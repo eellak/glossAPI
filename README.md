@@ -14,7 +14,7 @@
 
 # Επισκόπηση των διαθέσιμων μοντέλων και δεδομένων στα Ελληνικά
 
-Προέχει με συστηματικό τρόπο να αξιολογηθούν τα διαθέσιμα μοντέλα https://huggingface.co/search/full-text?q=greek&type=model και δεδομένα https://huggingface.co/search/full-text?q=greek&type=dataset στο Hugging Face.
+Προέχει με συστηματικό τρόπο να αξιολογηθούν τα διαθέσιμα μοντέλα [huggingface](https://huggingface.co/search/full-text?q=greek&type=model) και τα δεδομένα [huggingface-dataset](https://huggingface.co/search/full-text?q=greek&type=dataset).
 
 Η προεκπαίδευση στα ελληνικά είναι σημαντική αλλά δεν πρέπει να είναι από μόνη της κριτήριο.
 Το είδος της προεκπαίδευσης που μας ωφελεί είναι εκείνο που μας ανακουφίζει από το υπολογιστικό και χρονικό κόστος.
