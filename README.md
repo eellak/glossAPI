@@ -116,4 +116,4 @@
 
 [Ανοιχτός Κώδικας και Προηγμένα Γλωσσικά Νευρωνικά Δίκτυα](https://openstandards.ellak.gr/2023/10/26/anichtos-kodikas-ke-proigmena-glossika-nevronika-diktia/)
 
-
+[Τί ξέρουμε για τις ραγδαίες εξελίξεις στην OpenAI...](https://opensource.ellak.gr/2023/11/21/ti-xeroume-gia-tis-ragdees-exelixis-stin-openai-pou-elavan-chora-tis-teleftees-72-ores/)
