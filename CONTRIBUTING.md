@@ -9,4 +9,6 @@
 
 Τις πηγές αυτές τις βρίσκουμε στα αρχεία CSV και, αν θέλουμε, προσθέτουμε και άλλες πηγές που μπορεί να γνωρίζουμε, και δεν βρίσκονται στον κατάλογο.
 
-Οι πηγές της Βικιπαιδείας παρατίθενται και [στο wiki της ΕΕΛΛΑΚ](https://ellak.gr/wiki/index.php?title=%CE%9A%CE%B1%CF%84%CE%AC%CE%BB%CE%BF%CE%B3%CE%BF%CF%82_%CE%A0%CE%B7%CE%B3%CF%8E%CE%BD_%CE%95%CE%BB%CE%BB%CE%B7%CE%BD%CE%B9%CE%BA%CE%BF%CF%8D_%CE%9A%CE%B5%CE%B9%CE%BC%CE%AD%CE%BD%CE%BF%CF%85)
+Οι πηγές παρατίθενται επίσης [στο wiki αυτού του αποθετηρίου]([https://github.com/eellak/glossAPI/wiki](https://github.com/eellak/glossAPI/wiki/%CE%9A%CE%B1%CF%84%CE%B1%CE%B3%CF%81%CE%B1%CF%86%CE%AE-%CE%A0%CE%B7%CE%B3%CF%8E%CE%BD) .
+
+Εκεί μπορείτε να τις τροποποιείτε εφόσον έχετε προτάσεις. Διαφορετικά μπορείτε να επεξεργαστείτε το Wiki και να ζητήσετε να εντάξουμε τις αλλαγές σας.
