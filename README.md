@@ -23,8 +23,7 @@ __Στόχος αυτού του έργου είναι η ανάπτυξη εν�
 📻 Κρατήστε επαφή:
 
 - [Lemmy](https://lemmy.ml/c/greek_foss)
-- [Matrix](https://matrix.to/#/%23ml-groups23:chat.ellak.gr)
-- #Συστηθείτε με ένα σύντομο μήνυμα.
+- [Matrix](https://matrix.to/#/%23ml-groups23:chat.ellak.gr) (#Συστηθείτε με ένα σύντομο μήνυμα.)
 
 # Καταγραφή διαθέσιμων μοντέλων στα Ελληνικά
 
