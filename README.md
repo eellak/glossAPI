@@ -20,6 +20,10 @@ __Στόχος αυτού του έργου είναι η ανάπτυξη εν�
 
 [Τεχνητή νοημοσύνη και το μέλλον της εργασίας](https://openstandards.ellak.gr/2023/12/08/ti-echoume-na-mathoume-apo-tin-apergia-ton-singrafeon-tou-choligount-gia-tin-techniti-noimosini-ke-to-mellon-tis-ergasias/)
 
+- [Lemmy](https://lemmy.ml/c/greek_foss)
+- [Matrix](https://matrix.to/#/%23ml-groups23:chat.ellak.gr)
+- #Συστηθείτε με ένα σύντομο μήνυμα.
+
 # Καταγραφή διαθέσιμων μοντέλων στα Ελληνικά
 
 Το έργο καταγραφής των διαθέσιμων πηγών στα ελληνικά εντάσσεται στις προσπάθειες που άμεσα ξεκίνησε η ΕΕΛΛΑΚ με την δημοσιοποίηση του ChatGPT και τη παγκόσμια άνοδο του ενδιαφέροντος για τα προηγμένα λογοπαραγωγικά νευρωνικά δίκτυα.
