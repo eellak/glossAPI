@@ -12,3 +12,7 @@
 Οι πηγές παρατίθενται επίσης [στο wiki αυτού του αποθετηρίου](https://github.com/eellak/glossAPI/wiki/%CE%9A%CE%B1%CF%84%CE%B1%CE%B3%CF%81%CE%B1%CF%86%CE%AE-%CE%A0%CE%B7%CE%B3%CF%8E%CE%BD) .
 
 Εκεί μπορείτε να τις τροποποιείτε εφόσον έχετε προτάσεις. Διαφορετικά μπορείτε να επεξεργαστείτε το Wiki και να ζητήσετε να εντάξουμε τις αλλαγές σας.
+
+# Αναπτύσσοντας το Greek Tokenizer
+
+Δοκιμάστε τον [λεξικό κατατεμαχιστή](https://github.com/eellak/glossAPI/blob/4a67366a91c1f87ca7874757c62f31b1a51f8c78/greek_tokenizer.json) ([παράδειγμα χρήσης](https://github.com/eellak/glossAPI/wiki/%CE%A7%CF%81%CE%AE%CF%83%CE%B7-Tokenizer)) και :pencil2: δώστε μας ανατροφοδότηση στα [Issues](https://github.com/eellak/glossAPI/issues)!
