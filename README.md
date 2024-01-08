@@ -8,6 +8,11 @@ __Στόχος αυτού του έργου είναι η ανάπτυξη εν�
 
 :arrow_right: Έχετε μια ιδέα που δεν βλέπετε στο αποθετήριο; Θέλετε να προτείνετε μια διόρθωση; 🚩 Ανοίξτε ένα [Issue](https://github.com/eellak/glossAPI/issues)!
 
+
+🆕: Δοκιμάστε τον [λεξικό κατατεμαχιστή](https://github.com/eellak/glossAPI/blob/4a67366a91c1f87ca7874757c62f31b1a51f8c78/greek_tokenizer.json) ([παράδειγμα χρήσης](https://github.com/eellak/glossAPI/wiki/%CE%A7%CF%81%CE%AE%CF%83%CE%B7-Tokenizer)) και :pencil2: δώστε μας ανατροφοδότηση στα [Issues](https://github.com/eellak/glossAPI/issues)!
+
+#
+
 :newspaper: __Διαβάστε την αρθρογραφία μας για τα γλωσσικά μοντέλα και τις διεθνείς εξελίξεις__
 
 [Νευρωνικά Δίκτυα και Μηχανική Μάθηση](https://edu.ellak.gr/2023/04/11/nevronika-diktia-ke-michaniki-mathisi/)
@@ -19,6 +24,8 @@ __Στόχος αυτού του έργου είναι η ανάπτυξη εν�
 [Φιλοσοφικές προεκτάσεις νευρωνικών δικτύων](https://opensource.ellak.gr/2023/12/07/filosofikes-proektasis-nevronikon-diktion/)
 
 [Τεχνητή νοημοσύνη και το μέλλον της εργασίας](https://openstandards.ellak.gr/2023/12/08/ti-echoume-na-mathoume-apo-tin-apergia-ton-singrafeon-tou-choligount-gia-tin-techniti-noimosini-ke-to-mellon-tis-ergasias/)
+
+#
 
 📻 Κρατήστε επαφή:
 
