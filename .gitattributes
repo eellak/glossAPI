@@ -1,1 +1,2 @@
-data/ filter=lfs diff=lfs merge=lfs -text
+"data/*.rda" filter=lfs diff=lfs merge=lfs -text
+"data/*.pkl" filter=lfs diff=lfs merge=lfs -text
