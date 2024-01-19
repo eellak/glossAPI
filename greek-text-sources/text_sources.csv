@@ -1,0 +1,29 @@
+Name;URL;Description;Format;Notes
+Kodiko dot gr;https://www.kodiko.gr/;Ελληνική Νομοθεσία;HTML;
+Eur Lex;https://eur-lex.europa.eu;Ευρωπαϊκή Νομοθεσία;HTML;
+[OPUS] Wikimatrix;https://opus.nlpl.eu/Wikipedia.php;Παράλληλα Κείμενα Wikipedia;XML, Tokenized;Untokenized form available
+[OPUS] Wikipedia;https://opus.nlpl.eu/Wikipedia.php;Παράλληλα Κείμενα Wikipedia;XML, Tokenized;Untokenized form available
+EuroPARL;https://statmt.org/europarl/;Παράλληλα Κείμενα Ευρωπαϊκού Κοινοβουλίου;XML, Tokenized;Untokenized form available
+Anna's Archive;https://annas-archive.org/llm;Shadow library;Unknown;By Request
+Internet Archive;https://archive.org;Public domain texts;HTML;By Request
+Εθνικός Συσσωρευτής;searchculture.gr;Ψηφιοποιημένες Συλλογές;Non-OCR'd;
+Αρχείο ΜΙΕΤ;www.elia.org.gr/digitized-collections/;Ψηφιοποιημένες Συλλογές;Non-OCR'd;
+[OPUS] Other;https://opus.nlpl.eu/;Άλλα παράλληλα κείμενα;XML, Tokenized;Subtitles, Bible, Other Sources (Loads)
+Ραπτάρχης;https://raptarchis.gov.gr;Ελληνική Νομοθεσία;PDF, OCR'd?;Deep nested structure, Unclear URL Routing
+Μίτος;https://mitos.gov.gr/index.php/;Διαδικασίες Δημόσιας Διοίκησης;HTML, API;
+Ανέμη;https://anemi.lib.uoc.gr/;Ψηφιοποιημένες Συλλογές;Non-OCR'd;Cumbersome navigation, Unclear URL Routing
+Πέργαμος;https://pergamos.lib.uoa.gr;Ψηφιοποιημένες Συλλογές;PDF, Non-OCR'd;Varies Wildly
+NLTK;https://www.nltk.org/nltk_data/;Συλλογή Σωμάτων Κειμένων;Python data structures;Parsing tools, Greek coverage undetermined
+Project Gutenberg;https://www.gutenberg.org/browse/languages/el;Συλλογή Ελληνικών Κειμένων;HTML, Other;Modern Greek Translations, Monotonic Available
+Greek Legal Code;https://huggingface.co/datasets/greek_legal_code;Ελληνική Νομοθεσία;Python data structures;
+Greek Legal Named Entity Recognition;https://huggingface.co/datasets/joelniklaus/greek_legal_ner/tree/main;Ελληνική Νομοθεσία, Αναγνώριση επώνυμων οντοτήτων;JSON;
+OSCAR;https://huggingface.co/datasets/oscar;Πολυγλωσικά δεδομένα από Crawling;Python data structures;
+Tensor Flow Wikipedia Dataset;https://www.tensorflow.org/datasets/catalog/wiki40b#wiki40bel;Μονογλωσσικά σώματα κειμένων από Wikipedia σε πολλές γλώσσες;Python data structures;
+Common Crawl;https://data.statmt.org/cc-100/;Μονογλωσσικά σώματα κειμένων από Crawling σε πολλές γλώσσες;TXT, Line Separated;
+LDC 2007 CoNLL Shared Task - Greek, Hungarian & Italian;https://catalog.ldc.upenn.edu/LDC2018T07;;;
+LDC ECI Multilingual Text;https://catalog.ldc.upenn.edu/LDC94T5;;;
+Αρχείο Ευρεσιτεχνιών;https://www.obi.gr/;;;
+Ηλεκτρονικό Αναγνωστήριο;https://ereading.nlg.gr/el/?server=1;;;
+Εθνική Βιβλιοθήκη Ψηφιακή Βιβλιοθήκη Εφημερίδων και Περιοδικού Τύπου;http://efimeris.nlg.gr/ns/main.html;;;
+Κοινοβούλιο;https://library.parliament.gr/;;;PG RESET ERROR
+Σχολικά βιβλία;http://www.pi-schools.gr/books/;;PDF, OCR'd;Difficult routing, not homogeneous, paging?
