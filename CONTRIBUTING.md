@@ -16,3 +16,8 @@
 # Αναπτύσσοντας το Greek Tokenizer
 
 Δοκιμάστε τον [λεξικό κατατεμαχιστή](https://github.com/eellak/glossAPI/blob/4a67366a91c1f87ca7874757c62f31b1a51f8c78/greek_tokenizer.json) ([παράδειγμα χρήσης](https://github.com/eellak/glossAPI/wiki/%CE%A7%CF%81%CE%AE%CF%83%CE%B7-Tokenizer)) και :pencil2: δώστε μας ανατροφοδότηση στα [Issues](https://github.com/eellak/glossAPI/issues)!
+
+# Προγράμματα Επεξεργασίας
+
+Συμβουλευτείτε τον [οδηγό](https://github.com/eellak/glossAPI/wiki/Guide-to-Scripts-%7C-%CE%9F%CE%B4%CE%B7%CE%B3%CF%8C%CF%82-%CE%B3%CE%B9%CE%B1-%CF%80%CF%81%CE%BF%CE%B3%CF%81%CE%AC%CE%BC%CE%BC%CE%B1%CF%84%CE%B1-%CE%B5%CF%80%CE%B5%CE%BE%CE%B5%CF%81%CE%B3%CE%B1%CF%83%CE%AF%CE%B1%CF%82) για τα προγράμματα επεξεργασίας.
+
