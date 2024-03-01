@@ -1,0 +1,6 @@
+torch
+transformers
+pandas
+numpy>=1.20.3
+scikit-learn
+tokenizers
