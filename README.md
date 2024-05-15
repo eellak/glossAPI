@@ -11,6 +11,8 @@ __Στόχος της ΕΕΛΛΑΚ είναι η ανάπτυξη ενός Ελ�
 
 🆕: Δοκιμάστε τον [λεξικό κατατεμαχιστή](https://github.com/eellak/glossAPI/blob/4a67366a91c1f87ca7874757c62f31b1a51f8c78/greek_tokenizer.json) ([παράδειγμα χρήσης](https://github.com/eellak/glossAPI/wiki/%CE%A7%CF%81%CE%AE%CF%83%CE%B7-Tokenizer)) και :pencil2: δώστε μας ανατροφοδότηση στα [Issues](https://github.com/eellak/glossAPI/issues)!
 
+#
+
 :arrow_right: **Αν θέλετε να ενημερώνεστε για το glossAPI** μπορείτε να εγγραφείτε στο [https://newsletters.ellak.gr/](https://newsletters.ellak.gr/?p=subscribe&id=3)
 
 #
