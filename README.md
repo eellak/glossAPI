@@ -11,6 +11,8 @@ __Στόχος της ΕΕΛΛΑΚ είναι η ανάπτυξη ενός Ελ�
 
 🆕: Δοκιμάστε τον [λεξικό κατατεμαχιστή](https://github.com/eellak/glossAPI/blob/4a67366a91c1f87ca7874757c62f31b1a51f8c78/greek_tokenizer.json) ([παράδειγμα χρήσης](https://github.com/eellak/glossAPI/wiki/%CE%A7%CF%81%CE%AE%CF%83%CE%B7-Tokenizer)) και :pencil2: δώστε μας ανατροφοδότηση στα [Issues](https://github.com/eellak/glossAPI/issues)!
 
+:arrow_right: [Μια εφαρμογή χρήσης εμπνευσμένη από τις ψηφιακές ανθρωπιστικές επιστήμες](https://edu.ellak.gr/2024/05/31/daskalissa-idiomatikos-tipos-malliari-dimotiki-i-idiolektos-tou-papadiamanti/)
+
 #
 
 :arrow_right: **Αν θέλετε να ενημερώνεστε για το glossAPI** μπορείτε να εγγραφείτε στο [https://newsletters.ellak.gr/](https://newsletters.ellak.gr/?p=subscribe&id=3)
@@ -18,6 +20,7 @@ __Στόχος της ΕΕΛΛΑΚ είναι η ανάπτυξη ενός Ελ�
 #
 
 :newspaper: __Διαβάστε την αρθρογραφία μας για τα γλωσσικά μοντέλα και τις διεθνείς εξελίξεις__
+
 
 [Νευρωνικά Δίκτυα και Μηχανική Μάθηση](https://edu.ellak.gr/2023/04/11/nevronika-diktia-ke-michaniki-mathisi/)
 
@@ -33,7 +36,6 @@ __Στόχος της ΕΕΛΛΑΚ είναι η ανάπτυξη ενός Ελ�
 
 📻 Κρατήστε επαφή:
 
-- [Lemmy](https://lemmy.ml/c/greek_foss)
 - [Matrix](https://matrix.to/#/%23ml-groups23:chat.ellak.gr) (#Συστηθείτε με ένα σύντομο μήνυμα.)
 
 # Καταγραφή διαθέσιμων μοντέλων στα Ελληνικά
