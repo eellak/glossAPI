@@ -1,5 +1,7 @@
 __Στόχος της ΕΕΛΛΑΚ είναι η ανάπτυξη ενός Ελληνικού γλωσσικού μοντέλου ανοιχτού λογισμικού του glossAPI( a Greek Open Source LLM ), που ο κώδικας του θα διατίθεται με την άδεια ανοιχτού λογισμικού [EUPL](https://eupl.eu/) και τα δεδομένα του με την άδεια [Creative Commons BY-SA](https://creativecommons.org/licenses/by-sa/4.0/deed.el).__
 
+TODO: Translate documentation to English, other languages
+
 :rocket: **Τρέχουσα δράση: Καταγραφή - αποτίμηση ανοιχτών πηγών κειμένου στα Ελληνικά**
 
 :arrow_right: Συμβουλευτείτε το CONTRIBUTING.md για να συνεισφέρετε στην :dart: συγκέντρωση και προτεραιοποίηση συνόλων κειμενικών δεδομένων στα Ελληνικά.
