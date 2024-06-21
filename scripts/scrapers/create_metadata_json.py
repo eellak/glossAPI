@@ -28,7 +28,7 @@ def process_pdfs(folder_path, base_name, json_file):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process and rename PDF files in a given folder.')
     parser.add_argument('--path', type=str, help='Path to the folder containing PDF files.')
-    parser.add_argument('--filetype', type=str, help='Base name for renamed PDF files.')
+    parser.add_argument('--filetype', type=str, help='Base name for renamed PDF files; paper_1 or book_1, generally {filetype}_1')
     parser.add_argument('--index', type=str, required=True, help='Output JSON file for metadata.')
 
     args = parser.parse_args()
