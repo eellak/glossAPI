@@ -2,10 +2,10 @@ import argparse
 import os
 import json
 import logging
+import time
 from pdfminer.high_level import extract_text
 from pdfminer.pdfparser import PDFSyntaxError
 from pdfminer.psparser import PSEOF
-import time
 
 def setup_logging():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -40,7 +40,7 @@ def process_pdfs(downloaded_files_path, progress_report_path):
     progress_report = read_json_file(progress_report_path)
     index = 1
     if extracted_files:
-            index = get_indexes(list(extracted_files.keys()))[0] + 1
+            index = get_indexes(list(extracted_files.keys()))[0]
 
     pdf_files = [f for f in os.listdir(downloaded_files_path) if f.endswith('.pdf')]
     if not pdf_files:
@@ -80,9 +80,17 @@ def process_pdfs(downloaded_files_path, progress_report_path):
 
     logging.info("Files processing details have been updated and recorded.")
 
-if __name__ == "__main__":
+
+
+def run(current_path):
     setup_logging()
-    start_time = time.time()
+    args = type('args', (object,), {'path': current_path, 'json': 'progress_report.json'})
+    process_pdfs(args.path, args.json)
+
+
+if __name__ == "__main__":
+    start_time = time.time()  # Capture start time
+    setup_logging()
     parser = argparse.ArgumentParser(description="Process PDF files and associate extracted text with metadata.")
     parser.add_argument("--path", type=str, help="Path to the folder containing PDF files to be processed.")
     parser.add_argument("--json", type=str, help="Path to the JSON file containing metadata associations.")
