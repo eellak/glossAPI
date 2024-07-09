@@ -7,7 +7,7 @@ from tqdm import tqdm
 # Step 1: Import necessary libraries (done above)
 
 # Step 2: Load the CSV file
-input_path = "/home/fivos/Projects/GlossAPI/glossAPI/data/draw2texts.csv"
+input_path = "~/Projects/GlossAPI/glossAPI/data/draw2texts.csv"
 df = pd.read_csv(input_path)
 
 # Step 3: Load the model and tokenizer
