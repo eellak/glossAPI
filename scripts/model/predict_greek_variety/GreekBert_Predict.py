@@ -42,7 +42,7 @@ for text in tqdm(df['text'], desc="Classifying texts"):
 df['predicted class'] = predictions
 
 # Step 7: Save the results to a new CSV file
-output_path = "/home/fivos/Projects/GlossAPI/glossAPI/data/draw2texts_predicted.csv"
+output_path = "~/Projects/GlossAPI/glossAPI/data/draw2texts_predicted.csv"
 df.to_csv(output_path, index=False)
 
 print(f"Classification completed. Results saved to {output_path}")
