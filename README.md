@@ -19,22 +19,6 @@ TODO: Translate documentation to English, other languages
 
 :arrow_right: **Αν θέλετε να ενημερώνεστε για το glossAPI** μπορείτε να εγγραφείτε στο [https://newsletters.ellak.gr/](https://newsletters.ellak.gr/?p=subscribe&id=3)
 
-#
-
-:newspaper: __Διαβάστε την αρθρογραφία μας για τα γλωσσικά μοντέλα και τις διεθνείς εξελίξεις__
-
-
-[Νευρωνικά Δίκτυα και Μηχανική Μάθηση](https://edu.ellak.gr/2023/04/11/nevronika-diktia-ke-michaniki-mathisi/)
-
-[Ανοιχτός Κώδικας και Προηγμένα Γλωσσικά Νευρωνικά Δίκτυα](https://openstandards.ellak.gr/2023/10/26/anichtos-kodikas-ke-proigmena-glossika-nevronika-diktia/)
-
-[Τί ξέρουμε για τις ραγδαίες εξελίξεις στην OpenAI...](https://opensource.ellak.gr/2023/11/21/ti-xeroume-gia-tis-ragdees-exelixis-stin-openai-pou-elavan-chora-tis-teleftees-72-ores/)
-
-[Φιλοσοφικές προεκτάσεις νευρωνικών δικτύων](https://opensource.ellak.gr/2023/12/07/filosofikes-proektasis-nevronikon-diktion/)
-
-[Τεχνητή νοημοσύνη και το μέλλον της εργασίας](https://openstandards.ellak.gr/2023/12/08/ti-echoume-na-mathoume-apo-tin-apergia-ton-singrafeon-tou-choligount-gia-tin-techniti-noimosini-ke-to-mellon-tis-ergasias/)
-
-#
 
 📻 Κρατήστε επαφή:
 
@@ -64,4 +48,21 @@ TODO: Translate documentation to English, other languages
 Που οδεύουμε, λοιπόν; Τα δεδομένα του προβλήματος είναι σαφή. Τα εύκολα προσβάσιμα δεδομένα έχουν αξιοποηθεί ήδη. Τα δύσκολα προσβάσιμα δεδομένα περιλαμβάνουν ένα δυσνόητο μέγεθος ανθρωποπροσπάθειας. Τα κλειστά δεδομένα είναι και θα παραμείνουν κλειστά. Είναι σχεδόν βέβαιο ότι σύντομα θα δούμε ένα κλειστό γλωσσικό μοντέλο στην ελληνική γλώσσα. Αλλά αυτό δεν θα αλλάξει σε τίποτα την δυστοπική διαπίστωση ότι οι ανοιχτές τεχνολογίες θα δεχτούν ένα πρωτόγνωρο πλήγμα. Η κύρια τεχνολογία της εποχής που έρχεται θα έχει ξεκινήσει με ένα αποφασιστικό πλεονέκτημα των κλειστών τεχνολογιών και των κλειστών δεδομένων. Πέρα από τις ακτιβιστικές μας ανησυχίες όμως, οι δυσμενείς επιπτώσεις έχουν επισημανθεί και από τις διεθνείς οργανώσεις, καθώς και από την Ευρωπαϊκή Επιτροπή.
 
 Η ιδέα ότι τα δεδομένα των πολιτών ενός ολόκληρου κράτους μπορούν να μεταφορτωθούν στους απομακρυσμένους υπολογιστές ενός υπερατλαντικού τεχνολογικού ολιγοπωλίου, με όλους τους κινδύνους ασφάλειας και ιδιωτικότητας, είναι απλά επικίνδυνη, και αντίθετη σε μια σειρά από ευρωπαϊκές οδηγίες στις οποίες έχει δεσμευτεί η Ελλάδα. Η εύκολη λύση της προμήθειας λογοπαραγωγικής τεχνολογίας από τεχνολογικά ολογοπώλια του εξωτερικού είναι ένα ναρκοπέδιο για την ασφάλεια, την ιδιωτικότητα, την καινοτομία, και οι επιπτώσεις του θα φανούν σύντομα.
+
+#
+
+:newspaper: __Διαβάστε την αρθρογραφία μας για τα γλωσσικά μοντέλα και τις διεθνείς εξελίξεις__
+
+
+[Νευρωνικά Δίκτυα και Μηχανική Μάθηση](https://edu.ellak.gr/2023/04/11/nevronika-diktia-ke-michaniki-mathisi/)
+
+[Ανοιχτός Κώδικας και Προηγμένα Γλωσσικά Νευρωνικά Δίκτυα](https://openstandards.ellak.gr/2023/10/26/anichtos-kodikas-ke-proigmena-glossika-nevronika-diktia/)
+
+[Τί ξέρουμε για τις ραγδαίες εξελίξεις στην OpenAI...](https://opensource.ellak.gr/2023/11/21/ti-xeroume-gia-tis-ragdees-exelixis-stin-openai-pou-elavan-chora-tis-teleftees-72-ores/)
+
+[Φιλοσοφικές προεκτάσεις νευρωνικών δικτύων](https://opensource.ellak.gr/2023/12/07/filosofikes-proektasis-nevronikon-diktion/)
+
+[Τεχνητή νοημοσύνη και το μέλλον της εργασίας](https://openstandards.ellak.gr/2023/12/08/ti-echoume-na-mathoume-apo-tin-apergia-ton-singrafeon-tou-choligount-gia-tin-techniti-noimosini-ke-to-mellon-tis-ergasias/)
+
+#
 
