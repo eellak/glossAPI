@@ -1,7 +1,0 @@
-.~lock*
-scripts/model/saved_models/
-.vscode/
-settings.json
-
-# Ignore Git attribute files
-.gitattributes
