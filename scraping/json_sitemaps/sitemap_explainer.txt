@@ -1,0 +1,8 @@
+JSON with {metadata : file_link} pairs.
+
+Each JSON file corresponds to a website source which contains eg files of university theses, school/ university books, or school/ uni entry exams.
+
+Metadata is the native categorization of the site, each level of recurssion is split by " > ", and ends with the file title.
+
+By using downloader10.py on each of these files you get files "paper_n.pdf" or similar and another JSON file
+	associating {filename : metadata}. By running extractor4.py you get similar result but for "paper_n.txt" or similar.
