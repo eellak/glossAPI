@@ -111,16 +111,16 @@ int main(int argc, char** argv) {
     int srcprovided = 0 ;
     int dstprovided = 0 ;
     for( int i = 1 ; i < argc ; i++ ) {
-        if( !memcmp(argv[i],"-ec",strlen("-ec")) ) {
+        if( !memcmp(argv[i],"-ec",strlen("-ec")) ) { // encode
             mode = 1 ;
         }
-        else if( !memcmp(argv[i],"-dc",strlen("-dc")) ) {
+        else if( !memcmp(argv[i],"-dc",strlen("-dc")) ) { // decode
             mode = 2 ;
         }
-        else if( !memcmp(argv[i],"-strip",strlen("-strip")) ) {
+        else if( !memcmp(argv[i],"-strip",strlen("-strip")) ) { // strip
             mode = 3 ;
         }
-        else if( !memcmp(argv[i],"-s",strlen("-s")) ) {
+        else if( !memcmp(argv[i],"-s",strlen("-s")) ) { //source file
             i++ ;
             src = fopen(argv[i],"r") ;
             if( src == NULL) {
@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
             }
             srcprovided++ ;
         }
-        else if( !memcmp(argv[i],"-d",strlen("-d")) ) {
+        else if( !memcmp(argv[i],"-d",strlen("-d")) ) { // destination file
             i++ ;
             dst = fopen(argv[i],"w") ;
             if( dst == NULL ) {
