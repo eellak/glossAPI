@@ -7,10 +7,13 @@ import random
 import aiofiles
 import logging
 import json
+import time 
 
-# Configure logging
+
+#Configure logging for behavior tracking and errors 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+#Function for the highest index of papers downloaded for continuation
 def get_indexes(papers):
     if papers:
         nums = []
@@ -20,18 +23,20 @@ def get_indexes(papers):
         return sorted(nums)[-1:]
     return []
 
+#Function that is capable of downloading PDFs allowing retrial and concurrent downloads 
 async def download_pdfs(metadata_dict, semaphore, visited, indexes, args, progress_report, retry=1):
-    """
-    Prepares tasks for download_pdf function; and stores association of
-    "paper_n.pdf" name with original metadata.
-    """
+
+   #Prepares tasks for download_pdf function and stores association of "paper_name.pdf" with original metadata.
+    
     retry -= 1
-    retries = {}
-    tasks = []
+    retries = {} #Dictionary holding files for download retrial
+    tasks = [] #List to hold the tasks to be executed
     ordered_metadata = list(metadata_dict.items())
     user_agent_gen = user_agent_generator()
     i = 0
-    reached_end_of_file = True # flag: if all metadata are in "visited"
+    reached_end_of_file = True #flag: if all metadata are in "visited"
+    
+    #Process metadata urls and schedule downloads
     for metadata, url in ordered_metadata:
         if i < args.batch and metadata not in visited:
             reached_end_of_file = False
@@ -61,6 +66,7 @@ async def download_pdfs(metadata_dict, semaphore, visited, indexes, args, progre
     if i < args.batch: reached_end_of_file = True
     return reached_end_of_file
 
+#Function to extract base URL from a given full URL
 async def get_base_url(url):
     if not url.startswith("http"):
         url = f"http://{url}"
@@ -68,6 +74,7 @@ async def get_base_url(url):
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     return base_url
 
+#Function for the initialization of session headers
 async def setup_session(session, url, headers):
     """ Initialize the session with base headers. """
     base_url = await get_base_url(url)
@@ -76,11 +83,9 @@ async def setup_session(session, url, headers):
         await response.text()
     return headers
 
+#Function that arranges concurrent download of a PDFs given pdf_url, then returns download status, metadata and filename as a tuple.
 async def download_pdf(index, metadata, pdf_url, semaphore, args, user_agent, referer=None):
-    """
-    Arranges concurrent download of a PDFs given pdf_url, then returns download status,
-    metadata and filename as a tuple.
-    """
+
     if not referer:
         base_url = await get_base_url(pdf_url)
     else:
@@ -95,7 +100,9 @@ async def download_pdf(index, metadata, pdf_url, semaphore, args, user_agent, re
     async with semaphore:
         timeout = aiohttp.ClientTimeout(total=60)
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False), timeout=timeout) as session:
-            await asyncio.sleep(int(sleep_time))  # Delay before each request
+            # Randomized sleep time between args.sleep and args.sleep + 2 (better for passing bot detection)
+            await asyncio.sleep(random.uniform(sleep_time, sleep_time + 2))  
+           
             file_name = f'paper_{index}.{file_type}'  # Names file by order of appearance
             try:
                 await setup_session(session, pdf_url, headers)
@@ -122,12 +129,16 @@ async def download_pdf(index, metadata, pdf_url, semaphore, args, user_agent, re
                 logging.error(f"Unexpected error while downloading {pdf_url}: {e}")
             return (False, metadata, file_name)
 
+#Function that writes downloaded content to a file 
 async def write_file(filename, content, output_path = "./"):
     path_to_file = os.path.join(output_path, filename)
     async with aiofiles.open(path_to_file, 'wb') as file:
         await file.write(content)
 
+#Function to generate random user-agents for avoiding bot detection 
+#to add proxy rotation option
 def user_agent_generator():
+    
     templates = [
         "Mozilla/5.0 ({os}) AppleWebKit/537.36 (KHTML, like Gecko) {browser}/{version} Safari/537.36",
         "Mozilla/5.0 ({os}) Gecko/20100101 {browser}/{version}",
@@ -153,13 +164,14 @@ def user_agent_generator():
         user_agent = template.format(os=os, browser=browser, version=full_version)
         yield user_agent
 
+#Function for overall program executon 
 async def run(args):
     current_working_directory = os.getcwd()
     path_to_url_siteguide = os.path.join(current_working_directory, args.filename)
     with open(path_to_url_siteguide, 'r') as file:
         metadata_dict = json.load(file)
 
-    semaphore = asyncio.Semaphore(3)
+    semaphore = asyncio.Semaphore(3) #if you get flagged by bot detection try adjusting value
     try:
         try:
             with open('progress_report.json', 'r') as file:
@@ -193,6 +205,7 @@ async def run(args):
             logging.info("Progress report written to progress_report.json")
             return False
 
+#Function for handling command-line arguments 
 def parse_input():
     parser = argparse.ArgumentParser(description="Gets PDFs through URLs given as value entries in a JSON.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--json", help="Add path to JSON file with URLs siteguide", required=True)
@@ -209,15 +222,16 @@ def parse_input():
     logging.info(f"Arguments received: JSON file: {args.json}, Sleep time: {args.sleep}, File type: {args.type}, Request type: {args.req}, Output path: {args.output}, 'progress_report.json' path: {args.little_potato}")
     return args
 
-
+#The main function to parse input arguments, load URL metadata from a JSON file, manage download progress with semaphores for concurrency, and save the download progress to a JSON report file
 async def main():
     args = parse_input()
     with open(args.json, 'r') as file:
         metadata_dict = json.load(file)
+    #Semaphore that limits concurrent downloads     
     semaphore = asyncio.Semaphore(3)  # Adjust the value as needed
     
     try:
-        # Read existing progress report if any
+        #Read existing progress report if any
         try:
             progress_report_path = os.path.join(args.little_potato, 'progress_report.json')
             with open(progress_report_path, 'r') as file:
@@ -239,9 +253,12 @@ async def main():
         logging.error(f"An error occurred: {e}")
         raise
     finally:
+        #Write progress report to a JSON file 
         progress_report_path = os.path.join(args.little_potato, 'progress_report.json')
         with open(progress_report_path, 'w') as file:
             json.dump(progress_report, file, ensure_ascii=False, indent=4)
         logging.info("Progress report written to progress_report.json")
+
+#Entry point of Downloader 
 if __name__ == "__main__":
     asyncio.run(main())
