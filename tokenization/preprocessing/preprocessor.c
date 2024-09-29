@@ -25,26 +25,31 @@ int char_bytes(unsigned char input) {
     return 4 ;
 }
 
-void fullstrip(FILE* dst, FILE* src, unsigned char character){
+void fullstrip(FILE* dst, FILE* src){
+    debug() ;
+    unsigned char character = 0 ;
+    fread(&character,sizeof(unsigned char),1,src) ;
+    printf("Character read is %c , with value %u \n", character, (unsigned char) character) ;
     if( char_bytes(character) > utf_8_gr_eng ) { //too big to be greek or english
-        for( int i = 1 ; i < char_bytes(character) ; i++ ) {
-            character = fgetc(src) ;
+        for( int i = 0 ; i < char_bytes(character)-1 ; i++ ) {
+            fread(&character,sizeof(unsigned char),1,src) ;
         }
         return;
     }
     if ( char_bytes(character) == 1) {  //english
         if( character == 10 || character == 13 || character == 20 || character == 32 ){ //spaces and newline
-            fprintf(dst,"%c", character) ;
+            fwrite(&character,sizeof(unsigned char),1,dst) ;
         }
         else if ( character < 97 && character > 122  ){ // lower case letters
-            fprintf(dst,"%c", character) ;
+            fwrite(&character,sizeof(unsigned char),1,dst) ;
         }
-        else if ( character < 65 && character > 90 ){
-            fprintf(dst,"%c", character) ;
+        else if ( character < 65 && character > 90 ){ //Upper case
+            fwrite(&character,sizeof(unsigned char),1,dst) ;
         }
     }
     else {
-        unsigned char nextbyte = fgetc(src) ;
+        unsigned char nextbyte = 0 ;
+        fread(&nextbyte,sizeof(unsigned char),1,src) ;
         if( character > utf_8_gr_max_first_byte) { //too big to be greek
             return ;
         }
@@ -57,8 +62,8 @@ void fullstrip(FILE* dst, FILE* src, unsigned char character){
         if( character == 207 && (( nextbyte > utf_8_gr_207_max_second) || ( nextbyte < utf_8_gr_207_min_second) )) { //not a letter
             return ;
         }
-        fprintf(dst,"%c", character) ;
-        fprintf(dst,"%c", nextbyte) ;
+        fwrite(&character,sizeof(unsigned char),1,dst) ;
+        fwrite(&nextbyte,sizeof(unsigned char),1,dst) ;
     }
 }
 
@@ -165,8 +170,7 @@ int main(int argc, char** argv) {
             if ( feof(src) ) {
                 break;
             }
-            character = fgetc(src) ;
-            fullstrip(dst,src,character) ;
+            fullstrip(dst,src) ;
         }
     }
     if ( mode == 3 ) {
