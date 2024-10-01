@@ -22,6 +22,19 @@ void print_freq( int** freq_table, int table_size) {
     }
 }
 
+void print_freq_to_file( int** freq_table, int table_size) {
+    FILE* out = fopen("freqency.txt","w") ;
+    fprintf(out,"Frequency table \n") ;
+    for( int i = 0 ; i < table_size ; i++ ) {
+        fprintf(out,"Element %d is followed by :", i) ;
+        for( int j = 0 ; j < table_size ; j++ ) {
+            fprintf(out,"element %d with %d frequency, ",j,freq_table[i][j]) ;
+        }
+        fprintf(out,"\n") ;
+    }
+    fclose(out) ;
+}
+
 void print_corpus( int* corpus, unsigned long long corpus_size ) {
     printf("Corpus is %llu size and the following text: \n",corpus_size) ;
     for( unsigned long long i = 0 ; i < corpus_size ; i++ ) {
@@ -126,6 +139,6 @@ int main(int argc, char** argv) {
     print_corpus(corpus,corpus_size) ;
     int** freq_table = NULL ;
     get_freq_table(&freq_table,corpus,corpus_size,table,table_size) ;
-    print_freq(freq_table,table_size) ;
+    print_freq_to_file(freq_table,table_size) ;
     return 0 ;
 }

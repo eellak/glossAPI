@@ -9,3 +9,4 @@ tokenization/text.txt
 tokenization/tokenize
 tokenization/tokenizer
 .gitignore
+tokenization/freqency.txt
