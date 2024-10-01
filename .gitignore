@@ -2,3 +2,10 @@ tokenization/preprocessing/preprocessor
 tokenization/preprocessing/text
 tokenization/preprocessing/text.txt
 tokenization/preprocessing/re_text.txt
+tokenization/new.bin
+tokenization/new.txt
+tokenization/text.bin
+tokenization/text.txt
+tokenization/tokenize
+tokenization/tokenizer
+.gitignore
