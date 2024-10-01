@@ -11,6 +11,17 @@ void print_table( int* table, int*table_size) {
     }
 }
 
+void print_freq( int** freq_table, int table_size) {
+    printf("Frequency table \n") ;
+    for( int i = 0 ; i < table_size ; i++ ) {
+        printf("Element %d is followed by :", i) ;
+        for( int j = 0 ; j < table_size ; j++ ) {
+            printf("element %d with %d frequency, ",j,freq_table[i][j]) ;
+        }
+        printf("\n") ;
+    }
+}
+
 void print_corpus( int* corpus, unsigned long long corpus_size ) {
     printf("Corpus is %llu size and the following text: \n",corpus_size) ;
     for( unsigned long long i = 0 ; i < corpus_size ; i++ ) {
@@ -75,6 +86,22 @@ void load_text (FILE* src, int* table, int table_size, int** corpus, unsigned lo
     return ;
 }
 
+ void get_freq_table(int*** freq_table,int* corpus,unsigned long long corpus_size,int* table, int table_size) {
+    freq_table[0] = malloc(sizeof(int*)*table_size) ;
+    if( freq_table[0] == NULL ) {
+        printf("Critical Error: Failed to Allocate memory for frequency table") ;
+    }
+    for ( int i = 0 ; i < table_size ; i++ ) {
+        freq_table[0][i] = calloc(table_size,sizeof(int)) ;
+        if( freq_table[0] == NULL ){
+            printf("Critical Error: Failed to Allocate memory for frequency table") ;
+        }   
+    }
+    for( unsigned long long i = 0 ; i < corpus_size - 1 ; i++ ) {
+        freq_table[0][corpus[i]][corpus[i+1]]++ ;
+    }
+}
+
 int main(int argc, char** argv) {
     //FILE* dst = fopen(argv[1],"w") ;
     //if( dst == NULL ) {
@@ -93,9 +120,12 @@ int main(int argc, char** argv) {
         return -1 ;
     }
     begin_constructing_table(src,&table,&table_size) ;
-    //print_table(table,&table_size) ;
+    print_table(table,&table_size) ;
     rewind(src) ;
     load_text(src,table,table_size,&corpus,&corpus_size) ;
     print_corpus(corpus,corpus_size) ;
+    int** freq_table = NULL ;
+    get_freq_table(&freq_table,corpus,corpus_size,table,table_size) ;
+    print_freq(freq_table,table_size) ;
     return 0 ;
 }
