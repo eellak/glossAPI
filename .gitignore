@@ -10,3 +10,4 @@ tokenization/tokenize
 tokenization/tokenizer
 .gitignore
 tokenization/freqency.txt
+tokenization/paper_1.txt
