@@ -12,3 +12,4 @@ tokenization/tokenizer
 tokenization/freqency.txt
 tokenization/paper_1.txt
 tokenization/cleaned_filtered_extracted_txt
+tokenization/cleaned_filtered_extracted_txt_v2/*
