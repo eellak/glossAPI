@@ -4,7 +4,7 @@ import re
 import os
 
 def remove_simiosi(text) :
-    simiosi_pattern = re.compile(r'Σημείωση|Note')
+    simiosi_pattern = re.compile(r'Σημείωση|Note|Ο τονισμός|The translator')
     if re.match(simiosi_pattern,text) :
         return True
     return False
@@ -15,8 +15,26 @@ def end_of_text(text) :
         return True
     return False
     
+def fexi_intro(text) :
+    fexi_pattern = re.compile(r'ΦΕΞΗ|ΒΙΒΛΙΟΘΗΚΗ|ΒΙΒΛΙΟΠΩΛΕΙΟΝ')
+    if re.search(fexi_pattern,text) :
+        return True
+    return False
+
+def exception_to_fexi_intro(text) :
+    exception_to_fexi_intro_pattern = re.compile(r'ΕΚΔΟΤΙΚΟΣ ΟΙΚΟΣ ΓΕΩΡΓΙΟΥ Δ. ΦΕΞΗ')
+    if re.match(exception_to_fexi_intro_pattern,text) :
+        return True
+    return False
+
+def end_fexi_intro(text) :
+    fexi_end_intro = re.compile(r'ΕΝ ΑΘΗΝΑΙΣ|19[0-9][0-9]|ΕΙΣΑΓΩΓΗ|ΠΡΟΛΟΓΟΣ|ΠΡΟΣΩΠΑ|ΑΡΙΣΤΟΤΕΛΟΥΣ|ΕΚΔΟΤΙΚΟΣ ΟΙΚΟΣ ΓΕΩΡΓΙΟΥ ΦΕΞΗ|ΕΙΣΗΓΗΣΙΣ')
+    if re.search(fexi_end_intro,text) :
+        return True
+    return False
+
 def content(text) :
-    content_pattern = re.compile(r'ΠΕΡΙΕΧΟΜΕΝΑ|ΕΜΠΕΡΙΕΧΟΜΕΝΑ|ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ')
+    content_pattern = re.compile(r'ΠΕΡΙΕΧΟΜΕΝΑ|ΕΜΠΕΡΙΕΧΟΜΕΝΑ|ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ|Π Ι Ν Α Κ Α Σ   Π Ε Ρ Ι Ε Χ Ο Μ Ε Ν Ω Ν')
     if re.match(content_pattern,text) :
         return True
     return False
@@ -29,6 +47,7 @@ def remove_latin_text(text) :
     content_flag = False
     content_begin_flag = False
     end_of_text_flag = False
+    fexi_intro_flag = False
     for line in lines :
         if line == '' :
             content_flag = False
@@ -37,8 +56,19 @@ def remove_latin_text(text) :
             continue
         if content_begin_flag == True :
             content_flag = True
-        if end_of_text(line) :
-            end_of_text_flag = True
+        if fexi_intro(line) :
+            fexi_intro_flag = True
+            if exception_to_fexi_intro(line) :
+                fexi_intro_flag = False
+                newtext = newtext+'[Out]'+line+'\n'
+                continue
+        if fexi_intro_flag == True :
+            if end_fexi_intro(line) :
+                fexi_intro_flag = False
+                newtext = newtext+'[Out]'+line+'\n'
+                continue
+        #if end_of_text(line) :
+            #end_of_text_flag = True
         if remove_simiosi(line) :
             simiosi_flag = True
         if content(line) :
@@ -52,12 +82,17 @@ def remove_latin_text(text) :
         if end_of_text_flag == True :
             newtext = newtext+'[Out]'+line+'\n'
             continue
+        if fexi_intro_flag == True :
+            newtext = newtext+'[Out]'+line+'\n'
+            continue
         if re.search(no_greek_pattern,line) :
             content_begin_flag = False
             if content_flag == True :
                 newtext = newtext+'[Out]'+line+'\n'
                 continue
             newtext = newtext + line + '\n'
+        else :
+            newtext = newtext+'[Out]'+line+'\n'
     return newtext 
 
 def clean(pathout,pathin) :
