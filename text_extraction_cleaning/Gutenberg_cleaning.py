@@ -8,9 +8,10 @@ end_pattern = re.compile(r'(( )*ΤΕΛΟΣ.?)$|Α Υ Λ Α Ι Α|Τ Ε Λ Ο Σ|
 fexi_pattern = re.compile(r'ΦΕΞΗ|ΒΙΒΛΙΟΘΗΚΗ|ΒΙΒΛΙΟΠΩΛΕΙΟΝ|^ΕΚΔΟΤΗΣ|ΕΝ ΑΘΗΝΑΙΣ|ΤΥΠΟΓΡΑΦΕΙΟΥ|ΒΙΒΛΙΟΓΡΑΦΙΑ|ΠΙΝΑΞ ΤΩΝ ΕΙΚΟΝΩΝ')
 exception_to_fexi_intro_pattern = re.compile(r'ΕΚΔΟΤΙΚΟΣ ΟΙΚΟΣ ΓΕΩΡΓΙΟΥ Δ. ΦΕΞΗ')
 unique_line_remove_pattern = re.compile(r'ΒΑΣΙΛΙΚΟΝ ΤΥΠΟΓΡΑΦΕΙΟΝ')
-fexi_end_intro = re.compile(r'ΕΝ ΑΘΗΝΑΙΣ|(1[8-9][0-9][0-9])$|ΕΙΣΑΓΩΓΗ|ΠΡΟΛΟΓΟΣ|ΠΡΟΣΩΠΑ|ΤΑ ΦΟΡΕΜΑΤΑ|ΕΚΔΟΤΙΚΟΣ ΟΙΚΟΣ ΓΕΩΡΓΙΟΥ ΦΕΞΗ|ΕΙΣΗΓΗΣΙΣ|ΒΙΒΛΙΟΝ|ΤΟΜΟΣ|ΕΚΔΟΤΗΣ|ΕΚΔΟΣΕΙΣ ΦΕΞΗ|ΚΕΦΑΛΑΙΟΝ|Κεφάλαιον|Α\'\.|ΚΕΦΑΛΑΙΟ I.|(\(1[8-9][0-9][0-9]\))$|Η ΥΠΟΘΕΣΙΣ ΤΟΥ ΔΡΑΜΑΤΟΣ|ΠΡΟΛΕΓΟΜΕΝΑ|ΠΡΑΞΙΣ|ΒΙΒΛΙΟ ΠΡΩΤΟ.')
+fexi_end_intro = re.compile(r'ΕΝ ΑΘΗΝΑΙΣ|(1[8-9][0-9][0-9].?)$|ΕΙΣΑΓΩΓΗ|ΠΡΟΛΟΓΟΣ|ΠΡΟΣΩΠΑ|ΤΑ ΦΟΡΕΜΑΤΑ|ΕΚΔΟΤΙΚΟΣ ΟΙΚΟΣ ΓΕΩΡΓΙΟΥ ΦΕΞΗ|ΕΙΣΗΓΗΣΙΣ|ΒΙΒΛΙΟΝ|ΤΟΜΟΣ|ΕΚΔΟΤΗΣ|ΕΚΔΟΣΕΙΣ ΦΕΞΗ|ΚΕΦΑΛΑΙΟΝ|Κεφάλαιον|Α\'\.|ΚΕΦΑΛΑΙΟ I.|(\(1[8-9][0-9][0-9]\))$|Η ΥΠΟΘΕΣΙΣ ΤΟΥ ΔΡΑΜΑΤΟΣ|ΠΡΟΛΕΓΟΜΕΝΑ|ΠΡΑΞΙΣ|ΒΙΒΛΙΟ ΠΡΩΤΟ.|Τι είναι βουδδισμός;|PREFACE|ΑΡΙΣΤΟΤΕΛΗΣ ΒΑΛΑΩΡΙΤΗΣ|ΓΙΑ ΤΟΥΤΟ ΤΟ ΒΙΒΛΙΟ|ΠΑΡΑΜΥΘΙ ΧΩΡΙΣ ΟΝΟΜΑ')
 content_pattern = re.compile(r'ΠΕΡΙΕΧΟΜΕΝΑ|ΕΜΠΕΡΙΕΧΟΜΕΝΑ|ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ|Π Ι Ν Α Κ Α Σ   Π Ε Ρ Ι Ε Χ Ο Μ Ε Ν Ω Ν|Π Ρ Ο Σ Ω Π Α|ΠΡΟΣΩΠΑ|Π Ι Ν Α Κ Α Σ  Π Ε Ρ Ι Ε Χ Ο Μ Ε Ν Ω Ν|ΤΑ ΤΗΣ ΤΡΑΓΩΔΙΑΣ ΠΡΟΣΩΠΑ|ΠΕΡΙΕΧΟΜΕΝA|ΠΑΡΑΡΤΗΜΑ|ΠΙΝΑΚΑΣ|( )*ΟΙ ΠΑΡΑΔΑΡΜΕΝΟΙ|Τ Α Π Ρ Ο Σ Ω Π Α Τ Ο Υ Δ Ρ Α Μ Α Τ Ο Σ|ΠΡΟΣΩΠΑ ΤΟΥ ΔΡΑΜΑΤΟΣ|Τα πρόσωπα της τραγωδίας|ΤΑ ΠΡΟΣΩΠΑ ΤΟΥ ΔΡΑΜΑΤΟΣ')
 re_clean_end_pattern = re.compile(r'ΕΚΛΕΚΤΑ ΕΡΓΑ|\*\*\*|\* \* \*|ΠΙΝΑΚΑΣ|ΤΕΥΧΗ ΕΚΔΟΘΕΝΤΑ|Σ Η Μ Ε I Ω Σ Ε Ι Σ|ΠΡΟΠΟΜΠΟΙ|Δ Ι Ο Ρ Θ Ω Σ Ε Ι Σ|_Πίναξ|ΤΕΛΟΣ ΤΟΥ ΠΡΩΤΟΥ ΤΟΜΟΥ|ΠΙΝΑΞ|ΝΤΟΠΙΕΣ ΖΩΓΡΑΦΙΕΣ|ΤΕΛΟΣ|.?1[\)\}\]]|ΠΕΡΙΕΧΟΜΕΝΑ')
+out_pattern = re.compile(r'\[Out')
 
 no_greek_pattern = re.compile(r'([Α-Ω]+)|([α-ω]+)', re.UNICODE)
 #end_note_pattern = re.compile(r'(1)|1)|1}|1}|[1]|1]')
@@ -123,12 +124,18 @@ def remove_latin_text(text) :
             newtext = newtext + line + '\n'
     return newtext 
 
-def re_remove(text) :
+def re_remove(text,num_of_file) :
     newtext = ''
     lines = text.splitlines()
     non_capital_pattern = re.compile(r'([α-ω][α-ω])+')
     re_clean_end_found_flag = False
+    flag_prob_fail = False
     for i,line in enumerate(lines) :
+        if re.match(out_pattern,line) :
+            #if i > len(lines)/4 and i < len(lines)/3 and flag_prob_fail == False :
+                #print('Probable Failure at ',num_of_file)
+                #flag_prob_fail = True
+            continue
         if i > 105 and i < len(lines) - 300 : 
             newtext = newtext+line+'\n'
             continue
@@ -139,14 +146,39 @@ def re_remove(text) :
             newtext = newtext+line+'\n'
             continue
         if re_clean_end_found_flag == True : 
-            newtext = newtext+'[Out:End of text, Second clean]'+line+'\n'
+            #newtext = newtext+'[Out:End of text, Second clean]'+line+'\n'
             continue
         if i < 105 : 
             if not re.search(non_capital_pattern,line) :
-                newtext = newtext+'[Out:Pures Capitals/No greek characters in first 105 lines]'+line+'\n'
+                #newtext = newtext+'[Out:Pures Capitals/No greek characters in first 105 lines]'+line+'\n'
                 continue
         newtext = newtext+line+'\n'
     return newtext
+
+def remove_extras(text) :
+    intro_white_space_flag = True
+    beginning_pattern = re.compile(r'[Α-Ω]')
+    lines = text.splitlines()
+    newtext = ''
+    for line in lines :
+        if re.match(beginning_pattern,line) :
+            intro_white_space_flag = False
+        if intro_white_space_flag :
+            newtext = newtext + '[Out:Greek Text not begun]'+ line + '\n'
+            continue
+        newtext = newtext + line + '\n'
+    return newtext
+
+def remove_publisher_note(text) :
+    ekdotis_pattern = re.compile(r'.+Ο ΕΚΔΟΤΗΣ',re.DOTALL)
+    if re.match(ekdotis_pattern, text) :
+        re.sub(ekdotis_pattern, '[Out'+re.match(ekdotis_pattern, text).group(0)+']',text)
+    return text
+
+def precision_cleaning(text) :
+    text = remove_extras(text)
+    text = remove_publisher_note(text)
+    return text
 
 def clean(pathout,pathin) :
     os.makedirs(pathout, exist_ok=True)
@@ -160,7 +192,8 @@ def clean(pathout,pathin) :
             print(f"Error reading {file}: {e}")
             continue
         text = remove_latin_text(text)
-        text = re_remove(text)
+        text = re_remove(text,file)
+        text = precision_cleaning(text)
         output_file_path = os.path.join(pathout, file)
         try:
             with open(output_file_path, 'w', encoding='utf-8') as output_file:
