@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>glossAPI - ΕΕΛΛΑΚ</title>
+    <link rel="shortcut icon" href="../images/fav_icon.png" type="image/x-icon">
+    <!-- Bulma Version 1-->
+    <link rel="stylesheet" href="https://unpkg.com/bulma@1.0.0/css/bulma.min.css" />
+    <script defer src="https://use.fontawesome.com/releases/v5.0.10/js/all.js"></script>
+    <style>
+        body {
+            background-color: #ffffff;
+            color: #363636;
+        }
+        .hero, .footer {
+            background-color: #ffffff;
+        }
+        .card {
+            background-color: #ffffff;
+            color: #363636;
+            border: 1px solid #ddd;
+        }
+        .navbar {
+            background-color: #ffffff;
+            border-bottom: 1px solid #6d4e48c5;
+            margin-bottom: 20px; /* Adjusts spacing below the navbar */
+        }
+    
+        .navbar-brand {
+            display: flex;
+            justify-content: flex-start; /* Evenly space out the navbar items */
+            gap: 38px;
+            padding-left: 15px;
+        }
+    
+        .navbar-item {
+            color: #6d4e48be; /* Default text color for navbar items */
+            text-align: center;
+        }
+    
+        .navbar-item:hover {
+            color: #e5a831; /* Text color on hover */
+            background-color: #ffffff; /* Optional: Change background color on hover */
+        }
+        h1 {
+            color: #6d4e48 !important;
+        }
+        .section .container p {
+            font-size: 1.5em;
+        }
+        .section .container .card-content {
+            font-size: 1.1em;
+        }
+        .card-content .content,
+        .card-content .content p {
+            font-size: 1.0em !important; /* Increased to 1.3em to be noticeable */
+            /*line-height: 1.6 !important; /* Adjust line height for readability */
+        }
+
+        .card-content .title {
+            font-size: 1.3em !important; /* Adjust title size if needed */
+        }
+        .section .container .title {
+            color: #6d4e48be;
+        }
+        .card {
+            background-color: #ffffff;
+            color: #363636;
+            border: 2px solid #ff5733;
+        }
+            html, body {
+            height: 100%;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        body > * {
+            flex-shrink: 0;
+        }
+        section.section {
+            flex-grow: 1;
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <nav class="navbar" role="navigation" aria-label="main navigation">
+            <div class="navbar-brand">
+                <a class="navbar-item" href="index.html">
+                    Λήμμα
+                </a>
+                <a class="navbar-item" href="omada.html">
+                    Ομάδα
+                </a>
+                <a class="navbar-item" href="keimena.html">
+                    Κείμενα
+                </a>
+            </div>
+        </nav>
+        
+        <section class="section">
+            <div class="container">
+                <h1 class="title has-text-centered">Κείμενα ομάδας glossAPI</h1>
+                <div class="columns is-multiline">
+                    <div class="column is-one-third" style="padding: 2rem">
+                        <div class="card">
+                            <div class="card-content">
+                                <h2 class="title is-4">Δασκάλισσα: Ιδιωματικός τύπος, “μαλλιαρή” δημοτική, ή ιδιόλεκτος του Παπαδιαμάντη</h2>
+                                <div class="content">
+                                    <p>Μια μελέτη στις ψηφιακές ανθρωπιστικές σπουδές που εξετάζει την προέλευση και χρήση του όρου "δασκάλισσα" στην ελληνική γλώσσα, αναλύοντας ιστορικά και γλωσσολογικά δεδομένα.</p>
+                                    <a href="https://edu.ellak.gr/2024/05/31/daskalissa-idiomatikos-tipos-malliari-dimotiki-i-idiolektos-tou-papadiamanti/" class="button is-link" target="_blank">Κείμενο</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Repeat similar blocks for more articles -->
+                </div>
+            </div>
+        </section>
+
+        <script src="../js/bulma.js"></script>
+    </main>
+</body>
+
+</html>

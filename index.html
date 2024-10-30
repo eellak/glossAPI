@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="el">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>glossAPI - ΕΕΛΛΑΚ</title>
+    <link rel="shortcut icon" href="../images/fav_icon.png" type="image/x-icon">
+    <!-- Bulma Version 1-->
+    <link rel="stylesheet" href="https://unpkg.com/bulma@1.0.0/css/bulma.min.css" />
+    <script defer src="https://use.fontawesome.com/releases/v5.0.10/js/all.js"></script>
+    <style>
+        body {
+            background-color: #ffffff;
+            color: #363636;
+        }
+
+        .hero,
+        .footer {
+            background-color: #ffffff;
+        }
+
+        .hero {
+            background-color: #ffffff;
+            padding: 0;
+        }
+
+        .hero-body {
+            padding: 0;
+        }
+
+        .hero-image {
+            width: 100%;
+            max-width: 1350px;
+            /* Adjust this to match your SVG's width */
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+
+        .card {
+            background-color: #ffffff;
+            color: #363636;
+            border: 1px solid #ddd;
+        }
+        .navbar {
+            background-color: #ffffff;
+            border-bottom: 1px solid #6d4e48c5;
+            margin-bottom: 20px; /* Adjusts spacing below the navbar */
+        }
+    
+        .navbar-brand {
+            display: flex;
+            justify-content: flex-start; /* Evenly space out the navbar items */
+            gap: 38px;
+            padding-left: 15px;
+        }
+    
+        .navbar-item {
+            color: #6d4e48be; /* Default text color for navbar items */
+            text-align: center;
+        }
+    
+        .navbar-item:hover {
+            color: #e5a831; /* Text color on hover */
+            background-color: #ffffff; /* Optional: Change background color on hover */
+        }
+        .input,
+        .textarea,
+        .button {
+            background-color: #ffffff;
+            color: #363636;
+            border: 1px solid #ddd;
+        }
+
+        .hero {
+            position: relative;
+        }
+
+        .hero::after {
+            content: '';
+            position: absolute;
+            bottom: -20px;
+            /* Adjust to place it behind the section */
+            left: 0;
+            width: 100%;
+            height: 0px;
+            /* Adjust thickness as needed */
+            background-color: #e5a831;
+            z-index: 1;
+        }
+
+        .section {
+            position: relative;
+            z-index: 2;
+        }
+
+        h1 {
+            color: #6d4e48 !important;
+            /* Default color for the h2 */
+        }
+
+        .custom-h1 {
+            margin-top: 5px !important;
+            /* Adjust as needed */
+            margin-bottom: 30px !important;
+            /* Adjust as needed */
+        }
+
+        .custom-p {
+            line-height: 35px;
+            margin-top: 7px !important;
+            /* Adjust as needed */
+            color: #6d4e48;
+            /* Change the color of p elements */
+        }
+
+        .links-container {
+            display: flex;
+            flex-wrap: wrap;
+            /* Allow wrapping on narrow screens */
+            justify-content: space-evenly;
+            gap: 20px;
+            /* Use a smaller gap for better spacing */
+            margin-top: 75px;
+        }
+
+        .links-container a {
+            color: #3273dc;
+            /* Bulma default link color */
+            text-decoration: none;
+            flex-grow: 1;
+            /* Allow links to grow to fill space */
+            text-align: center;
+            /* Center text within each link */
+        }
+
+        .links-container a:hover {
+            text-decoration: underline;
+        }
+
+        .section .container * {
+            font-size: 1.30em;
+            /* Adjust the size as needed */
+        }
+
+        .content-wrapper {
+            font-size: 1.1em;
+            max-width: 800px;
+            /* Adjust to control the width of the content */
+            margin: 100px auto;
+            /* Center the content and add top margin */
+            padding: 20px;
+            text-align: left;
+            line-height: 1.8;
+        }
+
+        .pronunciation {
+            text-align: left;
+            font-size: 2em;
+            font-weight: bold;
+            color: #6d4e48;
+            margin-bottom: 20px;
+        }
+
+        .lemma {
+            font-size: 1.3em;
+            color: #6d4e48;
+            margin-bottom: 30px;
+        }
+
+        .content-wrapper ol {
+            list-style-position: inside;
+            padding-left: 20px;
+            text-align: left;
+        }
+        main {
+            margin-top: 0px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar" role="navigation" aria-label="main navigation">
+        <div class="navbar-brand">
+            <a class="navbar-item" href="index.html">
+                Λήμμα
+            </a>
+            <a class="navbar-item" href="omada.html">
+                Ομάδα
+            </a>
+            <a class="navbar-item" href="keimena.html">
+                Κείμενα
+            </a>
+        </div>
+    </nav>
+    <main>
+    <div class="content-wrapper">
+        <div class="pronunciation">[γlo'sapi]</div>
+        <div class="lemma">glossAPI, το</div>
+        <ol>
+            <li>Ένα έργο της <a href="https://eellak.ellak.gr/" target="_blank">ΕΕΛΛΑΚ</a> στον χώρο των ψηφιακών ανθρωπιστικών επιστημών που αξιοποιεί ελεύθερα διαθέσιμες πηγές για τη συγκέντρωση ενός εκτενούς σώματος κειμένων υψηλής ποιότητας τα οποία παρέχονται με άδεια Creative Commons. Το glossaAPI καλύπτει ένα ευρύ φάσμα θεματικών περιοχών, από την επιστήμη και τη λογοτεχνία έως τα νομικά κείμενα, με δεδομένα που υφίστανται επιμελή επεξεργασία και αποδελτίωση.</li>
+            <li>Στόχος του glossaAPI είναι να διευκολύνει την επεξεργασία κειμενικών δεδομένων και την εκπαίδευση σύγχρονων γλωσσικών μοντέλων. Όλα τα εργαλεία που αναπτύσσει διατίθενται ελεύθερα με άδεια EUPL μέσω του αποθετηρίου του στο <a href="https://github.com/eellak/glossAPI" target="_blank">Github</a>.</li>
+            <li>Το glossaAPI φιλοδοξεί να συμβάλει στην ανάπτυξη των ελληνικών ανοιχτών κειμενικών δεδομένων, ενθαρρύνοντας ερευνητές και φοιτητές να χρησιμοποιήσουν τα εργαλεία που αναπτύχθηκαν, και να επεκτείνουν το κώδικα και τα δεδομένα προς κατευθύνσεις που τους ενδιαφέρουν.</li>
+        </ol>
+
+        <p>[1: greeklish < γλωσσάρι 2: αγγλ. gloss < μεσαιων. αγγλ. gloze < μεσαιων. λατ. glōsa < κλασ. λατ. glōssa < αρχ. γλῶσσα: "γλώσσα, λέξη" + αγγλ. API: Application Programming Interface]</p>
+    </div>
+    </main>
+</body>
+
+</html>
