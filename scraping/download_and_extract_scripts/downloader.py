@@ -1,3 +1,18 @@
+
+# [Changed by @Sadique982]
+# Function to dynamically set a proxy for requests (e.g., Tor network)
+async def use_proxy(session, url, headers, proxy_url='socks5://127.0.0.1:9050'):
+    try:
+        async with session.get(url, headers=headers, proxy=proxy_url) as response:
+            if response.status in (403, 429):  # Check for block indicators
+                logging.warning("Blocked response detected, switching to proxy")
+                return False
+            return True
+    except Exception as e:
+        logging.error(f"Proxy error: {e}")
+        return False
+
+
 import aiohttp
 import asyncio
 import os
@@ -48,6 +63,8 @@ async def download_pdfs(metadata_dict, semaphore, visited, indexes, args, progre
             task = asyncio.create_task(
                 download_pdf(index, metadata, url, semaphore, args, next(user_agent_gen))
             )
+            # [Changed by @Sadique982]
+            await asyncio.sleep(0.5)  # Rate limit
             tasks.append(task)
             i += 1
     results = await asyncio.gather(*tasks)
@@ -74,14 +91,19 @@ async def get_base_url(url):
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     return base_url
 
-#Function for the initialization of session headers
+# Function for the initialization of session headers
 async def setup_session(session, url, headers):
     """ Initialize the session with base headers. """
     base_url = await get_base_url(url)
     initial_url = f"{base_url}"
-    async with session.get(initial_url, headers=headers) as response:
-        await response.text()
+    # [Changed by @Sadique982]
+    if not await use_proxy(session, initial_url, headers):
+        logging.info('Using proxy for download.')
+    else:
+        async with session.get(initial_url, headers=headers) as response:
+            await response.text()  # Ensure this line is indented correctly
     return headers
+
 
 #Function that arranges concurrent download of a PDFs given pdf_url, then returns download status, metadata and filename as a tuple.
 async def download_pdf(index, metadata, pdf_url, semaphore, args, user_agent, referer=None):
