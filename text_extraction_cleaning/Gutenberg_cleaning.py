@@ -5,13 +5,13 @@ import os
 import time
 
 simiosi_pattern = re.compile(r'Σημείωση|Note|Ο τονισμός|The translator|Στην παρούσα ηλεκτρονική μεταγραφή διατηρηθήκαν|Ο πίνακας περιεχομένων|Η έκδοση είχε ατέλειες|Τίτλος:')
-end_pattern = re.compile(r'(( )*ΤΕΛΟΣ.?)$|Α Υ Λ Α Ι Α|Τ Ε Λ Ο Σ|Η Σειρά των Αρχαίων Ελλήνων Συγγραφέων|Η Σειρά των Αρχαίων Ελλήνων Συγγραφεων|Ο Εκπαιδευτικός Όμιλος|ΠΑΡΟΡΑΜΑΤΑ|ΥΠΟΣΗΜΕΙΩΣΕΙΣ|ΕΚΛΕΚΤΑ ΕΡΓΑ|ΧΡΗΜΑΤΙΣΤΗΡΙΟΝ ΤΟΥ ΒΙΒΛΙΟΥ|ΔIΟΡΘΩΜΑΤΑ|ΤΥΠΟΓΡΑΦΕΙΟΝ "ΕΣΤΙΑ|Έργα του Ιδίου|(.?ΣΗΜΕΙΩΣΕΙΣ.?)$|ΠΡΟΠΟΜΠΟΙ|(\*\*)$|ΤΟΥ ΑΥΤΟΥ ΣΥΓΓΡΑΦΕΩΣ|( )*ΕΝ ΤΩ ΒΙΒΛΙΟΠΩΛΕΙΩ ΤΗΣ ΕΣΤΙΑΣ')
-fexi_pattern = re.compile(r'ΦΕΞΗ|ΒΙΒΛΙΟΘΗΚΗ|ΒΙΒΛΙΟΠΩΛΕΙΟΝ|^ΕΚΔΟΤΗΣ|ΕΝ ΑΘΗΝΑΙΣ|ΤΥΠΟΓΡΑΦΕΙΟΥ|ΒΙΒΛΙΟΓΡΑΦΙΑ|ΠΙΝΑΞ ΤΩΝ ΕΙΚΟΝΩΝ')
+end_pattern = re.compile(r'(( )*ΤΕΛΟΣ.?)$|Α Υ Λ Α Ι Α|Τ Ε Λ Ο Σ|Η Σειρά των Αρχαίων Ελλήνων Συγγραφέων|Η Σειρά των Αρχαίων Ελλήνων Συγγραφεων|Ο Εκπαιδευτικός Όμιλος|ΠΑΡΟΡΑΜΑΤΑ|ΥΠΟΣΗΜΕΙΩΣΕΙΣ|ΕΚΛΕΚΤΑ ΕΡΓΑ|ΧΡΗΜΑΤΙΣΤΗΡΙΟΝ ΤΟΥ ΒΙΒΛΙΟΥ|ΔIΟΡΘΩΜΑΤΑ|ΤΥΠΟΓΡΑΦΕΙΟΝ "ΕΣΤΙΑ|Έργα του Ιδίου|(.?ΣΗΜΕΙΩΣΕΙΣ.?)$|ΠΡΟΠΟΜΠΟΙ|(\*\*)$|ΤΟΥ ΑΥΤΟΥ ΣΥΓΓΡΑΦΕΩΣ|( )*ΕΝ ΤΩ ΒΙΒΛΙΟΠΩΛΕΙΩ ΤΗΣ ΕΣΤΙΑΣ|1. &Η ΜΙΝΙΟΝ& του &Γκαίτε&. Το χαριτωμένο επεισόδιο της|   ΕΙΣΑΓΩΓΗ ΡΩΜΑΙΟΚΡΑΤΙΑ|ΣΗΜΕΙΩΣΙΣ ΤΟΥ ΠΟΙΗΤΟΥ|ΒΡΙΣΚΟΝΤΑΙ ΜΕΣΑ|\{Διαφημήσεις\}')
+fexi_pattern = re.compile(r'ΦΕΞΗ|ΒΙΒΛΙΟΘΗΚΗ|ΒΙΒΛΙΟΠΩΛΕΙΟΝ|^ΕΚΔΟΤΗΣ|ΕΝ ΑΘΗΝΑΙΣ|ΤΥΠΟΓΡΑΦΕΙΟΥ|ΒΙΒΛΙΟΓΡΑΦΙΑ|ΠΙΝΑΞ ΤΩΝ ΕΙΚΟΝΩΝ|ΓΡΑΦΕΙΑ: Οδός Μιλτιάδου αριθ: 1.|ΣΥΝΔΡΟΜΑΙ: Εσωτερικού ετησία δραχ. 60. — εξάμηνος δραχ. 30. —|           Εξωτερικού ετησία φράγ. 60. — εξάμηνος φράγ. 30. —')
 exception_to_fexi_intro_pattern = re.compile(r'ΕΚΔΟΤΙΚΟΣ ΟΙΚΟΣ ΓΕΩΡΓΙΟΥ Δ. ΦΕΞΗ')
-unique_line_remove_pattern = re.compile(r'ΒΑΣΙΛΙΚΟΝ ΤΥΠΟΓΡΑΦΕΙΟΝ')
+unique_line_remove_pattern = re.compile(r'ΒΑΣΙΛΙΚΟΝ ΤΥΠΟΓΡΑΦΕΙΟΝ|Ο κυρ-ΜΑΝΩΛΑΚΗΣ — ΒΑΡΥΧΕΙΜΩΝΙΑ — ΧΡΙΣΤΟΣ ΒΟΣΚΡΕΣ — ΣΕ ΜΙΑ|ΜΕΤΑΦΡΑΣΗ|Π. ΓΡΑΤΣΙΑΤΟΥ|Αθήνα, Τυπογραφείο «Εστία» Κ. Μάισνερ και Ν. Καργαδούρη — 10805.|Εν Αθήναις εκ του Τυπογραφείου της Εστίας 1896-1333.|Τιμάται  δρ.  2.50|Τυπογραφείο της Εστίας, Κ. Μάισνερ και Ν. Καργαδούρη — 1790')
 fexi_end_intro = re.compile(r'ΕΝ ΑΘΗΝΑΙΣ|(1[8-9][0-9][0-9].?)$|ΕΙΣΑΓΩΓΗ|ΠΡΟΛΟΓΟΣ|ΠΡΟΣΩΠΑ|ΤΑ ΦΟΡΕΜΑΤΑ|ΕΚΔΟΤΙΚΟΣ ΟΙΚΟΣ ΓΕΩΡΓΙΟΥ ΦΕΞΗ|ΕΙΣΗΓΗΣΙΣ|ΒΙΒΛΙΟΝ|ΤΟΜΟΣ|ΕΚΔΟΤΗΣ|ΕΚΔΟΣΕΙΣ ΦΕΞΗ|ΚΕΦΑΛΑΙΟΝ|Κεφάλαιον|Α\'\.|ΚΕΦΑΛΑΙΟ I.|(\(1[8-9][0-9][0-9]\))$|Η ΥΠΟΘΕΣΙΣ ΤΟΥ ΔΡΑΜΑΤΟΣ|ΠΡΟΛΕΓΟΜΕΝΑ|ΠΡΑΞΙΣ|ΒΙΒΛΙΟ ΠΡΩΤΟ.|Τι είναι βουδδισμός;|PREFACE|ΑΡΙΣΤΟΤΕΛΗΣ ΒΑΛΑΩΡΙΤΗΣ|ΓΙΑ ΤΟΥΤΟ ΤΟ ΒΙΒΛΙΟ|ΠΑΡΑΜΥΘΙ ΧΩΡΙΣ ΟΝΟΜΑ')
-content_pattern = re.compile(r'ΠΕΡΙΕΧΟΜΕΝΑ|ΕΜΠΕΡΙΕΧΟΜΕΝΑ|ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ|Π Ι Ν Α Κ Α Σ   Π Ε Ρ Ι Ε Χ Ο Μ Ε Ν Ω Ν|Π Ρ Ο Σ Ω Π Α|ΠΡΟΣΩΠΑ|Π Ι Ν Α Κ Α Σ  Π Ε Ρ Ι Ε Χ Ο Μ Ε Ν Ω Ν|ΤΑ ΤΗΣ ΤΡΑΓΩΔΙΑΣ ΠΡΟΣΩΠΑ|ΠΕΡΙΕΧΟΜΕΝA|ΠΑΡΑΡΤΗΜΑ|ΠΙΝΑΚΑΣ|( )*ΟΙ ΠΑΡΑΔΑΡΜΕΝΟΙ|Τ Α Π Ρ Ο Σ Ω Π Α Τ Ο Υ Δ Ρ Α Μ Α Τ Ο Σ|ΠΡΟΣΩΠΑ ΤΟΥ ΔΡΑΜΑΤΟΣ|Τα πρόσωπα της τραγωδίας|ΤΑ ΠΡΟΣΩΠΑ ΤΟΥ ΔΡΑΜΑΤΟΣ')
-re_clean_end_pattern = re.compile(r'ΕΚΛΕΚΤΑ ΕΡΓΑ|\*\*\*|\* \* \*|ΠΙΝΑΚΑΣ|ΤΕΥΧΗ ΕΚΔΟΘΕΝΤΑ|Σ Η Μ Ε I Ω Σ Ε Ι Σ|ΠΡΟΠΟΜΠΟΙ|Δ Ι Ο Ρ Θ Ω Σ Ε Ι Σ|_Πίναξ|ΤΕΛΟΣ ΤΟΥ ΠΡΩΤΟΥ ΤΟΜΟΥ|ΠΙΝΑΞ|ΝΤΟΠΙΕΣ ΖΩΓΡΑΦΙΕΣ|ΤΕΛΟΣ|.?1[\)\}\]]|ΠΕΡΙΕΧΟΜΕΝΑ')
+content_pattern = re.compile(r'ΠΕΡΙΕΧΟΜΕΝΑ|ΕΜΠΕΡΙΕΧΟΜΕΝΑ|ΠΙΝΑΚΑΣ ΠΕΡΙΕΧΟΜΕΝΩΝ|Π Ι Ν Α Κ Α Σ   Π Ε Ρ Ι Ε Χ Ο Μ Ε Ν Ω Ν|Π Ρ Ο Σ Ω Π Α|ΠΡΟΣΩΠΑ|Π Ι Ν Α Κ Α Σ  Π Ε Ρ Ι Ε Χ Ο Μ Ε Ν Ω Ν|ΤΑ ΤΗΣ ΤΡΑΓΩΔΙΑΣ ΠΡΟΣΩΠΑ|ΠΕΡΙΕΧΟΜΕΝA|ΠΑΡΑΡΤΗΜΑ|ΠΙΝΑΚΑΣ|( )*ΟΙ ΠΑΡΑΔΑΡΜΕΝΟΙ|Τ Α Π Ρ Ο Σ Ω Π Α Τ Ο Υ Δ Ρ Α Μ Α Τ Ο Σ|ΠΡΟΣΩΠΑ ΤΟΥ ΔΡΑΜΑΤΟΣ|Τα πρόσωπα της τραγωδίας|ΤΑ ΠΡΟΣΩΠΑ ΤΟΥ ΔΡΑΜΑΤΟΣ|ΤΟ \[\?\?\?\?\?\} ΒΙΒΛΙΟΝ ΕΤΥ\[\?\?\?\?\]|ΕΚΔΟΣΕΙΣ|Ιφιγένεια|ΕΡΓΑ ΤΟΥ ΙΔΙΟΥ|ΠΙΝΑΞ ΤΩΝ ΠΕΡΙΕΧΟΜΕΝΩΝ|&Η Ευρώπη κατά τον 19 αιώνα&|&ΠΕΡΙΕΧΟΜΕΝΑ :|(ΦΡΕΣΚΑ ΧΡΟΝΙΑ)$|ΚΕΝΤΡΙΚΗ ΠΩΛΗΣΙΣ')
+re_clean_end_pattern = re.compile(r'ΕΚΛΕΚΤΑ ΕΡΓΑ|\*\*\*|\* \* \*|ΠΙΝΑΚΑΣ|ΤΕΥΧΗ ΕΚΔΟΘΕΝΤΑ|Σ Η Μ Ε I Ω Σ Ε Ι Σ|ΠΡΟΠΟΜΠΟΙ|Δ Ι Ο Ρ Θ Ω Σ Ε Ι Σ|_Πίναξ|ΤΕΛΟΣ ΤΟΥ ΠΡΩΤΟΥ ΤΟΜΟΥ|ΠΙΝΑΞ|ΝΤΟΠΙΕΣ ΖΩΓΡΑΦΙΕΣ|ΤΕΛΟΣ|.?1[\)\}\]]|ΠΕΡΙΕΧΟΜΕΝΑ|ΑΝΕΣΤΗ ΚΩΝΣΤΑΝΤΙΝΙΔΟΥ')
 out_pattern = re.compile(r'\[Out')
 
 no_greek_pattern = re.compile(r'([Α-Ω]+)|([α-ω]+)', re.UNICODE)
@@ -161,42 +161,23 @@ def remove_extras(text) :
     temp = re.match(whitespace_pattern, text)
     if temp :
         temp = temp.group(0)
-        text = re.sub(whitespace_pattern, '[Out: Greek text not begun'+temp[:-2]+' End of Non-Greek text]'+temp[-2:],text,1)
+        text = re.sub(whitespace_pattern, ''+temp[-2:],text,1)
     return text
 
 def remove_publisher_note(text) :
     ekdotis_pattern = re.compile(r'.+(Ο ΕΚΔΟΤΗΣ|Ο εκδότης( )*\n|Αφιερώ( )*\n)',re.DOTALL)
     if re.match(ekdotis_pattern, text) :
-        text = re.sub(ekdotis_pattern, '[Out: Ends in Ekdotis'+re.match(ekdotis_pattern, text).group(0)+' End of ekdotis]',text)
+        text = re.sub(ekdotis_pattern, '',text,1)
     return text
 
 def remove_special_char(text) :
-    special_char_pattern = re.compile(r'$|_')
+    special_char_pattern = re.compile(r'$|_|&|\*')
     text = re.sub(special_char_pattern,'',text)
-    return text
-
-def remove_sim_end(text) :
-    text = text[::-1]
-    sim_ending_pattern = re.compile(r'.+?(}1)',re.DOTALL)
-    if re.match(sim_ending_pattern,text) :
-        text = re.sub(sim_ending_pattern, '[Out: Ends in Ekdotis'+re.match(sim_ending_pattern, text).group(0)+' End of ekdotis]',text)
-    text = text[::-1]
-    return text
-    
-
-def remove_extras_end(text) :
-    text = text[::-1]
-    end_whitespace_pattern = re.compile(r'[ \n]+?.')
-    if re.match(end_whitespace_pattern,text) :
-        text = re.sub(end_whitespace_pattern, '[Out: Ends in Ekdotis'[::-1]+re.match(end_whitespace_pattern, text).group(0)+' End of ekdotis]'[::-1],text)
-    text = text[::-1]
     return text
 
 def precision_cleaning(text) :
     text = remove_publisher_note(text)
-    text = remove_sim_end(text)
     text = remove_extras(text)
-    #text = remove_extras_end(text)
     text = remove_special_char(text)
     return text
 
