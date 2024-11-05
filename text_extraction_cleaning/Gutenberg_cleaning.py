@@ -171,13 +171,16 @@ def remove_publisher_note(text) :
     return text
 
 def remove_special_char(text) :
-    special_char_pattern = re.compile(r'$|_|&|\*')
+    special_char_pattern = re.compile(r'$|_|&|\*|[\)\]\}][0-9]+?[\)\]\}]')
     text = re.sub(special_char_pattern,'',text)
     return text
 
 def precision_cleaning(text) :
     text = remove_publisher_note(text)
     text = remove_extras(text)
+    text = text[::-1]
+    text = remove_extras(text)
+    text = text[::-1]
     text = remove_special_char(text)
     return text
 
