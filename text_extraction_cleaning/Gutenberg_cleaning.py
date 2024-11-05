@@ -171,7 +171,7 @@ def remove_publisher_note(text) :
     return text
 
 def remove_special_char(text) :
-    special_char_pattern = re.compile(r'$|_|&|\*|[\)\]\}][0-9]+?[\)\]\}]')
+    special_char_pattern = re.compile(r'$|_|&|\*|[\(\[\{][0-9]+?[\)\]\}]')
     text = re.sub(special_char_pattern,'',text)
     return text
 
