@@ -16,3 +16,14 @@ tokenization/cleaned_filtered_extracted_txt_v2/*
 gutenberg_books
 clean_books
 clean_books.zip
+par_creator.ipynb
+Greek_variety_classification/models/Gr_Var_Classifier_model/saved_model/config.json
+Greek_variety_classification/models/Gr_Var_Classifier_model/saved_model/pytorch_model.bin
+Greek_variety_classification/models/Gr_Var_Classifier_model/saved_model/special_tokens_map.json
+Greek_variety_classification/models/Gr_Var_Classifier_model/saved_model/tokenizer_config.json
+Greek_variety_classification/models/Gr_Var_Classifier_model/saved_model/tokenizer.json
+Greek_variety_classification/models/Gr_Var_Classifier_model/saved_model/training_info.txt
+Greek_variety_classification/models/Gr_Var_Classifier_model/saved_model/vocab.txt
+gutenberg_clean.par
+gutenberg_clean.csv
+gutenberg_clean.parquet
