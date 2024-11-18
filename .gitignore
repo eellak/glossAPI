@@ -27,3 +27,4 @@ Greek_variety_classification/models/Gr_Var_Classifier_model/saved_model/vocab.tx
 gutenberg_clean.par
 gutenberg_clean.csv
 gutenberg_clean.parquet
+unique_sxolika_pdf
