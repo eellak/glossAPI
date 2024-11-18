@@ -27,4 +27,10 @@ Greek_variety_classification/models/Gr_Var_Classifier_model/saved_model/vocab.tx
 gutenberg_clean.par
 gutenberg_clean.csv
 gutenberg_clean.parquet
+<<<<<<< HEAD
 unique_sxolika_pdf
+=======
+text_extraction_cleaning/test.txt
+text_extraction_cleaning/test_text_296.txt
+text_extraction_cleaning/test_text_1.txt
+>>>>>>> ce05b721ebb7c522bbca825e103e8f5a86eed8ce
