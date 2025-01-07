@@ -60,7 +60,7 @@ Core works of Classical Greek literature, including philosophical, historical, a
 
 ### :construction: Υπό επεξεργασία (Work in Progress)
 
-### Πήγασος (Pegasus)
+### Πέργαμος (Πέργαμος)
 - [✓] Scraped
 - [:hourglass:] Downloading
 - [ ] Cleaned
