@@ -4,9 +4,15 @@
 
 ## Datasets
 
+### 95Κ Δείγμα Ελληνικής (95K Greek Sample)
+- [✓] Scraped
+- [✓] Downloaded
+- [✓] Cleaned
+- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/95k_deigma_ellinikis)
+
 A diverse sample of 95,000 Greek texts, providing a broad representation of modern Greek language usage. Useful for general NLP tasks and language modeling.
 
-### School Books (Σχολικά Βιβλία)
+### Σχολικά Βιβλία (School Books)
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
@@ -14,7 +20,7 @@ A diverse sample of 95,000 Greek texts, providing a broad representation of mode
 
 Collection of Greek school textbooks and educational materials. Great resource for educational NLP applications and studying formal Modern Greek.
 
-### Folk Literature (Δημώδης Λογοτεχνία)
+### Δημώδης Λογοτεχνία (Folk Literature)
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
@@ -22,7 +28,7 @@ Collection of Greek school textbooks and educational materials. Great resource f
 
 Traditional Greek folk literature, including stories, songs, and poems. Valuable for cultural preservation and studying regional Greek variations.
 
-### Project Gutenberg Greek Texts (Ελληνικά Κείμενα Project Gutenberg)
+### Ελληνικά Κείμενα Project Gutenberg (Project Gutenberg Greek Texts)
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
@@ -30,7 +36,7 @@ Traditional Greek folk literature, including stories, songs, and poems. Valuable
 
 Public domain Greek texts from Project Gutenberg, spanning various periods and genres. Excellent for literary analysis and historical language studies.
 
-### First 1000 Years of Greek (1000 Πρώτα Χρόνια Ελληνικής)
+### 1000 Πρώτα Χρόνια Ελληνικής (First 1000 Years of Greek)
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
@@ -38,7 +44,7 @@ Public domain Greek texts from Project Gutenberg, spanning various periods and g
 
 Texts covering the first millennium of written Greek, crucial for studying the evolution of the Greek language and historical linguistics.
 
-### Classical Ancient Greek Literature (Κλασική Αρχαία Ελληνική Γραμματεία)
+### Κλασική Αρχαία Ελληνική Γραμματεία (Classical Ancient Greek Literature)
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
@@ -46,11 +52,36 @@ Texts covering the first millennium of written Greek, crucial for studying the e
 
 Core works of Classical Greek literature, including philosophical, historical, and dramatic texts. Essential for classical studies and ancient Greek NLP.
 
-### Wikisource Greek Texts (Ελληνικά Κείμενα Wikisource)
+### Ελληνικά Κείμενα Wikisource (Wikisource Greek Texts)
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
 - [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/Wikisource_Greek_texts)
+
+### :construction: Υπό επεξεργασία (Work in Progress)
+
+### Πήγασος (Pegasus)
+- [✓] Scraped
+- [:hourglass:] Downloading
+- [ ] Cleaned
+- [ ] Uploaded with metadata
+
+Συλλογή κειμένων από την πλατφόρμα Πήγασος. Collection of texts from the Pegasus platform.
+
+### Κάλλιπος (Kallipos)
+- [✓] Scraped
+- [ ] Downloaded
+- [ ] Cleaned
+- [ ] Uploaded with metadata
+
+Ακαδημαϊκά συγγράμματα από την πλατφόρμα Κάλλιπος. Academic textbooks from the Kallipos platform.
+
+### Έγγραφα ΕΕ (EU Documents)
+- [ ] Downloaded
+- [ ] Cleaned
+- [ ] Uploaded with metadata
+
+Επίσημα έγγραφα της Ευρωπαϊκής Ένωσης. Official documents of the European Union.
 
 [γlo'sapi]
 
@@ -65,6 +96,3 @@ Core works of Classical Greek literature, including philosophical, historical, a
 [ 1: greeklish < γλωσσάρι 2: αγγλ. gloss < μεσαιων. αγγλ. gloze < μεσαιων. λατ. glōsa < κλασ. λατ. glōssa < αρχ. γλῶσσα: "γλώσσα, λέξη" + αγγλ. API: Application Programming Interface ]
 
 Επικοινωνία/ contact at: glossapi.team@eellak.gr
-
-
-
