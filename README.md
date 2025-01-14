@@ -62,7 +62,7 @@ Core works of Classical Greek literature, including philosophical, historical, a
 
 ### Πέργαμος (Πέργαμος)
 - [✓] Scraped
-- [:hourglass:] Downloading
+- :hourglass: Downloading
 - [ ] Cleaned
 - [ ] Uploaded with metadata
 
