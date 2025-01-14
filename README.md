@@ -66,7 +66,7 @@ Core works of Classical Greek literature, including philosophical, historical, a
 - [ ] Cleaned
 - [ ] Uploaded with metadata
 
-Συλλογή κειμένων από την πλατφόρμα Πήγασος. Collection of texts from the Pegasus platform.
+Συλλογή κειμένων από την πλατφόρμα Πέργαμος. Collection of texts from the Pergamos' University theses archive.
 
 ### Κάλλιπος (Kallipos)
 - [✓] Scraped
@@ -74,7 +74,7 @@ Core works of Classical Greek literature, including philosophical, historical, a
 - [ ] Cleaned
 - [ ] Uploaded with metadata
 
-Ακαδημαϊκά συγγράμματα από την πλατφόρμα Κάλλιπος. Academic textbooks from the Kallipos platform.
+Ακαδημαϊκά συγγράμματα από την πλατφόρμα Κάλλιπος. Open source academic textbooks from Kallipos.
 
 ### Έγγραφα ΕΕ (EU Documents)
 - [ ] Downloaded
