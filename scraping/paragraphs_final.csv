@@ -1,0 +1,806 @@
+Kathgoria,Ypokathgoria,title,link
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Ἱερεῖς,Δευτέρα,https://glt.goarch.org/daily/Mon.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Ἱερεῖς,Τρίτη,https://glt.goarch.org/daily/Tue.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Ἱερεῖς,Τετάρτη,https://glt.goarch.org/daily/Wed.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Ἱερεῖς,Πέμπτη,https://glt.goarch.org/daily/Thu.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Ἱερεῖς,Παρασκευή,https://glt.goarch.org/daily/Fri.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Ἱερεῖς,Σάββατον,https://glt.goarch.org/daily/Sat.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Ἱερεῖς,Κυριακή,https://glt.goarch.org/daily/Sun.html
+,Καθημερινὲς ἀκολουθίες LITE,Δευτέρα,https://glt.goarch.org/Lite/Mon.html
+,Καθημερινὲς ἀκολουθίες LITE,Τρίτη,https://glt.goarch.org/Lite/Tue.html
+,Καθημερινὲς ἀκολουθίες LITE,Τετάρτη,https://glt.goarch.org/Lite/Wed.html
+,Καθημερινὲς ἀκολουθίες LITE,Πέμπτη,https://glt.goarch.org/Lite/Thu.html
+,Καθημερινὲς ἀκολουθίες LITE,Παρασκευή,https://glt.goarch.org/Lite/Fri.html
+,Καθημερινὲς ἀκολουθίες LITE,Σάββατον,https://glt.goarch.org/Lite/Sat.html
+,Καθημερινὲς ἀκολουθίες LITE,Κυριακή,https://glt.goarch.org/Lite/Sun.html
+,"Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - old, minus 13 days",Δευτέρα,https://glt.goarch.org/AthosJ/Mon.html
+,"Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - old, minus 13 days",Τρίτη,https://glt.goarch.org/AthosJ/Tue.html
+,"Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - old, minus 13 days",Τετάρτη,https://glt.goarch.org/AthosJ/Wed.html
+,"Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - old, minus 13 days",Πέμπτη,https://glt.goarch.org/AthosJ/Thu.html
+,"Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - old, minus 13 days",Παρασκευή,https://glt.goarch.org/AthosJ/Fri.html
+,"Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - old, minus 13 days",Σάββατον,https://glt.goarch.org/AthosJ/Sat.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - new,Δευτέρα,https://glt.goarch.org/Athos/Mon.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - new,Τρίτη,https://glt.goarch.org/Athos/Tue.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - new,Τετάρτη,https://glt.goarch.org/Athos/Wed.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - new,Πέμπτη,https://glt.goarch.org/Athos/Thu.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - new,Παρασκευή,https://glt.goarch.org/Athos/Fri.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - new,Σάββατον,https://glt.goarch.org/Athos/Sat.html
+,Καθημερινὲς ἀκολουθίες γιὰ τοὺς Μοναχούς - new,Κυριακή,https://glt.goarch.org/Athos/Sun.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,01,https://glt.goarch.org/texts/Sep/Sep01.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,02,https://glt.goarch.org/texts/Sep/Sep02.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,03,https://glt.goarch.org/texts/Sep/Sep03.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,04,https://glt.goarch.org/texts/Sep/Sep04.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,05,https://glt.goarch.org/texts/Sep/Sep05.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,06,https://glt.goarch.org/texts/Sep/Sep06.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,07,https://glt.goarch.org/texts/Sep/Sep07.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,08,https://glt.goarch.org/texts/Sep/Sep08.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,09,https://glt.goarch.org/texts/Sep/Sep09.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,10,https://glt.goarch.org/texts/Sep/Sep10.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,11,https://glt.goarch.org/texts/Sep/Sep11.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,12,https://glt.goarch.org/texts/Sep/Sep12.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,13,https://glt.goarch.org/texts/Sep/Sep13.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,14,https://glt.goarch.org/texts/Sep/Sep14.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,Ακάθιστος,https://glt.goarch.org/texts/Sep/14b.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,15,https://glt.goarch.org/texts/Sep/Sep15.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,16,https://glt.goarch.org/texts/Sep/Sep16.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,17,https://glt.goarch.org/texts/Sep/Sep17.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,18,https://glt.goarch.org/texts/Sep/Sep18.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,19,https://glt.goarch.org/texts/Sep/Sep19.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,20,https://glt.goarch.org/texts/Sep/Sep20.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,21,https://glt.goarch.org/texts/Sep/Sep21.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,22,https://glt.goarch.org/texts/Sep/Sep22.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,23,https://glt.goarch.org/texts/Sep/Sep23.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,24,https://glt.goarch.org/texts/Sep/Sep24.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,25,https://glt.goarch.org/texts/Sep/Sep25.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,26,https://glt.goarch.org/texts/Sep/Sep26.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,27,https://glt.goarch.org/texts/Sep/Sep27.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,28,https://glt.goarch.org/texts/Sep/Sep28.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,29,https://glt.goarch.org/texts/Sep/Sep29.html
+TA ΜΗΝΑΙΑ,Σεπτέμβριος,30,https://glt.goarch.org/texts/Sep/Sep30.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,Αγία Σκέπη,https://glt.goarch.org/texts/Oct/Oct01b.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,01,https://glt.goarch.org/texts/Oct/Oct01.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,02,https://glt.goarch.org/texts/Oct/Oct02.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,03,https://glt.goarch.org/texts/Oct/Oct03.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,04,https://glt.goarch.org/texts/Oct/Oct04.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,05,https://glt.goarch.org/texts/Oct/Oct05.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,06,https://glt.goarch.org/texts/Oct/Oct06.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,07,https://glt.goarch.org/texts/Oct/Oct07.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,08,https://glt.goarch.org/texts/Oct/Oct08.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,09,https://glt.goarch.org/texts/Oct/Oct09.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,10,https://glt.goarch.org/texts/Oct/Oct10.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,11-17,https://glt.goarch.org/texts/Oct/Oct11_17.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,11,https://glt.goarch.org/texts/Oct/Oct11.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,12,https://glt.goarch.org/texts/Oct/Oct12.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,13,https://glt.goarch.org/texts/Oct/Oct13.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,14,https://glt.goarch.org/texts/Oct/Oct14.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,15,https://glt.goarch.org/texts/Oct/Oct15.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,16,https://glt.goarch.org/texts/Oct/Oct16.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,17,https://glt.goarch.org/texts/Oct/Oct17.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,18,https://glt.goarch.org/texts/Oct/Oct18.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,19,https://glt.goarch.org/texts/Oct/Oct19.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,20,https://glt.goarch.org/texts/Oct/Oct20.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,21,https://glt.goarch.org/texts/Oct/Oct21.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,22,https://glt.goarch.org/texts/Oct/Oct22.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,23,https://glt.goarch.org/texts/Oct/Oct23.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,24,https://glt.goarch.org/texts/Oct/Oct24.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,25,https://glt.goarch.org/texts/Oct/Oct25.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,26,https://glt.goarch.org/texts/Oct/Oct26.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,27,https://glt.goarch.org/texts/Oct/Oct27.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,Αγία Σκέπη,https://glt.goarch.org/texts/Oct/Oct28.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,28,https://glt.goarch.org/texts/Oct/Oct28b.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,Δοξολογία,https://glt.goarch.org/texts/Oct/28th_Doxology.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,29,https://glt.goarch.org/texts/Oct/Oct29.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,30,https://glt.goarch.org/texts/Oct/Oct30.html
+TA ΜΗΝΑΙΑ,Οκτώβριος,31,https://glt.goarch.org/texts/Oct/Oct31.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,01,https://glt.goarch.org/texts/Nov/Nov01.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,02,https://glt.goarch.org/texts/Nov/Nov02.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,03,https://glt.goarch.org/texts/Nov/Nov03.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,04,https://glt.goarch.org/texts/Nov/Nov04.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,05,https://glt.goarch.org/texts/Nov/Nov05.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,06,https://glt.goarch.org/texts/Nov/Nov06.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,07,https://glt.goarch.org/texts/Nov/Nov07.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,08,https://glt.goarch.org/texts/Nov/Nov08.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,09,https://glt.goarch.org/texts/Nov/Nov09a.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,Αγ.Νεκταρίου,https://glt.goarch.org/texts/Nov/Nov09.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,10,https://glt.goarch.org/texts/Nov/Nov10.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,11,https://glt.goarch.org/texts/Nov/Nov11.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,12,https://glt.goarch.org/texts/Nov/Nov12.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,13,https://glt.goarch.org/texts/Nov/Nov13.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,14,https://glt.goarch.org/texts/Nov/Nov14.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,15,https://glt.goarch.org/texts/Nov/Nov15.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,16,https://glt.goarch.org/texts/Nov/Nov16.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,17,https://glt.goarch.org/texts/Nov/Nov17.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,18,https://glt.goarch.org/texts/Nov/Nov18.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,19,https://glt.goarch.org/texts/Nov/Nov19.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,20,https://glt.goarch.org/texts/Nov/Nov20.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,21,https://glt.goarch.org/texts/Nov/Nov21.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,22,https://glt.goarch.org/texts/Nov/Nov22.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,23,https://glt.goarch.org/texts/Nov/Nov23.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,24,https://glt.goarch.org/texts/Nov/Nov24.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,25,https://glt.goarch.org/texts/Nov/Nov25.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,26,https://glt.goarch.org/texts/Nov/Nov26.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,27,https://glt.goarch.org/texts/Nov/Nov27.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,28,https://glt.goarch.org/texts/Nov/Nov28.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,29,https://glt.goarch.org/texts/Nov/Nov29.html
+TA ΜΗΝΑΙΑ,Νοέμβριος,30,https://glt.goarch.org/texts/Nov/Nov30.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,01,https://glt.goarch.org/texts/Dec/Dec01.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,02,https://glt.goarch.org/texts/Dec/Dec02.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,03,https://glt.goarch.org/texts/Dec/Dec03.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,04,https://glt.goarch.org/texts/Dec/Dec04.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,05,https://glt.goarch.org/texts/Dec/Dec05.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,06,https://glt.goarch.org/texts/Dec/Dec06.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,07,https://glt.goarch.org/texts/Dec/Dec07.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,08,https://glt.goarch.org/texts/Dec/Dec08.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,09,https://glt.goarch.org/texts/Dec/Dec09.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,10,https://glt.goarch.org/texts/Dec/Dec10.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,11-17,https://glt.goarch.org/texts/Dec/Dec11-17.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,11,https://glt.goarch.org/texts/Dec/Dec11.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,12,https://glt.goarch.org/texts/Dec/Dec12.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,13,https://glt.goarch.org/texts/Dec/Dec13.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,14,https://glt.goarch.org/texts/Dec/Dec14.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,15,https://glt.goarch.org/texts/Dec/Dec15.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,16,https://glt.goarch.org/texts/Dec/Dec16.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,17,https://glt.goarch.org/texts/Dec/Dec17a.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,18-24,https://glt.goarch.org/texts/Dec/Dec18-24.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,18,https://glt.goarch.org/texts/Dec/Dec18.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,19,https://glt.goarch.org/texts/Dec/Dec19.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,20,https://glt.goarch.org/texts/Dec/Dec20.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,21,https://glt.goarch.org/texts/Dec/Dec21.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,22,https://glt.goarch.org/texts/Dec/Dec22.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,23,https://glt.goarch.org/texts/Dec/Dec23.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,24,https://glt.goarch.org/texts/Dec/Dec24.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,Ώρες,https://glt.goarch.org/texts/Dec/Dechours.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,25,https://glt.goarch.org/texts/Dec/Dec25.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,26-31,https://glt.goarch.org/texts/Dec/Dec26-31.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,26,https://glt.goarch.org/texts/Dec/Dec26.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,27,https://glt.goarch.org/texts/Dec/Dec27.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,28,https://glt.goarch.org/texts/Dec/Dec28.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,29,https://glt.goarch.org/texts/Dec/Dec29.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,30,https://glt.goarch.org/texts/Dec/Dec30.html
+TA ΜΗΝΑΙΑ,Δεκέμβριος,31,https://glt.goarch.org/texts/Dec/Dec31.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,01,https://glt.goarch.org/texts/Jan/Jan01.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,02,https://glt.goarch.org/texts/Jan/Jan02.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,03,https://glt.goarch.org/texts/Jan/Jan03.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,04,https://glt.goarch.org/texts/Jan/Jan04.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,05,https://glt.goarch.org/texts/Jan/Jan05.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,Ώρες,https://glt.goarch.org/texts/Jan/JanHours.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,Θεοφάνεια,https://glt.goarch.org/texts/Jan/JanTheophaneia.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,06,https://glt.goarch.org/texts/Jan/Jan06.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,07,https://glt.goarch.org/texts/Jan/Jan07.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,08,https://glt.goarch.org/texts/Jan/Jan08.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,09,https://glt.goarch.org/texts/Jan/Jan09.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,10,https://glt.goarch.org/texts/Jan/Jan10.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,11,https://glt.goarch.org/texts/Jan/Jan11.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,12,https://glt.goarch.org/texts/Jan/Jan12.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,13,https://glt.goarch.org/texts/Jan/Jan13.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,14,https://glt.goarch.org/texts/Jan/Jan14.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,15,https://glt.goarch.org/texts/Jan/Jan15.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,16,https://glt.goarch.org/texts/Jan/Jan16.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,17,https://glt.goarch.org/texts/Jan/Jan17.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,18,https://glt.goarch.org/texts/Jan/Jan18.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,19,https://glt.goarch.org/texts/Jan/Jan19.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,20,https://glt.goarch.org/texts/Jan/Jan20.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,21,https://glt.goarch.org/texts/Jan/Jan21.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,22,https://glt.goarch.org/texts/Jan/Jan22.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,23,https://glt.goarch.org/texts/Jan/Jan23.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,24,https://glt.goarch.org/texts/Jan/Jan24.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,25,https://glt.goarch.org/texts/Jan/Jan25.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,26,https://glt.goarch.org/texts/Jan/Jan26.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,27,https://glt.goarch.org/texts/Jan/Jan27.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,28,https://glt.goarch.org/texts/Jan/Jan28.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,29,https://glt.goarch.org/texts/Jan/Jan29.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,30,https://glt.goarch.org/texts/Jan/Jan30.html
+TA ΜΗΝΑΙΑ,Ιανουάριος,31,https://glt.goarch.org/texts/Jan/Jan31.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,01,https://glt.goarch.org/texts/Feb/Feb01.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,02,https://glt.goarch.org/texts/Feb/Feb02.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,03,https://glt.goarch.org/texts/Feb/Feb03.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,03Τ,https://glt.goarch.org/texts/Feb/Feb03t.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,04,https://glt.goarch.org/texts/Feb/Feb04.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,04Τ,https://glt.goarch.org/texts/Feb/Feb04t.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,05,https://glt.goarch.org/texts/Feb/Feb05.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,05Τ,https://glt.goarch.org/texts/Feb/Feb05t.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,06,https://glt.goarch.org/texts/Feb/Feb06.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,06Τ,https://glt.goarch.org/texts/Feb/Feb06t.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,07,https://glt.goarch.org/texts/Feb/Feb07.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,07Τ,https://glt.goarch.org/texts/Feb/Feb07t.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,08,https://glt.goarch.org/texts/Feb/Feb08.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,08Τ,https://glt.goarch.org/texts/Feb/Feb08t.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,09,https://glt.goarch.org/texts/Feb/Feb09.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,09Τ,https://glt.goarch.org/texts/Feb/Feb09t.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,10,https://glt.goarch.org/texts/Feb/Feb10.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,11,https://glt.goarch.org/texts/Feb/Feb11.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,12,https://glt.goarch.org/texts/Feb/Feb12.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,13,https://glt.goarch.org/texts/Feb/Feb13.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,14,https://glt.goarch.org/texts/Feb/Feb14.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,15,https://glt.goarch.org/texts/Feb/Feb15.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,16,https://glt.goarch.org/texts/Feb/Feb16.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,17,https://glt.goarch.org/texts/Feb/Feb17.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,18,https://glt.goarch.org/texts/Feb/Feb18.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,19,https://glt.goarch.org/texts/Feb/Feb19.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,20,https://glt.goarch.org/texts/Feb/Feb20.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,21,https://glt.goarch.org/texts/Feb/Feb21.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,22,https://glt.goarch.org/texts/Feb/Feb22.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,23,https://glt.goarch.org/texts/Feb/Feb23.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,24,https://glt.goarch.org/texts/Feb/Feb24.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,25,https://glt.goarch.org/texts/Feb/Feb25.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,26,https://glt.goarch.org/texts/Feb/Feb26.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,27,https://glt.goarch.org/texts/Feb/Feb27.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,28,https://glt.goarch.org/texts/Feb/Feb28.html
+TA ΜΗΝΑΙΑ,Φεβρουάριος,29,https://glt.goarch.org/texts/Feb/Feb29.html
+TA ΜΗΝΑΙΑ,Μάρτιος,01,https://glt.goarch.org/texts/Mar/Mar01.html
+TA ΜΗΝΑΙΑ,Μάρτιος,02,https://glt.goarch.org/texts/Mar/Mar02.html
+TA ΜΗΝΑΙΑ,Μάρτιος,03,https://glt.goarch.org/texts/Mar/Mar03.html
+TA ΜΗΝΑΙΑ,Μάρτιος,04,https://glt.goarch.org/texts/Mar/Mar04.html
+TA ΜΗΝΑΙΑ,Μάρτιος,05,https://glt.goarch.org/texts/Mar/Mar05.html
+TA ΜΗΝΑΙΑ,Μάρτιος,06,https://glt.goarch.org/texts/Mar/Mar06.html
+TA ΜΗΝΑΙΑ,Μάρτιος,07,https://glt.goarch.org/texts/Mar/Mar07.html
+TA ΜΗΝΑΙΑ,Μάρτιος,08,https://glt.goarch.org/texts/Mar/Mar08.html
+TA ΜΗΝΑΙΑ,Μάρτιος,09,https://glt.goarch.org/texts/Mar/Mar09.html
+TA ΜΗΝΑΙΑ,Μάρτιος,10,https://glt.goarch.org/texts/Mar/Mar10.html
+TA ΜΗΝΑΙΑ,Μάρτιος,11,https://glt.goarch.org/texts/Mar/Mar11.html
+TA ΜΗΝΑΙΑ,Μάρτιος,12,https://glt.goarch.org/texts/Mar/Mar12.html
+TA ΜΗΝΑΙΑ,Μάρτιος,13,https://glt.goarch.org/texts/Mar/Mar13.html
+TA ΜΗΝΑΙΑ,Μάρτιος,14,https://glt.goarch.org/texts/Mar/Mar14.html
+TA ΜΗΝΑΙΑ,Μάρτιος,15,https://glt.goarch.org/texts/Mar/Mar15.html
+TA ΜΗΝΑΙΑ,Μάρτιος,16,https://glt.goarch.org/texts/Mar/Mar16.html
+TA ΜΗΝΑΙΑ,Μάρτιος,17,https://glt.goarch.org/texts/Mar/Mar17.html
+TA ΜΗΝΑΙΑ,Μάρτιος,18,https://glt.goarch.org/texts/Mar/Mar18.html
+TA ΜΗΝΑΙΑ,Μάρτιος,19,https://glt.goarch.org/texts/Mar/Mar19.html
+TA ΜΗΝΑΙΑ,Μάρτιος,20,https://glt.goarch.org/texts/Mar/Mar20.html
+TA ΜΗΝΑΙΑ,Μάρτιος,21,https://glt.goarch.org/texts/Mar/Mar21.html
+TA ΜΗΝΑΙΑ,Μάρτιος,22,https://glt.goarch.org/texts/Mar/Mar22.html
+TA ΜΗΝΑΙΑ,Μάρτιος,23,https://glt.goarch.org/texts/Mar/Mar23.html
+TA ΜΗΝΑΙΑ,Μάρτιος,24,https://glt.goarch.org/texts/Mar/Mar24.html
+TA ΜΗΝΑΙΑ,Μάρτιος,25,https://glt.goarch.org/texts/Mar/Mar25.html
+TA ΜΗΝΑΙΑ,Μάρτιος,Δοξολογία,https://glt.goarch.org/texts/Mar/25th_Doxology.html
+TA ΜΗΝΑΙΑ,Μάρτιος,26,https://glt.goarch.org/texts/Mar/Mar26.html
+TA ΜΗΝΑΙΑ,Μάρτιος,27,https://glt.goarch.org/texts/Mar/Mar27.html
+TA ΜΗΝΑΙΑ,Μάρτιος,28,https://glt.goarch.org/texts/Mar/Mar28.html
+TA ΜΗΝΑΙΑ,Μάρτιος,29,https://glt.goarch.org/texts/Mar/Mar29.html
+TA ΜΗΝΑΙΑ,Μάρτιος,30,https://glt.goarch.org/texts/Mar/Mar30.html
+TA ΜΗΝΑΙΑ,Μάρτιος,31,https://glt.goarch.org/texts/Mar/Mar31.html
+TA ΜΗΝΑΙΑ,Απρίλιος,01,https://glt.goarch.org/texts/Apr/Apr01.html
+TA ΜΗΝΑΙΑ,Απρίλιος,02,https://glt.goarch.org/texts/Apr/Apr02.html
+TA ΜΗΝΑΙΑ,Απρίλιος,03,https://glt.goarch.org/texts/Apr/Apr03.html
+TA ΜΗΝΑΙΑ,Απρίλιος,04,https://glt.goarch.org/texts/Apr/Apr04.html
+TA ΜΗΝΑΙΑ,Απρίλιος,05,https://glt.goarch.org/texts/Apr/Apr05.html
+TA ΜΗΝΑΙΑ,Απρίλιος,06,https://glt.goarch.org/texts/Apr/Apr06.html
+TA ΜΗΝΑΙΑ,Απρίλιος,07,https://glt.goarch.org/texts/Apr/Apr07.html
+TA ΜΗΝΑΙΑ,Απρίλιος,08,https://glt.goarch.org/texts/Apr/Apr08.html
+TA ΜΗΝΑΙΑ,Απρίλιος,09,https://glt.goarch.org/texts/Apr/Apr09.html
+TA ΜΗΝΑΙΑ,Απρίλιος,10,https://glt.goarch.org/texts/Apr/Apr10.html
+TA ΜΗΝΑΙΑ,Απρίλιος,11,https://glt.goarch.org/texts/Apr/Apr11.html
+TA ΜΗΝΑΙΑ,Απρίλιος,12,https://glt.goarch.org/texts/Apr/Apr12.html
+TA ΜΗΝΑΙΑ,Απρίλιος,13,https://glt.goarch.org/texts/Apr/Apr13.html
+TA ΜΗΝΑΙΑ,Απρίλιος,14,https://glt.goarch.org/texts/Apr/Apr14.html
+TA ΜΗΝΑΙΑ,Απρίλιος,15,https://glt.goarch.org/texts/Apr/Apr15.html
+TA ΜΗΝΑΙΑ,Απρίλιος,16,https://glt.goarch.org/texts/Apr/Apr16.html
+TA ΜΗΝΑΙΑ,Απρίλιος,17,https://glt.goarch.org/texts/Apr/Apr17.html
+TA ΜΗΝΑΙΑ,Απρίλιος,18,https://glt.goarch.org/texts/Apr/Apr18.html
+TA ΜΗΝΑΙΑ,Απρίλιος,19,https://glt.goarch.org/texts/Apr/Apr19.html
+TA ΜΗΝΑΙΑ,Απρίλιος,20,https://glt.goarch.org/texts/Apr/Apr20.html
+TA ΜΗΝΑΙΑ,Απρίλιος,21,https://glt.goarch.org/texts/Apr/Apr21.html
+TA ΜΗΝΑΙΑ,Απρίλιος,22,https://glt.goarch.org/texts/Apr/Apr22.html
+TA ΜΗΝΑΙΑ,Απρίλιος,23,https://glt.goarch.org/texts/Apr/Apr23.html
+TA ΜΗΝΑΙΑ,Απρίλιος,24,https://glt.goarch.org/texts/Apr/Apr24.html
+TA ΜΗΝΑΙΑ,Απρίλιος,25,https://glt.goarch.org/texts/Apr/Apr25.html
+TA ΜΗΝΑΙΑ,Απρίλιος,26,https://glt.goarch.org/texts/Apr/Apr26.html
+TA ΜΗΝΑΙΑ,Απρίλιος,27,https://glt.goarch.org/texts/Apr/Apr27.html
+TA ΜΗΝΑΙΑ,Απρίλιος,28,https://glt.goarch.org/texts/Apr/Apr28.html
+TA ΜΗΝΑΙΑ,Απρίλιος,29,https://glt.goarch.org/texts/Apr/Apr29.html
+TA ΜΗΝΑΙΑ,Απρίλιος,30,https://glt.goarch.org/texts/Apr/Apr30.html
+TA ΜΗΝΑΙΑ,Μαϊος,01,https://glt.goarch.org/texts/May/May01.html
+TA ΜΗΝΑΙΑ,Μαϊος,02,https://glt.goarch.org/texts/May/May02.html
+TA ΜΗΝΑΙΑ,Μαϊος,03,https://glt.goarch.org/texts/May/May03.html
+TA ΜΗΝΑΙΑ,Μαϊος,04,https://glt.goarch.org/texts/May/May04.html
+TA ΜΗΝΑΙΑ,Μαϊος,05,https://glt.goarch.org/texts/May/May05.html
+TA ΜΗΝΑΙΑ,Μαϊος,06,https://glt.goarch.org/texts/May/May06.html
+TA ΜΗΝΑΙΑ,Μαϊος,07,https://glt.goarch.org/texts/May/May07.html
+TA ΜΗΝΑΙΑ,Μαϊος,08,https://glt.goarch.org/texts/May/May08.html
+TA ΜΗΝΑΙΑ,Μαϊος,09,https://glt.goarch.org/texts/May/May09.html
+TA ΜΗΝΑΙΑ,Μαϊος,10,https://glt.goarch.org/texts/May/May10.html
+TA ΜΗΝΑΙΑ,Μαϊος,11,https://glt.goarch.org/texts/May/May11.html
+TA ΜΗΝΑΙΑ,Μαϊος,12,https://glt.goarch.org/texts/May/May12.html
+TA ΜΗΝΑΙΑ,Μαϊος,13,https://glt.goarch.org/texts/May/May13.html
+TA ΜΗΝΑΙΑ,Μαϊος,14,https://glt.goarch.org/texts/May/May14.html
+TA ΜΗΝΑΙΑ,Μαϊος,15,https://glt.goarch.org/texts/May/May15.html
+TA ΜΗΝΑΙΑ,Μαϊος,16,https://glt.goarch.org/texts/May/May16.html
+TA ΜΗΝΑΙΑ,Μαϊος,17,https://glt.goarch.org/texts/May/May17.html
+TA ΜΗΝΑΙΑ,Μαϊος,18,https://glt.goarch.org/texts/May/May18.html
+TA ΜΗΝΑΙΑ,Μαϊος,19,https://glt.goarch.org/texts/May/May19.html
+TA ΜΗΝΑΙΑ,Μαϊος,20,https://glt.goarch.org/texts/May/May20.html
+TA ΜΗΝΑΙΑ,Μαϊος,21,https://glt.goarch.org/texts/May/May21.html
+TA ΜΗΝΑΙΑ,Μαϊος,22,https://glt.goarch.org/texts/May/May22.html
+TA ΜΗΝΑΙΑ,Μαϊος,23,https://glt.goarch.org/texts/May/May23.html
+TA ΜΗΝΑΙΑ,Μαϊος,24,https://glt.goarch.org/texts/May/May24.html
+TA ΜΗΝΑΙΑ,Μαϊος,25,https://glt.goarch.org/texts/May/May25.html
+TA ΜΗΝΑΙΑ,Μαϊος,26,https://glt.goarch.org/texts/May/May26.html
+TA ΜΗΝΑΙΑ,Μαϊος,27,https://glt.goarch.org/texts/May/May27.html
+TA ΜΗΝΑΙΑ,Μαϊος,28,https://glt.goarch.org/texts/May/May28.html
+TA ΜΗΝΑΙΑ,Μαϊος,29,https://glt.goarch.org/texts/May/May29.html
+TA ΜΗΝΑΙΑ,Μαϊος,30,https://glt.goarch.org/texts/May/May30.html
+TA ΜΗΝΑΙΑ,Μαϊος,31,https://glt.goarch.org/texts/May/May31.html
+TA ΜΗΝΑΙΑ,Ιούνιος,01,https://glt.goarch.org/texts/Jun/Jun01.html
+TA ΜΗΝΑΙΑ,Ιούνιος,02,https://glt.goarch.org/texts/Jun/Jun02.html
+TA ΜΗΝΑΙΑ,Ιούνιος,03,https://glt.goarch.org/texts/Jun/Jun03.html
+TA ΜΗΝΑΙΑ,Ιούνιος,04,https://glt.goarch.org/texts/Jun/Jun04.html
+TA ΜΗΝΑΙΑ,Ιούνιος,05,https://glt.goarch.org/texts/Jun/Jun05.html
+TA ΜΗΝΑΙΑ,Ιούνιος,06,https://glt.goarch.org/texts/Jun/Jun06.html
+TA ΜΗΝΑΙΑ,Ιούνιος,07,https://glt.goarch.org/texts/Jun/Jun07.html
+TA ΜΗΝΑΙΑ,Ιούνιος,08,https://glt.goarch.org/texts/Jun/Jun08.html
+TA ΜΗΝΑΙΑ,Ιούνιος,09,https://glt.goarch.org/texts/Jun/Jun09.html
+TA ΜΗΝΑΙΑ,Ιούνιος,10,https://glt.goarch.org/texts/Jun/Jun10.html
+TA ΜΗΝΑΙΑ,Ιούνιος,11,https://glt.goarch.org/texts/Jun/Jun11.html
+TA ΜΗΝΑΙΑ,Ιούνιος,12,https://glt.goarch.org/texts/Jun/Jun12.html
+TA ΜΗΝΑΙΑ,Ιούνιος,13,https://glt.goarch.org/texts/Jun/Jun13.html
+TA ΜΗΝΑΙΑ,Ιούνιος,14,https://glt.goarch.org/texts/Jun/Jun14.html
+TA ΜΗΝΑΙΑ,Ιούνιος,15,https://glt.goarch.org/texts/Jun/Jun15.html
+TA ΜΗΝΑΙΑ,Ιούνιος,16,https://glt.goarch.org/texts/Jun/Jun16.html
+TA ΜΗΝΑΙΑ,Ιούνιος,17,https://glt.goarch.org/texts/Jun/Jun17.html
+TA ΜΗΝΑΙΑ,Ιούνιος,18,https://glt.goarch.org/texts/Jun/Jun18.html
+TA ΜΗΝΑΙΑ,Ιούνιος,19,https://glt.goarch.org/texts/Jun/Jun19.html
+TA ΜΗΝΑΙΑ,Ιούνιος,20,https://glt.goarch.org/texts/Jun/Jun20.html
+TA ΜΗΝΑΙΑ,Ιούνιος,21,https://glt.goarch.org/texts/Jun/Jun21.html
+TA ΜΗΝΑΙΑ,Ιούνιος,22,https://glt.goarch.org/texts/Jun/Jun22.html
+TA ΜΗΝΑΙΑ,Ιούνιος,23,https://glt.goarch.org/texts/Jun/Jun23.html
+TA ΜΗΝΑΙΑ,Ιούνιος,24,https://glt.goarch.org/texts/Jun/Jun24.html
+TA ΜΗΝΑΙΑ,Ιούνιος,25,https://glt.goarch.org/texts/Jun/Jun25.html
+TA ΜΗΝΑΙΑ,Ιούνιος,26,https://glt.goarch.org/texts/Jun/Jun26.html
+TA ΜΗΝΑΙΑ,Ιούνιος,27,https://glt.goarch.org/texts/Jun/Jun27.html
+TA ΜΗΝΑΙΑ,Ιούνιος,28,https://glt.goarch.org/texts/Jun/Jun28.html
+TA ΜΗΝΑΙΑ,Ιούνιος,29,https://glt.goarch.org/texts/Jun/Jun29.html
+TA ΜΗΝΑΙΑ,Ιούνιος,30,https://glt.goarch.org/texts/Jun/Jun30.html
+TA ΜΗΝΑΙΑ,Ιούλιος,01,https://glt.goarch.org/texts/Jul/Jul01.html
+TA ΜΗΝΑΙΑ,Ιούλιος,02,https://glt.goarch.org/texts/Jul/Jul02.html
+TA ΜΗΝΑΙΑ,Ιούλιος,03,https://glt.goarch.org/texts/Jul/Jul03.html
+TA ΜΗΝΑΙΑ,Ιούλιος,04,https://glt.goarch.org/texts/Jul/Jul04.html
+TA ΜΗΝΑΙΑ,Ιούλιος,05,https://glt.goarch.org/texts/Jul/Jul05.html
+TA ΜΗΝΑΙΑ,Ιούλιος,06,https://glt.goarch.org/texts/Jul/Jul06.html
+TA ΜΗΝΑΙΑ,Ιούλιος,07,https://glt.goarch.org/texts/Jul/Jul07.html
+TA ΜΗΝΑΙΑ,Ιούλιος,08,https://glt.goarch.org/texts/Jul/Jul08.html
+TA ΜΗΝΑΙΑ,Ιούλιος,09,https://glt.goarch.org/texts/Jul/Jul09.html
+TA ΜΗΝΑΙΑ,Ιούλιος,10,https://glt.goarch.org/texts/Jul/Jul10.html
+TA ΜΗΝΑΙΑ,Ιούλιος,11,https://glt.goarch.org/texts/Jul/Jul11.html
+TA ΜΗΝΑΙΑ,Ιούλιος,12,https://glt.goarch.org/texts/Jul/Jul12.html
+TA ΜΗΝΑΙΑ,Ιούλιος,13,https://glt.goarch.org/texts/Jul/Jul13.html
+TA ΜΗΝΑΙΑ,Ιούλιος,13-19,https://glt.goarch.org/texts/Jul/Jul13-19.html
+TA ΜΗΝΑΙΑ,Ιούλιος,14,https://glt.goarch.org/texts/Jul/Jul14.html
+TA ΜΗΝΑΙΑ,Ιούλιος,15,https://glt.goarch.org/texts/Jul/15a.html
+TA ΜΗΝΑΙΑ,Ιούλιος,16,https://glt.goarch.org/texts/Jul/Jul16.html
+TA ΜΗΝΑΙΑ,Ιούλιος,17,https://glt.goarch.org/texts/Jul/Jul17.html
+TA ΜΗΝΑΙΑ,Ιούλιος,18,https://glt.goarch.org/texts/Jul/Jul18.html
+TA ΜΗΝΑΙΑ,Ιούλιος,19,https://glt.goarch.org/texts/Jul/Jul19.html
+TA ΜΗΝΑΙΑ,Ιούλιος,20,https://glt.goarch.org/texts/Jul/Jul20.html
+TA ΜΗΝΑΙΑ,Ιούλιος,21,https://glt.goarch.org/texts/Jul/Jul21.html
+TA ΜΗΝΑΙΑ,Ιούλιος,22,https://glt.goarch.org/texts/Jul/Jul22.html
+TA ΜΗΝΑΙΑ,Ιούλιος,23,https://glt.goarch.org/texts/Jul/Jul23.html
+TA ΜΗΝΑΙΑ,Ιούλιος,24,https://glt.goarch.org/texts/Jul/Jul24.html
+TA ΜΗΝΑΙΑ,Ιούλιος,25,https://glt.goarch.org/texts/Jul/Jul25.html
+TA ΜΗΝΑΙΑ,Ιούλιος,26,https://glt.goarch.org/texts/Jul/Jul26.html
+TA ΜΗΝΑΙΑ,Ιούλιος,27,https://glt.goarch.org/texts/Jul/Jul27.html
+TA ΜΗΝΑΙΑ,Ιούλιος,28,https://glt.goarch.org/texts/Jul/Jul28.html
+TA ΜΗΝΑΙΑ,Ιούλιος,29,https://glt.goarch.org/texts/Jul/Jul29.html
+TA ΜΗΝΑΙΑ,Ιούλιος,30,https://glt.goarch.org/texts/Jul/Jul30.html
+TA ΜΗΝΑΙΑ,Ιούλιος,31,https://glt.goarch.org/texts/Jul/Jul31.html
+TA ΜΗΝΑΙΑ,Αύγουστος,01,https://glt.goarch.org/texts/Aug/Aug01.html
+TA ΜΗΝΑΙΑ,Αύγουστος,02,https://glt.goarch.org/texts/Aug/Aug02.html
+TA ΜΗΝΑΙΑ,Αύγουστος,03,https://glt.goarch.org/texts/Aug/Aug03.html
+TA ΜΗΝΑΙΑ,Αύγουστος,04,https://glt.goarch.org/texts/Aug/Aug04.html
+TA ΜΗΝΑΙΑ,Αύγουστος,05,https://glt.goarch.org/texts/Aug/Aug05.html
+TA ΜΗΝΑΙΑ,Αύγουστος,06,https://glt.goarch.org/texts/Aug/Aug06.html
+TA ΜΗΝΑΙΑ,Αύγουστος,07,https://glt.goarch.org/texts/Aug/Aug07.html
+TA ΜΗΝΑΙΑ,Αύγουστος,08,https://glt.goarch.org/texts/Aug/Aug08.html
+TA ΜΗΝΑΙΑ,Αύγουστος,09,https://glt.goarch.org/texts/Aug/Aug09.html
+TA ΜΗΝΑΙΑ,Αύγουστος,10,https://glt.goarch.org/texts/Aug/Aug10.html
+TA ΜΗΝΑΙΑ,Αύγουστος,11,https://glt.goarch.org/texts/Aug/Aug11.html
+TA ΜΗΝΑΙΑ,Αύγουστος,12,https://glt.goarch.org/texts/Aug/Aug12.html
+TA ΜΗΝΑΙΑ,Αύγουστος,13,https://glt.goarch.org/texts/Aug/Aug13.html
+TA ΜΗΝΑΙΑ,Αύγουστος,14,https://glt.goarch.org/texts/Aug/Aug14.html
+TA ΜΗΝΑΙΑ,Αύγουστος,15,https://glt.goarch.org/texts/Aug/Aug15.html
+TA ΜΗΝΑΙΑ,Αύγουστος,16,https://glt.goarch.org/texts/Aug/Aug16.html
+TA ΜΗΝΑΙΑ,Αύγουστος,17,https://glt.goarch.org/texts/Aug/Aug17.html
+TA ΜΗΝΑΙΑ,Αύγουστος,18,https://glt.goarch.org/texts/Aug/Aug18.html
+TA ΜΗΝΑΙΑ,Αύγουστος,19,https://glt.goarch.org/texts/Aug/Aug19.html
+TA ΜΗΝΑΙΑ,Αύγουστος,20,https://glt.goarch.org/texts/Aug/Aug20.html
+TA ΜΗΝΑΙΑ,Αύγουστος,21,https://glt.goarch.org/texts/Aug/Aug21.html
+TA ΜΗΝΑΙΑ,Αύγουστος,22,https://glt.goarch.org/texts/Aug/Aug22.html
+TA ΜΗΝΑΙΑ,Αύγουστος,23,https://glt.goarch.org/texts/Aug/Aug23.html
+TA ΜΗΝΑΙΑ,Αύγουστος,24,https://glt.goarch.org/texts/Aug/Aug24.html
+TA ΜΗΝΑΙΑ,Αύγουστος,25,https://glt.goarch.org/texts/Aug/Aug25.html
+TA ΜΗΝΑΙΑ,Αύγουστος,26,https://glt.goarch.org/texts/Aug/Aug26.html
+TA ΜΗΝΑΙΑ,Αύγουστος,27,https://glt.goarch.org/texts/Aug/Aug27.html
+TA ΜΗΝΑΙΑ,Αύγουστος,28,https://glt.goarch.org/texts/Aug/Aug28.html
+TA ΜΗΝΑΙΑ,Αύγουστος,29,https://glt.goarch.org/texts/Aug/Aug29.html
+TA ΜΗΝΑΙΑ,Αύγουστος,30,https://glt.goarch.org/texts/Aug/Aug30.html
+TA ΜΗΝΑΙΑ,Αύγουστος,31,https://glt.goarch.org/texts/Aug/Aug31.html
+TA ΜΗΝΑΙΑ,,ΚΑΤΑΒΑΣΙΑΙ,https://glt.goarch.org/texts/Synek/Katabasiai.html
+TA ΜΗΝΑΙΑ,,Μεγαλυνάρια,https://glt.goarch.org/texts/Synek/Megalynaria.html
+TA ΜΗΝΑΙΑ,,ΕΓΚΟΛΠΙΟΝ ΤΟΥ ΟΡΘΡΟΥ,https://glt.goarch.org/texts/Synek/orthrosegkolpion.html
+ΟΚΤΩΗΧΟΣ,Ήχος α',Κυριακή,https://glt.goarch.org/texts/Och/Tone1Sun.html
+ΟΚΤΩΗΧΟΣ,Ήχος α',Δευτέρα,https://glt.goarch.org/texts/Och/Tone1Mon.html
+ΟΚΤΩΗΧΟΣ,Ήχος α',Τρίτη,https://glt.goarch.org/texts/Och/Tone1Tue.html
+ΟΚΤΩΗΧΟΣ,Ήχος α',Τετάρτη,https://glt.goarch.org/texts/Och/Tone1Wed.html
+ΟΚΤΩΗΧΟΣ,Ήχος α',Πέμπτη,https://glt.goarch.org/texts/Och/Tone1Thu.html
+ΟΚΤΩΗΧΟΣ,Ήχος α',Παρασκευή,https://glt.goarch.org/texts/Och/Tone1Fri.html
+ΟΚΤΩΗΧΟΣ,Ήχος α',Σάββατον,https://glt.goarch.org/texts/Och/Tone1Sat.html
+ΟΚΤΩΗΧΟΣ,Ήχος β',Κυριακή,https://glt.goarch.org/texts/Och/Tone2Sun.html
+ΟΚΤΩΗΧΟΣ,Ήχος β',Δευτέρα,https://glt.goarch.org/texts/Och/Tone2Mon.html
+ΟΚΤΩΗΧΟΣ,Ήχος β',Τρίτη,https://glt.goarch.org/texts/Och/Tone2Tue.html
+ΟΚΤΩΗΧΟΣ,Ήχος β',Τετάρτη,https://glt.goarch.org/texts/Och/Tone2Wed.html
+ΟΚΤΩΗΧΟΣ,Ήχος β',Πέμπτη,https://glt.goarch.org/texts/Och/Tone2Thu.html
+ΟΚΤΩΗΧΟΣ,Ήχος β',Παρασκευή,https://glt.goarch.org/texts/Och/Tone2Fri.html
+ΟΚΤΩΗΧΟΣ,Ήχος β',Σάββατον,https://glt.goarch.org/texts/Och/Tone2Sat.html
+ΟΚΤΩΗΧΟΣ,Ήχος γ',Κυριακή,https://glt.goarch.org/texts/Och/Tone3Sun.html
+ΟΚΤΩΗΧΟΣ,Ήχος γ',Δευτέρα,https://glt.goarch.org/texts/Och/Tone3Mon.html
+ΟΚΤΩΗΧΟΣ,Ήχος γ',Τρίτη,https://glt.goarch.org/texts/Och/Tone3Tue.html
+ΟΚΤΩΗΧΟΣ,Ήχος γ',Τετάρτη,https://glt.goarch.org/texts/Och/Tone3Wed.html
+ΟΚΤΩΗΧΟΣ,Ήχος γ',Πέμπτη,https://glt.goarch.org/texts/Och/Tone3Thu.html
+ΟΚΤΩΗΧΟΣ,Ήχος γ',Παρασκευή,https://glt.goarch.org/texts/Och/Tone3Fri.html
+ΟΚΤΩΗΧΟΣ,Ήχος γ',Σάββατον,https://glt.goarch.org/texts/Och/Tone3Sat.html
+ΟΚΤΩΗΧΟΣ,Ήχος δ',Κυριακή,https://glt.goarch.org/texts/Och/Tone4Sun.html
+ΟΚΤΩΗΧΟΣ,Ήχος δ',Δευτέρα,https://glt.goarch.org/texts/Och/Tone4Mon.html
+ΟΚΤΩΗΧΟΣ,Ήχος δ',Τρίτη,https://glt.goarch.org/texts/Och/Tone4Tue.html
+ΟΚΤΩΗΧΟΣ,Ήχος δ',Τετάρτη,https://glt.goarch.org/texts/Och/Tone4Wed.html
+ΟΚΤΩΗΧΟΣ,Ήχος δ',Πέμπτη,https://glt.goarch.org/texts/Och/Tone4Thu.html
+ΟΚΤΩΗΧΟΣ,Ήχος δ',Παρασκευή,https://glt.goarch.org/texts/Och/Tone4Fri.html
+ΟΚΤΩΗΧΟΣ,Ήχος δ',Σάββατον,https://glt.goarch.org/texts/Och/Tone4Sat.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. α',Κυριακή,https://glt.goarch.org/texts/Och/Tone5Sun.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. α',Δευτέρα,https://glt.goarch.org/texts/Och/Tone5Mon.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. α',Τρίτη,https://glt.goarch.org/texts/Och/Tone5Tue.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. α',Τετάρτη,https://glt.goarch.org/texts/Och/Tone5Wed.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. α',Πέμπτη,https://glt.goarch.org/texts/Och/Tone5Thu.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. α',Παρασκευή,https://glt.goarch.org/texts/Och/Tone5Fri.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. α',Σάββατον,https://glt.goarch.org/texts/Och/Tone5Sat.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. β',Κυριακή,https://glt.goarch.org/texts/Och/Tone6Sun.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. β',Δευτέρα,https://glt.goarch.org/texts/Och/Tone6Mon.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. β',Τρίτη,https://glt.goarch.org/texts/Och/Tone6Tue.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. β',Τετάρτη,https://glt.goarch.org/texts/Och/Tone6Wed.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. β',Πέμπτη,https://glt.goarch.org/texts/Och/Tone6Thu.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. β',Παρασκευή,https://glt.goarch.org/texts/Och/Tone6Fri.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. β',Σάββατον,https://glt.goarch.org/texts/Och/Tone6Sat.html
+ΟΚΤΩΗΧΟΣ,Ήχος βαρύς,Κυριακή,https://glt.goarch.org/texts/Och/Tone7Sun.html
+ΟΚΤΩΗΧΟΣ,Ήχος βαρύς,Δευτέρα,https://glt.goarch.org/texts/Och/Tone7Mon.html
+ΟΚΤΩΗΧΟΣ,Ήχος βαρύς,Τρίτη,https://glt.goarch.org/texts/Och/Tone7Tue.html
+ΟΚΤΩΗΧΟΣ,Ήχος βαρύς,Τετάρτη,https://glt.goarch.org/texts/Och/Tone7Wed.html
+ΟΚΤΩΗΧΟΣ,Ήχος βαρύς,Πέμπτη,https://glt.goarch.org/texts/Och/Tone7Thu.html
+ΟΚΤΩΗΧΟΣ,Ήχος βαρύς,Παρασκευή,https://glt.goarch.org/texts/Och/Tone7Fri.html
+ΟΚΤΩΗΧΟΣ,Ήχος βαρύς,Σάββατον,https://glt.goarch.org/texts/Och/Tone7Sat.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. δ',Κυριακή,https://glt.goarch.org/texts/Och/Tone8Sun.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. δ',Δευτέρα,https://glt.goarch.org/texts/Och/Tone8Mon.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. δ',Τρίτη,https://glt.goarch.org/texts/Och/Tone8Tue.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. δ',Τετάρτη,https://glt.goarch.org/texts/Och/Tone8Wed.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. δ',Πέμπτη,https://glt.goarch.org/texts/Och/Tone8Thu.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. δ',Παρασκευή,https://glt.goarch.org/texts/Och/Tone8Fri.html
+ΟΚΤΩΗΧΟΣ,Ήχος πλ. δ',Σάββατον,https://glt.goarch.org/texts/Och/Tone8Sat.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,Α',https://glt.goarch.org/texts/Och/Eothina1.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,Β',https://glt.goarch.org/texts/Och/Eothina2.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,Γ',https://glt.goarch.org/texts/Och/Eothina3.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,Δ',https://glt.goarch.org/texts/Och/Eothina4.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,Ε',https://glt.goarch.org/texts/Och/Eothina5.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,ΣΤ',https://glt.goarch.org/texts/Och/Eothina6.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,Ζ',https://glt.goarch.org/texts/Och/Eothina7.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,Η',https://glt.goarch.org/texts/Och/Eothina8.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,Θ',https://glt.goarch.org/texts/Och/Eothina9.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,Ι',https://glt.goarch.org/texts/Och/Eothina10.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,ΙΑ',https://glt.goarch.org/texts/Och/Eothina11.html
+ΟΚΤΩΗΧΟΣ,ΕΩΘΙΝΑ ΚΕΙΜΕΝΑ,Α'- ΙΑ',https://glt.goarch.org/texts/Och/Eothina.html
+ΟΚΤΩΗΧΟΣ,ΘΕΟΤΟΚΙΑ ΕΙΣ ΕΚΑΣΤΟΝ ΗΧΟΝ,Ήχος α',https://glt.goarch.org/texts/Och/Theotokia1.html
+ΟΚΤΩΗΧΟΣ,ΘΕΟΤΟΚΙΑ ΕΙΣ ΕΚΑΣΤΟΝ ΗΧΟΝ,Ήχος β',https://glt.goarch.org/texts/Och/Theotokia2.html
+ΟΚΤΩΗΧΟΣ,ΘΕΟΤΟΚΙΑ ΕΙΣ ΕΚΑΣΤΟΝ ΗΧΟΝ,Ήχος γ',https://glt.goarch.org/texts/Och/Theotokia3.html
+ΟΚΤΩΗΧΟΣ,ΘΕΟΤΟΚΙΑ ΕΙΣ ΕΚΑΣΤΟΝ ΗΧΟΝ,Ήχος δ',https://glt.goarch.org/texts/Och/Theotokia4.html
+ΟΚΤΩΗΧΟΣ,ΘΕΟΤΟΚΙΑ ΕΙΣ ΕΚΑΣΤΟΝ ΗΧΟΝ,Ήχος πλ. α',https://glt.goarch.org/texts/Och/Theotokia5.html
+ΟΚΤΩΗΧΟΣ,ΘΕΟΤΟΚΙΑ ΕΙΣ ΕΚΑΣΤΟΝ ΗΧΟΝ,Ήχος πλ. β',https://glt.goarch.org/texts/Och/Theotokia6.html
+ΟΚΤΩΗΧΟΣ,ΘΕΟΤΟΚΙΑ ΕΙΣ ΕΚΑΣΤΟΝ ΗΧΟΝ,Ήχος βαρύς,https://glt.goarch.org/texts/Och/Theotokia7.html
+ΟΚΤΩΗΧΟΣ,ΘΕΟΤΟΚΙΑ ΕΙΣ ΕΚΑΣΤΟΝ ΗΧΟΝ,Ήχος πλ. δ',https://glt.goarch.org/texts/Och/Theotokia8.html
+ΟΚΤΩΗΧΟΣ,ΤΑ ΛΟΙΠΑ,ΥΜΝΟΙ ΤΡΙΑΔΙΚΟΙ,https://glt.goarch.org/texts/Och/Triadikoi.html
+ΟΚΤΩΗΧΟΣ,ΤΑ ΛΟΙΠΑ,ΦΩΤΑΓΩΓΙΚΑ,https://glt.goarch.org/texts/Och/Phota.html
+ΟΚΤΩΗΧΟΣ,ΤΑ ΛΟΙΠΑ,ΕΞΑΠΟΣΤΕΙΛΑΡΙΑ ΤΗΣ ΟΛΗΣ ΕΒΔΟΜΑΔΟΣ,https://glt.goarch.org/texts/Och/Exaposteilaria.html
+ΟΚΤΩΗΧΟΣ,ΤΑ ΛΟΙΠΑ,ΘΕΟΤΟΚΙΑ ΕΙΣ ΕΚΑΣΤΟΝ ΗΧΟΝ,https://glt.goarch.org/texts/Och/Theotokia.html
+ΟΚΤΩΗΧΟΣ,ΤΑ ΛΟΙΠΑ,ΘΕΟΤΟΚΙΑ ΕΙΣ ΕΚΑΣΤΗΝ ΗΜΕΡΑΝ,https://glt.goarch.org/texts/Och/Daily.html
+ΤΡΙΩΔΙΟΝ,ΤΟΥ ΤΕΛΩΝΟΥ ΚΑΙ ΤΟΥ ΦΑΡΙΣΑΙΟΥ,Κυριακή,https://glt.goarch.org/texts/Tri/t70.html
+ΤΡΙΩΔΙΟΝ,ΤΟΥ ΑΣΩΤΟΥ,Κυριακή,https://glt.goarch.org/texts/Tri/t63.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΑΠΟΚΡΕΩ,Σάββατον,https://glt.goarch.org/texts/Tri/t57.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΑΠΟΚΡΕΩ,Κυριακή,https://glt.goarch.org/texts/Tri/t56.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΤΥΡΙΝΗΣ,Δευτέρα,https://glt.goarch.org/texts/Tri/t55.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΤΥΡΙΝΗΣ,Τρίτη,https://glt.goarch.org/texts/Tri/t54.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΤΥΡΙΝΗΣ,Τετάρτη,https://glt.goarch.org/texts/Tri/t53.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΤΥΡΙΝΗΣ,Πέμπτη,https://glt.goarch.org/texts/Tri/t52.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΤΥΡΙΝΗΣ,Παρασκευή,https://glt.goarch.org/texts/Tri/t51.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΤΥΡΙΝΗΣ,Σάββατον,https://glt.goarch.org/texts/Tri/t50.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΤΥΡΙΝΗΣ,Κυριακή,https://glt.goarch.org/texts/Tri/t49.html
+ΤΡΙΩΔΙΟΝ,Α' ΕΒΔΟΜΑΔΟΣ,Δευτέρα,https://glt.goarch.org/texts/Tri/t48.html
+ΤΡΙΩΔΙΟΝ,Α' ΕΒΔΟΜΑΔΟΣ,Τρίτη,https://glt.goarch.org/texts/Tri/t47.html
+ΤΡΙΩΔΙΟΝ,Α' ΕΒΔΟΜΑΔΟΣ,Τετάρτη,https://glt.goarch.org/texts/Tri/t46.html
+ΤΡΙΩΔΙΟΝ,Α' ΕΒΔΟΜΑΔΟΣ,Πέμπτη,https://glt.goarch.org/texts/Tri/t45.html
+ΤΡΙΩΔΙΟΝ,Α' ΕΒΔΟΜΑΔΟΣ,Παρασκευή,https://glt.goarch.org/texts/Tri/t44.html
+ΤΡΙΩΔΙΟΝ,Α' ΕΒΔΟΜΑΔΟΣ,Σάββατον,https://glt.goarch.org/texts/Tri/t43.html
+ΤΡΙΩΔΙΟΝ,Α' ΕΒΔΟΜΑΔΟΣ,Κυριακή,https://glt.goarch.org/texts/Tri/t42.html
+ΤΡΙΩΔΙΟΝ,Β' ΕΒΔΟΜΑΔΟΣ,Δευτέρα,https://glt.goarch.org/texts/Tri/t41.html
+ΤΡΙΩΔΙΟΝ,Β' ΕΒΔΟΜΑΔΟΣ,Τρίτη,https://glt.goarch.org/texts/Tri/t40.html
+ΤΡΙΩΔΙΟΝ,Β' ΕΒΔΟΜΑΔΟΣ,Τετάρτη,https://glt.goarch.org/texts/Tri/t39.html
+ΤΡΙΩΔΙΟΝ,Β' ΕΒΔΟΜΑΔΟΣ,Πέμπτη,https://glt.goarch.org/texts/Tri/t38.html
+ΤΡΙΩΔΙΟΝ,Β' ΕΒΔΟΜΑΔΟΣ,Παρασκευή,https://glt.goarch.org/texts/Tri/t37.html
+ΤΡΙΩΔΙΟΝ,Β' ΕΒΔΟΜΑΔΟΣ,Σάββατον,https://glt.goarch.org/texts/Tri/t36.html
+ΤΡΙΩΔΙΟΝ,Β' ΕΒΔΟΜΑΔΟΣ,Κυριακή,https://glt.goarch.org/texts/Tri/t35.html
+ΤΡΙΩΔΙΟΝ,Γ' ΕΒΔΟΜΑΔΟΣ,Δευτέρα,https://glt.goarch.org/texts/Tri/t34.html
+ΤΡΙΩΔΙΟΝ,Γ' ΕΒΔΟΜΑΔΟΣ,Τρίτη,https://glt.goarch.org/texts/Tri/t33.html
+ΤΡΙΩΔΙΟΝ,Γ' ΕΒΔΟΜΑΔΟΣ,Τετάρτη,https://glt.goarch.org/texts/Tri/t32.html
+ΤΡΙΩΔΙΟΝ,Γ' ΕΒΔΟΜΑΔΟΣ,Πέμπτη,https://glt.goarch.org/texts/Tri/t31.html
+ΤΡΙΩΔΙΟΝ,Γ' ΕΒΔΟΜΑΔΟΣ,Παρασκευή,https://glt.goarch.org/texts/Tri/t30.html
+ΤΡΙΩΔΙΟΝ,Γ' ΕΒΔΟΜΑΔΟΣ,Σάββατον,https://glt.goarch.org/texts/Tri/t29.html
+ΤΡΙΩΔΙΟΝ,Γ' ΕΒΔΟΜΑΔΟΣ,Κυριακή,https://glt.goarch.org/texts/Tri/t28.html
+ΤΡΙΩΔΙΟΝ,Δ' ΕΒΔΟΜΑΔΟΣ,Δευτέρα,https://glt.goarch.org/texts/Tri/t27.html
+ΤΡΙΩΔΙΟΝ,Δ' ΕΒΔΟΜΑΔΟΣ,Τρίτη,https://glt.goarch.org/texts/Tri/t26.html
+ΤΡΙΩΔΙΟΝ,Δ' ΕΒΔΟΜΑΔΟΣ,Τετάρτη,https://glt.goarch.org/texts/Tri/t25.html
+ΤΡΙΩΔΙΟΝ,Δ' ΕΒΔΟΜΑΔΟΣ,Πέμπτη,https://glt.goarch.org/texts/Tri/t24.html
+ΤΡΙΩΔΙΟΝ,Δ' ΕΒΔΟΜΑΔΟΣ,Παρασκευή,https://glt.goarch.org/texts/Tri/t23.html
+ΤΡΙΩΔΙΟΝ,Δ' ΕΒΔΟΜΑΔΟΣ,Σάββατον,https://glt.goarch.org/texts/Tri/t22.html
+ΤΡΙΩΔΙΟΝ,Δ' ΕΒΔΟΜΑΔΟΣ,Κυριακή,https://glt.goarch.org/texts/Tri/t21.html
+ΤΡΙΩΔΙΟΝ,Ε' ΕΒΔΟΜΑΔΟΣ,Δευτέρα,https://glt.goarch.org/texts/Tri/t20.html
+ΤΡΙΩΔΙΟΝ,Ε' ΕΒΔΟΜΑΔΟΣ,Τρίτη,https://glt.goarch.org/texts/Tri/t19.html
+ΤΡΙΩΔΙΟΝ,Ε' ΕΒΔΟΜΑΔΟΣ,Τετάρτη,https://glt.goarch.org/texts/Tri/t18.html
+ΤΡΙΩΔΙΟΝ,Ε' ΕΒΔΟΜΑΔΟΣ,Πέμπτη,https://glt.goarch.org/texts/Tri/t17.html
+ΤΡΙΩΔΙΟΝ,Ε' ΕΒΔΟΜΑΔΟΣ,Παρασκευή,https://glt.goarch.org/texts/Tri/t16.html
+ΤΡΙΩΔΙΟΝ,Ε' ΕΒΔΟΜΑΔΟΣ,Σάββατον,https://glt.goarch.org/texts/Tri/t15.html
+ΤΡΙΩΔΙΟΝ,Ε' ΕΒΔΟΜΑΔΟΣ,Κυριακή,https://glt.goarch.org/texts/Tri/t14.html
+ΤΡΙΩΔΙΟΝ,ΤΩΝ ΒΑΪΩΝ,Δευτέρα,https://glt.goarch.org/texts/Tri/t13.html
+ΤΡΙΩΔΙΟΝ,ΤΩΝ ΒΑΪΩΝ,Τρίτη,https://glt.goarch.org/texts/Tri/t12.html
+ΤΡΙΩΔΙΟΝ,ΤΩΝ ΒΑΪΩΝ,Τετάρτη,https://glt.goarch.org/texts/Tri/t11.html
+ΤΡΙΩΔΙΟΝ,ΤΩΝ ΒΑΪΩΝ,Πέμπτη,https://glt.goarch.org/texts/Tri/t10.html
+ΤΡΙΩΔΙΟΝ,ΤΩΝ ΒΑΪΩΝ,Παρασκευή,https://glt.goarch.org/texts/Tri/t09.html
+ΤΡΙΩΔΙΟΝ,ΤΩΝ ΒΑΪΩΝ,Σάββατον,https://glt.goarch.org/texts/Tri/t08.html
+ΤΡΙΩΔΙΟΝ,ΤΩΝ ΒΑΪΩΝ,Κυριακή,https://glt.goarch.org/texts/Tri/t07.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΜΕΓΑΛΗΣ ΕΒΔΟΜΑΔΟΣ,Μ.Δευτέρα,https://glt.goarch.org/texts/Tri/t06.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΜΕΓΑΛΗΣ ΕΒΔΟΜΑΔΟΣ,Μ.Τρίτη,https://glt.goarch.org/texts/Tri/t05.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΜΕΓΑΛΗΣ ΕΒΔΟΜΑΔΟΣ,Μ.Τετάρτη,https://glt.goarch.org/texts/Tri/t04.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΜΕΓΑΛΗΣ ΕΒΔΟΜΑΔΟΣ,Μ.Πέμπτη,https://glt.goarch.org/texts/Tri/t03.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΜΕΓΑΛΗΣ ΕΒΔΟΜΑΔΟΣ,Μ.Παρασκευή,https://glt.goarch.org/texts/Tri/t02.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΜΕΓΑΛΗΣ ΕΒΔΟΜΑΔΟΣ,Μ.Σάββατον,https://glt.goarch.org/texts/Tri/t01a.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΜΕΓΑΛΗΣ ΕΒΔΟΜΑΔΟΣ,Μ.Σάββατον Πρωὶ,https://glt.goarch.org/texts/Tri/t00.html
+ΤΡΙΩΔΙΟΝ,ΤΗΣ ΜΕΓΑΛΗΣ ΕΒΔΟΜΑΔΟΣ,Τά Ἐγκώμια,https://glt.goarch.org/texts/Tri/Lamentations.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,ΕΝΑΡΚΤΗΡΙΟΣ ΑΚΟΛΟΥΘΙΑ ΤΟΥ ΠΑΣΧΑ,https://glt.goarch.org/texts/Pen/new.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Δευτέρα,https://glt.goarch.org/texts/Pen/p01.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Δευτέρα ΓΕΩ,https://glt.goarch.org/texts/Pen/p01Geo.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Τρίτη,https://glt.goarch.org/texts/Pen/p02.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Τετάρτη,https://glt.goarch.org/texts/Pen/p03.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Πέμπτη,https://glt.goarch.org/texts/Pen/p04.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Παρασκευή,https://glt.goarch.org/texts/Pen/p05.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Σάββατον,https://glt.goarch.org/texts/Pen/p06.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Κυριακή,https://glt.goarch.org/texts/Pen/p07.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Δευτέρα,https://glt.goarch.org/texts/Pen/p08.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Τρίτη,https://glt.goarch.org/texts/Pen/p09.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Τετάρτη,https://glt.goarch.org/texts/Pen/p10.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Πέμπτη,https://glt.goarch.org/texts/Pen/p11.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Παρασκευή,https://glt.goarch.org/texts/Pen/p12.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Σάββατον,https://glt.goarch.org/texts/Pen/p13.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Κυριακή,https://glt.goarch.org/texts/Pen/p14.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Δευτέρα,https://glt.goarch.org/texts/Pen/p15.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Τρίτη,https://glt.goarch.org/texts/Pen/p16.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Τετάρτη,https://glt.goarch.org/texts/Pen/p17.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Πέμπτη,https://glt.goarch.org/texts/Pen/p18.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Παρασκευή,https://glt.goarch.org/texts/Pen/p19.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Σάββατον,https://glt.goarch.org/texts/Pen/p20.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Κυριακή,https://glt.goarch.org/texts/Pen/p21.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Δευτέρα,https://glt.goarch.org/texts/Pen/p22.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Τρίτη,https://glt.goarch.org/texts/Pen/p23.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Τετάρτη,https://glt.goarch.org/texts/Pen/p24.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Πέμπτη,https://glt.goarch.org/texts/Pen/p25.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Παρασκευή,https://glt.goarch.org/texts/Pen/p26.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Σάββατον,https://glt.goarch.org/texts/Pen/p27.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Κυριακή,https://glt.goarch.org/texts/Pen/p28.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Δευτέρα,https://glt.goarch.org/texts/Pen/p29.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Τρίτη,https://glt.goarch.org/texts/Pen/p30.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Τετάρτη,https://glt.goarch.org/texts/Pen/p31.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Πέμπτη,https://glt.goarch.org/texts/Pen/p32.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Παρασκευή,https://glt.goarch.org/texts/Pen/p33.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Σάββατον,https://glt.goarch.org/texts/Pen/p34.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Κυριακή,https://glt.goarch.org/texts/Pen/p35.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Δευτέρα,https://glt.goarch.org/texts/Pen/p36.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Τρίτη,https://glt.goarch.org/texts/Pen/p37.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Τετάρτη,https://glt.goarch.org/texts/Pen/p38.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Πέμπτη,https://glt.goarch.org/texts/Pen/p39.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Παρασκευή,https://glt.goarch.org/texts/Pen/p40.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Σάββατον,https://glt.goarch.org/texts/Pen/p41.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Κυριακή,https://glt.goarch.org/texts/Pen/p42.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Δευτέρα,https://glt.goarch.org/texts/Pen/p43.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Τρίτη,https://glt.goarch.org/texts/Pen/p44.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Τετάρτη,https://glt.goarch.org/texts/Pen/p45.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Πέμπτη,https://glt.goarch.org/texts/Pen/p46.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Παρασκευή,https://glt.goarch.org/texts/Pen/p47.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Σάββατον,https://glt.goarch.org/texts/Pen/p48.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Κυριακή,https://glt.goarch.org/texts/Pen/p49.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Δευτέρα,https://glt.goarch.org/texts/Pen/p50.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Τρίτη,https://glt.goarch.org/texts/Pen/p51.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Τετάρτη,https://glt.goarch.org/texts/Pen/p52.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Πέμπτη,https://glt.goarch.org/texts/Pen/p53.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Παρασκευή,https://glt.goarch.org/texts/Pen/p54.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Σάββατον,https://glt.goarch.org/texts/Pen/p55.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΑΓΙΩΝ ΠΑΝΤΩΝ,Κυριακή,https://glt.goarch.org/texts/Pen/p56.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΜΕΣΟΝΥΚΤΙΚΟΝ,Καθημερινά,https://glt.goarch.org/texts/Oro/Meso.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΜΕΣΟΝΥΚΤΙΚΟΝ,Κυριακή,https://glt.goarch.org/texts/Oro/MesoSun.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΜΕΣΟΝΥΚΤΙΚΟΝ,Σάββατον,https://glt.goarch.org/texts/Oro/MesoSat.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΩΡΕΣ,Πρώτη,https://glt.goarch.org/texts/Oro/one.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΩΡΕΣ,Τρίτη,https://glt.goarch.org/texts/Oro/three.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΩΡΕΣ,Έκτη,https://glt.goarch.org/texts/Oro/six.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΩΡΕΣ,Ενάτη,https://glt.goarch.org/texts/Oro/nine.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΩΡΕΣ ΤΗΣ ΤΕΣΣΑΡΑΚΟΣΤΗΣ,Πρώτη,https://glt.goarch.org/texts/Oro/one40.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΩΡΕΣ ΤΗΣ ΤΕΣΣΑΡΑΚΟΣΤΗΣ,Τρίτη,https://glt.goarch.org/texts/Oro/three40.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΩΡΕΣ ΤΗΣ ΤΕΣΣΑΡΑΚΟΣΤΗΣ,Έκτη,https://glt.goarch.org/texts/Oro/six40.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΩΡΕΣ ΤΗΣ ΤΕΣΣΑΡΑΚΟΣΤΗΣ,Ενάτη,https://glt.goarch.org/texts/Oro/nine40.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΜΕΣΩΡΙΑ ΤΩΝ ΩΡΩΝ,Πρώτη,https://glt.goarch.org/texts/Oro/mesone.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΜΕΣΩΡΙΑ ΤΩΝ ΩΡΩΝ,Τρίτη,https://glt.goarch.org/texts/Oro/mesthree.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΜΕΣΩΡΙΑ ΤΩΝ ΩΡΩΝ,Έκτη,https://glt.goarch.org/texts/Oro/messix.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΜΕΣΩΡΙΑ ΤΩΝ ΩΡΩΝ,Ενάτη,https://glt.goarch.org/texts/Oro/mesnine.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος α΄,https://glt.goarch.org/texts/Oro/Sun1.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος β΄,https://glt.goarch.org/texts/Oro/Sun2.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος γ΄,https://glt.goarch.org/texts/Oro/Sun3.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος δ΄,https://glt.goarch.org/texts/Oro/Sun4.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος πλ. α΄,https://glt.goarch.org/texts/Oro/Sun5.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος πλ. β΄,https://glt.goarch.org/texts/Oro/Sun6.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος βαρὺς,https://glt.goarch.org/texts/Oro/Sun7.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος πλ. δ΄,https://glt.goarch.org/texts/Oro/Sun8.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Καθημερινά,https://glt.goarch.org/texts/Oro/Orthros.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Κυριακή,https://glt.goarch.org/texts/Oro/OrthrosSun.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Τεσσαρακοστή,https://glt.goarch.org/texts/Oro/Orthros40.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,ΤΥΠΙΚΩΝ,https://glt.goarch.org/texts/Oro/Typikon.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,ΑΚΟΛΟΥΘΙΑ ΤΗΣ ΘΕΙΑΣ ΜΕΤΑΛΗΨΕΩΣ,https://glt.goarch.org/texts/Oro/Communion.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Χρυσοστόμου Καθ' ημέραν,https://glt.goarch.org/texts/Oro/Daily_Liturgy.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Χρυσοστόμου Κυριακή,https://glt.goarch.org/texts/Oro/Sun_Liturgy.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Χρυσοστόμου Κυριακή μετά Διακόνου,https://glt.goarch.org/texts/Oro/Lit_with_Deacon.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Βασιλείου,https://glt.goarch.org/texts/Oro/Basil_Liturgy.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Προηγιασμένη,https://glt.goarch.org/texts/Oro/Pro.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Ιακώβου,https://glt.goarch.org/texts/Oro/StJames.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,ΕΥΧΑΡΙΣΤΙΑ ΜΕΤΑ ΤΗΝ ΘΕΙΑΝ ΜΕΤΑΛΗΨΙΝ,https://glt.goarch.org/texts/Oro/Thanks.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Ακάθιστος Ύμνος 1-4,https://glt.goarch.org/texts/Oro/Akathist1to4.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Ακάθιστος Ύμνος 5,https://glt.goarch.org/texts/Oro/Akathist5.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Στάσεις,https://glt.goarch.org/texts/Oro/Staseis.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Μικρή Παράκληση,https://glt.goarch.org/texts/Oro/paraklesis.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Μεγάλη Παράκληση,https://glt.goarch.org/texts/Oro/paraklesis_Great.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Μικρή Παράκληση μετά Ιερέως,https://glt.goarch.org/texts/Oro/paraklesis_priest.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΟΡΘΡΟΣ,Μεγάλη Παράκληση μετά Ιερέως,https://glt.goarch.org/texts/Oro/paraklesis_Greatp.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,ΑΚΟΛΟΥΘΙΑ ΤΗΣ ΘΕΙΑΣ ΜΕΤΑΛΗΨΕΩΣ,https://glt.goarch.org/texts/Oro/Communion.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Χρυσοστόμου Καθ' ημέραν,https://glt.goarch.org/texts/Oro/Daily_Liturgy.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Χρυσοστόμου Κυριακή,https://glt.goarch.org/texts/Oro/Sun_Liturgy.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Χρυσοστόμου Κυριακή μετά Διακόνου,https://glt.goarch.org/texts/Oro/Lit_with_Deacon.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Βασιλείου,https://glt.goarch.org/texts/Oro/Basil_Liturgy.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Προηγιασμένη,https://glt.goarch.org/texts/Oro/Pro.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Ιακώβου,https://glt.goarch.org/texts/Oro/StJames.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,ΕΥΧΑΡΙΣΤΙΑ ΜΕΤΑ ΤΗΝ ΘΕΙΑΝ ΜΕΤΑΛΗΨΙΝ,https://glt.goarch.org/texts/Oro/Thanks.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΑ ΛΟΙΠΑ,Ακάθιστος Ύμνος 1-4,https://glt.goarch.org/texts/Oro/Akathist1to4.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΑ ΛΟΙΠΑ,Ακάθιστος Ύμνος 5,https://glt.goarch.org/texts/Oro/Akathist5.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΑ ΛΟΙΠΑ,Στάσεις,https://glt.goarch.org/texts/Oro/Staseis.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΑ ΛΟΙΠΑ,Μικρή Παράκληση,https://glt.goarch.org/texts/Oro/paraklesis.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΑ ΛΟΙΠΑ,Μεγάλη Παράκληση,https://glt.goarch.org/texts/Oro/paraklesis_Great.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΑ ΛΟΙΠΑ,Μικρή Παράκληση μετά Ιερέως,https://glt.goarch.org/texts/Oro/paraklesis_priest.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΑ ΛΟΙΠΑ,Μεγάλη Παράκληση μετά Ιερέως,https://glt.goarch.org/texts/Oro/paraklesis_Greatp.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,,ΣΤΙΧΗΡΑ ΚΑΙ ΚΑΘΙΣΜΑΤΑ,https://glt.goarch.org/texts/Tri/TriOkto.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,,Ήχος α',https://glt.goarch.org/texts/Tri/Tone1.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,,Ήχος β',https://glt.goarch.org/texts/Tri/Tone2.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,,Ήχος γ',https://glt.goarch.org/texts/Tri/Tone3.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,,Ήχος δ',https://glt.goarch.org/texts/Tri/Tone4.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,,Ήχος πλ. α',https://glt.goarch.org/texts/Tri/Tone5.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,,Ήχος πλ. β',https://glt.goarch.org/texts/Tri/Tone6.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,,Ήχος βαρύς,https://glt.goarch.org/texts/Tri/Tone7.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,,Ήχος πλ. δ',https://glt.goarch.org/texts/Tri/Tone8.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,ΕΝΑΡΚΤΗΡΙΟΣ ΑΚΟΛΟΥΘΙΑ ΤΟΥ ΠΑΣΧΑ,https://glt.goarch.org/texts/Pen/new.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Δευτέρα,https://glt.goarch.org/texts/Pen/p01.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Δευτέρα ΓΕΩ,https://glt.goarch.org/texts/Pen/p01Geo.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Τρίτη,https://glt.goarch.org/texts/Pen/p02.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Τετάρτη,https://glt.goarch.org/texts/Pen/p03.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Πέμπτη,https://glt.goarch.org/texts/Pen/p04.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Παρασκευή,https://glt.goarch.org/texts/Pen/p05.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΔΙΑΚΑΙΝΗΣΙΜΟΥ,Σάββατον,https://glt.goarch.org/texts/Pen/p06.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Κυριακή,https://glt.goarch.org/texts/Pen/p07.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Δευτέρα,https://glt.goarch.org/texts/Pen/p08.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Τρίτη,https://glt.goarch.org/texts/Pen/p09.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Τετάρτη,https://glt.goarch.org/texts/Pen/p10.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Πέμπτη,https://glt.goarch.org/texts/Pen/p11.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Παρασκευή,https://glt.goarch.org/texts/Pen/p12.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΘΩΜΑ,Σάββατον,https://glt.goarch.org/texts/Pen/p13.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Κυριακή,https://glt.goarch.org/texts/Pen/p14.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Δευτέρα,https://glt.goarch.org/texts/Pen/p15.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Τρίτη,https://glt.goarch.org/texts/Pen/p16.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Τετάρτη,https://glt.goarch.org/texts/Pen/p17.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Πέμπτη,https://glt.goarch.org/texts/Pen/p18.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Παρασκευή,https://glt.goarch.org/texts/Pen/p19.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΜΥΡΟΦΟΡΩΝ,Σάββατον,https://glt.goarch.org/texts/Pen/p20.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Κυριακή,https://glt.goarch.org/texts/Pen/p21.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Δευτέρα,https://glt.goarch.org/texts/Pen/p22.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Τρίτη,https://glt.goarch.org/texts/Pen/p23.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Τετάρτη,https://glt.goarch.org/texts/Pen/p24.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Πέμπτη,https://glt.goarch.org/texts/Pen/p25.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Παρασκευή,https://glt.goarch.org/texts/Pen/p26.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΠΑΡΑΛΥΤΟΥ,Σάββατον,https://glt.goarch.org/texts/Pen/p27.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Κυριακή,https://glt.goarch.org/texts/Pen/p28.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Δευτέρα,https://glt.goarch.org/texts/Pen/p29.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Τρίτη,https://glt.goarch.org/texts/Pen/p30.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Τετάρτη,https://glt.goarch.org/texts/Pen/p31.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Πέμπτη,https://glt.goarch.org/texts/Pen/p32.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Παρασκευή,https://glt.goarch.org/texts/Pen/p33.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΗΣ ΣΑΜΑΡΕΙΤΙΔΟΣ,Σάββατον,https://glt.goarch.org/texts/Pen/p34.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Κυριακή,https://glt.goarch.org/texts/Pen/p35.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Δευτέρα,https://glt.goarch.org/texts/Pen/p36.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Τρίτη,https://glt.goarch.org/texts/Pen/p37.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Τετάρτη,https://glt.goarch.org/texts/Pen/p38.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Πέμπτη,https://glt.goarch.org/texts/Pen/p39.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Παρασκευή,https://glt.goarch.org/texts/Pen/p40.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΟΥ ΤΥΦΛΟΥ,Σάββατον,https://glt.goarch.org/texts/Pen/p41.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Κυριακή,https://glt.goarch.org/texts/Pen/p42.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Δευτέρα,https://glt.goarch.org/texts/Pen/p43.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Τρίτη,https://glt.goarch.org/texts/Pen/p44.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Τετάρτη,https://glt.goarch.org/texts/Pen/p45.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Πέμπτη,https://glt.goarch.org/texts/Pen/p46.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Παρασκευή,https://glt.goarch.org/texts/Pen/p47.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΠΑΤΕΡΩΝ,Σάββατον,https://glt.goarch.org/texts/Pen/p48.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Κυριακή,https://glt.goarch.org/texts/Pen/p49.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Δευτέρα,https://glt.goarch.org/texts/Pen/p50.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Τρίτη,https://glt.goarch.org/texts/Pen/p51.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Τετάρτη,https://glt.goarch.org/texts/Pen/p52.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Πέμπτη,https://glt.goarch.org/texts/Pen/p53.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Παρασκευή,https://glt.goarch.org/texts/Pen/p54.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΠΕΝΤΗΚΟΣΤΗΣ,Σάββατον,https://glt.goarch.org/texts/Pen/p55.html
+ΠΕΝΤΗΚΟΣΤΑΡΙΟΝ,ΤΩΝ ΑΓΙΩΝ ΠΑΝΤΩΝ,Κυριακή,https://glt.goarch.org/texts/Pen/p56.html
+ΩΡΟΛΟΓΙΟΝ,ΜΕΣΟΝΥΚΤΙΚΟΝ,Καθημερινά,https://glt.goarch.org/texts/Oro/Meso.html
+ΩΡΟΛΟΓΙΟΝ,ΜΕΣΟΝΥΚΤΙΚΟΝ,Κυριακή,https://glt.goarch.org/texts/Oro/MesoSun.html
+ΩΡΟΛΟΓΙΟΝ,ΜΕΣΟΝΥΚΤΙΚΟΝ,Σάββατον,https://glt.goarch.org/texts/Oro/MesoSat.html
+ΩΡΟΛΟΓΙΟΝ,ΩΡΕΣ,Πρώτη,https://glt.goarch.org/texts/Oro/one.html
+ΩΡΟΛΟΓΙΟΝ,ΩΡΕΣ,Τρίτη,https://glt.goarch.org/texts/Oro/three.html
+ΩΡΟΛΟΓΙΟΝ,ΩΡΕΣ,Έκτη,https://glt.goarch.org/texts/Oro/six.html
+ΩΡΟΛΟΓΙΟΝ,ΩΡΕΣ,Ενάτη,https://glt.goarch.org/texts/Oro/nine.html
+ΩΡΟΛΟΓΙΟΝ,ΩΡΕΣ ΤΗΣ ΤΕΣΣΑΡΑΚΟΣΤΗΣ,Πρώτη,https://glt.goarch.org/texts/Oro/one40.html
+ΩΡΟΛΟΓΙΟΝ,ΩΡΕΣ ΤΗΣ ΤΕΣΣΑΡΑΚΟΣΤΗΣ,Τρίτη,https://glt.goarch.org/texts/Oro/three40.html
+ΩΡΟΛΟΓΙΟΝ,ΩΡΕΣ ΤΗΣ ΤΕΣΣΑΡΑΚΟΣΤΗΣ,Έκτη,https://glt.goarch.org/texts/Oro/six40.html
+ΩΡΟΛΟΓΙΟΝ,ΩΡΕΣ ΤΗΣ ΤΕΣΣΑΡΑΚΟΣΤΗΣ,Ενάτη,https://glt.goarch.org/texts/Oro/nine40.html
+ΩΡΟΛΟΓΙΟΝ,ΜΕΣΩΡΙΑ ΤΩΝ ΩΡΩΝ,Πρώτη,https://glt.goarch.org/texts/Oro/mesone.html
+ΩΡΟΛΟΓΙΟΝ,ΜΕΣΩΡΙΑ ΤΩΝ ΩΡΩΝ,Τρίτη,https://glt.goarch.org/texts/Oro/mesthree.html
+ΩΡΟΛΟΓΙΟΝ,ΜΕΣΩΡΙΑ ΤΩΝ ΩΡΩΝ,Έκτη,https://glt.goarch.org/texts/Oro/messix.html
+ΩΡΟΛΟΓΙΟΝ,ΜΕΣΩΡΙΑ ΤΩΝ ΩΡΩΝ,Ενάτη,https://glt.goarch.org/texts/Oro/mesnine.html
+ΩΡΟΛΟΓΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος α΄,https://glt.goarch.org/texts/Oro/Sun1.html
+ΩΡΟΛΟΓΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος β΄,https://glt.goarch.org/texts/Oro/Sun2.html
+ΩΡΟΛΟΓΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος γ΄,https://glt.goarch.org/texts/Oro/Sun3.html
+ΩΡΟΛΟΓΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος δ΄,https://glt.goarch.org/texts/Oro/Sun4.html
+ΩΡΟΛΟΓΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος πλ. α΄,https://glt.goarch.org/texts/Oro/Sun5.html
+ΩΡΟΛΟΓΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος πλ. β΄,https://glt.goarch.org/texts/Oro/Sun6.html
+ΩΡΟΛΟΓΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος βαρὺς,https://glt.goarch.org/texts/Oro/Sun7.html
+ΩΡΟΛΟΓΙΟΝ,"ΕΣΠΕΡΙΝΟΣ, ΟΡΘΡΟΣ καὶ ΛΕΙΤΟΥΡΓΙΑ μαζή",Ἦχος πλ. δ΄,https://glt.goarch.org/texts/Oro/Sun8.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Καθημερινά,https://glt.goarch.org/texts/Oro/Orthros.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Κυριακή,https://glt.goarch.org/texts/Oro/OrthrosSun.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Τεσσαρακοστή,https://glt.goarch.org/texts/Oro/Orthros40.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,ΤΥΠΙΚΩΝ,https://glt.goarch.org/texts/Oro/Typikon.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,ΑΚΟΛΟΥΘΙΑ ΤΗΣ ΘΕΙΑΣ ΜΕΤΑΛΗΨΕΩΣ,https://glt.goarch.org/texts/Oro/Communion.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Χρυσοστόμου Καθ' ημέραν,https://glt.goarch.org/texts/Oro/Daily_Liturgy.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Χρυσοστόμου Κυριακή,https://glt.goarch.org/texts/Oro/Sun_Liturgy.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Χρυσοστόμου Κυριακή μετά Διακόνου,https://glt.goarch.org/texts/Oro/Lit_with_Deacon.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Βασιλείου,https://glt.goarch.org/texts/Oro/Basil_Liturgy.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Προηγιασμένη,https://glt.goarch.org/texts/Oro/Pro.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Ιακώβου,https://glt.goarch.org/texts/Oro/StJames.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,ΕΥΧΑΡΙΣΤΙΑ ΜΕΤΑ ΤΗΝ ΘΕΙΑΝ ΜΕΤΑΛΗΨΙΝ,https://glt.goarch.org/texts/Oro/Thanks.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Ακάθιστος Ύμνος 1-4,https://glt.goarch.org/texts/Oro/Akathist1to4.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Ακάθιστος Ύμνος 5,https://glt.goarch.org/texts/Oro/Akathist5.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Στάσεις,https://glt.goarch.org/texts/Oro/Staseis.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Μικρή Παράκληση,https://glt.goarch.org/texts/Oro/paraklesis.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Μεγάλη Παράκληση,https://glt.goarch.org/texts/Oro/paraklesis_Great.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Μικρή Παράκληση μετά Ιερέως,https://glt.goarch.org/texts/Oro/paraklesis_priest.html
+ΩΡΟΛΟΓΙΟΝ,ΟΡΘΡΟΣ,Μεγάλη Παράκληση μετά Ιερέως,https://glt.goarch.org/texts/Oro/paraklesis_Greatp.html
+ΩΡΟΛΟΓΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,ΑΚΟΛΟΥΘΙΑ ΤΗΣ ΘΕΙΑΣ ΜΕΤΑΛΗΨΕΩΣ,https://glt.goarch.org/texts/Oro/Communion.html
+ΩΡΟΛΟΓΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Χρυσοστόμου Καθ' ημέραν,https://glt.goarch.org/texts/Oro/Daily_Liturgy.html
+ΩΡΟΛΟΓΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Χρυσοστόμου Κυριακή,https://glt.goarch.org/texts/Oro/Sun_Liturgy.html
+ΩΡΟΛΟΓΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Χρυσοστόμου Κυριακή μετά Διακόνου,https://glt.goarch.org/texts/Oro/Lit_with_Deacon.html
+ΩΡΟΛΟΓΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Βασιλείου,https://glt.goarch.org/texts/Oro/Basil_Liturgy.html
+ΩΡΟΛΟΓΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Προηγιασμένη,https://glt.goarch.org/texts/Oro/Pro.html
+ΩΡΟΛΟΓΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,Ιακώβου,https://glt.goarch.org/texts/Oro/StJames.html
+ΩΡΟΛΟΓΙΟΝ,ΛΕΙΤΟΥΡΓΙΕΣ,ΕΥΧΑΡΙΣΤΙΑ ΜΕΤΑ ΤΗΝ ΘΕΙΑΝ ΜΕΤΑΛΗΨΙΝ,https://glt.goarch.org/texts/Oro/Thanks.html
+ΩΡΟΛΟΓΙΟΝ,ΤΑ ΛΟΙΠΑ,Ακάθιστος Ύμνος 1-4,https://glt.goarch.org/texts/Oro/Akathist1to4.html
+ΩΡΟΛΟΓΙΟΝ,ΤΑ ΛΟΙΠΑ,Ακάθιστος Ύμνος 5,https://glt.goarch.org/texts/Oro/Akathist5.html
+ΩΡΟΛΟΓΙΟΝ,ΤΑ ΛΟΙΠΑ,Στάσεις,https://glt.goarch.org/texts/Oro/Staseis.html
+ΩΡΟΛΟΓΙΟΝ,ΤΑ ΛΟΙΠΑ,Μικρή Παράκληση,https://glt.goarch.org/texts/Oro/paraklesis.html
+ΩΡΟΛΟΓΙΟΝ,ΤΑ ΛΟΙΠΑ,Μεγάλη Παράκληση,https://glt.goarch.org/texts/Oro/paraklesis_Great.html
+ΩΡΟΛΟΓΙΟΝ,ΤΑ ΛΟΙΠΑ,Μικρή Παράκληση μετά Ιερέως,https://glt.goarch.org/texts/Oro/paraklesis_priest.html
+ΩΡΟΛΟΓΙΟΝ,ΤΑ ΛΟΙΠΑ,Μεγάλη Παράκληση μετά Ιερέως,https://glt.goarch.org/texts/Oro/paraklesis_Greatp.html
+ΕΥΧΟΛΟΓΙΟΝ,,Μικρός Αγιασμός,https://glt.goarch.org/texts/Euch/Agiasmos.html
+ΕΥΧΟΛΟΓΙΟΝ,,Βάπτιση,https://glt.goarch.org/texts/Euch/Baptism.html
+ΕΥΧΟΛΟΓΙΟΝ,,Γάμος,https://glt.goarch.org/texts/Euch/Wedding.html
+ΕΥΧΟΛΟΓΙΟΝ,,Ευχέλαιον,https://glt.goarch.org/texts/Euch/Uncion.html
+ΕΥΧΟΛΟΓΙΟΝ,,Τρισάγιον,https://glt.goarch.org/texts/Euch/Trisagion.html
+ΕΥΧΟΛΟΓΙΟΝ,,Κηδεία στα ελληνικά,https://glt.goarch.org/texts/Euch/Funeral.html
+ΕΥΧΟΛΟΓΙΟΝ,,Κηδεία,https://glt.goarch.org/texts/Euch/Funeral.rtf
