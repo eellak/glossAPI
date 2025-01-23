@@ -1,6 +1,11 @@
 import re
 import os
 
+file_stat_list = []
+
+def file_reset_list() :
+    return []
+
 def paragraph_maker(text,maxpadding = 2) :
     lines = text.splitlines()
     paragraphs = []
@@ -134,27 +139,51 @@ def remove_numbered_title(paragraphs,pattern) :
         newparagraphs.append(paragraph)
     return newparagraphs
 
-def remove_taged_paragraphs(paragraphs,tags,print = False) :
+def util_check_and_remove(paragraph,newparagraphs,tags,ending_tags,print) :
+    bibliography_flag = True
+    if ending_tags == () : ending_tags = ('##','[Out:')
+    else : ending_tags = ('[Out:',) + ending_tags
+    if paragraph.startswith(ending_tags) :
+        bibliography_flag = False
+        newparagraphs.append(paragraph)
+    elif print :
+        paragraph = '[Out:Paragraph is part of ' + tags[0] + ']' + paragraph
+        newparagraphs.append(paragraph)
+    return bibliography_flag,newparagraphs
+
+def util_skip_handler(counter,ending_tags,paragraph,flag) :
+    if flag == False : counter = counter - 1
+    elif paragraph.startswith(('##','[Out:')) : counter = counter - 1
+    if counter <= 0 : ending_tags = tuple()
+    return counter,ending_tags
+
+def util_stat_creator(tags) :
+    file_stat_list.append([tags[0],0])
+
+def util_stat_incrementor() :
+    file_stat_list[-1][-1] = file_stat_list[-1][-1] + 1
+
+def stat_assembly(text,paragraphs) :
+    file_stat_list.insert(0,['Total Chars',str(len(text))])
+    file_stat_list.insert(0,['Total lines',str(len(text.splitlines()))])
+    file_stat_list.insert(0,['Total Paragraphs',str(len(paragraphs))])
+
+def remove_taged_paragraphs(paragraphs,tags,ending_tags=tuple(),print = False,skip_paragraphs = 0 ) :
     newparagraphs = []
     bibliography_flag = False
+    util_stat_creator(tags)
     for paragraph in paragraphs :
-        if any(paragraph.startswith(tag) for tag in tags) :
+        if paragraph.startswith(tags) :
             bibliography_flag = True
+            util_stat_incrementor()
             if print :
-                paragraph = '[Out:Paragraph is' + tags[0] + ']' + paragraph
+                paragraph = '[Out:Paragraph is start of ' + tags[0] + ']' + paragraph
                 newparagraphs.append(paragraph)
-            continue
         elif bibliography_flag == True :
-            if paragraph.startswith(('##','[Out:')) and not any(paragraph.startswith(tag) for tag in tags) :
-                bibliography_flag = False
-                newparagraphs.append(paragraph)
-                continue
-            if print :
-                paragraph = '[Out:Paragraph is' + tags[0] + ']' + paragraph
-                newparagraphs.append(paragraph)
-                continue
-            else : continue
-        newparagraphs.append(paragraph)
+            bibliography_flag,newparagraphs = util_check_and_remove(paragraph,newparagraphs,tags,ending_tags,print)
+            if bibliography_flag == True : util_stat_incrementor()
+            skip_paragraphs,ending_tags = util_skip_handler(skip_paragraphs,ending_tags,paragraph,bibliography_flag)
+        else : newparagraphs.append(paragraph)
     return newparagraphs
 
 def remove_noise(paragraphs,pattern) :
