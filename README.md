@@ -62,8 +62,9 @@ Core works of Classical Greek literature, including philosophical, historical, a
 
 ### Πέργαμος (Πέργαμος)
 - [✓] Scraped
-- :hourglass: Downloading
-- [ ] Cleaned
+- [✓] Downloading
+- [✓] Preprocessed
+- [✓] Each article's sections categorized by type (introductory remarks, index etc.)
 - [ ] Uploaded with metadata
 
 Συλλογή κειμένων από την πλατφόρμα Πέργαμος. Collection of texts from the Pergamos' University theses archive.
