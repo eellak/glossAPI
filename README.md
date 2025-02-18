@@ -1,99 +1,117 @@
-Στόχος της [ΕΕΛΛΑΚ](https://eellak.gr/) είναι η ανάπτυξη ενός Ελληνικού μοντέλου τεχνητής νοημοσύνης(ΤΝ) ανοιχτού λογισμικού, που ο κώδικας του θα διατίθεται με την άδεια ανοιχτού λογισμικού [EUPL](https://eupl.eu/) και τα δεδομένα του με την άδεια [Creative Commons](https://creativecommons.org/share-your-work/cclicenses/), **1ος στόχος του glossAPI είναι η συγκέντρωση, επεξεργασία και συντήρηση αντιπροσωπευτικών συνόλων ελληνικών κειμένων** ώστε να μπορεί ένα μοντέλο ΤΝ να χειρίζεται σωστά την Ελληνική γλώσσα. 
+Στόχος της [ΕΕΛΛΑΚ](https://eellak.gr/) είναι η ανάπτυξη ενός Ελληνικού μοντέλου τεχνητής νοημοσύνης (ΤΝ) ανοιχτού λογισμικού, με κώδικα διαθέσιμο υπό την άδεια [EUPL](https://eupl.eu/) και δεδομένα υπό την άδεια [Creative Commons](https://creativecommons.org/share-your-work/cclicenses/). **Πρωταρχικός στόχος του glossAPI είναι η συγκέντρωση, επεξεργασία και συντήρηση αντιπροσωπευτικών συνόλων ελληνικών κειμένων**, ώστε ένα μοντέλο ΤΝ να χειρίζεται σωστά την Ελληνική γλώσσα.
 
-:rocket: **Δημιουργεία καθαρισμένων κειμενικών δεδομένων με χρήσιμα μεταδεδομένα**
+:rocket: **Δημιουργία καθαρισμένων κειμενικών δεδομένων με χρήσιμα μεταδεδομένα**
 
 ## Datasets
 
 ### 95Κ Δείγμα Ελληνικής (95K Greek Sample)
+
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/95k_deigma_ellinikis)
+- [✓] Uploaded with metadata  
+  (https://huggingface.co/datasets/glossAPI/95k_deigma_ellinikis)
 
-A diverse sample of 95,000 Greek texts, providing a broad representation of modern Greek language usage. Useful for general NLP tasks and language modeling.
+Ένα ποικίλο δείγμα 95.000 ελληνικών κειμένων που παρέχει μια ευρεία αναπαράσταση της σύγχρονης ελληνικής χρήσης – ιδανικό για γενικά NLP tasks και γλωσσική μοντελοποίηση.
 
 ### Σχολικά Βιβλία (School Books)
+
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/Sxolika_vivlia)
+- [✓] Uploaded with metadata  
+  (https://huggingface.co/datasets/glossAPI/Sxolika_vivlia)
 
-Collection of Greek school textbooks and educational materials. Great resource for educational NLP applications and studying formal Modern Greek.
+Συλλογή ελληνικών σχολικών βιβλίων και εκπαιδευτικού υλικού, χρήσιμη για εκπαιδευτικές εφαρμογές NLP και μελέτη της επίσημης μοντέρνας ελληνικής.
 
 ### Δημώδης Λογοτεχνία (Folk Literature)
+
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/dimodis_logotexnia)
+- [✓] Uploaded with metadata  
+  (https://huggingface.co/datasets/glossAPI/dimodis_logotexnia)
 
-Traditional Greek folk literature, including stories, songs, and poems. Valuable for cultural preservation and studying regional Greek variations.
+Παραδοσιακή λαϊκή λογοτεχνία, όπως ιστορίες, τραγούδια και ποιήματα – πολύτιμο για τη διατήρηση του πολιτισμού και τη μελέτη τοπικών παραλλαγών.
 
 ### Ελληνικά Κείμενα Project Gutenberg (Project Gutenberg Greek Texts)
+
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/Ellinika_Keimena_Project_Gutenberg)
+- [✓] Uploaded with metadata  
+  (https://huggingface.co/datasets/glossAPI/Ellinika_Keimena_Project_Gutenberg)
 
-Public domain Greek texts from Project Gutenberg, spanning various periods and genres. Excellent for literary analysis and historical language studies.
+Δημόσιοι κείμενοι από το Project Gutenberg που καλύπτουν διάφορες περιόδους και είδη, εξαιρετικοί για λογοτεχνική ανάλυση και ιστορικές μελέτες.
 
 ### 1000 Πρώτα Χρόνια Ελληνικής (First 1000 Years of Greek)
+
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/1000_prwta_xronia_ellhnikhs)
+- [✓] Uploaded with metadata  
+  (https://huggingface.co/datasets/glossAPI/1000_prwta_xronia_ellhnikhs)
 
-Texts covering the first millennium of written Greek, crucial for studying the evolution of the Greek language and historical linguistics.
+Κείμενα του πρώτου χιλιετού της ελληνικής γραφής, ουσιώδη για τη μελέτη της γλωσσικής εξέλιξης και της ιστορικής γλωσσολογίας.
 
 ### Κλασική Αρχαία Ελληνική Γραμματεία (Classical Ancient Greek Literature)
+
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/klasikh_arx_ell_grammateia)
+- [✓] Uploaded with metadata  
+  (https://huggingface.co/datasets/glossAPI/klasikh_arx_ell_grammateia)
 
-Core works of Classical Greek literature, including philosophical, historical, and dramatic texts. Essential for classical studies and ancient Greek NLP.
+Βασικά έργα της κλασικής αρχαίας ελληνικής λογοτεχνίας, περιλαμβάνοντας φιλοσοφικά, ιστορικά και δραματικά κείμενα – απαραίτητα για κλασικές σπουδές και NLP αρχαίας ελληνικής.
 
 ### Ελληνικά Κείμενα Wikisource (Wikisource Greek Texts)
+
 - [✓] Scraped
 - [✓] Downloaded
 - [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/Wikisource_Greek_texts)
+- [✓] Uploaded with metadata  
+  (https://huggingface.co/datasets/glossAPI/Wikisource_Greek_texts)
 
 ### :construction: Υπό επεξεργασία (Work in Progress)
 
-### Πέργαμος (Πέργαμος)
+### Πέργαμος (Pergamos)
+
 - [✓] Scraped
-- [✓] Downloading
+- [✓] Downloaded
 - [✓] Preprocessed
-- [✓] Each article's sections categorized by type (introductory remarks, index etc.)
+- [✓] Κάθε άρθρο κατηγοριοποιείται κατά τύπο  
+  (π.χ. εισαγωγικά, ευρετήριο κ.λπ.)
 - [ ] Uploaded with metadata
 
-Συλλογή κειμένων από την πλατφόρμα Πέργαμος. Collection of texts from the Pergamos' University theses archive.
+Συλλογή κειμένων από την πλατφόρμα Πέργαμος, περιλαμβάνοντας άρθρα από το αρχείο μεταπτυχιακών διατριβών.
 
 ### Κάλλιπος (Kallipos)
+
 - [✓] Scraped
 - [ ] Downloaded
 - [ ] Cleaned
 - [ ] Uploaded with metadata
 
-Ακαδημαϊκά συγγράμματα από την πλατφόρμα Κάλλιπος. Open source academic textbooks from Kallipos.
+Ακαδημαϊκά συγγράμματα από την πλατφόρμα Κάλλιπος – ανοιχτού κώδικα ακαδημαϊκά βιβλία.
 
 ### Έγγραφα ΕΕ (EU Documents)
+
 - [ ] Downloaded
 - [ ] Cleaned
 - [ ] Uploaded with metadata
 
-Επίσημα έγγραφα της Ευρωπαϊκής Ένωσης. Official documents of the European Union.
+Επίσημα έγγραφα της Ευρωπαϊκής Ένωσης.
 
 [γlo'sapi]
 
 ### glossAPI, το
 
-  Ένα έργο της ΕΕΛΛΑΚ στον χώρο των ψηφιακών ανθρωπιστικών επιστημών που αξιοποιεί ελεύθερα διαθέσιμες πηγές για τη συγκέντρωση ενός εκτενούς σώματος κειμένων υψηλής ποιότητας τα οποία παρέχονται με άδεια Creative Commons. Το glossAPI καλύπτει ένα ευρύ φάσμα θεματικών περιοχών, από την επιστήμη και τη λογοτεχνία έως τα νομικά κείμενα, με δεδομένα που υφίστανται επιμελή επεξεργασία και αποδελτίωση.
+Ένα έργο της ΕΕΛΛΑΚ στον χώρο των ψηφιακών ανθρωπιστικών επιστημών, που αξιοποιεί ελεύθερες πηγές για τη συγκέντρωση ενός εκτενούς σώματος ποιοτικών κειμένων με άδεια Creative Commons. Το glossAPI καλύπτει ένα ευρύ φάσμα θεματικών – από την επιστήμη και τη λογοτεχνία έως τα νομικά κείμενα – με επιμελή επεξεργασία και κατηγοριοποίηση δεδομένων.
 
-  Στόχος του glossAPI είναι να διευκολύνει την επεξεργασία κειμενικών δεδομένων και την εκπαίδευση σύγχρονων γλωσσικών μοντέλων. Όλα τα εργαλεία που αναπτύσσει διατίθενται ελεύθερα με άδεια EUPL μέσω του αποθετηρίου του στο Github.
+Ο στόχος του glossAPI είναι να διευκολύνει την επεξεργασία κειμενικών δεδομένων και την εκπαίδευση σύγχρονων γλωσσικών μοντέλων. Όλα τα εργαλεία του είναι διαθέσιμα υπό την άδεια EUPL μέσω του GitHub αποθετηρίου.
 
-  Το glossAPI συμβάλει στην ανάπτυξη των ελληνικών ανοιχτών κειμενικών δεδομένων, ενθαρρύνοντας ερευνητές και φοιτητές να χρησιμοποιήσουν τα εργαλεία που αναπτύχθηκαν, και να επεκτείνουν το κώδικα και τα δεδομένα προς κατευθύνσεις που τους ενδιαφέρουν.
+Το glossAPI συμβάλλει στην ανάπτυξη ελληνικών ανοιχτών κειμενικών δεδομένων, ενθαρρύνοντας ερευνητές και φοιτητές να αξιοποιήσουν και να επεκτείνουν τα εργαλεία και τα δεδομένα του.
 
-[ 1: greeklish < γλωσσάρι 2: αγγλ. gloss < μεσαιων. αγγλ. gloze < μεσαιων. λατ. glōsa < κλασ. λατ. glōssa < αρχ. γλῶσσα: "γλώσσα, λέξη" + αγγλ. API: Application Programming Interface ]
+[ 1: greeklish < γλωσσάρι | 2: αγγλ. gloss < μεσαιων. αγγλ. gloze < μεσαιων. λατ. glōsa < κλασ. λατ. glōssa < αρχ. γλῶσσα: "γλώσσα, λέξη" + αγγλ. API: Application Programming Interface ]
 
-Επικοινωνία/ contact at: glossapi.team@eellak.gr
+Επικοινωνία/Contact: glossapi.team@eellak.gr
