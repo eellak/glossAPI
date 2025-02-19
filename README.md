@@ -58,8 +58,6 @@ Core works of Classical Greek literature, including philosophical, historical, a
 - [✓] Cleaned
 - [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/Wikisource_Greek_texts)
 
-### :construction: Υπό επεξεργασία (Work in Progress)
-
 ### Πέργαμος (Πέργαμος)
 - [✓] Scraped
 - [✓] Downloading
@@ -68,6 +66,8 @@ Core works of Classical Greek literature, including philosophical, historical, a
 - [✓] Uploaded with metadata
 
 Συλλογή κειμένων από την πλατφόρμα Πέργαμος. Collection of texts from the Pergamos' University theses archive.
+
+### :construction: Υπό επεξεργασία (Work in Progress)
 
 ### Κάλλιπος (Kallipos)
 - [✓] Scraped
