@@ -71,7 +71,7 @@ Core works of Classical Greek literature, including philosophical, historical, a
 
 ### Κάλλιπος (Kallipos)
 - [✓] Scraped
-- [ ] Downloaded
+- [✓] Downloaded
 - [ ] Cleaned
 - [ ] Uploaded with metadata
 
