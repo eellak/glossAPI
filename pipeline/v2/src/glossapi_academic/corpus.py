@@ -98,6 +98,13 @@ class Corpus:
                 # Create a mapping from filename to document_type
                 if 'filename' in metadata_df.columns and 'document_type' in metadata_df.columns:
                     self.logger.info("Both 'filename' and 'document_type' columns found in metadata")
+                    
+                    # Check if filenames have .md extension
+                    sample_filenames = metadata_df['filename'].head(100).tolist()
+                    if any('.md' in str(f) for f in sample_filenames):
+                        self.logger.warning("Some filenames in metadata contain .md extension. This may cause matching issues if section filenames don't have extensions.")
+                        self.logger.warning("Consider removing .md extensions from metadata filenames for consistent matching.")
+                    
                     self.filename_to_doctype = dict(zip(
                         metadata_df['filename'], 
                         metadata_df['document_type']
@@ -245,39 +252,37 @@ class Corpus:
             parquet_file: Path to the Parquet file to update
         """
         if not self.filename_to_doctype:
-            self.logger.info("No document type information available. Skipping document type annotation.")
+            self.logger.warning("No document type information available. Skipping document type addition.")
             return
         
-        self.logger.info(f"Adding document_type to classified sections in {parquet_file}")
-        
-        try:
-            # Load the classified data
-            classified_df = pd.read_parquet(str(parquet_file))
-            
-            # Create a new column for document_type
-            classified_df['document_type'] = None
-            
-            # Update document_type based on filename
-            for filename, group_df in classified_df.groupby('filename'):
-                doc_type = self.filename_to_doctype.get(filename, None)
-                if doc_type:
-                    # Update document_type for all rows with this filename
-                    classified_df.loc[classified_df['filename'] == filename, 'document_type'] = doc_type
-            
-            # Save the updated classified data
-            classified_df.to_parquet(str(parquet_file))
-            
-            # Count document types for verification
-            doc_type_counts = classified_df['document_type'].value_counts(dropna=False)
-            self.logger.info("Document type distribution in classified sections:")
-            for doc_type, count in doc_type_counts.items():
-                if pd.notna(doc_type):
-                    self.logger.info(f"  {doc_type}: {count} sections")
-                else:
-                    self.logger.info(f"  None/Unknown: {count} sections")
+        if parquet_file.exists():
+            try:
+                # Read the parquet file
+                df = pd.read_parquet(parquet_file)
+                
+                # Add document_type based on filename
+                df['document_type'] = df['filename'].map(self.filename_to_doctype)
+                
+                # Check for missing document types
+                missing_count = df['document_type'].isna().sum()
+                if missing_count > 0:
+                    self.logger.warning(f"{missing_count} sections ({missing_count/len(df):.2%}) have no document type!")
+                    missing_filenames = df[df['document_type'].isna()]['filename'].unique()[:5]
+                    self.logger.warning(f"Sample filenames with missing document types: {missing_filenames}")
                     
-        except Exception as e:
-            self.logger.error(f"Error adding document types: {e}")
+                    # Check if the issue might be due to .md extension
+                    if any('.md' in str(f) for f in self.filename_to_doctype.keys()):
+                        self.logger.warning("Possible cause: Metadata filenames contain .md extension but sections filenames don't")
+                    elif any('.md' in str(f) for f in df['filename'].unique()[:100]):
+                        self.logger.warning("Possible cause: Sections filenames contain .md extension but metadata filenames don't")
+                
+                # Save the updated file
+                df.to_parquet(parquet_file, index=False)
+                self.logger.info(f"Added document types to {parquet_file}")
+            except Exception as e:
+                self.logger.error(f"Error adding document types: {e}")
+        else:
+            self.logger.warning(f"File not found: {parquet_file}")
     
     def process_all(self, input_format: str = "pdf", fully_annotate: bool = True) -> None:
         """
