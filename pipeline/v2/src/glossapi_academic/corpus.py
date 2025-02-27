@@ -19,7 +19,7 @@ class Corpus:
     Example:
         corpus = Corpus(input_dir="path/to/pdfs", output_dir="path/to/output")
         corpus.convert()  # Convert PDFs to markdown
-        corpus.extract()  # Extract sections from markdown files
+        corpus.section()  # Extract sections from markdown files
         corpus.annotate()  # Classify sections using ML
     """
     
@@ -51,7 +51,15 @@ class Corpus:
         # Store paths
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
-        self.model_path = Path(model_path) if model_path else None
+        
+        # Handle model path - if not provided, use default path in package
+        if model_path:
+            self.model_path = Path(model_path)
+        else:
+            # Use default model path in the package
+            package_dir = Path(__file__).parent
+            self.model_path = package_dir / "models" / "academic_classifier.joblib"
+            
         self.metadata_path = Path(metadata_path) if metadata_path else None
         
         # Create output directory if it doesn't exist
@@ -139,7 +147,7 @@ class Corpus:
         self.converter.convert_path(input_files, self.markdown_dir)
         self.logger.info(f"Conversion complete. Markdown files saved to {self.markdown_dir}")
     
-    def extract(self) -> None:
+    def section(self) -> None:
         """
         Extract sections from markdown files and save to Parquet format.
         """
@@ -159,12 +167,24 @@ class Corpus:
         
         self.logger.info(f"Section extraction complete. Parquet file saved to {self.sections_parquet}")
     
-    def annotate(self, fully_annotate: bool = True) -> None:
+    # Keep extract method for backward compatibility
+    def extract(self) -> None:
+        """
+        Extract sections from markdown files (alias for section()).
+        
+        This method is kept for backward compatibility and will be deprecated in future versions.
+        Please use section() instead.
+        """
+        self.logger.warning("extract() is deprecated and will be removed in a future version. Use section() instead.")
+        self.section()
+    
+    def annotate(self, fully_annotate: bool = True, save_model: bool = True) -> None:
         """
         Classify sections using machine learning.
         
         Args:
             fully_annotate: Whether to perform full annotation after classification (default: True)
+            save_model: Whether to save the trained model for future use (default: True)
         """
         self.logger.info("Classifying sections...")
         
@@ -177,7 +197,7 @@ class Corpus:
         self.classifier.build_pipeline()
         
         # Load pre-trained model if available
-        if self.model_path and self.model_path.exists():
+        if self.model_path.exists():
             self.logger.info(f"Loading pre-trained model from {self.model_path}")
             self.classifier.load_model(str(self.model_path))
             
@@ -189,10 +209,19 @@ class Corpus:
         else:
             # Train a new model
             self.logger.info("Training a new classifier model")
+            
+            # Create model directory if it doesn't exist
+            os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+            
+            # Train and save the model
             self.classifier.train_model(
                 input_parquet=str(self.sections_parquet),
-                output_parquet=str(self.classified_parquet)
+                output_parquet=str(self.classified_parquet),
+                model_save_path=str(self.model_path) if save_model else None
             )
+            
+            if save_model:
+                self.logger.info(f"Model saved to {self.model_path}")
         
         # Perform full annotation if requested
         if fully_annotate:
@@ -259,7 +288,7 @@ class Corpus:
             fully_annotate: Whether to perform full annotation after classification (default: True)
         """
         self.convert(input_format=input_format)
-        self.extract()
+        self.section()
         self.annotate(fully_annotate=fully_annotate)
         
         self.logger.info("Complete processing pipeline finished successfully.")
