@@ -30,14 +30,14 @@ from collections import defaultdict
 import json
 
 
-class GlossConvert:
+class GlossExtract:
     """
-    A class for converting PDF documents to Markdown using Docling, and for
+    A class for extracting content from PDF documents to Markdown using Docling, and for
     clustering documents based on their quality (good vs. bad extractions).
     """
     
     def __init__(self):
-        """Initialize the GlossConvert class with default settings."""
+        """Initialize the GlossExtract class with default settings."""
         self.pipeline_options = PdfPipelineOptions()
         self.pipeline_options.do_ocr = False
         self.pipeline_options.do_table_structure = True

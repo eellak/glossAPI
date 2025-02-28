@@ -7,9 +7,9 @@ import pyarrow.parquet as pq
 from .academic_section import AcademicSection
 
 
-class GlossExtraction:
+class GlossSection:
     """
-    A class for extracting, processing, and exporting academic document sections to Parquet format.
+    A class for sectioning, processing, and exporting academic document sections to Parquet format.
     Handles parsing markdown documents, identifying structural elements like headers, tables, 
     and bullet lists, and processes them for further analysis.
     """

@@ -16,9 +16,9 @@ from sklearn.metrics import confusion_matrix, classification_report
 from sklearn.preprocessing import FunctionTransformer
 
 
-class GlossAcademicClassifier:
+class GlossSectionClassifier:
     """
-    A classifier for academic document sections that uses machine learning to categorize
+    A classifier for document sections that uses machine learning to categorize
     sections into different types (e.g., introduction, index, bibliography, etc.)
     
     The class provides functionality to train a classifier model, process predictions
@@ -41,8 +41,12 @@ class GlossAcademicClassifier:
         
         Args:
             model_file (str): Path to the joblib file containing the saved model
+            
+        Returns:
+            The loaded model
         """
         self.loaded_model = joblib.load(model_file)
+        return self.loaded_model
 
     # -----------------------------------------------------------------------------
     # Build the Training Pipeline
@@ -97,8 +101,27 @@ class GlossAcademicClassifier:
         Uses a fixed path to training data, processes it, and trains an SVM classifier.
         """
         train_csv_file = "/mnt/data/section_classifier/training_dataset_updated_06_02.csv"
-        self.logger.info(f"Loading training data from {train_csv_file}...")
-        df_train = pd.read_csv(train_csv_file)
+        model_file = "/mnt/data/glossAPI/pipeline/v2/models/section_classifier.joblib"
+        self.logger.info(f"Training model internally using {train_csv_file}...")
+        return self.train_from_csv(train_csv_file, model_file)
+
+    # -----------------------------------------------------------------------------
+    # Training Function with CSV input
+    # -----------------------------------------------------------------------------
+    def train_from_csv(self, csv_file, output_model_file=None):
+        """
+        Train the classification model using a CSV dataset and optionally save it.
+        
+        Args:
+            csv_file (str): Path to the CSV file containing training data
+            output_model_file (str, optional): Path where to save the trained model
+                If None, the model is trained but not saved
+                
+        Returns:
+            sklearn.pipeline.Pipeline: The trained classifier pipeline
+        """
+        self.logger.info(f"Loading training data from {csv_file}...")
+        df_train = pd.read_csv(csv_file)
         self.logger.info(f"Loaded training data with {len(df_train)} rows.")
         
         # Preprocess training data
@@ -134,27 +157,15 @@ class GlossAcademicClassifier:
         report = classification_report(y_val, y_val_pred)
         self.logger.info("Confusion Matrix:\n" + str(cm))
         self.logger.info("Classification Report:\n" + report)
-
-    def train_model(self, input_parquet, output_parquet):
-        """
-        Train the model and process predictions on the input Parquet file.
         
-        Args:
-            input_parquet (str): Path to the input Parquet file with sections to classify
-            output_parquet (str): Path where the classified Parquet file will be saved
-        """
-        overall_start = time.time()
+        # Save the model if requested
+        if output_model_file:
+            self.logger.info(f"Saving model to {output_model_file}...")
+            os.makedirs(os.path.dirname(os.path.abspath(output_model_file)), exist_ok=True)
+            joblib.dump(self.clf_pipeline, output_model_file)
+            self.logger.info(f"Model saved successfully to {output_model_file}")
         
-        # 1. Train the model using the training dataset.
-        self._train_model_internal()
-        
-        # 2. Process predictions on the Parquet file.
-        #    The output file will have a "predicted_section" column annotated by both
-        #    methods (table detection and SVM), following the threshold logic.
-        self._process_predictions_with_dask(input_parquet, output_parquet, pretrained_model=False)
-        
-        overall_end = time.time()
-        self.logger.info(f"Total elapsed time: {overall_end - overall_start:.2f} seconds.")
+        return self.clf_pipeline
 
     # -----------------------------------------------------------------------------
     # Adjust Predictions with Combined Logic
@@ -524,3 +535,24 @@ class GlossAcademicClassifier:
         
         self.logger.info("Processing complete.")
         self.logger.info(f"Files missing one or both boundaries (π and β): {files_missing_boundaries}")
+
+    def train_model(self, input_parquet, output_parquet):
+        """
+        Train the model and process predictions on the input Parquet file.
+        
+        Args:
+            input_parquet (str): Path to the input Parquet file with sections to classify
+            output_parquet (str): Path where the classified Parquet file will be saved
+        """
+        overall_start = time.time()
+        
+        # 1. Train the model using the training dataset.
+        self._train_model_internal()
+        
+        # 2. Process predictions on the Parquet file.
+        #    The output file will have a "predicted_section" column annotated by both
+        #    methods (table detection and SVM), following the threshold logic.
+        self._process_predictions_with_dask(input_parquet, output_parquet, pretrained_model=False)
+        
+        overall_end = time.time()
+        self.logger.info(f"Total elapsed time: {overall_end - overall_start:.2f} seconds.")

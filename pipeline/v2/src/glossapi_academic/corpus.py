@@ -5,21 +5,21 @@ import pandas as pd
 import random
 from typing import Dict, Optional, Union, List
 
-from .gloss_convert import GlossConvert
-from .gloss_extraction import GlossExtraction
-from .gloss_academic_classifier import GlossAcademicClassifier
+from .gloss_extract import GlossExtract
+from .gloss_section import GlossSection
+from .gloss_section_classifier import GlossSectionClassifier
 
 class Corpus:
     """
     A high-level wrapper for the GlossAPI academic document processing pipeline.
     
-    This class provides a unified interface to convert PDFs to markdown,
-    extract sections, and classify them using machine learning.
+    This class provides a unified interface to extract content from PDFs to markdown,
+    section them, and classify them using machine learning.
     
     Example:
         corpus = Corpus(input_dir="path/to/pdfs", output_dir="path/to/output")
-        corpus.convert()  # Convert PDFs to markdown
-        corpus.extract()  # Extract sections from markdown files
+        corpus.convert()  # Extract content from PDFs to markdown
+        corpus.extract()  # Section content from markdown files
         corpus.annotate()  # Classify sections using ML
     """
     
@@ -58,9 +58,9 @@ class Corpus:
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Initialize component classes
-        self.converter = GlossConvert()
-        self.extractor = GlossExtraction()
-        self.classifier = GlossAcademicClassifier()
+        self.converter = GlossExtract()
+        self.extractor = GlossSection()
+        self.classifier = GlossSectionClassifier()
         
         # Create necessary directories
         self.markdown_dir = self.output_dir / "markdown"
@@ -99,14 +99,14 @@ class Corpus:
         accel_type: str = "Auto"
     ) -> None:
         """
-        Convert input files to markdown format.
+        Extract content from input files to markdown format.
         
         Args:
             input_format: Input format (default: "pdf")
             num_threads: Number of threads for processing (default: 4)
             accel_type: Acceleration type ("Auto", "CPU", "CUDA", "MPS") (default: "Auto")
         """
-        self.logger.info(f"Converting {input_format} files to markdown...")
+        self.logger.info(f"Extracting content from {input_format} files to markdown...")
         
         # Prepare converter
         self.converter.enable_accel(threads=num_threads, type=accel_type)
@@ -133,9 +133,9 @@ class Corpus:
     
     def extract(self) -> None:
         """
-        Extract sections from markdown files and save to Parquet format.
+        Section content from markdown files and save to Parquet format.
         """
-        self.logger.info("Extracting sections from markdown files...")
+        self.logger.info("Sectioning content from markdown files...")
         
         # Create output directory
         os.makedirs(self.sections_dir, exist_ok=True)
