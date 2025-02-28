@@ -28,6 +28,7 @@ from sklearn.decomposition import PCA
 import shutil
 from collections import defaultdict
 import json
+import joblib
 
 
 class GlossExtract:
@@ -232,7 +233,7 @@ class GlossExtract:
                 trigrams.append(trigram)
         return trigrams
     
-    def split_bad(self, input_folder, output_folder):
+    def split_bad(self, input_folder, output_folder,model_file='kmeans_weights.joblib'):
         """
         Processes all Markdown files in input_folder:
           - Computes a trigram representation and clusters them.
@@ -279,7 +280,7 @@ class GlossExtract:
 
         print("\nPerforming clustering...")
         n_clusters = 2
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        kmeans = joblib.load(model_file)
         labels = np.array(list(tqdm(
             kmeans.fit_predict(X),
             desc="Clustering documents",
