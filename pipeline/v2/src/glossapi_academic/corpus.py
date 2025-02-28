@@ -6,7 +6,7 @@ import random
 from typing import Dict, Optional, Union, List
 
 from .gloss_extract import GlossExtract
-from .gloss_extraction import GlossExtraction
+from .gloss_section import GlossSection
 from .gloss_academic_classifier import GlossAcademicClassifier
 
 class Corpus:
@@ -67,7 +67,7 @@ class Corpus:
         
         # Initialize component classes
         self.converter = GlossExtract()
-        self.extractor = GlossExtraction()
+        self.extractor = GlossSection()
         self.classifier = GlossAcademicClassifier()
         
         # Create necessary directories
