@@ -5,7 +5,7 @@ import pandas as pd
 import random
 from typing import Dict, Optional, Union, List
 
-from .gloss_convert import GlossConvert
+from .gloss_extract import GlossExtract
 from .gloss_extraction import GlossExtraction
 from .gloss_academic_classifier import GlossAcademicClassifier
 
@@ -13,12 +13,12 @@ class Corpus:
     """
     A high-level wrapper for the GlossAPI academic document processing pipeline.
     
-    This class provides a unified interface to convert PDFs to markdown,
+    This class provides a unified interface to extract PDFs to markdown,
     extract sections, and classify them using machine learning.
     
     Example:
         corpus = Corpus(input_dir="path/to/pdfs", output_dir="path/to/output")
-        corpus.convert()  # Convert PDFs to markdown
+        corpus.extract()  # Extract PDFs to markdown
         corpus.section()  # Extract sections from markdown files
         corpus.annotate()  # Classify sections using ML
     """
@@ -66,7 +66,7 @@ class Corpus:
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Initialize component classes
-        self.converter = GlossConvert()
+        self.converter = GlossExtract()
         self.extractor = GlossExtraction()
         self.classifier = GlossAcademicClassifier()
         
@@ -115,23 +115,23 @@ class Corpus:
             except Exception as e:
                 self.logger.error(f"Error loading metadata: {e}")
     
-    def convert(
+    def extract(
         self, 
         input_format: str = "pdf", 
         num_threads: int = 4, 
         accel_type: str = "Auto"
     ) -> None:
         """
-        Convert input files to markdown format.
+        Extract input files to markdown format.
         
         Args:
             input_format: Input format (default: "pdf")
             num_threads: Number of threads for processing (default: 4)
             accel_type: Acceleration type ("Auto", "CPU", "CUDA", "MPS") (default: "Auto")
         """
-        self.logger.info(f"Converting {input_format} files to markdown...")
+        self.logger.info(f"Extracting {input_format} files to markdown...")
         
-        # Prepare converter
+        # Prepare extractor
         self.converter.enable_accel(threads=num_threads, type=accel_type)
         self.converter.create_converter()
         
@@ -148,11 +148,18 @@ class Corpus:
             self.logger.warning(f"No {input_format} files found in {self.input_dir}")
             return
         
-        self.logger.info(f"Found {len(input_files)} {input_format} files to convert")
+        self.logger.info(f"Found {len(input_files)} {input_format} files to extract")
         
-        # Convert files
-        self.converter.convert_path(input_files, self.markdown_dir)
-        self.logger.info(f"Conversion complete. Markdown files saved to {self.markdown_dir}")
+        # Process all PDF files
+        self.logger.info(f"Processing {len(input_files)} {input_format.upper()} files...")
+        
+        # Extract PDFs to markdown
+        os.makedirs(self.markdown_dir, exist_ok=True)
+        
+        # Use multiple threads for extraction
+        self.converter.extract_path(input_files, self.markdown_dir)
+        
+        self.logger.info(f"Extraction complete. Markdown files saved to {self.markdown_dir}")
     
     def section(self) -> None:
         """
@@ -175,14 +182,14 @@ class Corpus:
         self.logger.info(f"Section extraction complete. Parquet file saved to {self.sections_parquet}")
     
     # Keep extract method for backward compatibility
-    def extract(self) -> None:
+    def convert(self) -> None:
         """
         Extract sections from markdown files (alias for section()).
         
         This method is kept for backward compatibility and will be deprecated in future versions.
         Please use section() instead.
         """
-        self.logger.warning("extract() is deprecated and will be removed in a future version. Use section() instead.")
+        self.logger.warning("convert() is deprecated and will be removed in a future version. Use section() instead.")
         self.section()
     
     def annotate(self, fully_annotate: bool = True, save_model: bool = True) -> None:
@@ -286,13 +293,13 @@ class Corpus:
     
     def process_all(self, input_format: str = "pdf", fully_annotate: bool = True) -> None:
         """
-        Run the complete processing pipeline: convert, extract, and annotate.
+        Run the complete processing pipeline: extract, section, and annotate.
         
         Args:
             input_format: Input format (default: "pdf")
             fully_annotate: Whether to perform full annotation after classification (default: True)
         """
-        self.convert(input_format=input_format)
+        self.extract(input_format=input_format)
         self.section()
         self.annotate(fully_annotate=fully_annotate)
         
