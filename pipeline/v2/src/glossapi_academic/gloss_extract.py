@@ -233,6 +233,62 @@ class GlossExtract:
                 trigrams.append(trigram)
         return trigrams
     
+    def training(self, input_folder,model_path='kmeans_weights.joblib'):
+        """
+        Processes all Markdown files in input_folder:
+          - Computes a trigram representation and clusters them.
+          - Creates 'good' and 'bad' subdirectories in output_folder.
+          - Copies files to these folders according to cluster labels.
+        """
+        print("Starting document analysis...")
+
+        # Get all files from the input folder
+        all_files = self._get_all_files([input_folder])
+        print(f"Found {len(all_files)} files to process")
+
+        # Process files in parallel
+        n_cores = max(1, cpu_count() - 1)
+        print(f"Using {n_cores} CPU cores for parallel processing")
+        documents = []
+        filenames = []
+        folder_sources = []
+        with Pool(n_cores) as pool:
+            results = list(tqdm(
+                pool.imap(self._process_file, all_files),
+                total=len(all_files),
+                desc="Processing files"
+            ))
+
+        # Filter out None results and unpack
+        for result in results:
+            if result is not None:
+                filepath, text, folder = result
+                documents.append(text)
+                filenames.append(os.path.basename(filepath))
+                folder_sources.append(folder)
+
+        print(f"\nSuccessfully processed {len(documents)} documents")
+
+        print("\nCreating trigram representation...")
+        vectorizer = TfidfVectorizer(
+            analyzer=self._custom_tokenizer,
+            lowercase=False,
+            max_features=10000
+        )
+        X = vectorizer.fit_transform(tqdm(documents, desc="Vectorizing documents", unit="doc"))
+        print(f"Extracted trigram feature matrix of shape: {X.shape}")
+
+        print("\nPerforming clustering...")
+        n_clusters = 2
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        labels = np.array(list(tqdm(
+            kmeans.fit_predict(X),
+            desc="Clustering documents",
+            total=len(documents),
+            unit="doc"
+        )))
+        joblib.dump(kmeans,model_path)
+    
     def split_bad(self, input_folder, output_folder,model_file='kmeans_weights.joblib'):
         """
         Processes all Markdown files in input_folder:
