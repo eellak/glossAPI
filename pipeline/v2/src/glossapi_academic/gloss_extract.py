@@ -32,7 +32,7 @@ import json
 
 class GlossExtract:
     """
-    A class for extracting PDF documents to Markdown using Docling, and for
+    A class for extracting content from PDF documents to Markdown using Docling, and for
     clustering documents based on their quality (good vs. bad extractions).
     """
     
@@ -103,13 +103,13 @@ class GlossExtract:
             }
         )
     
-    def extract_path(self, input_doc_paths, output_dir):
+    def convert_path(self, input_doc_paths, output_dir):
         """
-        Extract all PDF documents in the input paths to Markdown.
+        Convert all PDF documents in the input paths to Markdown.
         
         Args:
             input_doc_paths (List[Path]): List of paths to PDF documents
-            output_dir (Path): Directory to save the extracted Markdown files
+            output_dir (Path): Directory to save the converted Markdown files
         """
         start_time = time.time()
 
@@ -122,11 +122,11 @@ class GlossExtract:
         )
         end_time = time.time() - start_time
 
-        self._log.info(f"Document extraction complete in {end_time:.2f} seconds.")
+        self._log.info(f"Document conversion complete in {end_time:.2f} seconds.")
 
         if failure_count > 0:
-            self._log.warning(f"Failed to extract {failure_count} out of {len(input_doc_paths)} documents.")
-            # Don't raise an exception, just continue with the successfully extracted files
+            self._log.warning(f"Failed to convert {failure_count} out of {len(input_doc_paths)} documents.")
+            # Don't raise an exception, just continue with the successfully converted files
         
     def _fix_greek_text(self, text):
         """Fix Unicode issues in text, particularly for Greek characters."""
@@ -134,7 +134,7 @@ class GlossExtract:
 
     def _export_documents(self, conv_results: Iterable[ConversionResult], output_dir: Path):
         """
-        Export extracted documents to Markdown files.
+        Export converted documents to Markdown files.
         
         Args:
             conv_results: Iterable of conversion results
@@ -164,13 +164,13 @@ class GlossExtract:
 
             elif conv_res.status == ConversionStatus.PARTIAL_SUCCESS:
                 self._log.info(
-                    f"Document {conv_res.input.file} was partially extracted with the following errors:"
+                    f"Document {conv_res.input.file} was partially converted with the following errors:"
                 )
                 for item in conv_res.errors:
                     self._log.info(f"\t{item.error_message}")
                 partial_success_count += 1
             else:
-                self._log.info(f"Document {conv_res.input.file} failed to extract.")
+                self._log.info(f"Document {conv_res.input.file} failed to convert.")
                 failure_count += 1
         return success_count, partial_success_count, failure_count
     

@@ -188,16 +188,7 @@ class GlossSection:
         """Check if line is a markdown header (#...)."""
         return line.strip().startswith('#')
 
-    def _parse_section_level(self, line: str) -> Tuple[int, str]:
-        """
-        Parse a markdown header line to determine its level and title.
-        
-        Args:
-            line: A line of text, potentially a markdown header
-            
-        Returns:
-            Tuple of (level, title) where level is the header level (1-6) or 0 if not a header
-        """
+    def _extract_section_level(self, line: str) -> Tuple[int, str]:
         match = re.match(r'^(#+)\s*(.+)$', line.strip())
         if match:
             level = len(match.group(1)) - 1  # 0-based
@@ -210,8 +201,8 @@ class GlossSection:
     ###############################################################################
     def _process_academic_text_with_positions(self, lines: List[str]) -> AcademicSection:
         """
-        Process academic text into a hierarchical section structure.
-        Stores start_line/end_line for each section and detects bullet lines.
+        Similar to your original 'process_academic_text', but now we store
+        start_line/end_line for each section and we detect bullet lines.
         """
         root = AcademicSection(level=0, title="", start_line=0)
         section_stack = [root]
@@ -232,7 +223,7 @@ class GlossSection:
                     section_stack[-1].content.append(" ".join(current_content))
                     current_content = []
                 
-                level, title = self._parse_section_level(raw_line)
+                level, title = self._extract_section_level(raw_line)
                 
                 # pop up if needed
                 while len(section_stack) > 1 and section_stack[-1].level >= level:
