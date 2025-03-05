@@ -14,6 +14,7 @@ from sklearn.svm import LinearSVC
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
 from sklearn.preprocessing import FunctionTransformer
+from typing import Dict
 
 
 # Define the combine_text function outside of the class for compatibility
@@ -69,26 +70,13 @@ class GlossSectionClassifier:
         
         Args:
             model_file (str, optional): Path to the joblib file containing the saved model.
-                                       If None, loads the default model from the package.
+                                       If None, fails with an appropriate error.
             
         Returns:
             The loaded model
         """
         if model_file is None:
-            try:
-                # First, try importlib.resources (modern approach)
-                try:
-                    from importlib.resources import files
-                    model_path = files('glossapi').joinpath('models/section_classifier.joblib')
-                    model_file = str(model_path)
-                except (ImportError, ModuleNotFoundError):
-                    # Fall back to pkg_resources for older Python versions
-                    import pkg_resources
-                    model_file = pkg_resources.resource_filename('glossapi', 'models/section_classifier.joblib')
-            except Exception as e:
-                # Log the error and raise it
-                self.logger.error(f"Failed to locate the default model: {str(e)}")
-                raise FileNotFoundError(f"Could not find the default model: {str(e)}")
+            raise ValueError("Model file path is required. Please specify a valid model path.")
                 
         self.logger.info(f"Loading model from: {model_file}")
         try:
@@ -126,21 +114,6 @@ class GlossSectionClassifier:
             ('preprocessor', self.preprocessor),
             ('classifier', LinearSVC(class_weight='balanced', max_iter=10000))
         ])
-
-    # -----------------------------------------------------------------------------
-    # Training Function
-    # -----------------------------------------------------------------------------
-    def _train_model_internal(self):
-        """
-        Internal function to train the classification model using a predefined dataset.
-        
-        Uses a fixed path to training data, processes it, and trains an SVM classifier.
-        """
-        train_csv_file = "/mnt/data/section_classifier/training_dataset_updated_06_02.csv"
-        # Keep original path for training
-        model_file = "/mnt/data/glossAPI/pipeline/v2/models/section_classifier.joblib"
-        self.logger.info(f"Training model internally using {train_csv_file}...")
-        return self.train_from_csv(train_csv_file, model_file)
 
     # -----------------------------------------------------------------------------
     # Training Function with CSV input
@@ -258,26 +231,40 @@ class GlossSectionClassifier:
     # -----------------------------------------------------------------------------
     # Process Predictions Using Dask with Progress Bar and Checkpointing
     # -----------------------------------------------------------------------------
-    def _process_predictions_with_dask(self, input_parquet, output_parquet, pretrained_model=True):
+    def _process_predictions_with_dask(self, input_parquet, output_parquet, model_path=None, pretrained_model=True, n_cpus=4):
         """
         Process predictions on the input Parquet file using Dask for parallel processing.
         
         Args:
             input_parquet (str): Path to the input Parquet file with sections to classify
             output_parquet (str): Path where the classified Parquet file will be saved
+            model_path (str, optional): Path to the model file to load
             pretrained_model (bool): If True, use the loaded model; otherwise, use the trained model
+            n_cpus (int, optional): Number of CPU cores to use for parallel processing. Default is 4.
         """
         if pretrained_model:
             # Ensure the model is loaded
-            if self.loaded_model is None:
+            if model_path is not None:
+                self.logger.info(f"Loading model from specified path: {model_path}")
+                self.loaded_model = self.load_model(model_path)
+            elif self.loaded_model is None:
+                self.logger.info("Loading default model")
                 self.load_model()  # Load default model
             self.clf_pipeline = self.loaded_model
             
-        # Read required columns from the input Parquet file.
-        needed_columns = ['id', 'row_id', 'filename', 'has_table', 'has_list', 'header', 
-                        'place', 'section', 'label', 'section_propo', 'section_length']
-        self.logger.info(f"Reading data from Parquet file: {input_parquet} (columns: {needed_columns})")
-        ddf = dd.read_parquet(input_parquet, columns=needed_columns)
+        # Read all columns from the input Parquet file to preserve them
+        self.logger.info(f"Reading data from Parquet file: {input_parquet}")
+        ddf = dd.read_parquet(input_parquet)
+        
+        # Get list of all columns to preserve them
+        all_columns = ddf.columns.tolist()
+        
+        # Verify required columns exist
+        required_columns = ['id', 'header', 'section', 'has_table', 'has_list']
+        missing_columns = [col for col in required_columns if col not in all_columns]
+        if missing_columns:
+            self.logger.error(f"Missing required columns: {missing_columns}")
+            raise ValueError(f"Input parquet file missing required columns: {missing_columns}")
         
         # Preprocess key columns
         ddf['header'] = ddf['header'].fillna('')
@@ -310,7 +297,10 @@ class GlossSectionClassifier:
             self.logger.info("No prior progress found; processing all rows.")
         
         # (Optional) Repartition to a moderate number of partitions
-        ddf = ddf.repartition(npartitions=20)
+        # Use n_cpus to determine the number of partitions (5 partitions per CPU)
+        npartitions = max(5 * n_cpus, 1)  # Ensure at least 1 partition
+        self.logger.info(f"Repartitioning data into {npartitions} partitions based on {n_cpus} CPU cores")
+        ddf = ddf.repartition(npartitions=npartitions)
         ddf = ddf.persist()  # Cache in memory to avoid repeated computations
         
         # Create metadata that includes the new column "predicted_section"
@@ -342,6 +332,16 @@ class GlossSectionClassifier:
             self.logger.info("Merging new predictions with existing progress...")
             df_existing = dd.read_parquet(output_parquet).compute()
             df_new = dd.read_parquet(temp_output).compute()
+            
+            # Ensure both dataframes have the same columns for clean merging
+            missing_cols_new = [c for c in df_existing.columns if c not in df_new.columns]
+            for col in missing_cols_new:
+                df_new[col] = None if df_existing[col].dtype == 'object' else np.nan
+                
+            missing_cols_existing = [c for c in df_new.columns if c not in df_existing.columns]
+            for col in missing_cols_existing:
+                df_existing[col] = None if df_new[col].dtype == 'object' else np.nan
+            
             df_final = pd.concat([df_existing, df_new], ignore_index=True)
         else:
             df_final = dd.read_parquet(temp_output).compute()
@@ -506,93 +506,211 @@ class GlossSectionClassifier:
 
         return 0, numbers
 
-    def fully_annotate(self, input_parquet: str, output_parquet: str) -> None:
+    def fully_annotate(self, input_parquet: str, output_parquet: str, document_types: Dict[str, str] = None, annotation_type: str = "auto") -> None:
         """
-        Fully annotate sections in a parquet file based on π and β boundaries.
+        Fully annotate sections in a parquet file based on document type.
+        
+        This is a dispatcher method that delegates to the appropriate specialized annotation 
+        method based on document_type or explicit annotation_type.
         
         Args:
             input_parquet: Path to input parquet file with predicted sections
             output_parquet: Path to save fully annotated parquet file
+            document_types: Dict mapping filename to document_type (optional)
+            annotation_type: Annotation method to use ('text', 'chapter', or 'auto')
+                            - 'text': Use fully_annotate_text for all documents
+                            - 'chapter': Use fully_annotate_chapter for all documents
+                            - 'auto': Determine method based on document_type
         """
         self.logger.info(f"Reading parquet file from {input_parquet}...")
-        df = pd.read_parquet(input_parquet, columns=[
-            'id', 'row_id', 'filename', 'has_table', 'has_list', 
-            'header', 'place', 'section', 'predicted_section'
-        ])
+        # Read all columns to ensure we preserve everything
+        df = pd.read_parquet(input_parquet)
         
-        files_missing_boundaries = 0  # Count files without both a π and a β boundary
-        updated_groups = []  # To collect processed groups
+        # If document_types are provided and document_type column doesn't exist yet, add it
+        if document_types and 'document_type' not in df.columns:
+            df['document_type'] = df['filename'].map(document_types)
         
-        self.logger.info("Processing each file group...")
-        for filename, group in df.groupby('filename'):
-            # Sort sections by id (which reflects absolute order)
-            group = group.sort_values('id').copy()
+        # Determine annotation type for each document
+        if annotation_type == "text":
+            # Use text annotation for all documents
+            df_updated = self.fully_annotate_text(df)
+        elif annotation_type == "chapter":
+            # Use chapter annotation for all documents
+            df_updated = self.fully_annotate_chapter(df)
+        else:  # annotation_type == "auto"
+            # Group by filename and process each document according to its type
+            updated_groups = []
             
-            # Check if both boundary labels are present
-            has_pi = (group['predicted_section'] == 'π').any()
-            has_beta = (group['predicted_section'] == 'β').any()
+            for filename, group in df.groupby('filename'):
+                # Sort sections by id (which reflects absolute order)
+                group = group.sort_values('id').copy()
+                
+                # Determine document type if available
+                doc_type = None
+                if 'document_type' in group.columns and not group['document_type'].isna().all():
+                    # Use document_type from the DataFrame if available
+                    doc_type = group['document_type'].iloc[0]
+                elif document_types and filename in document_types:
+                    # Fall back to the provided document_types mapping
+                    doc_type = document_types[filename]
+                    if 'document_type' not in group.columns:
+                        group['document_type'] = doc_type
+                
+                # Select annotation method based on document type
+                if doc_type == 'Κεφάλαιο':
+                    self.logger.debug(f"Processing chapter document: {filename}")
+                    # Process as chapter
+                    updated_group = self.fully_annotate_chapter_group(group)
+                else:
+                    # Process as text
+                    updated_group = self.fully_annotate_text_group(group)
+                
+                updated_groups.append(updated_group)
             
-            if has_pi and has_beta:
-                # The first occurrence of 'π' defines the upper boundary
-                first_pi_id = group.loc[group['predicted_section'] == 'π', 'id'].iloc[0]
-                # The last occurrence of 'β' defines the lower boundary
-                last_beta_id = group.loc[group['predicted_section'] == 'β', 'id'].iloc[-1]
-                
-                # New condition: Check if markers are in the correct order
-                if first_pi_id > last_beta_id:
-                    files_missing_boundaries += 1
-                    continue  # Skip this file's annotation
-                
-                # Create a boolean mask for rows with label "άλλο" (i.e. not yet fully annotated)
-                mask = group['predicted_section'] == 'άλλο'
-                
-                # Define conditions (vectorized) on the 'id' of each row
-                cond_intro = group['id'] < first_pi_id    # Before the first 'π'
-                cond_appendix = group['id'] > last_beta_id  # After the last 'β'
-                
-                # For rows with label "άλλο", assign:
-                #   'ε.σ.' if the row is before the first π,
-                #   'α' if the row is after the last β,
-                #   and 'κ' otherwise.
-                new_labels = np.select(
-                    [cond_intro, cond_appendix],
-                    ['ε.σ.', 'α'],
-                    default='κ'
-                )
-                # Update only the rows with label "άλλο"
-                group.loc[mask, 'predicted_section'] = new_labels[mask]
-            else:
-                files_missing_boundaries += 1  # Count files missing one or both boundaries
-            
-            updated_groups.append(group)
-        
-        # Concatenate updated groups back into a single DataFrame
-        df_updated = pd.concat(updated_groups)
+            # Concatenate all groups
+            df_updated = pd.concat(updated_groups) if updated_groups else pd.DataFrame()
         
         # Save to output parquet file
         self.logger.info(f"Saving fully annotated parquet to {output_parquet}...")
         df_updated.to_parquet(output_parquet, index=False)
         
         self.logger.info("Processing complete.")
-        self.logger.info(f"Files missing one or both boundaries (π and β): {files_missing_boundaries}")
-
-    def train_model(self, input_parquet, output_parquet):
+        
+    def fully_annotate_text(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Train the model and process predictions on the input Parquet file.
+        Fully annotate sections in a DataFrame based on π and β boundaries.
         
         Args:
-            input_parquet (str): Path to the input Parquet file with sections to classify
-            output_parquet (str): Path where the classified Parquet file will be saved
+            df: DataFrame with predicted sections
+            
+        Returns:
+            DataFrame with fully annotated sections
+        """
+        files_missing_boundaries = 0  # Count files without both a π and a β boundary
+        updated_groups = []  # To collect processed groups
+        
+        self.logger.info("Processing each file group for text annotation...")
+        for filename, group in df.groupby('filename'):
+            updated_group = self.fully_annotate_text_group(group)
+            if updated_group is None:
+                files_missing_boundaries += 1
+            else:
+                updated_groups.append(updated_group)
+        
+        # Concatenate updated groups back into a single DataFrame
+        df_updated = pd.concat(updated_groups) if updated_groups else pd.DataFrame()
+        
+        self.logger.info(f"Files missing one or both boundaries (π and β): {files_missing_boundaries}")
+        return df_updated
+    
+    def fully_annotate_text_group(self, group: pd.DataFrame) -> pd.DataFrame:
+        """
+        Process a single document group for text annotation.
+        
+        Args:
+            group: DataFrame group for a single document
+            
+        Returns:
+            Processed DataFrame group or None if missing boundaries
+        """
+        # Sort sections by id (which reflects absolute order)
+        group = group.sort_values('id').copy()
+        
+        # Check if both boundary labels are present
+        has_pi = (group['predicted_section'] == 'π').any()
+        has_beta = (group['predicted_section'] == 'β').any()
+        
+        if has_pi and has_beta:
+            # The first occurrence of 'π' defines the upper boundary
+            first_pi_id = group.loc[group['predicted_section'] == 'π', 'id'].iloc[0]
+            # The last occurrence of 'β' defines the lower boundary
+            last_beta_id = group.loc[group['predicted_section'] == 'β', 'id'].iloc[-1]
+            
+            # Check if markers are in the correct order
+            if first_pi_id > last_beta_id:
+                return None  # Skip this file's annotation
+            
+            # Create a boolean mask for rows with label "άλλο" (i.e. not yet fully annotated)
+            mask = group['predicted_section'] == 'άλλο'
+            
+            # Define conditions (vectorized) on the 'id' of each row
+            cond_intro = group['id'] < first_pi_id    # Before the first 'π'
+            cond_appendix = group['id'] > last_beta_id  # After the last 'β'
+            
+            # For rows with label "άλλο", assign:
+            #   'ε.σ.' if the row is before the first π,
+            #   'α' if the row is after the last β,
+            #   and 'κ' otherwise.
+            new_labels = np.select(
+                [cond_intro, cond_appendix],
+                ['ε.σ.', 'α'],
+                default='κ'
+            )
+            # Update only the rows with label "άλλο"
+            group.loc[mask, 'predicted_section'] = new_labels[mask]
+            return group
+        else:
+            return None  # Signal missing boundaries
+    
+    def fully_annotate_chapter(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Fully annotate sections in a DataFrame as chapter content.
+        
+        Args:
+            df: DataFrame with predicted sections
+            
+        Returns:
+            DataFrame with fully annotated sections as chapters
+        """
+        updated_groups = []  # To collect processed groups
+        
+        self.logger.info("Processing each file group for chapter annotation...")
+        for filename, group in df.groupby('filename'):
+            updated_groups.append(self.fully_annotate_chapter_group(group))
+        
+        # Concatenate updated groups back into a single DataFrame
+        df_updated = pd.concat(updated_groups) if updated_groups else pd.DataFrame()
+        
+        return df_updated
+    
+    def fully_annotate_chapter_group(self, group: pd.DataFrame) -> pd.DataFrame:
+        """
+        Process a single document group for chapter annotation.
+        
+        Args:
+            group: DataFrame group for a single document
+            
+        Returns:
+            Processed DataFrame group
+        """
+        # Sort sections by id (which reflects absolute order)
+        group = group.sort_values('id').copy()
+        
+        # For chapters: convert all 'π' and 'άλλο' to 'κ', leave 'β' as is
+        mask = group['predicted_section'].isin(['π', 'άλλο'])
+        group.loc[mask, 'predicted_section'] = 'κ'
+        
+        return group
+
+    def classify_sections(self, input_parquet, output_parquet, model_path, n_cpus=4, column_name='title'):
+        """
+        Classify the sections in a parquet file and save the predictions to an output parquet file.
+        
+        Args:
+            input_parquet (str): Path to input parquet file with sections data
+            output_parquet (str): Path to save the output parquet file with predictions
+            model_path (str): Path to the model file to use for predictions
+            n_cpus (int, optional): Number of CPU cores to use for parallel processing. Default is 4.
+            column_name (str, optional): Name of the column containing text to classify. Default is 'title'.
         """
         overall_start = time.time()
         
-        # 1. Train the model using the training dataset.
-        self._train_model_internal()
+        # Use a pre-trained model for prediction
+        self.logger.info(f"Using model from {model_path} for prediction")
+        self.load_model(model_path)
         
-        # 2. Process predictions on the Parquet file.
-        #    The output file will have a "predicted_section" column annotated by both
-        #    methods (table detection and SVM), following the threshold logic.
-        self._process_predictions_with_dask(input_parquet, output_parquet, pretrained_model=False)
+        # Process using Dask
+        self._process_predictions_with_dask(input_parquet, output_parquet, model_path=model_path, pretrained_model=True, n_cpus=n_cpus)
         
         overall_end = time.time()
         self.logger.info(f"Total elapsed time: {overall_end - overall_start:.2f} seconds.")
