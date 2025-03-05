@@ -9,6 +9,7 @@ A library for processing academic texts in Greek and other languages.
 - Extract and clean academic sections
 - Classify sections using machine learning
 - Support for document-specific annotation based on document types
+- Sample and manage data with the Sampler class
 
 ## Installation
 
@@ -100,6 +101,50 @@ The GlossAPI supports different annotation methods based on document types:
    - Treats all content as main content (κ) except for bibliography sections (β)
    - Doesn't require or expect an index/prologue (π) section
 
+### Sampling and Data Management
+
+### Using the Sampler Class
+
+```python
+from glossapi_academic import Sampler
+
+# Initialize the Sampler with the directory containing processed data
+sampler = Sampler("/path/to/processed_data")
+
+# Sample documents where document_type is 'Κεφάλαιο'
+kefalaia_samples = sampler.sample(
+    sample_from={'document_type': 'Κεφάλαιο'}, 
+    n=200
+)
+
+# Sample documents from all types except 'Κεφάλαιο'
+non_kefalaia_samples = sampler.sample(
+    sample_from_all_except={'document_type': 'Κεφάλαιο'}, 
+    n=200
+)
+
+# Sample and split into parts for cross-validation
+kefalaia_parts = sampler.sample(
+    sample_from={'document_type': 'Κεφάλαιο'}, 
+    n=200, 
+    parts=2, 
+    output_name="kefalaia_samples"
+)
+
+# Convert samples to text files for manual review
+sampler.to_text(kefalaia_parts[0], folder_name="kefalaia_group_1")
+```
+
+### Sampler Features
+
+- Extract samples from processed parquet files
+- Flexible filtering with `sample_from` and `sample_from_all_except`
+- Split samples into parts for cross-validation or model training
+- Automatic handling of output directories:
+  - CSV files stored in a `datasets` folder in the working directory
+  - Text files stored in a `text_samples` folder in the project directory
+- Custom naming for output files and folders
+
 ### Running as a Background Process
 
 For processing large repositories, you may want to run the pipeline in the background:
@@ -120,13 +165,14 @@ from glossapi_academic import GlossSectionClassifier
 
 # Train a new model from CSV data
 classifier = GlossSectionClassifier()
+# Sample training data can be generated using the Sampler class
 classifier.train_from_csv("path/to/training_data.csv", "section_text", "section_label")
 classifier.save_model("path/to/output_model.joblib")
 ```
 
 ## Version
 
-Current version: 0.0.3.5
+Current version: 0.0.3.6
 
 ## License
 

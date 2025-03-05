@@ -15,7 +15,8 @@ from .academic_section import AcademicSection
 from .gloss_extract import GlossExtract
 from .gloss_section import GlossSection
 from .gloss_section_classifier import GlossSectionClassifier
-from .corpus import Corpus, Sampler
+from .corpus import Corpus
+from .sampler import Sampler
 
 __all__ = [
     'AcademicSection',
