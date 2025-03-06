@@ -11,7 +11,7 @@ with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "README.md"),
 
 setup(
     name="glossapi",
-    version="0.0.3.5.1",
+    version="0.0.3.5.2",
     author="GlossAPI Team",
     author_email="foivos@example.com",
     description="A library for processing academic texts in Greek and other languages",
