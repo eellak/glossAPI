@@ -1,99 +1,80 @@
-Στόχος της [ΕΕΛΛΑΚ](https://eellak.gr/) είναι η ανάπτυξη ενός Ελληνικού μοντέλου τεχνητής νοημοσύνης(ΤΝ) ανοιχτού λογισμικού, που ο κώδικας του θα διατίθεται με την άδεια ανοιχτού λογισμικού [EUPL](https://eupl.eu/), τα βάρη και όλα τα δεδομένα θα είναι διαθέσιμα με την άδεια [Creative Commons BY-SA](https://creativecommons.org/licenses/by-sa/4.0/), **1ος στόχος του glossAPI είναι η συγκέντρωση, επεξεργασία και συντήρηση αντιπροσωπευτικών συνόλων ελληνικών κειμένων** ώστε να μπορεί ένα μοντέλο ΤΝ να χειρίζεται σωστά την Ελληνική γλώσσα. 
+# GlossAPI Academic
 
-:rocket: **Δημιουργία καθαρισμένων κειμενικών δεδομένων με χρήσιμα μεταδεδομένα**
+[![Release Version](https://img.shields.io/github/v/release/eellak/glossAPI)](https://github.com/eellak/glossAPI/releases)
+[![PyPI Test Status](https://img.shields.io/badge/PyPI%20Test-glossapi-blue?logo=pypi)](https://test.pypi.org/project/glossapi/)
 
-## Datasets
+A library for processing academic texts in Greek and other languages.
 
-### 95Κ Δείγμα Ελληνικής (95K Greek Sample)
-- [✓] Scraped
-- [✓] Downloaded
-- [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/95k_deigma_ellinikis)
+## Features
 
-A diverse sample of 95,000 Greek texts, providing a broad representation of modern Greek language usage. Useful for general NLP tasks and language modeling.
+- Extract content from PDFs with Docling
+- Cluster documents based on extraction quality
+- Extract and clean academic sections
+- Classify sections using machine learning
 
-### Σχολικά Βιβλία (School Books)
-- [✓] Scraped
-- [✓] Downloaded
-- [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/Sxolika_vivlia)
+## Installation
 
-Collection of Greek school textbooks and educational materials. Great resource for educational NLP applications and studying formal Modern Greek.
+```bash
+pip install glossapi
+```
 
-### Δημώδης Λογοτεχνία (Folk Literature)
-- [✓] Scraped
-- [✓] Downloaded
-- [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/dimodis_logotexnia)
+## Usage
 
-Traditional Greek folk literature, including stories, songs, and poems. Valuable for cultural preservation and studying regional Greek variations.
+### Individual Components
 
-### Ελληνικά Κείμενα Project Gutenberg (Project Gutenberg Greek Texts)
-- [✓] Scraped
-- [✓] Downloaded
-- [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/Ellinika_Keimena_Project_Gutenberg)
+```python
+from glossapi import GlossExtract, GlossSection, GlossSectionClassifier
 
-Public domain Greek texts from Project Gutenberg, spanning various periods and genres. Excellent for literary analysis and historical language studies.
+# Extract content from PDF
+extractor = GlossExtract()
+extracted_content = extractor.extract_from_pdf("path/to/document.pdf")
 
-### 1000 Πρώτα Χρόνια Ελληνικής (First 1000 Years of Greek)
-- [✓] Scraped
-- [✓] Downloaded
-- [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/1000_prwta_xronia_ellhnikhs)
+# Process sections
+section_processor = GlossSection()
+sections = section_processor.process(extracted_content)
 
-Texts covering the first millennium of written Greek, crucial for studying the evolution of the Greek language and historical linguistics.
+# Classify sections
+classifier = GlossSectionClassifier()
+classifier.load_model("path/to/model.joblib")
+classified_sections = classifier.classify(sections)
+```
 
-### Κλασική Αρχαία Ελληνική Γραμματεία (Classical Ancient Greek Literature)
-- [✓] Scraped
-- [✓] Downloaded
-- [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/klasikh_arx_ell_grammateia)
+### Using the Corpus Class (Recommended)
 
-Core works of Classical Greek literature, including philosophical, historical, and dramatic texts. Essential for classical studies and ancient Greek NLP.
+```python
+from glossapi import Corpus
 
-### Ελληνικά Κείμενα Wikisource (Wikisource Greek Texts)
-- [✓] Scraped
-- [✓] Downloaded
-- [✓] Cleaned
-- [✓] Uploaded with metadata (https://huggingface.co/datasets/glossAPI/Wikisource_Greek_texts)
+# Initialize the Corpus with input and output directories
+corpus = Corpus(
+    input_dir="path/to/pdfs",
+    output_dir="path/to/output"
+)
 
-### Πέργαμος (Πέργαμος)
-- [✓] Scraped
-- [✓] Downloading
-- [✓] Preprocessed
-- [✓] Each article's sections categorized by type (introductory remarks, index etc.)
-- [✓] Uploaded with metadata
+# Run the complete pipeline
+corpus.extract()  # Extract PDFs to markdown
+corpus.section()  # Extract sections from markdown files
+corpus.annotate()  # Classify sections using ML
+```
 
-Συλλογή κειμένων από την πλατφόρμα Πέργαμος. Collection of texts from the Pergamos' University theses archive.
+## Model Training
 
-### :construction: Υπό επεξεργασία (Work in Progress)
+```python
+from glossapi import GlossSectionClassifier
 
-### Κάλλιπος (Kallipos)
-- [✓] Scraped
-- [✓] Downloaded
-- [ ] Cleaned
-- [ ] Uploaded with metadata
+# Train a new model from CSV data
+classifier = GlossSectionClassifier()
+classifier.train_from_csv("path/to/training_data.csv", "section_text", "section_label")
+classifier.save_model("path/to/output_model.joblib")
+```
 
-Ακαδημαϊκά συγγράμματα από την πλατφόρμα Κάλλιπος. Open source academic textbooks from Kallipos.
+## Version
 
-### Έγγραφα ΕΕ (EU Documents)
-- [ ] Downloaded
-- [ ] Cleaned
-- [ ] Uploaded with metadata
+Current version: 0.0.3.4
 
-Επίσημα έγγραφα της Ευρωπαϊκής Ένωσης. Official documents of the European Union.
+## License
 
-[γlo'sapi]
+This project is licensed under the EUPL License - see the LICENSE file for details.
 
-### glossAPI, το
+## Contributing
 
-  Ένα έργο της ΕΕΛΛΑΚ στον χώρο των ψηφιακών ανθρωπιστικών επιστημών που αξιοποιεί ελεύθερα διαθέσιμες πηγές για τη συγκέντρωση ενός εκτενούς σώματος κειμένων υψηλής ποιότητας τα οποία παρέχονται με άδεια Creative Commons. Το glossAPI καλύπτει ένα ευρύ φάσμα θεματικών περιοχών, από την επιστήμη και τη λογοτεχνία έως τα νομικά κείμενα, με δεδομένα που υφίστανται επιμελή επεξεργασία και αποδελτίωση.
-
-  Στόχος του glossAPI είναι να διευκολύνει την επεξεργασία κειμενικών δεδομένων και την εκπαίδευση σύγχρονων γλωσσικών μοντέλων. Όλα τα εργαλεία που αναπτύσσει διατίθενται ελεύθερα με άδεια EUPL μέσω του αποθετηρίου του στο Github.
-
-  Το glossAPI συμβάλει στην ανάπτυξη των ελληνικών ανοιχτών κειμενικών δεδομένων, ενθαρρύνοντας ερευνητές και φοιτητές να χρησιμοποιήσουν τα εργαλεία που αναπτύχθηκαν, και να επεκτείνουν το κώδικα και τα δεδομένα προς κατευθύνσεις που τους ενδιαφέρουν.
-
-[ 1: greeklish < γλωσσάρι 2: αγγλ. gloss < μεσαιων. αγγλ. gloze < μεσαιων. λατ. glōsa < κλασ. λατ. glōssa < αρχ. γλῶσσα: "γλώσσα, λέξη" + αγγλ. API: Application Programming Interface ]
-
-Επικοινωνία/ contact at: glossapi.team@eellak.gr
+Contributions are welcome! Please feel free to submit a Pull Request.
