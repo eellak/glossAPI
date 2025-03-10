@@ -3,10 +3,10 @@ import os
 import glob
 
 # Find all model files
-model_files = glob.glob('v2/models/*.joblib')
+model_files = glob.glob('src/glossapi/models/*.joblib')
 
 # Get long description from the README file
-with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "README.md"), encoding="utf-8") as f:
+with open("README.md", encoding="utf-8") as f:
     long_description = f.read()
 
 setup(
@@ -18,8 +18,8 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/eellak/glossAPI",
-    packages=find_packages(where="v2/src"),
-    package_dir={"": "v2/src"},
+    packages=find_packages(where="src"),
+    package_dir={"": "src"},
     package_data={
         "glossapi": ["models/*.joblib"],
     },
