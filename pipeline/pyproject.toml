@@ -10,5 +10,32 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "European Union Public Licence 1.2 (EUPL 1.2)"}
 authors = [
-    {name = "GlossAPI Team", email = "glossapi.team@eellak.gr"}
+    {name = "GlossAPI Team", email = "foivos@example.com"}
 ]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: European Union Public Licence 1.2 (EUPL 1.2)",
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
+]
+dependencies = [
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "joblib",
+    "dask",
+    "pyarrow",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+glossapi = ["models/*.joblib"]
+
+[project.urls]
+Repository = "https://github.com/eellak/glossAPI"
