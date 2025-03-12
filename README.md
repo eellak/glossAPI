@@ -38,13 +38,13 @@ corpus = Corpus(
     output_dir="/path/to/output",
     metadata_path="/path/to/metadata.parquet",  # Optional
     annotation_mapping={
-        'Κεφάλαιο': 'chapter',
+        'Κεφάλαιο': 'chapter', # i.e. a label in document_type column : references text type to be annotated chapter or text for now
         # Add more mappings as needed
     }
 )
 
 # Step 1: Filter documents (quality control)
-corpus.filter()
+corpus.extract()
 
 # Step 2: Extract sections from filtered documents
 corpus.section()

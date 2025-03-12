@@ -4,6 +4,7 @@
 name: Upload Python Package
 
 on:
+  workflow_dispatch:
   release:
     types: [published]
 
@@ -13,6 +14,7 @@ jobs:
     permissions:
       # IMPORTANT: this permission is mandatory for trusted publishing
       id-token: write
+      contents: read
 
     steps:
     - uses: actions/checkout@v3
@@ -35,3 +37,4 @@ jobs:
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         packages-dir: pipeline/dist/
+        password: ${{ secrets.PYPI_API_TOKEN }}

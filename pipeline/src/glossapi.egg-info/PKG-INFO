@@ -1,17 +1,23 @@
 Metadata-Version: 2.2
 Name: glossapi
-Version: 0.0.3.5.2
+Version: 0.0.4
 Summary: A library for processing academic texts in Greek and other languages
-Home-page: https://github.com/eellak/glossAPI
-Author: GlossAPI Team
 Author-email: GlossAPI Team <foivos@example.com>
 License: European Union Public Licence 1.2 (EUPL 1.2)
+Project-URL: Repository, https://github.com/eellak/glossAPI
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: European Union Public Licence 1.2 (EUPL 1.2)
+Classifier: Operating System :: OS Independent
+Classifier: Development Status :: 3 - Alpha
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 License-File: LICENSE.md
-Dynamic: author
-Dynamic: home-page
-Dynamic: requires-python
+Requires-Dist: pandas
+Requires-Dist: numpy
+Requires-Dist: scikit-learn
+Requires-Dist: joblib
+Requires-Dist: dask
+Requires-Dist: pyarrow
 
 # GlossAPI
 
