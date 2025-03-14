@@ -130,7 +130,7 @@ class Sampler:
         self.logger.info(f"Reading data from {self.parquet_file}...")
         
         # Read the parquet file
-        df = pd.read_parquet(self.parquet_file)
+        df = pd.read_parquet(self.parquet_file,engine='fastparquet')
         
         # Check if filtering criteria are valid
         if sample_from:
@@ -138,14 +138,16 @@ class Sampler:
                 if column not in df.columns:
                     raise ValueError(f"Column '{column}' not found in the parquet file")
                 if value not in df[column].values:
-                    raise ValueError(f"Value '{value}' not found in column '{column}'")
+                    if not value.startswith('regex') :
+                        raise ValueError(f"Value '{value}' not found in column '{column}'")
         
         if sample_from_all_except:
             for column, value in sample_from_all_except.items():
                 if column not in df.columns:
                     raise ValueError(f"Column '{column}' not found in the parquet file")
                 if value not in df[column].values:
-                    raise ValueError(f"Value '{value}' not found in column '{column}'")
+                    if not value.startswith('regex') :
+                        raise ValueError(f"Value '{value}' not found in column '{column}'")
         
         # Apply filters to the DataFrame
         filtered_df = df.copy()
@@ -164,12 +166,20 @@ class Sampler:
         # Apply filters to the DataFrame
         if sample_from:
             for column, value in sample_from.items():
-                filtered_df = filtered_df[filtered_df[column] == value]
+                if value.startswith('regex(') and value.endswith(')') :
+                    filter = (filtered_df[column].str.contains(value[6:-1]))
+                    filtered_df = filtered_df[filter]
+                else :   
+                    filtered_df = filtered_df[filtered_df[column] == value]
                 self.logger.info(f"Filtered to rows where {column} = '{value}' ({len(filtered_df)} rows)")
         
         if sample_from_all_except:
             for column, value in sample_from_all_except.items():
-                filtered_df = filtered_df[filtered_df[column] != value]
+                if value.startswith('regex(') and value.endswith(')') :
+                    filter = (filtered_df[column].str.contains(value[6:-1]))
+                    filtered_df = filtered_df[~filter]
+                else :   
+                    filtered_df = filtered_df[filtered_df[column] != value]
                 self.logger.info(f"Filtered to rows where {column} != '{value}' ({len(filtered_df)} rows)")
         
         # Get unique filenames from the filtered data
@@ -286,7 +296,7 @@ class Sampler:
             if input_path.suffix.lower() == '.csv':
                 df = pd.read_csv(input_path)
             elif input_path.suffix.lower() == '.parquet':
-                df = pd.read_parquet(input_path)
+                df = pd.read_parquet(input_path,engine='fatstparquet')
             else:
                 self.logger.error(f"Unsupported file format: {input_path.suffix}")
                 return
