@@ -568,7 +568,12 @@ class GlossSectionClassifier:
                 updated_groups.append(updated_group)
             
             # Concatenate all groups
-            df_updated = pd.concat(updated_groups) if updated_groups else pd.DataFrame()
+            if not updated_groups:
+                self.logger.warning("No document groups were successfully annotated. Creating empty output file with original columns.")
+                # Create an empty DataFrame with the same columns as the input
+                df_updated = pd.DataFrame(columns=df.columns)
+            else:
+                df_updated = pd.concat(updated_groups)
         
         # Save to output parquet file
         self.logger.info(f"Saving fully annotated parquet to {output_parquet}...")
@@ -611,7 +616,7 @@ class GlossSectionClassifier:
             group: DataFrame group for a single document
             
         Returns:
-            Processed DataFrame group or None if missing boundaries
+            Processed DataFrame group
         """
         # Sort sections by id (which reflects absolute order)
         group = group.sort_values('id').copy()
@@ -650,7 +655,14 @@ class GlossSectionClassifier:
             group.loc[mask, 'predicted_section'] = new_labels[mask]
             return group
         else:
-            return None  # Signal missing boundaries
+            # FALLBACK: For small datasets without boundary markers
+            self.logger.warning(f"Missing boundary markers for {group['filename'].iloc[0]}. Using default annotation.")
+            
+            # Apply default annotation: mark everything as 'κ' (main content)
+            mask = group['predicted_section'] == 'άλλο'
+            group.loc[mask, 'predicted_section'] = 'κ'
+            
+            return group  # Return the group with default annotations instead of None
     
     def fully_annotate_chapter(self, df: pd.DataFrame) -> pd.DataFrame:
         """
