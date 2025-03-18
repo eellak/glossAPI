@@ -27,4 +27,4 @@ __all__ = [
     'Sampler'
 ]
 
-__version__ = '0.0.3.5.2'
+__version__ = '0.0.6'

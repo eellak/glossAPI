@@ -24,7 +24,6 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from sklearn.decomposition import PCA
 import shutil
 from collections import defaultdict
 import json
@@ -470,16 +469,6 @@ class GlossExtract:
             print(f"Warning: Could not calculate Silhouette Score: {e}")
             print("Continuing with classification...")
         
-        print("\nCreating visualization...")
-        sample_size = min(5000, X.shape[0])
-        sample_indices = np.random.choice(X.shape[0], sample_size, replace=False)
-        pca = PCA(n_components=2)
-        X_dense = X.toarray()
-        X_sampled = X_dense[sample_indices]
-        labels_sampled = labels[sample_indices]
-        X_2d = pca.fit_transform(X_sampled)
-        # (Visualization plotting code can be added here if needed)
-
         print("\nAnalyzing top trigrams per cluster...")
         feature_names = vectorizer.get_feature_names_out()
         clusters_top_trigrams = {}
@@ -581,4 +570,4 @@ class GlossExtract:
         print(f"\nFiles copied:")
         print(f"Good files: {copied_count['good']}")
         print(f"Bad files: {copied_count['bad']}")
-        print("\nAnalysis complete! Check the visualization and classified files in the output folder.")
+        print("\nAnalysis complete! Check the classified files in the output folder.")
