@@ -250,7 +250,8 @@ class Corpus:
         Extract input files to markdown format.
         
         Args:
-            input_format: Input format (default: "pdf")
+            input_format: Input format ("pdf", "docx", "xml_jats", "html", "pptx", "csv", "md", "all") (default: "pdf")
+                          Note: Old .doc format (pre-2007) is not supported
             num_threads: Number of threads for processing (default: 4)
             accel_type: Acceleration type ("Auto", "CPU", "CUDA", "MPS") (default: "Auto")
             split_bad: Whether to perform clustering to separate good and bad files (default: True)
@@ -266,21 +267,39 @@ class Corpus:
         os.makedirs(self.markdown_dir, exist_ok=True)
         
         # Get input files
-        if input_format.lower() == "pdf":
-            input_files = list(self.input_dir.glob("*.pdf"))
+        if input_format.lower() == "all":
+            # Include all supported formats
+            input_files = []
+            for ext in ["pdf", "docx", "xml", "html", "pptx", "csv", "md"]:  # All supported formats
+                input_files.extend(list(self.input_dir.glob(f"*.{ext}")))
+            
+            # Log a warning about doc files
+            doc_files = list(self.input_dir.glob("*.doc"))
+            if doc_files:
+                self.logger.warning(f"Found {len(doc_files)} .doc files which are not supported by Docling (pre-2007 Word format)")
         else:
-            input_files = list(self.input_dir.glob(f"*.{input_format}"))
+            # Handle special case for XML formats
+            if input_format.lower() == "xml":
+                ext = "xml"  # Still use the file extension .xml
+            else:
+                ext = input_format.lower()
+                
+            if ext == "doc":
+                self.logger.error(f"The .doc format (pre-2007 Word) is not supported by Docling. Please convert to .docx first.")
+                return
+                
+            input_files = list(self.input_dir.glob(f"*.{ext}"))
         
         if not input_files:
             self.logger.warning(f"No {input_format} files found in {self.input_dir}")
             return
         
-        self.logger.info(f"Found {len(input_files)} {input_format} files to extract")
+        self.logger.info(f"Found {len(input_files)} files to extract")
         
-        # Process all PDF files
-        self.logger.info(f"Processing {len(input_files)} {input_format.upper()} files...")
+        # Process all files
+        self.logger.info(f"Processing {len(input_files)} files...")
         
-        # Extract PDFs to markdown
+        # Extract files to markdown
         os.makedirs(self.markdown_dir, exist_ok=True)
         
         # Use multiple threads for extraction
@@ -474,4 +493,3 @@ class Corpus:
         self.annotate(fully_annotate=fully_annotate, annotation_type=annotation_type)
         
         self.logger.info("Complete processing pipeline finished successfully.")
-    

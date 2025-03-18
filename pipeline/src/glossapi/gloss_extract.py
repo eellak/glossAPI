@@ -1,4 +1,5 @@
 from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
+from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 from docling.datamodel.base_models import InputFormat, ConversionStatus
 from docling.datamodel.pipeline_options import (
     AcceleratorDevice,
@@ -9,7 +10,18 @@ from docling.datamodel.pipeline_options import (
 )
 from docling.datamodel.document import ConversionResult
 from docling.datamodel.settings import settings
-from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.document_converter import (
+    DocumentConverter,
+    PdfFormatOption,
+    WordFormatOption,
+    HTMLFormatOption,
+    XMLJatsFormatOption,
+    PowerpointFormatOption,
+    MarkdownFormatOption,
+    CsvFormatOption,
+)
+from docling.pipeline.simple_pipeline import SimplePipeline
+from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
 
 import ftfy
 import logging
@@ -24,12 +36,10 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from sklearn.decomposition import PCA
 import shutil
 from collections import defaultdict
 import json
 import joblib
-
 
 class GlossExtract:
     """
@@ -126,38 +136,65 @@ class GlossExtract:
             )
 
     def create_extractor(self):
-        """Create a document converter with the configured options."""
+        """Create a document converter with the configured options for multiple formats."""
         self.converter = DocumentConverter(
+            allowed_formats=[
+                InputFormat.PDF,
+                InputFormat.DOCX,  # .docx (Office Open XML)
+                # Note: Old .doc format (pre-2007) is not supported by Docling
+                InputFormat.XML_JATS,
+                InputFormat.HTML,
+                InputFormat.PPTX,
+                InputFormat.CSV,
+                InputFormat.MD,
+            ],  # whitelist formats, non-matching files are ignored
             format_options={
                 InputFormat.PDF: PdfFormatOption(
                     pipeline_options=self.pipeline_options,
-                )
+                    pipeline_cls=StandardPdfPipeline,
+                    backend=PyPdfiumDocumentBackend
+                ),
+                InputFormat.DOCX: WordFormatOption(
+                    pipeline_cls=SimplePipeline
+                ),
+                InputFormat.XML_JATS: XMLJatsFormatOption(),
+                InputFormat.HTML: HTMLFormatOption(),
+                InputFormat.PPTX: PowerpointFormatOption(),
+                InputFormat.CSV: CsvFormatOption(),
+                InputFormat.MD: MarkdownFormatOption(),
             }
         )
     
     def extract_path(self, input_doc_paths, output_dir):
         """
-        Convert all PDF documents in the input paths to Markdown.
+        Extract all documents in the input paths to Markdown.
         
         Args:
-            input_doc_paths (List[Path]): List of paths to PDF documents
-            output_dir (Path): Directory to save the converted Markdown files
+            input_doc_paths (List[Path]): List of paths to documents (PDF, DOCX, XML, etc.)
+            output_dir (Path): Directory to save the extracted Markdown files
         """
         start_time = time.time()
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Convert all input documents
         conv_results = self.converter.convert_all(
             input_doc_paths,
             raises_on_error=False,  # to let conversion run through all and examine results at the end
         )
+        
+        # Export results to markdown files
         success_count, partial_success_count, failure_count = self._export_documents(
             conv_results, output_dir=output_dir
         )
         end_time = time.time() - start_time
 
-        self._log.info(f"Document conversion complete in {end_time:.2f} seconds.")
+        self._log.info(f"Document extraction complete in {end_time:.2f} seconds.")
+        self._log.info(f"Successfully extracted: {success_count}")
+        self._log.info(f"Partially extracted: {partial_success_count}")
 
         if failure_count > 0:
-            self._log.warning(f"Failed to convert {failure_count} out of {len(input_doc_paths)} documents.")
+            self._log.warning(f"Failed to extract {failure_count} out of {len(input_doc_paths)} documents.")
             # Don't raise an exception, just continue with the successfully converted files
             
     def _fix_greek_text(self, text):
@@ -166,10 +203,10 @@ class GlossExtract:
 
     def _export_documents(self, conv_results: Iterable[ConversionResult], output_dir: Path):
         """
-        Export converted documents to Markdown files.
+        Export extracted documents to Markdown files.
         
         Args:
-            conv_results: Iterable of conversion results
+            conv_results: Iterable of extraction results
             output_dir: Directory to save the Markdown files
             
         Returns:
@@ -179,6 +216,7 @@ class GlossExtract:
         success_count = 0
         failure_count = 0
         partial_success_count = 0
+        
         for conv_res in conv_results:
             if conv_res.status == ConversionStatus.SUCCESS:
                 success_count += 1
@@ -194,16 +232,30 @@ class GlossExtract:
                 with (output_dir / f"{doc_filename}.md").open("w", encoding='utf-8') as fp:
                     fp.write(fixed_content)
 
+                # Optionally can also export to other formats like JSON
+                # with (output_dir / f"{doc_filename}.json").open("w", encoding='utf-8') as fp:
+                #     json.dump(conv_res.document.export_to_dict(), fp, ensure_ascii=False, indent=2)
+
             elif conv_res.status == ConversionStatus.PARTIAL_SUCCESS:
                 self._log.info(
-                    f"Document {conv_res.input.file} was partially converted with the following errors:"
+                    f"Document {conv_res.input.file} was partially extracted with the following errors:"
                 )
                 for item in conv_res.errors:
                     self._log.info(f"\t{item.error_message}")
+                    
+                # Still try to export the partial content
+                doc_filename = conv_res.input.file.stem
+                markdown_content = conv_res.document.export_to_markdown()
+                fixed_content = self._fix_greek_text(markdown_content)
+                
+                with (output_dir / f"{doc_filename}_partial.md").open("w", encoding='utf-8') as fp:
+                    fp.write(fixed_content)
+                    
                 partial_success_count += 1
             else:
-                self._log.info(f"Document {conv_res.input.file} failed to convert.")
+                self._log.info(f"Document {conv_res.input.file} failed to extract.")
                 failure_count += 1
+                
         return success_count, partial_success_count, failure_count
     
     def _clean_text(self, text):
@@ -470,16 +522,6 @@ class GlossExtract:
             print(f"Warning: Could not calculate Silhouette Score: {e}")
             print("Continuing with classification...")
         
-        print("\nCreating visualization...")
-        sample_size = min(5000, X.shape[0])
-        sample_indices = np.random.choice(X.shape[0], sample_size, replace=False)
-        pca = PCA(n_components=2)
-        X_dense = X.toarray()
-        X_sampled = X_dense[sample_indices]
-        labels_sampled = labels[sample_indices]
-        X_2d = pca.fit_transform(X_sampled)
-        # (Visualization plotting code can be added here if needed)
-
         print("\nAnalyzing top trigrams per cluster...")
         feature_names = vectorizer.get_feature_names_out()
         clusters_top_trigrams = {}
@@ -581,4 +623,4 @@ class GlossExtract:
         print(f"\nFiles copied:")
         print(f"Good files: {copied_count['good']}")
         print(f"Bad files: {copied_count['bad']}")
-        print("\nAnalysis complete! Check the visualization and classified files in the output folder.")
+        print("\nAnalysis complete! Check the classified files in the output folder.")
