@@ -18,7 +18,7 @@ A library for processing academic texts in Greek and other languages, developed 
 ## Installation
 
 ```bash
-pip install -i https://test.pypi.org/simple/ glossapi==0.0.6
+pip install glossapi==0.0.6
 ```
 
 ## Usage
