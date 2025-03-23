@@ -506,21 +506,20 @@ class GlossSectionClassifier:
 
         return 0, numbers
 
-    def fully_annotate(self, input_parquet: str, output_parquet: str, document_types: Dict[str, str] = None, annotation_type: str = "auto") -> None:
+    def fully_annotate(self, input_parquet: str, output_parquet: str, document_types: Dict[str, str] = None, annotation_type: str = "text") -> None:
         """
-        Fully annotate sections in a parquet file based on document type.
+        Fully annotate sections in a parquet file using the specified annotation type.
         
-        This is a dispatcher method that delegates to the appropriate specialized annotation 
-        method based on document_type or explicit annotation_type.
+        This method delegates to either the text annotation or chapter annotation method
+        based on the specified annotation_type parameter.
         
         Args:
             input_parquet: Path to input parquet file with predicted sections
             output_parquet: Path to save fully annotated parquet file
             document_types: Dict mapping filename to document_type (optional)
-            annotation_type: Annotation method to use ('text', 'chapter', or 'auto')
-                            - 'text': Use fully_annotate_text for all documents
+            annotation_type: Annotation method to use ('text' or 'chapter')
+                            - 'text': Use fully_annotate_text for all documents (default)
                             - 'chapter': Use fully_annotate_chapter for all documents
-                            - 'auto': Determine method based on document_type
         """
         self.logger.info(f"Reading parquet file from {input_parquet}...")
         # Read all columns to ensure we preserve everything
@@ -530,45 +529,21 @@ class GlossSectionClassifier:
         if document_types and 'document_type' not in df.columns:
             df['document_type'] = df['filename'].map(document_types)
         
-        # Determine annotation type for each document
-        if annotation_type == "text":
-            # Use text annotation for all documents
-            df_updated = self.fully_annotate_text(df)
-        elif annotation_type == "chapter":
+        # Validate annotation type
+        if annotation_type not in ["text", "chapter"]:
+            error_msg = f"Invalid annotation type: {annotation_type}. Must be 'text' or 'chapter'."
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        # Apply the appropriate annotation method based on the validated annotation type
+        if annotation_type == "chapter":
             # Use chapter annotation for all documents
+            self.logger.info("Using chapter annotation for all documents")
             df_updated = self.fully_annotate_chapter(df)
-        else:  # annotation_type == "auto"
-            # Group by filename and process each document according to its type
-            updated_groups = []
-            
-            for filename, group in df.groupby('filename'):
-                # Sort sections by id (which reflects absolute order)
-                group = group.sort_values('id').copy()
-                
-                # Determine document type if available
-                doc_type = None
-                if 'document_type' in group.columns and not group['document_type'].isna().all():
-                    # Use document_type from the DataFrame if available
-                    doc_type = group['document_type'].iloc[0]
-                elif document_types and filename in document_types:
-                    # Fall back to the provided document_types mapping
-                    doc_type = document_types[filename]
-                    if 'document_type' not in group.columns:
-                        group['document_type'] = doc_type
-                
-                # Select annotation method based on document type
-                if doc_type == 'Κεφάλαιο':
-                    self.logger.debug(f"Processing chapter document: {filename}")
-                    # Process as chapter
-                    updated_group = self.fully_annotate_chapter_group(group)
-                else:
-                    # Process as text
-                    updated_group = self.fully_annotate_text_group(group)
-                
-                updated_groups.append(updated_group)
-            
-            # Concatenate all groups
-            df_updated = pd.concat(updated_groups) if updated_groups else pd.DataFrame()
+        else:  # annotation_type == "text"
+            # Use text annotation for all documents
+            self.logger.info("Using text annotation for all documents")
+            df_updated = self.fully_annotate_text(df)
         
         # Save to output parquet file
         self.logger.info(f"Saving fully annotated parquet to {output_parquet}...")
@@ -628,7 +603,8 @@ class GlossSectionClassifier:
             
             # Check if markers are in the correct order
             if first_pi_id > last_beta_id:
-                return None  # Skip this file's annotation
+                self.logger.warning(f"Boundary markers in wrong order for {group['filename'].iloc[0]}. Keeping original labels.")
+                return group  # Return with original labels
             
             # Create a boolean mask for rows with label "άλλο" (i.e. not yet fully annotated)
             mask = group['predicted_section'] == 'άλλο'
@@ -650,7 +626,15 @@ class GlossSectionClassifier:
             group.loc[mask, 'predicted_section'] = new_labels[mask]
             return group
         else:
-            return None  # Signal missing boundaries
+            # Missing one or both boundary markers, log warning but don't change labels
+            if not has_pi and not has_beta:
+                self.logger.warning(f"Both 'π' and 'β' boundary markers missing for {group['filename'].iloc[0]}. Keeping original labels.")
+            elif not has_pi:
+                self.logger.warning(f"'π' boundary marker missing for {group['filename'].iloc[0]}. Keeping original labels.")
+            else:
+                self.logger.warning(f"'β' boundary marker missing for {group['filename'].iloc[0]}. Keeping original labels.")
+                
+            return group  # Return with original labels
     
     def fully_annotate_chapter(self, df: pd.DataFrame) -> pd.DataFrame:
         """

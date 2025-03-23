@@ -43,8 +43,8 @@ corpus = Corpus(
     }
 )
 
-# Step 1: Filter documents (quality control)
-corpus.filter()
+# Step 1: Extract documents (quality control)
+corpus.extract()
 
 # Step 2: Extract sections from filtered documents
 corpus.section()

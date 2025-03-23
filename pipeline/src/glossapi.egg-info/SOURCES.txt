@@ -1,4 +1,3 @@
-LICENSE.md
 MANIFEST.in
 README.md
 pyproject.toml
