@@ -1,4 +1,4 @@
-Metadata-Version: 2.2
+Metadata-Version: 2.4
 Name: glossapi
 Version: 0.0.7
 Summary: A library for processing academic texts in Greek and other languages
@@ -11,7 +11,6 @@ Classifier: Operating System :: OS Independent
 Classifier: Development Status :: 3 - Alpha
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
-License-File: LICENSE.md
 Requires-Dist: pandas
 Requires-Dist: numpy
 Requires-Dist: scikit-learn
@@ -64,8 +63,8 @@ corpus = Corpus(
     }
 )
 
-# Step 1: Filter documents (quality control)
-corpus.filter()
+# Step 1: Extract documents (quality control)
+corpus.extract()
 
 # Step 2: Extract sections from filtered documents
 corpus.section()
