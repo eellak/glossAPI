@@ -240,7 +240,7 @@ class Corpus:
 
     def extract(
         self, 
-        input_format: str = "pdf", 
+        input_format: str = "all", 
         num_threads: int = 4, 
         accel_type: str = "Auto",
         split_bad: bool = True,
@@ -250,7 +250,7 @@ class Corpus:
         Extract input files to markdown format.
         
         Args:
-            input_format: Input format ("pdf", "docx", "xml_jats", "html", "pptx", "csv", "md", "all") (default: "pdf")
+            input_format: Input format ("pdf", "docx", "xml_jats", "html", "pptx", "csv", "md", "all") (default: "all")
                           Note: Old .doc format (pre-2007) is not supported
             num_threads: Number of threads for processing (default: 4)
             accel_type: Acceleration type ("Auto", "CPU", "CUDA", "MPS") (default: "Auto")

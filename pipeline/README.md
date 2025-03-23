@@ -7,7 +7,8 @@ A library for processing academic texts in Greek and other languages, developed 
 
 ## Features
 
-- **PDF Processing**: Extract text content from academic PDFs with structure preservation
+- **Document Processing**: Extract text content from academic PDFs, DOCX, XML, HTML, and other formats with structure preservation
+- **Robust Batch Processing**: Process documents in batches with error isolation and automatic resumption
 - **Quality Control**: Filter and cluster documents based on extraction quality
 - **Section Extraction**: Identify and extract academic sections from documents
 - **Section Classification**: Classify sections using machine learning models
@@ -18,7 +19,7 @@ A library for processing academic texts in Greek and other languages, developed 
 ## Installation
 
 ```bash
-pip install -i https://test.pypi.org/simple/ glossapi==0.0.3.5.2
+pip install -i https://test.pypi.org/simple/ glossapi==0.0.9
 ```
 
 ## Usage
@@ -35,12 +36,12 @@ logging.basicConfig(level=logging.INFO)
 # Initialize Corpus with input and output directories
 corpus = Corpus(
     input_dir="/path/to/documents",
-    output_dir="/path/to/output",
-    metadata_path="/path/to/metadata.parquet",  # Optional
-    annotation_mapping={
-        'Κεφάλαιο': 'chapter',
-        # Add more mappings as needed
-    }
+    output_dir="/path/to/output"
+    # metadata_path="/path/to/metadata.parquet",  # Optional
+    # annotation_mapping={
+    #     'Κεφάλαιο': 'chapter',
+    #     # Add more mappings as needed
+    # }
 )
 
 # Step 1: Extract documents (quality control)
