@@ -1,6 +1,7 @@
 # GlossAPI
 
-[![PyPI Status](https://img.shields.io/pypi/v/glossapi?logo=pypi)](https://pypi.org/project/glossapi/)
+[![Release Version](https://img.shields.io/github/v/release/eellak/glossAPI)](https://github.com/eellak/glossAPI/releases)
+[![PyPI Test Status](https://img.shields.io/badge/PyPI%20Test-glossapi-blue?logo=pypi)](https://test.pypi.org/project/glossapi/)
 
 A library for processing academic texts in Greek and other languages, developed by [ΕΕΛΛΑΚ](https://eellak.gr/).
 
@@ -17,7 +18,7 @@ A library for processing academic texts in Greek and other languages, developed 
 ## Installation
 
 ```bash
-pip install glossapi
+pip install glossapi==0.0.7
 ```
 
 ## Usage
@@ -37,12 +38,12 @@ corpus = Corpus(
     output_dir="/path/to/output",
     metadata_path="/path/to/metadata.parquet",  # Optional
     annotation_mapping={
-        'Κεφάλαιο': 'chapter', # i.e. a label in document_type column : references text type to be annotated chapter or text for now
+        'Κεφάλαιο': 'chapter',
         # Add more mappings as needed
     }
 )
 
-# Step 1: Filter documents (quality control)
+# Step 1: Extract documents (quality control)
 corpus.extract()
 
 # Step 2: Extract sections from filtered documents

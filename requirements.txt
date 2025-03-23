@@ -1,0 +1,22 @@
+# GlossAPI Requirements
+# Automatically generated based on package imports
+
+# Core dependencies
+pandas>=1.3.0
+numpy>=1.20.0
+scikit-learn>=1.0.0
+joblib>=1.0.0
+dask>=2022.1.0
+pyarrow>=7.0.0
+
+# Document processing
+docling>=1.0.0
+
+# Python standard libraries (included for reference)
+# logging
+# os
+# pathlib
+# typing
+# re
+# random
+# shutil
