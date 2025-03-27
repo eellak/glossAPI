@@ -1,4 +1,7 @@
+from typing import Dict, Set, List, Optional, Iterable, Tuple, Any
+
 from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
+from docling.backend.docling_parse_v2_backend import DoclingParseV2DocumentBackend
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 from docling.datamodel.base_models import InputFormat, ConversionStatus
 from docling.datamodel.pipeline_options import (
@@ -26,6 +29,7 @@ from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
 import ftfy
 import logging
 import os
+import pickle
 import time
 import re
 from pathlib import Path
@@ -152,7 +156,7 @@ class GlossExtract:
                 InputFormat.PDF: PdfFormatOption(
                     pipeline_options=self.pipeline_options,
                     pipeline_cls=StandardPdfPipeline,
-                    backend=PyPdfiumDocumentBackend
+                    backend=DoclingParseV2DocumentBackend
                 ),
                 InputFormat.DOCX: WordFormatOption(
                     pipeline_cls=SimplePipeline
@@ -165,37 +169,250 @@ class GlossExtract:
             }
         )
     
-    def extract_path(self, input_doc_paths, output_dir):
+    def _load_processing_state(self, state_file: Path) -> Dict[str, Set[str]]:
         """
-        Extract all documents in the input paths to Markdown.
+        Load the processing state from a pickle file.
+        
+        Args:
+            state_file: Path to the pickle file
+            
+        Returns:
+            Dictionary with 'processed' and 'problematic' sets of filenames
+        """
+        if state_file.exists():
+            try:
+                with open(state_file, 'rb') as f:
+                    return pickle.load(f)
+            except Exception as e:
+                self._log.warning(f"Failed to load processing state: {e}. Starting fresh.")
+        
+        # If no state file or loading failed, check if output directory has existing files
+        output_dir = state_file.parent
+        if output_dir.exists():
+            self._log.info(f"No state file found, checking for existing output files in {output_dir}")
+            # Get all markdown files in the output directory
+            processed_files = set()
+            try:
+                for md_file in output_dir.glob("*.md"):
+                    # Extract the base filename without extension
+                    base_name = md_file.stem
+                    # For each likely input format, add a possible filename to the set
+                    for ext in ['pdf', 'docx', 'xml', 'html', 'pptx', 'csv', 'md']:
+                        processed_files.add(f"{base_name}.{ext}")
+                if processed_files:
+                    self._log.info(f"Found {len(processed_files) // 7} existing markdown files in output directory")
+            except Exception as e:
+                self._log.error(f"Error while scanning existing files: {e}")
+                
+            return {'processed': processed_files, 'problematic': set()}
+                
+        # Default state structure if file doesn't exist or can't be loaded
+        return {'processed': set(), 'problematic': set()}
+    
+    def _save_processing_state(self, state: Dict[str, Set[str]], state_file: Path) -> None:
+        """
+        Save the processing state to a pickle file.
+        
+        Args:
+            state: Dictionary with 'processed' and 'problematic' sets of filenames
+            state_file: Path to the pickle file
+        """
+        try:
+            with open(state_file, 'wb') as f:
+                pickle.dump(state, f)
+        except Exception as e:
+            self._log.error(f"Failed to save processing state: {e}")
+    
+    def _get_unprocessed_files(self, input_doc_paths: List[Path], 
+                              processed_files: Set[str], 
+                              problematic_files: Set[str]) -> List[Path]:
+        """
+        Get the list of files that haven't been processed yet.
+        
+        Args:
+            input_doc_paths: List of input file paths
+            processed_files: Set of filenames that have been processed
+            problematic_files: Set of filenames that were problematic
+            
+        Returns:
+            List of unprocessed file paths
+        """
+        # Create a list of unprocessed files
+        unprocessed_files = []
+        for file_path in input_doc_paths:
+            filename = Path(file_path).name
+            if filename not in processed_files and filename not in problematic_files:
+                unprocessed_files.append(file_path)
+                
+        return unprocessed_files
+    
+    def _process_batch(self, batch: List[Path], output_dir: Path) -> Tuple[List[str], List[str]]:
+        """
+        Process a batch of files and return the successful and problematic filenames.
+        
+        Args:
+            batch: List of file paths to process
+            output_dir: Output directory
+            
+        Returns:
+            Tuple of (successful_filenames, problematic_filenames)
+        """
+        successful = []
+        problematic = []
+        
+        # Try processing as a batch first
+        try:
+            # Convert all input documents
+            conv_results = self.converter.convert_all(
+                batch,
+                raises_on_error=False,
+            )
+            
+            # Export results to markdown files
+            success_count, partial_success_count, failure_count = self._export_documents(
+                conv_results, output_dir=output_dir
+            )
+            
+            # All files in batch were processed successfully
+            successful = [Path(file_path).name for file_path in batch]
+            return successful, problematic
+            
+        except Exception as batch_error:
+            self._log.warning(f"Batch processing failed with error: {batch_error}. Processing files individually.")
+            
+            # Process files individually to identify problematic ones
+            for file_path in batch:
+                try:
+                    # Try to process this file individually
+                    conv_results = self.converter.convert_all(
+                        [file_path],
+                        raises_on_error=False,
+                    )
+                    
+                    # Export results to markdown files
+                    success_count, partial_success_count, failure_count = self._export_documents(
+                        conv_results, output_dir=output_dir
+                    )
+                    
+                    if success_count > 0 or partial_success_count > 0:
+                        successful.append(Path(file_path).name)
+                    else:
+                        problematic.append(Path(file_path).name)
+                        self._log.error(f"Failed to process file: {Path(file_path).name}")
+                        
+                except Exception as individual_error:
+                    problematic.append(Path(file_path).name)
+                    self._log.error(f"Failed to process file {Path(file_path).name}: {individual_error}")
+        
+        return successful, problematic
+        
+    def extract_path(self, input_doc_paths, output_dir, batch_size: int = 5):
+        """
+        Extract all documents in the input paths to Markdown with robust batch processing and resumption.
         
         Args:
             input_doc_paths (List[Path]): List of paths to documents (PDF, DOCX, XML, etc.)
             output_dir (Path): Directory to save the extracted Markdown files
+            batch_size (int): Number of files to process in each batch
         """
         start_time = time.time()
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Convert all input documents
-        conv_results = self.converter.convert_all(
-            input_doc_paths,
-            raises_on_error=False,  # to let conversion run through all and examine results at the end
+        
+        # Create a directory for problematic files
+        problematic_dir = output_dir / "problematic_files"
+        problematic_dir.mkdir(exist_ok=True)
+        
+        # State file for tracking progress
+        state_file = output_dir / ".processing_state.pkl"
+        
+        # Load the current processing state
+        state = self._load_processing_state(state_file)
+        processed_files = state.get('processed', set())
+        problematic_files = state.get('problematic', set())
+        
+        self._log.info(f"Found {len(processed_files)} already processed files")
+        self._log.info(f"Found {len(problematic_files)} problematic files")
+        
+        # Convert all paths to Path objects for consistency
+        input_doc_paths = [Path(p) if not isinstance(p, Path) else p for p in input_doc_paths]
+        
+        # Get files that haven't been processed yet
+        unprocessed_files = self._get_unprocessed_files(
+            input_doc_paths, processed_files, problematic_files
         )
         
-        # Export results to markdown files
-        success_count, partial_success_count, failure_count = self._export_documents(
-            conv_results, output_dir=output_dir
-        )
+        total_files = len(input_doc_paths)
+        remaining_files = len(unprocessed_files)
+        
+        self._log.info(f"Processing {remaining_files} out of {total_files} files")
+        
+        # Check if all files have already been processed
+        if remaining_files == 0:
+            self._log.info("All files have already been processed. Nothing to do.")
+            end_time = time.time() - start_time
+            self._log.info(f"Document extraction verification complete in {end_time:.2f} seconds.")
+            return
+        
+        # Process files in batches
+        batch_count = (remaining_files + batch_size - 1) // batch_size  # Ceiling division
+        success_count = 0
+        partial_success_count = 0
+        failure_count = 0
+        
+        for i in range(0, len(unprocessed_files), batch_size):
+            batch = unprocessed_files[i:i + batch_size]
+            batch_start_time = time.time()
+            
+            self._log.info(f"Processing batch {i//batch_size + 1}/{batch_count} ({len(batch)} files)")
+            
+            # Process the batch
+            successful, problematic = self._process_batch(batch, output_dir)
+            
+            # Update counts
+            success_count += len(successful)
+            failure_count += len(problematic)
+            
+            # Update processed and problematic files
+            processed_files.update(successful)
+            problematic_files.update(problematic)
+            
+            # Move problematic files to the problematic directory
+            for filename in problematic:
+                for input_path in input_doc_paths:
+                    if Path(input_path).name == filename:
+                        try:
+                            # Create a copy of the problematic file
+                            copy2(input_path, problematic_dir / filename)
+                            self._log.info(f"Copied problematic file to {problematic_dir / filename}")
+                            break
+                        except Exception as e:
+                            self._log.error(f"Failed to copy problematic file {filename}: {e}")
+            
+            # Save the current state after each batch
+            self._save_processing_state({
+                'processed': processed_files,
+                'problematic': problematic_files
+            }, state_file)
+            
+            batch_duration = time.time() - batch_start_time
+            self._log.info(f"Batch processed in {batch_duration:.2f} seconds")
+            self._log.info(f"Progress: {len(processed_files)}/{total_files} files ({len(problematic_files)} problematic)")
+        
+        # Check if all files have been processed
+        if len(processed_files) + len(problematic_files) >= total_files:
+            self._log.info("All files have been processed")
+            
+            # Keep the state file for resumption capabilities
+            self._log.info("Preserving processing state file for resumption functionality")
+        
         end_time = time.time() - start_time
-
         self._log.info(f"Document extraction complete in {end_time:.2f} seconds.")
         self._log.info(f"Successfully extracted: {success_count}")
         self._log.info(f"Partially extracted: {partial_success_count}")
 
         if failure_count > 0:
-            self._log.warning(f"Failed to extract {failure_count} out of {len(input_doc_paths)} documents.")
-            # Don't raise an exception, just continue with the successfully converted files
+            self._log.warning(f"Failed to extract {failure_count} out of {total_files} documents.")
             
     def _fix_greek_text(self, text):
         """Fix Unicode issues in text, particularly for Greek characters."""
