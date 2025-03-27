@@ -1,7 +1,7 @@
 # GlossAPI
 
 [![Release Version](https://img.shields.io/github/v/release/eellak/glossAPI)](https://github.com/eellak/glossAPI/releases)
-[![PyPI Test Status](https://img.shields.io/badge/PyPI%20Test-glossapi-blue?logo=pypi)](https://test.pypi.org/project/glossapi/)
+[![PyPI Status](https://img.shields.io/pypi/v/glossapi?logo=pypi)](https://pypi.org/project/glossapi/)
 
 A library for processing academic texts in Greek and other languages, developed by [ΕΕΛΛΑΚ](https://eellak.gr/).
 
@@ -19,7 +19,7 @@ A library for processing academic texts in Greek and other languages, developed 
 ## Installation
 
 ```bash
-pip install -i https://test.pypi.org/simple/ glossapi==0.0.9
+pip install glossapi==0.0.9
 ```
 
 ## Usage
