@@ -1,6 +1,7 @@
 from typing import Dict, Set, List, Optional, Iterable, Tuple, Any
 
 from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
+from docling.backend.docling_parse_v2_backend import DoclingParseV2DocumentBackend
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 from docling.datamodel.base_models import InputFormat, ConversionStatus
 from docling.datamodel.pipeline_options import (
@@ -155,7 +156,7 @@ class GlossExtract:
                 InputFormat.PDF: PdfFormatOption(
                     pipeline_options=self.pipeline_options,
                     pipeline_cls=StandardPdfPipeline,
-                    backend=PyPdfiumDocumentBackend
+                    backend=DoclingParseV2DocumentBackend
                 ),
                 InputFormat.DOCX: WordFormatOption(
                     pipeline_cls=SimplePipeline
