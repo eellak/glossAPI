@@ -54,4 +54,4 @@ corpus.annotate()
 
 ## License
 
-This project is licensed under the European Union Public Licence 1.2 (EUPL 1.2).
+This project is licensed under the [European Union Public Licence 1.2 (EUPL 1.2)](https://interoperable-europe.ec.europa.eu/collection/eupl/eupl-text-eupl-12).
