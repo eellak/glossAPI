@@ -2,7 +2,7 @@
 
 [![PyPI Status](https://img.shields.io/pypi/v/glossapi?logo=pypi)](https://pypi.org/project/glossapi/)
 
-A library for processing texts in Greek and other languages, developed by [ΕΕΛΛΑΚ](https://eellak.gr/).
+A library for processing texts in Greek and other languages, developed by [Open Technologies Alliance(GFOSS)](https://gfoss.eu/).
 
 ## Features
 
