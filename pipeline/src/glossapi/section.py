@@ -252,6 +252,11 @@ class GlossSection:
         This only divides the document into sections based on headers - content
         categorization happens in _process_section_content.
         
+        Enhanced to handle:
+        1. Documents that start with content before the first header
+        2. Documents with no headers at all
+        3. Content after the last header
+        
         Parameters:
         - lines: List of text lines from the document
         
@@ -261,9 +266,17 @@ class GlossSection:
         sections = []
         current_section = None
         n = len(lines)
+        found_any_headers = False
         
         # Store raw lines between headers
         raw_section_lines = []
+        
+        # Handle case 1: Document starts with content before any header
+        # Create an initial section if the first line is not a header
+        if n > 0 and not self._is_header(lines[0].strip()):
+            # Use first line as title if it's not empty, otherwise use "Document"
+            first_line = lines[0].strip() if lines[0].strip() else "Document"
+            current_section = Section(title=first_line, start_line=0)
         
         i = 0
         while i < n:
@@ -271,6 +284,8 @@ class GlossSection:
             
             # Markdown heading - start of a new section
             if self._is_header(raw_line.strip()):
+                found_any_headers = True
+                
                 # If we had a previous section, finalize it
                 if current_section is not None:
                     current_section.end_line = i - 1
@@ -281,7 +296,7 @@ class GlossSection:
                     
                     sections.append(current_section)
                 
-                # Create a new section
+                # Create a new section based on the header
                 _, title = self._extract_section_level(raw_line)
                 current_section = Section(title=title, start_line=i)
                 i += 1
@@ -290,15 +305,34 @@ class GlossSection:
             # Just store the raw line - content processing happens later
             if current_section is not None:
                 raw_section_lines.append(raw_line)
+            else:
+                # This should generally not happen since we create an initial section if needed,
+                # but in case first_line logic changes, keep this safety check
+                raw_section_lines.append(raw_line)
             
             i += 1
 
-        
+        # Handle case 2 & 3: Document has no headers or content after the last header
         # Finalize the last section if there is one
         if current_section:
             current_section.end_line = n - 1
             current_section.raw_content = "\n".join(raw_section_lines)
             sections.append(current_section)
+        elif raw_section_lines:  # Handle case where no section was created but we collected content
+            first_line = raw_section_lines[0].strip() if raw_section_lines and raw_section_lines[0].strip() else "Document"
+            default_section = Section(title=first_line, start_line=0)
+            default_section.end_line = n - 1
+            default_section.raw_content = "\n".join(raw_section_lines[1:] if len(raw_section_lines) > 1 else raw_section_lines)
+            sections.append(default_section)
+        
+        # Handle case 2: If no headers were found and we have no sections yet, create a default section
+        if not found_any_headers and not sections and n > 0:
+            title = lines[0].strip() if lines[0].strip() else "Document"
+            content = "\n".join(lines[1:] if len(lines) > 1 else lines)
+            default_section = Section(title=title, start_line=0)
+            default_section.end_line = n - 1
+            default_section.raw_content = content
+            sections.append(default_section)
         
         return sections
 

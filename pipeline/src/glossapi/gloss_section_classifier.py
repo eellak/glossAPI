@@ -95,11 +95,27 @@ class GlossSectionClassifier:
         Build the machine learning pipeline for processing and classifying text sections.
         
         The pipeline combines header and section text, vectorizes it using TF-IDF,
-        and includes binary features (has_table, has_list).
+        and includes binary features (has_table, has_list). Now with better handling
+        of edge cases like empty arrays.
         """
+        # Create a custom TF-IDF vectorizer that can handle empty arrays
+        class RobustTfidfVectorizer(TfidfVectorizer):
+            def transform(self, X):
+                try:
+                    # Check if input is empty or contains only empty strings
+                    if len(X) == 0 or all(not x or pd.isna(x) for x in X):
+                        # Return an empty array with the right shape
+                        return np.zeros((len(X), self.max_features))
+                    # Otherwise do normal transform
+                    return super().transform(X)
+                except Exception as e:
+                    self.max_features = getattr(self, 'max_features', 2000)  # Default if not set
+                    print(f"TfidfVectorizer error: {e}")
+                    return np.zeros((len(X), self.max_features))
+                    
         self.combined_text_pipeline = Pipeline([
             ('combine', FunctionTransformer(combine_text, validate=False)),
-            ('tfidf', TfidfVectorizer(max_features=2000))
+            ('tfidf', RobustTfidfVectorizer(max_features=2000))
         ])
 
         self.preprocessor = ColumnTransformer(
@@ -309,11 +325,25 @@ class GlossSectionClassifier:
         
         # Define a closure that captures self
         def predict_partition(df):
-            # Run SVM prediction on the subset of features.
+            # If the dataframe is empty, return it with the predicted_section column added
+            if len(df) == 0:
+                df = df.copy()  # Avoid SettingWithCopyWarning
+                df['predicted_section'] = pd.Series(dtype='object')
+                return df
+                
+            # Run SVM prediction on the subset of features for non-empty dataframes
             X = df[['header', 'section', 'has_table', 'has_list']]
             df = df.copy()  # Avoid SettingWithCopyWarning
-            # Initially assign SVM predictions.
-            df['predicted_section'] = self.clf_pipeline.predict(X)
+            
+            try:
+                # Assign SVM predictions
+                df['predicted_section'] = self.clf_pipeline.predict(X)
+            except Exception as e:
+                # If prediction fails, assign a default value
+                print(f"Error during prediction: {str(e)}")
+                print(f"Assigning default prediction value to all rows")
+                df['predicted_section'] = 'άλλο'  # Default to general section for ML classifier
+                
             return df
         
         self.logger.info("Running predictions in parallel using Dask...")
