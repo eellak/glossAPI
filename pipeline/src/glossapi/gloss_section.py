@@ -160,7 +160,7 @@ class GlossSection:
         if end_char_1.islower() and start_char_2.islower():
             return True
         # ends with punctuation and next starts with lower
-        if end_char_1 in ',:' and start_char_2.islower():
+        if end_char_1 in ',:·' and start_char_2.islower():
             return True
         # ends with digit, next starts with '°'
         if end_char_1.isdigit() and start_char_2 == '°':

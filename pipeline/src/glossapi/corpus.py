@@ -3,12 +3,13 @@ from pathlib import Path
 import os
 import pandas as pd
 import random
-from typing import Dict, Optional, Union, List
+from typing import Dict, Optional, Union, List, Any
 import shutil
 
 from .gloss_extract import GlossExtract
-from .gloss_section import GlossSection
+from .section import GlossSection as NewGlossSection
 from .gloss_section_classifier import GlossSectionClassifier
+from .gloss_downloader import GlossDownloader
 
 class Corpus:
     """
@@ -32,6 +33,7 @@ class Corpus:
         extraction_model_path: Optional[Union[str, Path]] = None,
         metadata_path: Optional[Union[str, Path]] = None,
         annotation_mapping: Optional[Dict[str, str]] = None,
+        downloader_config: Optional[Dict[str, Any]] = None,
         log_level: int = logging.INFO
     ):
         """
@@ -45,6 +47,7 @@ class Corpus:
             metadata_path: Path to metadata file with document types (optional)
             annotation_mapping: Dictionary mapping document types to annotation methods (optional)
                                e.g. {'Κεφάλαιο': 'chapter'} means documents with type 'Κεφάλαιο' use chapter annotation
+            downloader_config: Configuration parameters for the GlossDownloader (optional)
             log_level: Logging level (default: logging.INFO)
         """
         # Setup logging
@@ -85,7 +88,7 @@ class Corpus:
         
         # Initialize component classes
         self.extractor = GlossExtract()
-        self.sectioner = GlossSection()
+        self.sectioner = NewGlossSection()
         self.classifier = GlossSectionClassifier()
         
         # Create necessary directories
@@ -104,6 +107,10 @@ class Corpus:
         
         # Initialize document type mapping
         self.filename_to_doctype = {}
+        
+        # Initialize downloader config
+        self.downloader_config = downloader_config or {}
+        
         self._load_metadata()
     
     def _load_metadata(self) -> None:
@@ -336,25 +343,14 @@ class Corpus:
         
         self.logger.info(f"Section extraction complete. Parquet file saved to {self.sections_parquet}")
     
-    # Keep extract method for backward compatibility
-    def convert(self) -> None:
-        """
-        Extract sections from markdown files (alias for section()).
-        
-        This method is kept for backward compatibility and will be deprecated in future versions.
-        Please use section() instead.
-        """
-        self.logger.warning("convert() is deprecated and will be removed in a future version. Use section() instead.")
-        self.section()
-    
-    def annotate(self, annotation_type: str = "auto", fully_annotate: bool = True) -> None:
+
+    def annotate(self, annotation_type: str = "text", fully_annotate: bool = True) -> None:
         """
         Annotate extracted sections with classification information.
         
         Args:
-            annotation_type: Type of annotation to use: 'auto', 'text', or 'chapter'
-                           - 'auto': Use document type from metadata to determine appropriate annotation
-                           - 'text': Use text-based annotation with section titles
+            annotation_type: Type of annotation to use: 'text' or 'chapter'
+                           - 'text': Use text-based annotation with section titles (default)
                            - 'chapter': Use chapter-based annotation with chapter numbers
             fully_annotate: Whether to perform full annotation of sections (default: True)
         """
@@ -479,7 +475,65 @@ class Corpus:
         else:
             self.logger.warning(f"File not found: {parquet_file}")
     
-    def process_all(self, input_format: str = "pdf", fully_annotate: bool = True, annotation_type: str = "auto") -> None:
+    def download(
+        self,
+        input_parquet: Optional[Union[str, Path]] = None,
+        url_column: str = 'url',
+        **kwargs
+    ) -> pd.DataFrame:
+        """
+        Download files from URLs in a parquet file.
+        
+        If input_parquet is not specified, it will automatically look for any .parquet file
+        in the input_dir and use the first one found.
+        
+        Args:
+            input_parquet: Path to input parquet file with URLs (optional)
+                          If not provided, will search input_dir for parquet files
+            url_column: Name of column containing URLs (defaults to 'url')
+            **kwargs: Additional parameters to override default downloader config
+                      Supported parameters include: concurrency, sleep, max_retries, etc.
+                      See GlossDownloader documentation for all options
+        
+        Returns:
+            pd.DataFrame: DataFrame with download results
+        """
+        # If input_parquet not specified, find parquet files in input_dir
+        if input_parquet is None:
+            parquet_files = list(self.input_dir.glob('*.parquet'))
+            if not parquet_files:
+                raise ValueError(f"No parquet files found in {self.input_dir}")
+            input_parquet = parquet_files[0]
+            self.logger.info(f"Using parquet file: {input_parquet}")
+        else:
+            input_parquet = Path(input_parquet)
+        
+        self.logger.info(f"Downloading files from URLs in {input_parquet}...")
+        
+        # Prepare downloader config with defaults and overrides
+        config = self.downloader_config.copy()
+        config['url_column'] = url_column  # Always set url_column, with default 'url'
+        config.update(kwargs)
+        
+        # Set output directory to input_dir
+        config['output_dir'] = str(self.input_dir)
+        
+        # Initialize and run downloader
+        downloader = GlossDownloader(**config)
+        df = downloader.download_files(input_parquet=str(input_parquet))
+        
+        # Save the updated dataframe with download results
+        parquet_download_dir = self.output_dir / "download_results"
+        os.makedirs(parquet_download_dir, exist_ok=True)
+        output_parquet = parquet_download_dir / f"download_results_{input_parquet.name}"
+        df.to_parquet(str(output_parquet), index=False)
+        
+        self.logger.info(f"Download complete. {len(df[df['download_success'] == True])} files downloaded to {self.input_dir}")
+        self.logger.info(f"Download results saved to {output_parquet}")
+        
+        return df
+    
+    def process_all(self, input_format: str = "pdf", fully_annotate: bool = True, annotation_type: str = "auto", download_first: bool = False) -> None:
         """
         Run the complete processing pipeline: extract, section, and annotate.
         
@@ -487,7 +541,16 @@ class Corpus:
             input_format: Input format (default: "pdf")
             fully_annotate: Whether to perform full annotation after classification (default: True)
             annotation_type: Annotation method to use (default: "auto")
+            download_first: Whether to run the downloader before extraction (default: False)
         """
+        if download_first:
+            try:
+                self.download()
+                self.logger.info("Download step completed, proceeding with extraction...")
+            except Exception as e:
+                self.logger.error(f"Error during download step: {e}")
+                self.logger.warning("Continuing with extraction of already downloaded files...")
+                
         self.extract(input_format=input_format)
         self.section()
         self.annotate(fully_annotate=fully_annotate, annotation_type=annotation_type)

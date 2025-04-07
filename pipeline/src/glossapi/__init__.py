@@ -18,6 +18,8 @@ from .gloss_section import GlossSection
 from .gloss_section_classifier import GlossSectionClassifier
 from .corpus import Corpus
 from .sampler import Sampler
+from .section import Section, GlossSection as NewGlossSection
+from .gloss_downloader import GlossDownloader
 
 __all__ = [
     'AcademicSection',
@@ -25,7 +27,10 @@ __all__ = [
     'GlossSection',
     'GlossSectionClassifier',
     'Corpus',
-    'Sampler'
+    'Sampler',
+    'Section',
+    'NewGlossSection',
+    'GlossDownloader'
 ]
 
-__version__ = '0.0.9'
+__version__ = '0.0.10'
