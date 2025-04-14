@@ -7,7 +7,7 @@ from typing import Dict, Optional, Union, List, Any
 import shutil
 
 from .gloss_extract import GlossExtract
-from .section import GlossSection as NewGlossSection
+from .gloss_section import GlossSection
 from .gloss_section_classifier import GlossSectionClassifier
 from .gloss_downloader import GlossDownloader
 
@@ -88,7 +88,7 @@ class Corpus:
         
         # Initialize component classes
         self.extractor = GlossExtract()
-        self.sectioner = NewGlossSection()
+        self.sectioner = GlossSection()
         self.classifier = GlossSectionClassifier()
         
         # Create necessary directories
@@ -185,59 +185,46 @@ class Corpus:
         else:
             input_dir = Path(input_dir)
             
-        # Create quality clustering directory structure
+        # Skip directory creation if not splitting bad files
+        if not split_bad:
+            self.logger.info("Skipping quality clustering as split_bad=False")
+            # Just use the original markdown directory for good files
+            self.good_markdown_dir = input_dir
+            self.markdown_dir = input_dir
+            self.logger.info(f"Using all files from {input_dir} as good quality")
+            return
+            
+        # Only create directory structure if we're doing actual clustering
         quality_dir = self.output_dir / 'quality_clustering'
         os.makedirs(quality_dir, exist_ok=True)
         
         good_dir = quality_dir / 'good'
         bad_dir = quality_dir / 'bad'
         os.makedirs(good_dir, exist_ok=True)
+        os.makedirs(bad_dir, exist_ok=True)
         
-        if split_bad:
-            # Only create bad dir if we're going to use it
-            os.makedirs(bad_dir, exist_ok=True)
-            
-            # Set extraction model path
-            if model_path is None:
-                model_path = str(self.extraction_model_path)
-            
-            # Check if model exists
-            if not os.path.exists(model_path):
-                self.logger.warning(f"Clustering model not found at {model_path}. Training a new model...")
-                # Create models directory only when needed for training a new model
-                os.makedirs(os.path.dirname(model_path), exist_ok=True)
-                # Train model
-                self.extractor.training(str(input_dir), model_path=model_path)
-                self.logger.info(f"Model trained and saved to {model_path}")
-            
-            # Run split_bad to separate good and bad files
-            self.logger.info("Running clustering to separate good and bad quality documents...")
-            self.extractor.split_bad(
-                input_folder=str(input_dir),
-                output_folder=str(quality_dir),
-                model_file=model_path
-            )
-            self.logger.info(f"Clustering complete. Files sorted into good/bad folders.")
-        else:
-            # If split_bad is disabled, just copy all files to the good directory
-            self.logger.info("Clustering disabled. Copying all files to 'good' folder...")
-            
-            # Get all markdown files
-            markdown_files = list(Path(input_dir).glob("*.md"))
-            
-            # Copy all files to good folder
-            copied_count = 0
-            for source_path in markdown_files:
-                filename = source_path.name
-                dest_path = good_dir / filename
-                try:
-                    shutil.copy2(source_path, dest_path)
-                    copied_count += 1
-                except Exception as e:
-                    self.logger.error(f"Error copying {filename}: {e}")
-            
-            self.logger.info(f"Copied {copied_count} files to good folder")
+        # Set extraction model path
+        if model_path is None:
+            model_path = str(self.extraction_model_path)
         
+        # Check if model exists
+        if not os.path.exists(model_path):
+            self.logger.warning(f"Clustering model not found at {model_path}. Training a new model...")
+            # Create models directory only when needed for training a new model
+            os.makedirs(os.path.dirname(model_path), exist_ok=True)
+            # Train model
+            self.extractor.training(str(input_dir), model_path=model_path)
+            self.logger.info(f"Model trained and saved to {model_path}")
+        
+        # Run split_bad to separate good and bad files
+        self.logger.info("Running clustering to separate good and bad quality documents...")
+        self.extractor.split_bad(
+            input_folder=str(input_dir),
+            output_folder=str(quality_dir),
+            model_file=model_path
+        )
+        self.logger.info(f"Clustering complete. Files sorted into good/bad folders.")
+
         # Update markdown_dir to use good files for further processing
         self.good_markdown_dir = good_dir
         self.logger.info(f"Files processed. Good files saved to {self.good_markdown_dir}")
@@ -273,17 +260,66 @@ class Corpus:
         # Create output directory
         os.makedirs(self.markdown_dir, exist_ok=True)
         
-        # Get input files
+        # Define supported formats
+        supported_formats = ["pdf", "docx", "xml", "html", "pptx", "csv", "md"]
+        
+        # Look for the downloads directory first
+        downloads_dir = self.output_dir / "downloads"
+        
+        # If downloads directory doesn't exist or is empty, check input directory and move files
+        if not downloads_dir.exists() or not any(downloads_dir.iterdir()):
+            self.logger.info(f"Downloads directory not found or empty at {downloads_dir}, checking input directory...")
+            
+            # Create downloads directory if it doesn't exist
+            os.makedirs(downloads_dir, exist_ok=True)
+            
+            # Check input directory for supported files and move them
+            input_files_to_move = []
+            for ext in supported_formats:
+                found_files = list(self.input_dir.glob(f"*.{ext}"))
+                if found_files:
+                    self.logger.info(f"Found {len(found_files)} .{ext} files in input directory, moving to downloads...")
+                    input_files_to_move.extend(found_files)
+            
+            # Move files to downloads directory
+            for file_path in input_files_to_move:
+                target_path = downloads_dir / file_path.name
+                if not target_path.exists():
+                    shutil.copy2(file_path, target_path)
+                    self.logger.debug(f"Copied {file_path.name} to downloads directory")
+            
+            self.logger.info(f"Moved {len(input_files_to_move)} files to downloads directory")
+        
+        # Get input files from downloads directory
         if input_format.lower() == "all":
             # Include all supported formats
             input_files = []
-            for ext in ["pdf", "docx", "xml", "html", "pptx", "csv", "md"]:  # All supported formats
-                input_files.extend(list(self.input_dir.glob(f"*.{ext}")))
+            for ext in supported_formats:
+                found_files = list(downloads_dir.glob(f"*.{ext}"))
+                input_files.extend(found_files)
+                if found_files:
+                    self.logger.info(f"Found {len(found_files)} .{ext} files in downloads directory")
             
             # Log a warning about doc files
-            doc_files = list(self.input_dir.glob("*.doc"))
+            doc_files = list(downloads_dir.glob("*.doc"))
             if doc_files:
                 self.logger.warning(f"Found {len(doc_files)} .doc files which are not supported by Docling (pre-2007 Word format)")
+        elif "," in input_format.lower():
+            # Handle comma-separated format list
+            input_files = []
+            formats = [fmt.strip().lower() for fmt in input_format.split(",")]
+            for ext in formats:
+                # Handle special case for XML formats
+                if ext == "xml_jats":
+                    ext = "xml"  # Use the file extension .xml
+                    
+                if ext == "doc":
+                    self.logger.warning(f"The .doc format (pre-2007 Word) is not supported by Docling. Please convert to .docx first.")
+                    continue
+                    
+                current_files = list(downloads_dir.glob(f"*.{ext}"))
+                self.logger.info(f"Found {len(current_files)} files with extension .{ext}")
+                input_files.extend(current_files)
         else:
             # Handle special case for XML formats
             if input_format.lower() == "xml":
@@ -295,10 +331,10 @@ class Corpus:
                 self.logger.error(f"The .doc format (pre-2007 Word) is not supported by Docling. Please convert to .docx first.")
                 return
                 
-            input_files = list(self.input_dir.glob(f"*.{ext}"))
+            input_files = list(downloads_dir.glob(f"*.{ext}"))
         
         if not input_files:
-            self.logger.warning(f"No {input_format} files found in {self.input_dir}")
+            self.logger.warning(f"No {input_format} files found in {downloads_dir}")
             return
         
         self.logger.info(f"Found {len(input_files)} files to extract")
@@ -317,30 +353,140 @@ class Corpus:
         # Run filtering on extracted markdown files
         self.filter(input_dir=self.markdown_dir, split_bad=split_bad, model_path=model_path)
     
+    def split_bad(self, model_path: Optional[Union[str, Path]] = None) -> None:
+        """
+        Analyze markdown files for extraction quality and update the input parquet file.
+        This adds an 'extraction' column to the parquet with values 'good' or 'bad'.
+        
+        Unlike the filter() method, this doesn't create separate folders but updates the 
+        parquet file directly for more efficient pipeline processing.
+        
+        Args:
+            model_path: Path to the pre-trained model for clustering (defaults to self.extraction_model_path)
+        """
+        self.logger.info("Analyzing extraction quality and updating parquet file...")
+        
+        # Set extraction model path
+        if model_path is None:
+            model_path = str(self.extraction_model_path)
+        
+        # Check if model exists
+        if not os.path.exists(model_path):
+            self.logger.warning(f"Clustering model not found at {model_path}. Training a new model...")
+            # Create models directory only when needed for training a new model
+            os.makedirs(os.path.dirname(model_path), exist_ok=True)
+            # Train model
+            self.extractor.training(str(self.markdown_dir), model_path=model_path)
+            self.logger.info(f"Model trained and saved to {model_path}")
+        
+        # Run the parquet annotation
+        self.logger.info("Annotating input parquet with extraction quality information...")
+        success = self.extractor.annotate_parquet_with_extraction_quality(
+            markdown_folder=str(self.markdown_dir),
+            input_dir=str(self.input_dir),
+            model_file=model_path
+        )
+        
+        if success:
+            self.logger.info("Parquet file successfully updated with extraction quality information.")
+        else:
+            self.logger.warning("Failed to update parquet file with extraction quality information.")
+    
     def section(self) -> None:
         """
         Extract sections from markdown files and save to Parquet format.
+        
+        Uses files marked with 'good' extraction quality (if available) or all markdown files.
         """
         self.logger.info("Extracting sections from markdown files...")
         
         # Create output directory
         os.makedirs(self.sections_dir, exist_ok=True)
         
-        # Use the good markdown directory if available, otherwise fall back to other options
-        if hasattr(self, 'good_markdown_dir') and self.good_markdown_dir.exists():
-            input_dir = self.good_markdown_dir
-            self.logger.info(f"Using good quality markdown files from {input_dir}")
-        else:
-            # Check if markdown directory exists
-            input_dir = self.markdown_dir if self.markdown_dir.exists() else self.input_dir
-            self.logger.info(f"Using markdown files from {input_dir}")
+        # Filter markdown files based on extraction quality in parquet files
+        # Initialize the good_filenames list that will be used with the sectioner
+        good_filenames = []
         
-        # Extract sections
+        # Try to find files marked as 'good' in the parquet
+        from glossapi.parquet_schema import ParquetSchema
+        # Initialize with proper URL column configuration
+        parquet_schema = ParquetSchema({
+            'url_column': 'preferred_url'  # Use the default URL column
+        })
+        self.logger.info(f"Using URL column for parquet search: {parquet_schema.url_column}")
+        
+        # Look for input parquet with extraction column
+        input_parquet_path = parquet_schema.find_metadata_parquet(self.input_dir)
+        
+        # If not in input_dir, check download_results folder
+        if input_parquet_path is None:
+            download_results_dir = self.input_dir / "download_results"
+            if download_results_dir.exists():
+                input_parquet_path = parquet_schema.find_metadata_parquet(download_results_dir)
+            
+        if input_parquet_path is not None:
+            try:
+                # Load parquet and filter by 'good' extraction
+                df = pd.read_parquet(input_parquet_path)
+                if 'filename' in df.columns and 'extraction' in df.columns:
+                    good_rows = df[df['extraction'] == 'good']
+                    if not good_rows.empty:
+                        # Get filenames (without extension) of good extractions
+                        good_filenames = [
+                            os.path.splitext(filename)[0] 
+                            for filename in good_rows['filename'].tolist() 
+                            if filename
+                        ]
+                        self.logger.info(f"Found {len(good_filenames)} files marked as 'good' in parquet")
+                        
+                        # Update the processing_stage in the download results parquet
+                        try:
+                            # Update processing_stage for all good rows
+                            if 'processing_stage' in df.columns:
+                                # Only update rows where extraction is 'good'
+                                for idx in good_rows.index:
+                                    current_stage = df.loc[idx, 'processing_stage']
+                                    # Append section to stages if not already there
+                                    if current_stage is not None and 'section' not in str(current_stage):
+                                        df.loc[idx, 'processing_stage'] = current_stage + ',section'
+                            else:
+                                # Create processing_stage column if it doesn't exist
+                                df['processing_stage'] = None
+                                for idx in good_rows.index:
+                                    df.loc[idx, 'processing_stage'] = 'download,extract,section'
+                            
+                            standard_path = Path(os.path.dirname(input_parquet_path)) / "download_results.parquet"
+                            df.to_parquet(standard_path, index=False)
+                            self.logger.info(f"Updated processing_stage column in {standard_path} for good quality files")
+                            
+                            # If we renamed the file, log this
+                            if standard_path != input_parquet_path:
+                                self.logger.info(f"Standardized parquet name from {os.path.basename(input_parquet_path)} to download_results.parquet")
+                        except Exception as e:
+                            self.logger.warning(f"Error updating processing_stage in download results parquet: {e}")
+            except Exception as e:
+                self.logger.warning(f"Error reading parquet for extraction quality: {e}")
+        
+        # Check if we found any good files to process
+        self.logger.info(f"Found {len(good_filenames)} good quality files for sectioning")
+        if good_filenames:
+            self.logger.info(f"Good filenames: {good_filenames}")
+            
+        if not good_filenames:
+            error_msg = "No good quality files found for sectioning. Check extraction quality or run split_bad() first."
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        # Extract sections - pass list of good filenames to the sectioner
+        # We will pass the original markdown directory and the list of good filenames 
+        # rather than creating a separate directory
         self.sectioner.to_parquet(
-            input_dir=str(input_dir),
-            output_dir=str(self.sections_dir)
+            input_dir=str(self.markdown_dir),  # Use the markdown directory directly
+            output_dir=str(self.sections_dir),
+            filenames_to_process=good_filenames  # Pass the list of good filenames
         )
         
+        self.logger.info(f"Finished sectioning {len(good_filenames)} good quality files")
         self.logger.info(f"Section extraction complete. Parquet file saved to {self.sections_parquet}")
     
 
@@ -431,9 +577,43 @@ class Corpus:
             
             # Use the fully annotated output for adding document types
             self._add_document_types(self.fully_annotated_parquet)
+            
+            # Update processing_stage in the fully annotated parquet
+            try:
+                # Read the fully annotated parquet
+                df = pd.read_parquet(self.fully_annotated_parquet)
+                
+                # Add annotate to processing stage
+                if 'processing_stage' in df.columns:
+                    df['processing_stage'] = df['processing_stage'].apply(lambda x: x + ',annotate' if 'annotate' not in str(x) else x)
+                else:
+                    df['processing_stage'] = 'section,annotate'
+                    
+                # Write back
+                df.to_parquet(self.fully_annotated_parquet, index=False)
+                self.logger.info("Updated processing_stage to include 'annotate' stage")
+            except Exception as e:
+                self.logger.warning(f"Failed to update processing_stage in fully annotated parquet: {e}")
         else:
             # Add document types to the classified output
             self._add_document_types(self.classified_parquet)
+            
+            # Update processing_stage in the classified parquet when not doing full annotation
+            try:
+                # Read the classified parquet
+                df = pd.read_parquet(self.classified_parquet)
+                
+                # Add annotate to processing stage
+                if 'processing_stage' in df.columns:
+                    df['processing_stage'] = df['processing_stage'].apply(lambda x: x + ',annotate' if 'annotate' not in str(x) else x)
+                else:
+                    df['processing_stage'] = 'section,annotate'
+                    
+                # Write back
+                df.to_parquet(self.classified_parquet, index=False)
+                self.logger.info("Updated processing_stage to include 'annotate' stage")
+            except Exception as e:
+                self.logger.warning(f"Failed to update processing_stage in classified parquet: {e}")
     
     def _add_document_types(self, parquet_file: Path) -> None:
         """
@@ -515,8 +695,8 @@ class Corpus:
         config['url_column'] = url_column  # Always set url_column, with default 'url'
         config.update(kwargs)
         
-        # Set output directory to input_dir
-        config['output_dir'] = str(self.input_dir)
+        # Set output directory to output_dir
+        config['output_dir'] = str(self.output_dir)
         
         # Initialize and run downloader
         downloader = GlossDownloader(**config)
@@ -528,7 +708,7 @@ class Corpus:
         output_parquet = parquet_download_dir / f"download_results_{input_parquet.name}"
         df.to_parquet(str(output_parquet), index=False)
         
-        self.logger.info(f"Download complete. {len(df[df['download_success'] == True])} files downloaded to {self.input_dir}")
+        self.logger.info(f"Download complete. {len(df[df['download_success'] == True])} files downloaded to {self.output_dir / 'downloads'}")
         self.logger.info(f"Download results saved to {output_parquet}")
         
         return df

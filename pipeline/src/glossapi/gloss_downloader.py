@@ -102,6 +102,7 @@ class GlossDownloader:
         request_timeout: int = 45,
         skip_failed_after: int = 3,
         domain_cookies: Dict[str, Dict[str, str]] = None,
+        supported_formats: List[str] = None,
         log_level: int = logging.INFO
     ):
         """
@@ -146,8 +147,12 @@ class GlossDownloader:
         # Setup domain cookies with defaults
         self.domain_cookies = domain_cookies or {}
         
-        # Create output directory
-        os.makedirs(self.output_dir, exist_ok=True)
+        # Set supported formats for validation
+        self.supported_formats = supported_formats or ['pdf', 'docx', 'xml', 'html', 'pptx', 'csv', 'md']
+        
+        # Create downloads directory inside output directory
+        self.downloads_dir = self.output_dir / "downloads"
+        os.makedirs(self.downloads_dir, exist_ok=True)
         
         # Constants for filename generation
         self.LETTERS = string.ascii_uppercase
@@ -287,6 +292,18 @@ class GlossDownloader:
         async with aiofiles.open(path_to_file, 'wb') as file:
             await file.write(content)
         return path_to_file
+        
+    def is_supported_format(self, file_ext: str) -> bool:
+        """
+        Check if the file extension is in the list of supported formats
+        
+        Args:
+            file_ext: File extension without the dot (e.g., 'pdf')
+            
+        Returns:
+            bool: True if supported, False otherwise
+        """
+        return file_ext.lower() in self.supported_formats
     
     @retry(
         stop=(stop_after_attempt(3) | stop_after_delay(30)),
@@ -420,8 +437,14 @@ class GlossDownloader:
                                 session, requester, url, headers, timeout
                             )
                             
+                            # Check if file extension is supported
+                            file_ext = self.get_file_extension_from_url(url)
+                            if not self.is_supported_format(file_ext):
+                                self.logger.warning(f"Unsupported file format: {file_ext}. Supported formats: {', '.join(self.supported_formats)}")
+                                return False, "", f"Unsupported file format: {file_ext}", retry_count
+                                
                             # Write to file
-                            await self.write_file(filename, content, self.output_dir)
+                            await self.write_file(filename, content, self.downloads_dir)
                             
                             self.logger.info(f"Successfully downloaded {filename} from {url}")
                             return True, filename, "", retry_count
@@ -578,8 +601,8 @@ class GlossDownloader:
             else:
                 raise ValueError(f"URL column '{self.url_column}' not found in parquet file and no alternative URL columns detected")
         
-        # Create output directory
-        os.makedirs(self.output_dir, exist_ok=True)
+        # Ensure downloads directory exists
+        os.makedirs(self.downloads_dir, exist_ok=True)
         
         # Initialize semaphore for concurrency control
         semaphore = asyncio.Semaphore(self.concurrency)
@@ -599,6 +622,6 @@ class GlossDownloader:
         # Summary of download results
         success_count = updated_df['download_success'].sum()
         fail_count = len(updated_df) - success_count
-        self.logger.info(f"Download complete: {success_count} successful, {fail_count} failed")
+        self.logger.info(f"Download complete: {success_count} successful, {fail_count} failed, files downloaded to {self.downloads_dir}")
         
         return updated_df

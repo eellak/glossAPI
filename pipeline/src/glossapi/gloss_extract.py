@@ -724,12 +724,55 @@ class GlossExtract:
         print("\nPerforming clustering using pre-trained model...")
         n_clusters = 2
         kmeans = joblib.load(model_file)
-        labels = np.array(list(tqdm(
-            kmeans.predict(X),
-            desc="Clustering documents",
-            total=len(documents),
-            unit="doc"
-        )))
+        
+        # Handle feature dimension mismatch
+        n_features = X.shape[1]
+        expected_features = kmeans.cluster_centers_.shape[1]
+        
+        # Check if we have fewer features than the model expects (typically 10,000)
+        if n_features < expected_features:
+            print(f"\nWARNING: Insufficient trigram features detected. The clustering model expects {expected_features} features but only {n_features} were found.")
+            print(f"This usually happens with very small datasets or short documents.")
+            print(f"Skipping clustering and treating all documents as 'good' quality for testing purposes.")
+            
+            # Skip clustering entirely - create good and bad folders
+            good_dir = os.path.join(output_folder, 'good')
+            os.makedirs(good_dir, exist_ok=True)
+            
+            # Copy all files to good folder
+            copied_count = 0
+            # Reconstruct source file paths from folder_sources and filenames
+            for i, filename in enumerate(filenames):
+                source_file = os.path.join(input_folder, filename)
+                dest_path = os.path.join(good_dir, filename)
+                try:
+                    shutil.copy2(source_file, dest_path)
+                    copied_count += 1
+                except Exception as e:
+                    print(f"Error copying {filename}: {e}")
+            
+            print(f"\nCopied all {copied_count} files to 'good' folder: {good_dir}")
+            return
+            
+        elif n_features != expected_features:
+            print(f"Warning: Feature dimension mismatch. Model expects {expected_features} features but data has {n_features} features.")
+            print("Using simple heuristic-based quality detection instead of KMeans clustering.")
+            
+            # Simple heuristic: use document length as a proxy for quality
+            # Short documents are more likely to be bad quality
+            doc_lengths = [len(doc) for doc in documents]
+            median_length = np.median(doc_lengths)
+            # Mark documents shorter than 20% of median length as 'bad quality'
+            threshold = median_length * 0.2
+            labels = np.array([1 if length >= threshold else 0 for length in doc_lengths])
+        else:
+            # Original code path if dimensions match
+            labels = np.array(list(tqdm(
+                kmeans.predict(X),
+                desc="Clustering documents",
+                total=len(documents),
+                unit="doc"
+            )))
 
         print("\nCalculating Silhouette Score...")
         try:
@@ -841,3 +884,214 @@ class GlossExtract:
         print(f"Good files: {copied_count['good']}")
         print(f"Bad files: {copied_count['bad']}")
         print("\nAnalysis complete! Check the classified files in the output folder.")
+        
+    def annotate_parquet_with_extraction_quality(self, markdown_folder, input_dir, model_file='kmeans_weights.joblib'):
+        """
+        Processes all Markdown files in markdown_folder and adds an 'extraction' column to the
+        input parquet file with values 'good' or 'bad' based on quality assessment.
+        
+        Unlike split_bad(), this function doesn't copy files but updates the input parquet directly.
+        It looks for a parquet file in input_dir that has a 'filename' column and adds or updates
+        the 'extraction' column for rows where filenames match markdown files.
+        
+        Args:
+            markdown_folder: Path to directory containing extracted markdown files
+            input_dir: Directory containing the input parquet file (used by downloader)
+            model_file: Path to the pre-trained model for clustering
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        from pathlib import Path
+        import pandas as pd
+        from glossapi.parquet_schema import ParquetSchema
+        
+        print("Starting extraction quality assessment for parquet annotation...")
+        
+        # Convert to Path objects for consistency
+        markdown_folder = Path(markdown_folder)
+        input_dir = Path(input_dir)
+        
+        # Step 1: Find input parquet file
+        print("Looking for input parquet file...")
+        # Initialize with proper URL column configuration
+        parquet_schema = ParquetSchema({
+            'url_column': getattr(self, 'url_column', 'preferred_url')  # Use the class url_column if exists or default to preferred_url
+        })
+        print(f"Using URL column: {parquet_schema.url_column}")
+        input_parquet_path = parquet_schema.find_metadata_parquet(input_dir)
+        
+        # If not found in input_dir, check download_results folder
+        if input_parquet_path is None:
+            download_results_dir = input_dir / "download_results"
+            if download_results_dir.exists():
+                input_parquet_path = parquet_schema.find_metadata_parquet(download_results_dir)
+        
+        if input_parquet_path is None:
+            print("Error: Could not find a valid input parquet file with filename column")
+            return False
+        
+        print(f"Found input parquet file: {input_parquet_path}")
+        
+        # Step 2: Read the input parquet file
+        try:
+            df = pd.read_parquet(input_parquet_path)
+            if 'filename' not in df.columns:
+                print("Error: Input parquet does not have 'filename' column")
+                return False
+        except Exception as e:
+            print(f"Error reading parquet file: {e}")
+            return False
+        
+        # Step 3: Process markdown files for quality assessment
+        # Use the same quality determination logic as in split_bad
+        all_files = self._get_all_files([markdown_folder])
+        print(f"Found {len(all_files)} markdown files to analyze")
+        
+        documents = []
+        md_filenames = []
+        folder_sources = []
+        
+        for file_info in tqdm(all_files, desc="Processing markdown files"):
+            result = self._process_file(file_info)
+            if result is not None:
+                filepath, text, folder = result
+                documents.append(text)
+                md_filenames.append(os.path.basename(filepath))
+                folder_sources.append(folder)
+        
+        print(f"\nSuccessfully processed {len(documents)} documents")
+        
+        # If no documents found, return early
+        if not documents:
+            print("No markdown files found. Cannot determine extraction quality.")
+            return False
+            
+        # Step 4: Run quality assessment using the same technique as split_bad
+        # Create trigram representation
+        print("\nCreating trigram representation...")
+        vectorizer = TfidfVectorizer(
+            analyzer=self._custom_tokenizer,
+            lowercase=False,
+            max_features=10000
+        )
+        X = vectorizer.fit_transform(tqdm(documents, desc="Vectorizing documents", unit="doc"))
+        
+        # Perform clustering
+        print("\nAssessing document quality using pre-trained model...")
+        n_clusters = 2
+        kmeans = joblib.load(model_file)
+        
+        # Handle feature dimension mismatch
+        n_features = X.shape[1]
+        expected_features = kmeans.cluster_centers_.shape[1]
+        
+        # Determine good and bad documents
+        if n_features < expected_features:
+            print(f"\nWARNING: Insufficient trigram features detected. Treating all documents as 'good' quality.")
+            # Default to all good
+            extraction_quality = {filename: "good" for filename in md_filenames}
+        elif n_features != expected_features:
+            print(f"Warning: Feature dimension mismatch. Using heuristic-based quality detection.")
+            # Simple heuristic: use document length as a proxy for quality
+            doc_lengths = [len(doc) for doc in documents]
+            median_length = np.median(doc_lengths)
+            threshold = median_length * 0.2
+            extraction_quality = {}
+            for i, filename in enumerate(md_filenames):
+                if doc_lengths[i] >= threshold:
+                    extraction_quality[filename] = "good"
+                else:
+                    extraction_quality[filename] = "bad"
+        else:
+            # Original code path if dimensions match
+            labels = kmeans.predict(X)
+            bad_cluster = 0  # Based on model convention
+            good_cluster = 1
+            
+            # Create a vectorizer for individual document trigram extraction
+            doc_vectorizer = TfidfVectorizer(
+                analyzer=self._custom_tokenizer,
+                lowercase=False,
+                max_features=10000
+            )
+            
+            # Process each document individually
+            extraction_quality = {}
+            for idx, (filename, label, document) in enumerate(zip(md_filenames, labels, documents)):
+                try:
+                    # Extract top trigrams from this document
+                    doc_vectors = doc_vectorizer.fit_transform([document])
+                    feature_names = doc_vectorizer.get_feature_names_out()
+                    
+                    doc_vector = doc_vectors.toarray()[0]
+                    top_indices = np.argsort(doc_vector)[::-1][:50]
+                    top_trigrams = [feature_names[i] for i in top_indices if doc_vector[i] > 0]
+                    
+                    # Count matches with good and bad trigram lists
+                    good_count = sum(1 for trigram in top_trigrams if trigram in self.good_trigrams)
+                    bad_count = sum(1 for trigram in top_trigrams if self._is_bad_trigram(trigram))
+                    
+                    # Determine quality based on trigram voting and cluster label
+                    if bad_count > good_count:
+                        extraction_quality[filename] = "bad"
+                    elif good_count > bad_count or (good_count == bad_count and label == good_cluster):
+                        extraction_quality[filename] = "good"
+                    else:
+                        extraction_quality[filename] = "bad" if label == bad_cluster else "good"
+                except Exception as e:
+                    print(f"Error in trigram voting for {filename}: {e}")
+                    # Fall back to cluster label if error
+                    extraction_quality[filename] = "bad" if label == bad_cluster else "good"
+        
+        # Count good and bad files
+        good_count = sum(1 for quality in extraction_quality.values() if quality == "good")
+        bad_count = sum(1 for quality in extraction_quality.values() if quality == "bad")
+        print(f"\nQuality assessment complete:")
+        print(f"Good files: {good_count}")
+        print(f"Bad files: {bad_count}")
+        
+        # Step 5: Add extraction column to parquet
+        print("\nUpdating parquet file with extraction quality...")
+        
+        # Add extraction column if it doesn't exist
+        if 'extraction' not in df.columns:
+            df['extraction'] = "unknown"
+        
+        # Map markdown filenames to parquet rows
+        match_count = 0
+        for i, row in tqdm(df.iterrows(), total=len(df), desc="Matching files"):
+            if 'filename' in row and row['filename']:
+                # Remove file extension for comparison
+                parquet_filename = row['filename']
+                # Strip extension if present
+                parquet_basename = os.path.splitext(parquet_filename)[0]
+                
+                # Try to find a matching markdown file
+                for md_filename in md_filenames:
+                    md_basename = os.path.splitext(md_filename)[0]
+                    
+                    # Check if filenames match after removing extensions
+                    if md_basename == parquet_basename:
+                        df.at[i, 'extraction'] = extraction_quality[md_filename]
+                        match_count += 1
+                        break
+        
+        print(f"Found and updated {match_count} matching files in parquet")
+        
+        # Step 6: Save updated parquet
+        if match_count > 0:
+            try:
+                # Add processing_stage metadata
+                df['processing_stage'] = df.get('processing_stage', 'download') + ",extract"
+                
+                # Save the updated parquet
+                df.to_parquet(input_parquet_path, index=False)
+                print(f"Successfully updated parquet file at {input_parquet_path}")
+                return True
+            except Exception as e:
+                print(f"Error saving updated parquet file: {e}")
+                return False
+        else:
+            print("No matches found between markdown files and parquet entries. Parquet not updated.")
+            return False
