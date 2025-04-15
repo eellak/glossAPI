@@ -5,6 +5,7 @@ This module defines standard schemas for parquet files used throughout the Gloss
 pipeline, ensuring consistency between different pipeline stages.
 """
 
+import os
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -19,11 +20,27 @@ class ParquetSchema:
     This class provides methods to validate, read, and write parquet files
     with consistent schemas for different pipeline stages.
     
-    The pipeline uses two main types of parquet files:
-    1. Metadata Parquet - Contains file metadata including URLs, download status,
-       and extraction quality. Used by downloader and extraction stages.
-    2. Sections Parquet - Contains extracted sections with their titles, content,
-       and classification information. Used by section and annotation stages.
+    The pipeline uses two distinct types of parquet files:
+    
+    1. Metadata Parquet:
+       - Each row represents a file (one-to-one relationship with files)
+       - Essential columns: filename, URL column (configurable), extraction quality
+       - Used by: downloader, extractor, and filter stages
+       - Example: download_results.parquet
+       - Typical location: {output_dir}/download_results/
+       - Schema: METADATA_SCHEMA, DOWNLOAD_SCHEMA
+    
+    2. Sections Parquet:
+       - Each row represents a section from a file (many-to-one relationship with files)
+       - Essential columns: filename, title, content, section, predicted_section
+       - Used by: section and annotation stages
+       - Examples: sections_for_annotation.parquet, classified_sections.parquet
+       - Typical location: {output_dir}/sections/
+       - Schema: SECTION_SCHEMA, CLASSIFIED_SCHEMA
+    
+    When the pipeline runs, it first creates and populates a metadata parquet,
+    then uses it to filter files, and finally creates section parquets from the
+    filtered files.
     """
     
     def __init__(self, pipeline_config: Optional[Dict[str, Any]] = None):
@@ -34,6 +51,9 @@ class ParquetSchema:
             pipeline_config: Configuration dictionary with settings such as
                 url_column, which will be used throughout the pipeline
         """
+        # TODO: Add more robust configuration options for each parquet type from input metadata and downloder, to section, and two phases of annotaiton.
+        # TODO: Add support for consolidated sections parquet handling
+        # TODO: Add methods to find the latest sections parquet in a pipeline
         self.config = pipeline_config or {}
         self.url_column = self.config.get('url_column', 'url')
     
@@ -251,6 +271,57 @@ class ParquetSchema:
         except Exception:
             return False
             
+    def create_basic_metadata_parquet(self, markdown_dir: Union[str, Path], output_dir: Union[str, Path]) -> Union[Path, None]:
+        """
+        Create a simple metadata parquet file from a directory of markdown files.
+        This is used when there is no existing parquet file to update.
+        
+        Args:
+            markdown_dir: Directory containing markdown files
+            output_dir: Directory where to create the parquet file
+            
+        Returns:
+            Path: Path to the created parquet file, or None if creation failed
+        """
+        try:
+            markdown_dir = Path(markdown_dir)
+            output_dir = Path(output_dir)
+            
+            # Create output directory if it doesn't exist
+            download_results_dir = output_dir / "download_results"
+            os.makedirs(download_results_dir, exist_ok=True)
+            
+            # Get all markdown files in the input directory
+            markdown_files = list(markdown_dir.glob("*.md"))
+            if not markdown_files:
+                print(f"No markdown files found in {markdown_dir}")
+                return None
+                
+            # Create a DataFrame with just filenames
+            data = []
+            for md_file in markdown_files:
+                entry = {
+                    'filename': md_file.name,
+                    self.url_column: ""  # Minimal URL placeholder
+                }
+                data.append(entry)
+                
+            # Create DataFrame
+            df = pd.DataFrame(data)
+            
+            # Set output path for the parquet file
+            output_path = download_results_dir / "download_results.parquet"
+            
+            # Write to parquet without adding complex metadata
+            pq.write_table(pa.Table.from_pandas(df), output_path)
+            
+            print(f"Created new metadata parquet file at {output_path}")
+            return output_path
+            
+        except Exception as e:
+            print(f"Error creating metadata parquet file: {e}")
+            return None
+            
     def is_download_result_parquet(self, filepath: Union[str, Path]) -> bool:
         """
         Check if a parquet file contains download results with success/error information.
@@ -265,6 +336,25 @@ class ParquetSchema:
             schema = pq.read_schema(filepath)
             # Check for download result fields
             required_fields = ['download_success', 'filename']
+            return all(field in schema.names for field in required_fields)
+        except Exception:
+            return False
+            
+    def is_sections_parquet(self, filepath: Union[str, Path]) -> bool:
+        """
+        Check if a parquet file contains section data from extracted files.
+        This identifies the second type of parquet in the pipeline - the sections parquet.
+        
+        Args:
+            filepath: Path to the parquet file to check
+            
+        Returns:
+            bool: True if the file has section data fields
+        """
+        try:
+            schema = pq.read_schema(filepath)
+            # Check for required section fields
+            required_fields = ['filename', 'title', 'content', 'section']
             return all(field in schema.names for field in required_fields)
         except Exception:
             return False
@@ -342,7 +432,7 @@ class ParquetSchema:
         
         # Add metadata if provided
         if metadata:
-            table = ParquetSchema.add_metadata(table, metadata)
+            table = self.add_metadata(table, metadata)
         
         # Write to parquet
         pq.write_table(table, file_path)
