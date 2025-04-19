@@ -33,51 +33,82 @@ from typing import Dict, List, Tuple, Set, Optional, Any, Iterator, Union
 import mimetypes
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, stop_after_delay, wait_exponential, retry_if_exception_type, before_sleep_log
+import functools
 
 
 class RateLimiter:
-    """Rate limiter to enforce API rate limits"""
+    """Rate limiter to enforce API rate limits with robust handling of timeouts and interruptions"""
     
-    def __init__(self, rate_limit: int, time_period: int = 60):
+    def __init__(self, rate_limit: int, time_period: int = 60, max_wait_time: int = 30):
         """
         Initialize rate limiter
         
         Args:
             rate_limit: Maximum number of requests allowed in time_period
             time_period: Time period in seconds (default: 60 seconds = 1 minute)
+            max_wait_time: Maximum time to wait for rate limiting in seconds (default: 30)
         """
         self.rate_limit = rate_limit
         self.time_period = time_period
+        self.max_wait_time = max_wait_time
         self.request_timestamps = deque(maxlen=rate_limit)
         self.lock = asyncio.Lock()
+        self.logger = logging.getLogger(__name__)
     
     async def acquire(self):
         """
-        Acquire permission to make a request, waiting if necessary
+        Acquire permission to make a request, waiting if necessary.
+        Includes safeguards against excessive waiting and better handling of cancellations.
         """
-        async with self.lock:
-            current_time = time.time()
-            
-            # If we haven't reached the limit yet, allow immediately
-            if len(self.request_timestamps) < self.rate_limit:
-                self.request_timestamps.append(current_time)
-                return
-            
-            # Check if the oldest request is outside the time window
-            elapsed = current_time - self.request_timestamps[0]
-            if elapsed < self.time_period:
-                # We need to wait until a slot is available
-                wait_time = self.time_period - elapsed
-                logger = logging.getLogger(__name__)
-                logger.debug(f"Rate limit reached. Waiting {wait_time:.2f} seconds")
-                # Release the lock while waiting
-                await asyncio.sleep(wait_time)
-                # Reacquire and check again (recursive call)
-                await self.acquire()
-            else:
-                # We can make a request now
-                self.request_timestamps.popleft()  # Remove oldest
-                self.request_timestamps.append(current_time)
+        try:
+            async with self.lock:
+                current_time = time.time()
+                
+                # If we haven't reached the limit yet, allow immediately
+                if len(self.request_timestamps) < self.rate_limit:
+                    self.request_timestamps.append(current_time)
+                    return
+                
+                # Check if the oldest request is outside the time window
+                elapsed = current_time - self.request_timestamps[0]
+                if elapsed < self.time_period:
+                    # Calculate wait time but cap it to max_wait_time
+                    wait_time = min(self.time_period - elapsed, self.max_wait_time)
+                    self.logger.debug(f"Rate limit reached. Waiting {wait_time:.2f} seconds (capped at {self.max_wait_time}s)")
+                    
+                    # Create a cancellable wait task
+                    try:
+                        # Release the lock while waiting
+                        self.lock.release()
+                        await asyncio.wait_for(asyncio.sleep(wait_time), timeout=wait_time+1)
+                    except asyncio.TimeoutError:
+                        self.logger.warning(f"Rate limit wait timed out after {wait_time} seconds")
+                    except asyncio.CancelledError:
+                        self.logger.warning("Rate limit wait was cancelled")
+                        raise  # Re-raise to properly handle cancellation
+                    finally:
+                        # Make sure to reacquire the lock
+                        await self.lock.acquire()
+                    
+                    # Clean old timestamps that might have expired during our wait
+                    self._clean_expired_timestamps(current_time)
+                    
+                    # Add our timestamp now
+                    self.request_timestamps.append(time.time())
+                else:
+                    # We can make a request now
+                    self.request_timestamps.popleft()  # Remove oldest
+                    self.request_timestamps.append(current_time)
+        except Exception as e:
+            self.logger.error(f"Error in rate limiter: {e}")
+            # If we encounter any issue, allow the request to proceed
+            # Better to occasionally exceed rate limits than to hang indefinitely
+            return
+    
+    def _clean_expired_timestamps(self, current_time):
+        """Remove any expired timestamps from the queue"""
+        while self.request_timestamps and (current_time - self.request_timestamps[0] >= self.time_period):
+            self.request_timestamps.popleft()
 
 
 class GlossDownloader:
@@ -103,7 +134,8 @@ class GlossDownloader:
         skip_failed_after: int = 3,
         domain_cookies: Dict[str, Dict[str, str]] = None,
         supported_formats: List[str] = None,
-        log_level: int = logging.INFO
+        log_level: int = logging.INFO,
+        verbose: bool = False
     ):
         """
         Initialize the downloader with configuration parameters.
@@ -129,6 +161,17 @@ class GlossDownloader:
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
         
+        # Verbose logging flag
+        self.verbose = verbose
+        
+        # Define a verbose log function to be used throughout the class
+        def verbose_log(self, message, level=logging.DEBUG):
+            if self.verbose:
+                self.logger.log(level, message)
+        
+        # Bind the verbose_log method to this instance
+        self.verbose_log = functools.partial(verbose_log, self)
+        
         # Store configuration parameters
         self.url_column = url_column
         self.output_dir = Path(output_dir)
@@ -139,8 +182,16 @@ class GlossDownloader:
         self.sleep = sleep
         self.request_method = request_method
         self.retry_interval = retry_interval
-        self.rate_limit = rate_limit
-        self.rate_period = rate_period
+        # Initialize rate limiter if rate_limit is specified
+        self.rate_limiter = None
+        if rate_limit > 0:
+            # Use more conservative settings for rate limiting to avoid hanging
+            # Default max_wait_time of 30 seconds prevents indefinite waiting
+            self.rate_limiter = RateLimiter(
+                rate_limit=rate_limit, 
+                time_period=rate_period,
+                max_wait_time=30  # Cap maximum wait time to 30 seconds
+            )
         self.request_timeout = request_timeout
         self.skip_failed_after = skip_failed_after
         
@@ -432,10 +483,17 @@ class GlossDownloader:
                         requester = self.request_method.lower()
                         
                         try:
+                            # Verbose logging of request attempt
+                            self.verbose_log(f"Attempting download request to URL: {url}")
+                            self.verbose_log(f"Request method: {requester}, Timeout: {timeout.total}s")
+                            self.verbose_log(f"Headers: {headers}")
+                            
                             # Attempt the download with tenacity-powered retry logic
                             content, status = await self.make_request(
                                 session, requester, url, headers, timeout
                             )
+                            
+                            self.verbose_log(f"Request successful with status {status}")
                             
                             # Check if file extension is supported
                             file_ext = self.get_file_extension_from_url(url)
@@ -454,12 +512,26 @@ class GlossDownloader:
                             status = e.status
                             self.logger.warning(f"Received {status} for {url}")
                             
+                            # Detailed verbose logging for HTTP errors
+                            if self.verbose:
+                                self.logger.debug(f"HTTP Error Details - Status: {e.status}, Message: {e.message}")
+                                self.logger.debug(f"Headers: {e.headers if hasattr(e, 'headers') else 'No headers available'}")
+                                self.logger.debug(f"Request info: {e.request_info if hasattr(e, 'request_info') else 'No request info available'}")
+                            
                             error_msg = f"HTTP {status}: {str(e)}"
                             return False, "", error_msg, retry_count + 1
                             
                         except Exception as e:
-                            self.logger.error(f"Failed to download {url}: {error_msg}")
                             error_msg = str(e)
+                            self.logger.error(f"Failed to download {url}: {error_msg}")
+                            
+                            # Detailed verbose logging for general errors
+                            if self.verbose:
+                                self.logger.debug(f"Exception type: {type(e).__name__}")
+                                self.logger.debug(f"Exception details: {e}")
+                                import traceback
+                                self.logger.debug(f"Traceback: {traceback.format_exc()}")
+                            
                             return False, "", error_msg, retry_count + 1
                             
                     except asyncio.TimeoutError:
@@ -607,11 +679,14 @@ class GlossDownloader:
         # Initialize semaphore for concurrency control
         semaphore = asyncio.Semaphore(self.concurrency)
         
-        # Create rate limiter
-        rate_limiter = RateLimiter(self.rate_limit, self.rate_period)
+        # Use the already configured rate limiter if available
+        rate_limiter = self.rate_limiter
+        if not rate_limiter:
+            # Create a minimal rate limiter if none was configured
+            rate_limiter = RateLimiter(100, 60, 30)  # Default: 100 requests per minute, max 30s wait
         
         # Run async download
-        self.logger.info(f"Starting download with concurrency={self.concurrency}, rate_limit={self.rate_limit}/{self.rate_period}s")
+        self.logger.info(f"Starting download with concurrency={self.concurrency}, rate_limit={rate_limiter.rate_limit}/{rate_limiter.time_period}s")
         
         # Run the async pipeline
         loop = asyncio.get_event_loop()
