@@ -34,7 +34,8 @@ class Corpus:
         metadata_path: Optional[Union[str, Path]] = None,
         annotation_mapping: Optional[Dict[str, str]] = None,
         downloader_config: Optional[Dict[str, Any]] = None,
-        log_level: int = logging.INFO
+        log_level: int = logging.INFO,
+        verbose: bool = False
     ):
         """
         Initialize the Corpus processor.
@@ -49,6 +50,7 @@ class Corpus:
                                e.g. {'Κεφάλαιο': 'chapter'} means documents with type 'Κεφάλαιο' use chapter annotation
             downloader_config: Configuration parameters for the GlossDownloader (optional)
             log_level: Logging level (default: logging.INFO)
+            verbose: Whether to enable verbose logging for debugging (default: False)
         """
         # Setup logging
         logging.basicConfig(
@@ -56,6 +58,10 @@ class Corpus:
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(log_level)
+        
+        # Verbose flag for detailed logging
+        self.verbose = verbose
         
         # Store paths
         self.input_dir = Path(input_dir)
@@ -435,6 +441,7 @@ class Corpus:
         
         # Try to find files marked as 'good' in the parquet
         from glossapi.parquet_schema import ParquetSchema
+        
         # Initialize with proper URL column configuration
         parquet_schema = ParquetSchema({
             'url_column': self.downloader_config.get('url_column', 'url')  # Use the configured URL column or default to 'url'
@@ -502,7 +509,6 @@ class Corpus:
             except Exception as e:
                 self.logger.warning(f"Error reading parquet for extraction quality: {e}")
         
-        # Check if we found any good files to process
         self.logger.info(f"Found {len(good_filenames)} good quality files for sectioning")
         if good_filenames:
             self.logger.info(f"Good filenames: {good_filenames}")
@@ -694,6 +700,7 @@ class Corpus:
         self,
         input_parquet: Optional[Union[str, Path]] = None,
         url_column: str = 'url',
+        verbose: Optional[bool] = None,
         **kwargs
     ) -> pd.DataFrame:
         """
@@ -704,11 +711,10 @@ class Corpus:
         
         Args:
             input_parquet: Path to input parquet file with URLs (optional)
-                          If not provided, will search input_dir for parquet files
+                           If not provided, will search input_dir for parquet files
             url_column: Name of column containing URLs (defaults to 'url')
+            verbose: Whether to enable verbose logging (overrides instance setting if provided)
             **kwargs: Additional parameters to override default downloader config
-                      Supported parameters include: concurrency, sleep, max_retries, etc.
-                      See GlossDownloader documentation for all options
         
         Returns:
             pd.DataFrame: DataFrame with download results
@@ -722,32 +728,126 @@ class Corpus:
             self.logger.info(f"Using parquet file: {input_parquet}")
         else:
             input_parquet = Path(input_parquet)
+            
+        # Load the input file with URLs to download
+        input_df = pd.read_parquet(input_parquet)
+        total_urls = len(input_df)
+        self.logger.info(f"Total URLs in input file: {total_urls}")
         
+        # Look for existing download results file by the specific input filename first
+        input_filename = Path(input_parquet).name
+        download_results_dir = Path(self.output_dir) / "download_results"
+        specific_results_path = download_results_dir / f"download_results_{input_filename}"
+        
+        existing_results = None
+        existing_results_path = None
+        found_existing = False
+        
+        # Check for specific download results file
+        if os.path.exists(specific_results_path):
+            self.logger.info(f"Found existing download results: {specific_results_path}")
+            try:
+                existing_results = pd.read_parquet(specific_results_path)
+                existing_results_path = specific_results_path
+                found_existing = True
+            except Exception as e:
+                self.logger.warning(f"Failed to read specific download results: {e}")
+                
+        # If specific results not found, look in the directory for any download results
+        if not found_existing and os.path.exists(download_results_dir):
+            result_files = list(download_results_dir.glob('*.parquet'))
+            for file in result_files:
+                try:
+                    test_df = pd.read_parquet(file)
+                    if url_column in test_df.columns and 'download_success' in test_df.columns:
+                        self.logger.info(f"Found alternative download results: {file}")
+                        existing_results = test_df
+                        existing_results_path = file
+                        found_existing = True
+                        break
+                except Exception:
+                    continue
+                    
+        # Filter out already downloaded URLs and prepare to download only remaining ones
+        if found_existing and url_column in existing_results.columns:
+            # Find filenames that have already been assigned (whether download succeeded or not)
+            # to ensure we don't reuse the same filenames and overwrite files
+            existing_filenames = []
+            if 'filename' in existing_results.columns:
+                existing_filenames = existing_results['filename'].dropna().tolist()
+                self.logger.info(f"Found {len(existing_filenames)} existing filenames to avoid")
+                
+            # Filter out successfully downloaded URLs
+            successful_urls = []
+            if 'download_success' in existing_results.columns:
+                successful_urls = existing_results[
+                    existing_results['download_success'] == True
+                ][url_column].tolist()
+                
+                if successful_urls:
+                    self.logger.info(f"Found {len(successful_urls)} previously successful downloads")
+                    # Filter out URLs that were successfully downloaded
+                    remaining_df = input_df[~input_df[url_column].isin(successful_urls)]
+                    
+                    # If all URLs already downloaded, return existing results
+                    if len(remaining_df) == 0:
+                        self.logger.info("All files already successfully downloaded")
+                        return existing_results
+                    
+                    self.logger.info(f"Processing {len(remaining_df)} remaining URLs out of {total_urls} total")
+                    
+                    # Save filtered input to a temporary file for the downloader
+                    temp_input = self.output_dir / "temp_download_input.parquet"
+                    remaining_df.to_parquet(temp_input, index=False)
+                    input_parquet = temp_input
+        else:
+            self.logger.info("No existing download results found or usable")
+            existing_results = pd.DataFrame()
+            
+        # Initialize downloader with the existing filenames to avoid
+        downloader = GlossDownloader(
+            url_column=url_column,
+            output_dir=str(self.output_dir),
+            log_level=self.logger.level,
+            verbose=verbose if verbose is not None else self.verbose
+        )
+        
+        # Download files
         self.logger.info(f"Downloading files from URLs in {input_parquet}...")
+        new_results = downloader.download_files(input_parquet=str(input_parquet), **kwargs)
         
-        # Prepare downloader config with defaults and overrides
-        config = self.downloader_config.copy()
-        config['url_column'] = url_column  # Always set url_column, with default 'url'
-        config.update(kwargs)
+        # Merge with existing results
+        if not existing_results.empty:
+            # Filter out rows from existing_results that are in new_results (based on URL)
+            if url_column in new_results.columns and url_column in existing_results.columns:
+                processed_urls = new_results[url_column].tolist()
+                existing_filtered = existing_results[~existing_results[url_column].isin(processed_urls)]
+                
+                # Combine existing and new results
+                final_results = pd.concat([existing_filtered, new_results], ignore_index=True)
+                self.logger.info(f"Merged {len(existing_filtered)} existing results with {len(new_results)} new results")
+        else:
+            final_results = new_results
+            
+        # Ensure we have a download_results directory
+        os.makedirs(download_results_dir, exist_ok=True)
         
-        # Set output directory to output_dir
-        config['output_dir'] = str(self.output_dir)
+        # Save results using the input filename pattern
+        output_parquet = download_results_dir / f"download_results_{Path(input_parquet).name}"
+        final_results.to_parquet(output_parquet, index=False)
+        self.logger.info(f"Saved download results to {output_parquet}")
         
-        # Initialize and run downloader
-        downloader = GlossDownloader(**config)
-        df = downloader.download_files(input_parquet=str(input_parquet))
+        # Clean up temporary files if created
+        temp_path = self.output_dir / "temp_download_input.parquet"
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            
+        # Report download completion
+        success_count = len(final_results[final_results['download_success'] == True]) if 'download_success' in final_results.columns else 0
+        self.logger.info(f"Download complete. {success_count} files downloaded to {self.output_dir / 'downloads'}")
         
-        # Save the updated dataframe with download results
-        parquet_download_dir = self.output_dir / "download_results"
-        os.makedirs(parquet_download_dir, exist_ok=True)
-        output_parquet = parquet_download_dir / f"download_results_{input_parquet.name}"
-        df.to_parquet(str(output_parquet), index=False)
+        return final_results
         
-        self.logger.info(f"Download complete. {len(df[df['download_success'] == True])} files downloaded to {self.output_dir / 'downloads'}")
-        self.logger.info(f"Download results saved to {output_parquet}")
-        
-        return df
-    
     def process_all(self, input_format: str = "pdf", fully_annotate: bool = True, annotation_type: str = "auto", download_first: bool = False) -> None:
         """
         Run the complete processing pipeline: extract, section, and annotate.

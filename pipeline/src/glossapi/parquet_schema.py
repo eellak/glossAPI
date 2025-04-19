@@ -81,7 +81,6 @@ class ParquetSchema:
         ('download_error', pa.string()),
         ('download_retry_count', pa.int32()),
         ('filename', pa.string()),
-        ('processing_stage', pa.string()),
     ])
     
     SECTION_SCHEMA = pa.schema([
