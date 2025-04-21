@@ -209,7 +209,7 @@ class ParquetSchema:
         
         return df
     
-    def find_metadata_parquet(self, directory: Union[str, Path]) -> Optional[Path]:
+    def find_metadata_parquet(self, directory: Union[str, Path], require_url_column: bool = False) -> Optional[Path]:
         """
         Find the first valid metadata parquet file in a directory.
         
@@ -218,38 +218,63 @@ class ParquetSchema:
         
         Args:
             directory: Directory to search for parquet files
+            require_url_column: If True, require the URL column to be present; if False, only require filename column
             
         Returns:
             Optional[Path]: Path to the first valid metadata parquet, or None if not found
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         directory = Path(directory)
         if not directory.exists():
+            logger.debug(f"Directory {directory} does not exist")
             return None
             
         # Get all parquet files in the directory
-        parquet_files = list(directory.glob('*.parquet'))
+        parquet_files = list(directory.glob('**/*.parquet'))
         if not parquet_files:
+            logger.debug(f"No parquet files found in {directory}")
             return None
             
-        # First, look for files with url_column and download info
+        # Check for download_results files first
+        download_files = [f for f in parquet_files if 'download_results' in str(f)]
+        if download_files:
+            logger.debug(f"Found {len(download_files)} download_results files")
+        
+        # Examine all files
         for file_path in parquet_files:
             try:
                 df = pd.read_parquet(file_path)
-                if self.url_column in df.columns and 'filename' in df.columns:
-                    if 'section' not in df.columns and 'header' not in df.columns:
+                columns = df.columns.tolist()
+                
+                # Skip section parquets - they have title/header columns
+                if 'title' in columns or 'header' in columns or 'section' in columns:
+                    logger.debug(f"Skipping sections parquet: {file_path}")
+                    continue
+                    
+                # For metadata parquets - they don't have title/header but have filename
+                if 'filename' in columns:
+                    if require_url_column:
+                        # Check if required URL column exists
+                        if self.url_column in columns:
+                            logger.info(f"Found metadata parquet with filename and {self.url_column}: {file_path}")
+                            return file_path
+                        else:
+                            # Missing URL column
+                            logger.warning(f"Found parquet with filename column but no {self.url_column} column: {file_path}")
+                            logger.debug(f"Available columns: {columns}")
+                    else:
+                        # URL not required, filename is enough
+                        logger.info(f"Found metadata parquet with filename (URL not required): {file_path}")
                         return file_path
-            except Exception:
+                else:
+                    logger.debug(f"Found parquet without filename column: {file_path}")
+            except Exception as e:
+                logger.debug(f"Error reading parquet {file_path}: {e}")
                 continue
                 
-        # If no metadata parquet found, look for any parquet without section columns
-        for file_path in parquet_files:
-            try:
-                df = pd.read_parquet(file_path)
-                if 'title' not in df.columns and 'header' not in df.columns:
-                    return file_path
-            except Exception:
-                continue
-                
+        logger.warning(f"No suitable metadata parquet found in {directory}")
         return None
     
     def is_valid_metadata_parquet(self, filepath: Union[str, Path]) -> bool:

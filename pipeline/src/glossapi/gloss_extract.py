@@ -64,6 +64,7 @@ class GlossExtract:
         self.USE_V2 = True
         self.log_file = Path('.') / 'conversion.log'
         self.url_column = url_column  # Store the URL column name for later use
+        self._metadata_parquet_path = None  # Store metadata parquet path once found
         logging.basicConfig(
             level=logging.DEBUG, 
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -138,7 +139,6 @@ class GlossExtract:
             self.pipeline_options.accelerator_options = AcceleratorOptions(
                 num_threads=threads, device=AcceleratorDevice.CPU
             )
-        else:
             print('Error : Wrong Acceleration type. Defaulting to Auto')
             self.pipeline_options.accelerator_options = AcceleratorOptions(
                 num_threads=threads, device=AcceleratorDevice.AUTO
@@ -736,7 +736,15 @@ class GlossExtract:
                 updated_parquet = True
                 print(f"Updated parquet file with extraction quality in {parent_dir}")
                 # Load the now-annotated parquet file to get extraction quality mappings
-                input_parquet_path = parquet_schema.find_metadata_parquet(parent_dir)
+                # Use cached path if available
+                if self._metadata_parquet_path is not None:
+                    input_parquet_path = self._metadata_parquet_path
+                else:
+                    parquet_schema = ParquetSchema({'url_column': self.url_column})
+                    input_parquet_path = parquet_schema.find_metadata_parquet(parent_dir)
+                    # Cache for future use
+                    if input_parquet_path is not None:
+                        self._metadata_parquet_path = input_parquet_path
                 if input_parquet_path:
                     try:
                         df = pd.read_parquet(input_parquet_path)
@@ -898,7 +906,16 @@ class GlossExtract:
             # Now update the parquet file if it was found earlier (but couldn't be updated)
             # This ensures our extraction quality is saved even if the parquet annotation failed
             for parent_dir in parent_dirs:
-                input_parquet_path = parquet_schema.find_metadata_parquet(parent_dir)
+                # Use cached path if available, otherwise find it
+                if self._metadata_parquet_path is not None:
+                    input_parquet_path = self._metadata_parquet_path
+                else:
+                    parquet_schema = ParquetSchema({'url_column': self.url_column})
+                    input_parquet_path = parquet_schema.find_metadata_parquet(parent_dir)
+                    # Cache for future use
+                    if input_parquet_path is not None:
+                        self._metadata_parquet_path = input_parquet_path
+                
                 if input_parquet_path:
                     try:
                         df = pd.read_parquet(input_parquet_path)
@@ -955,18 +972,21 @@ class GlossExtract:
         
         # Step 1: Find input parquet file
         print("Looking for input parquet file...")
-        # Initialize with proper URL column configuration
-        parquet_schema = ParquetSchema({
-            'url_column': getattr(self, 'url_column', 'url')  # Use the class url_column if exists or default to 'url'
-        })
-        print(f"Using URL column: {parquet_schema.url_column}")
-        input_parquet_path = parquet_schema.find_metadata_parquet(input_dir)
-        
-        # If not found in input_dir, check download_results folder
-        if input_parquet_path is None:
-            download_results_dir = input_dir / "download_results"
-            if download_results_dir.exists():
-                input_parquet_path = parquet_schema.find_metadata_parquet(download_results_dir)
+        # Use cached path if available
+        if self._metadata_parquet_path is not None:
+            input_parquet_path = self._metadata_parquet_path
+            print(f"Using cached metadata parquet path: {input_parquet_path}")
+        else:
+            # Initialize with proper URL column configuration
+            parquet_schema = ParquetSchema({
+                'url_column': getattr(self, 'url_column', 'url')  # Use the class url_column if exists or default to 'url'
+            })
+            print(f"Using URL column: {parquet_schema.url_column}")
+            # Find metadata parquet (with require_url_column=False by default)
+            input_parquet_path = parquet_schema.find_metadata_parquet(input_dir)
+            # Cache the found path
+            if input_parquet_path is not None:
+                self._metadata_parquet_path = input_parquet_path
         
         if input_parquet_path is None:
             print("Error: Could not find a valid input parquet file with filename column")

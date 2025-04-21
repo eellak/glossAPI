@@ -220,7 +220,8 @@ class Corpus:
         input_parquet_path = None
         for dir_to_check in [self.input_dir, download_results_dir]:
             if dir_to_check.exists():
-                found_path = parquet_schema.find_metadata_parquet(dir_to_check)
+                # In filter stage, we don't need URL column, just filename
+                found_path = parquet_schema.find_metadata_parquet(dir_to_check, require_url_column=False)
                 if found_path:
                     input_parquet_path = found_path
                     break
