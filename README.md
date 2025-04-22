@@ -55,9 +55,6 @@ corpus.download(url_column='a_column_name')  # Specify column with URLs, default
 # Step 2: Extract documents
 corpus.extract()
 
-# Step 3: Assess extraction quality
-corpus.split_bad()  # or corpus.filter()
-
 # Step 4: Extract sections from filtered documents
 corpus.section()
 
