@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "glossapi"
-version = "0.0.12"
+version = "0.0.13"
 description = "A library for processing academic texts in Greek and other languages"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -27,7 +27,9 @@ dependencies = [
     "dask",
     "pyarrow",
     "ftfy",
-    "tenacity"
+    "tenacity",
+    "aiohttp",
+    "aiofiles"
 ]
 
 [tool.setuptools]
