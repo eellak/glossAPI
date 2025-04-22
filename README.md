@@ -68,11 +68,13 @@ After running the pipeline, the following folder structure will be created:
 
 ```
 corpus/  # Your specified folder
-├── downloaded/  # Downloaded documents (if download() is used)
+├── download_results # stores metadata file with annotation from previous processing steps
+├── downloads/  # Downloaded documents (if download() is used)
 ├── markdown/    # Extracted text files in markdown format 
 ├── sections/    # Contains the processed sections in parquet format
-│   ├── classified_sections.parquet    # Intermediate processing form
-│   └── fully_annotated_sections.parquet  # Final processing form with section predictions
+│   ├── sections_for_annotation.parquet
+├── classified_sections.parquet    # Intermediate processing form
+├── fully_annotated_sections.parquet  # Final processing form with section predictions
 ```
 
 The `fully_annotated_sections.parquet` file contains the final processing form. The `predicted_sections` column shows the type of section: 'π' (table of contents), 'β' (bibliography), 'ε.σ.' (introductory note), 'κ' (main text), or 'a' (appendix). For files without table of contents or bibliography, the annotation will be "άλλο" (other).
