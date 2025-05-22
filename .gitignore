@@ -41,3 +41,4 @@ venv
 logs
 *.log
 processed_output
+pycache

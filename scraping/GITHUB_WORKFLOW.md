@@ -1,3 +1,6 @@
+<artifacts>
+<create id="github_workflow_tree_fixed" type="text/markdown" title="GITHUB_WORKFLOW.md">
+# GitHub Workflow for GlossAPI Contribution
 🎯 Project Status
 
 ✅ Fork completed: alexliak/glossAPI
@@ -21,28 +24,28 @@ Repository Structure
 scraping/
 ├── CONTRIBUTING.md                       # Project contribution guidelines
 ├── download_and_extract_scripts/
-│   ├── README.md                         # Main documentation
-│   ├── README_KODIKO.md                  # Source-specific documentation
-│   ├── README_GREEK_LANGUAGE.md          # Source-specific documentation
-│   ├── README_CYPRUS_EXAMS.md            # Source-specific documentation
-│   ├── README_PANELLADIKES.md            # Source-specific documentation
-│   ├── README_KALLIPOS.md                # Source-specific documentation
-│   ├── DOWNLOADER_CONTRIBUTION.md        # Technical contribution summary
-│   ├── downloader_kodiko.py              # Specialized downloader
-│   ├── downloader_greek_language.py      # Specialized downloader
-│   ├── downloader_cyprus_exams.py        # Specialized downloader
-│   ├── downloader_panelladikes.py        # Specialized downloader
-│   ├── downloader_kallipos.py            # Specialized downloader
-│   ├── download_all_kodiko.sh            # Automation script
-│   ├── download_all_greek_language.sh    # Automation script
-│   ├── download_all_cyprus_exams.sh      # Automation script
-│   ├── download_all_panelladikes.sh      # Automation script
-│   ├── download_all_kallipos.sh          # Automation script
-│   ├── monitor_kodiko.py                 # Monitoring tool
-│   ├── monitor_greek_language.py         # Monitoring tool
-│   ├── monitor_cyprus_exams.py           # Monitoring tool
-│   ├── monitor_panelladikes.py           # Monitoring tool
-│   └── monitor_kallipos.py               # Monitoring tool
+├── README.md                         # Main documentation
+├── README_KODIKO.md                  # Source-specific documentation
+├── README_GREEK_LANGUAGE.md          # Source-specific documentation
+├── README_CYPRUS_EXAMS.md            # Source-specific documentation
+├── README_PANELLADIKES.md            # Source-specific documentation
+├── README_KALLIPOS.md                # Source-specific documentation
+├── DOWNLOADER_CONTRIBUTION.md        # Technical contribution summary
+├── downloader_kodiko.py              # Specialized downloader
+├── downloader_greek_language.py      # Specialized downloader
+├── downloader_cyprus_exams.py        # Specialized downloader
+├── downloader_panelladikes.py        # Specialized downloader
+├── downloader_kallipos.py            # Specialized downloader
+├── download_all_kodiko.sh            # Automation script
+├── download_all_greek_language.sh    # Automation script
+├── download_all_cyprus_exams.sh      # Automation script
+├── download_all_panelladikes.sh      # Automation script
+├── download_all_kallipos.sh          # Automation script
+├── monitor_kodiko.py                 # Monitoring tool
+├── monitor_greek_language.py         # Monitoring tool
+├── monitor_cyprus_exams.py           # Monitoring tool
+├── monitor_panelladikes.py           # Monitoring tool
+└── monitor_kallipos.py               # Monitoring tool
 📈 Performance Results
 RepositorySuccess RateFiles DownloadedStatusKodiko86.95%23,086/26,552✅ CompleteGreek Language~100%~50 files✅ CompleteCyprus ExamsGoodVariable✅ ActivePanelladikes78%101/127✅ ActiveKalliposResearchN/A🔬 In Progress
 📝 GitHub Contribution Process
@@ -125,3 +128,7 @@ Pull Request interface showing contribution details
 Performance metrics table showing 86.95% success rate
 Code snippets highlighting Greek language support and error handling
 README files demonstrating comprehensive documentation approach
+</create>
+
+
+</artifacts>
