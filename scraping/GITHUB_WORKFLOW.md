@@ -1,5 +1,5 @@
 <artifacts>
-<create id="github_workflow_tree_fixed" type="text/markdown" title="GITHUB_WORKFLOW.md">
+<create id="github_workflow_simplified" type="text/markdown" title="GITHUB_WORKFLOW.md">
 # GitHub Workflow for GlossAPI Contribution
 🎯 Project Status
 
@@ -21,31 +21,42 @@ Implemented specialized downloaders for 5 different sources
 Created comprehensive documentation and automation tools
 
 Repository Structure
-scraping/
-├── CONTRIBUTING.md                       # Project contribution guidelines
-├── download_and_extract_scripts/
-├── README.md                         # Main documentation
-├── README_KODIKO.md                  # Source-specific documentation
-├── README_GREEK_LANGUAGE.md          # Source-specific documentation
-├── README_CYPRUS_EXAMS.md            # Source-specific documentation
-├── README_PANELLADIKES.md            # Source-specific documentation
-├── README_KALLIPOS.md                # Source-specific documentation
-├── DOWNLOADER_CONTRIBUTION.md        # Technical contribution summary
-├── downloader_kodiko.py              # Specialized downloader
-├── downloader_greek_language.py      # Specialized downloader
-├── downloader_cyprus_exams.py        # Specialized downloader
-├── downloader_panelladikes.py        # Specialized downloader
-├── downloader_kallipos.py            # Specialized downloader
-├── download_all_kodiko.sh            # Automation script
-├── download_all_greek_language.sh    # Automation script
-├── download_all_cyprus_exams.sh      # Automation script
-├── download_all_panelladikes.sh      # Automation script
-├── download_all_kallipos.sh          # Automation script
-├── monitor_kodiko.py                 # Monitoring tool
-├── monitor_greek_language.py         # Monitoring tool
-├── monitor_cyprus_exams.py           # Monitoring tool
-├── monitor_panelladikes.py           # Monitoring tool
-└── monitor_kallipos.py               # Monitoring tool
+The contribution includes the following files:
+Documentation:
+
+scraping/CONTRIBUTING.md - Project contribution guidelines
+scraping/download_and_extract_scripts/README.md - Main documentation
+scraping/download_and_extract_scripts/README_KODIKO.md - Source-specific documentation
+scraping/download_and_extract_scripts/README_GREEK_LANGUAGE.md - Source-specific documentation
+scraping/download_and_extract_scripts/README_CYPRUS_EXAMS.md - Source-specific documentation
+scraping/download_and_extract_scripts/README_PANELLADIKES.md - Source-specific documentation
+scraping/download_and_extract_scripts/README_KALLIPOS.md - Source-specific documentation
+scraping/download_and_extract_scripts/DOWNLOADER_CONTRIBUTION.md - Technical contribution summary
+
+Specialized Downloaders:
+
+scraping/download_and_extract_scripts/downloader_kodiko.py - Kodiko specialized downloader
+scraping/download_and_extract_scripts/downloader_greek_language.py - Greek Language specialized downloader
+scraping/download_and_extract_scripts/downloader_cyprus_exams.py - Cyprus Exams specialized downloader
+scraping/download_and_extract_scripts/downloader_panelladikes.py - Panelladikes specialized downloader
+scraping/download_and_extract_scripts/downloader_kallipos.py - Kallipos specialized downloader
+
+Automation Scripts:
+
+scraping/download_and_extract_scripts/download_all_kodiko.sh - Kodiko automation script
+scraping/download_and_extract_scripts/download_all_greek_language.sh - Greek Language automation script
+scraping/download_and_extract_scripts/download_all_cyprus_exams.sh - Cyprus Exams automation script
+scraping/download_and_extract_scripts/download_all_panelladikes.sh - Panelladikes automation script
+scraping/download_and_extract_scripts/download_all_kallipos.sh - Kallipos automation script
+
+Monitoring Tools:
+
+scraping/download_and_extract_scripts/monitor_kodiko.py - Kodiko monitoring tool
+scraping/download_and_extract_scripts/monitor_greek_language.py - Greek Language monitoring tool
+scraping/download_and_extract_scripts/monitor_cyprus_exams.py - Cyprus Exams monitoring tool
+scraping/download_and_extract_scripts/monitor_panelladikes.py - Panelladikes monitoring tool
+scraping/download_and_extract_scripts/monitor_kallipos.py - Kallipos monitoring tool
+
 📈 Performance Results
 RepositorySuccess RateFiles DownloadedStatusKodiko86.95%23,086/26,552✅ CompleteGreek Language~100%~50 files✅ CompleteCyprus ExamsGoodVariable✅ ActivePanelladikes78%101/127✅ ActiveKalliposResearchN/A🔬 In Progress
 📝 GitHub Contribution Process
