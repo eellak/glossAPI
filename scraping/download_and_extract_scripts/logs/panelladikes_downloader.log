@@ -1,0 +1,825 @@
+2025-05-21 18:27:01,452 - INFO - Arguments received: JSON file: ../../scraping/json_sitemaps/themata-lyseis-panelladikwn_pdf.json, Output dir: ../../downloads/panelladikes-exams, Batch size: 5, Sleep time: 3, Progress dir: progress_reports
+2025-05-21 18:27:01,462 - INFO - JSON file contains a dictionary with 154 items
+2025-05-21 18:27:01,462 - INFO - Loaded 154 items from ../../scraping/json_sitemaps/themata-lyseis-panelladikwn_pdf.json
+2025-05-21 18:27:01,463 - INFO - Found 154 new items to download
+2025-05-21 18:27:01,463 - INFO - Split into 31 batches of up to 5 items each
+2025-05-21 18:27:01,463 - INFO - Processing batch 1/31
+2025-05-21 18:27:01,463 - INFO - Starting batch download of 5 files
+2025-05-21 18:27:01,463 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2023/Istoria120623.pdf (Attempt 1/3)
+2025-05-21 18:27:01,784 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2023/Istoria120623.pdf to ../../downloads/panelladikes-exams/2023___Ιστορία___Θέματα.pdf
+2025-05-21 18:27:04,788 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2023/fsm_fra_istoria120623new.pdf (Attempt 1/3)
+2025-05-21 18:27:04,953 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2023/fsm_fra_istoria120623new.pdf to ../../downloads/panelladikes-exams/2023___Ιστορία___Λύσεις.pdf
+2025-05-21 18:27:07,957 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2023/Mathimatika060623.pdf (Attempt 1/3)
+2025-05-21 18:27:08,206 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2023/Mathimatika060623.pdf to ../../downloads/panelladikes-exams/2023___Μαθηματικά___Θέματα.pdf
+2025-05-21 18:27:11,211 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2023/fsm_fra_mathimatika_060623.pdf (Attempt 1/3)
+2025-05-21 18:27:11,567 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2023/fsm_fra_mathimatika_060623.pdf to ../../downloads/panelladikes-exams/2023___Μαθηματικά___Λύσεις.pdf
+2025-05-21 18:27:14,571 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2023/fsm_fra_mathimatika_060623.pdf (Attempt 1/3)
+2025-05-21 18:27:14,942 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2023/fsm_fra_mathimatika_060623.pdf to ../../downloads/panelladikes-exams/2023___Φυσική___Θέματα.pdf
+2025-05-21 18:27:14,944 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:27:17,947 - INFO - Processing batch 2/31
+2025-05-21 18:27:17,947 - INFO - Starting batch download of 5 files
+2025-05-21 18:27:17,947 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2023/Fysiki120623.pdf (Attempt 1/3)
+2025-05-21 18:27:18,441 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2023/Fysiki120623.pdf to ../../downloads/panelladikes-exams/2023___Φυσική___Λύσεις.pdf
+2025-05-21 18:27:21,445 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2022/them_istoria100622.pdf (Attempt 1/3)
+2025-05-21 18:27:21,705 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2022/them_istoria100622.pdf to ../../downloads/panelladikes-exams/2022___Ιστορία___Θέματα.pdf
+2025-05-21 18:27:24,709 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2022/fsm_fra_istoria100622.pdf (Attempt 1/3)
+2025-05-21 18:27:24,954 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2022/fsm_fra_istoria100622.pdf to ../../downloads/panelladikes-exams/2022___Ιστορία___Λύσεις.pdf
+2025-05-21 18:27:27,958 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2022/them_math_gel_220606.pdf (Attempt 1/3)
+2025-05-21 18:27:28,310 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2022/them_math_gel_220606.pdf to ../../downloads/panelladikes-exams/2022___Μαθηματικά___Θέματα.pdf
+2025-05-21 18:27:31,314 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2022/fsm_fra_math060622.pdf (Attempt 1/3)
+2025-05-21 18:27:31,679 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2022/fsm_fra_math060622.pdf to ../../downloads/panelladikes-exams/2022___Μαθηματικά___Λύσεις.pdf
+2025-05-21 18:27:31,689 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:27:34,693 - INFO - Processing batch 3/31
+2025-05-21 18:27:34,693 - INFO - Starting batch download of 5 files
+2025-05-21 18:27:34,694 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2022/fsm_fra_math060622.pdf (Attempt 1/3)
+2025-05-21 18:27:35,187 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2022/fsm_fra_math060622.pdf to ../../downloads/panelladikes-exams/2022___Φυσική___Θέματα.pdf
+2025-05-21 18:27:38,191 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2022/them_fysiki100622.pdf (Attempt 1/3)
+2025-05-21 18:27:38,552 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2022/them_fysiki100622.pdf to ../../downloads/panelladikes-exams/2022___Φυσική___Λύσεις.pdf
+2025-05-21 18:27:41,555 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2021/Istoria220621.pdf (Attempt 1/3)
+2025-05-21 18:27:41,804 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2021/Istoria220621.pdf to ../../downloads/panelladikes-exams/2021___Ιστορία___Θέματα.pdf
+2025-05-21 18:27:44,808 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2021/fsm_fra_istoria220621.pdf (Attempt 1/3)
+2025-05-21 18:27:44,997 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2021/fsm_fra_istoria220621.pdf to ../../downloads/panelladikes-exams/2021___Ιστορία___Λύσεις.pdf
+2025-05-21 18:27:48,000 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2021/mathimatika_160621.pdf (Attempt 1/3)
+2025-05-21 18:27:48,476 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2021/mathimatika_160621.pdf to ../../downloads/panelladikes-exams/2021___Μαθηματικά___Θέματα.pdf
+2025-05-21 18:27:48,487 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:27:51,491 - INFO - Processing batch 4/31
+2025-05-21 18:27:51,491 - INFO - Starting batch download of 5 files
+2025-05-21 18:27:51,491 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2021/fsm_fra_math160621.pdf (Attempt 1/3)
+2025-05-21 18:27:51,883 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2021/fsm_fra_math160621.pdf to ../../downloads/panelladikes-exams/2021___Μαθηματικά___Λύσεις.pdf
+2025-05-21 18:27:54,887 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2021/fsm_fra_math160621.pdf (Attempt 1/3)
+2025-05-21 18:27:55,228 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2021/fsm_fra_math160621.pdf to ../../downloads/panelladikes-exams/2021___Φυσική___Θέματα.pdf
+2025-05-21 18:27:58,232 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2021/Fysiki220621.pdf (Attempt 1/3)
+2025-05-21 18:27:58,528 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2021/Fysiki220621.pdf to ../../downloads/panelladikes-exams/2021___Φυσική___Λύσεις.pdf
+2025-05-21 18:28:01,530 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2020/Istoria240620.pdf (Attempt 1/3)
+2025-05-21 18:28:01,739 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2020/Istoria240620.pdf to ../../downloads/panelladikes-exams/2020___Ιστορία___Θέματα.pdf
+2025-05-21 18:28:04,742 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2020/fsm_fra_istoria240620.pdf (Attempt 1/3)
+2025-05-21 18:28:04,938 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2020/fsm_fra_istoria240620.pdf to ../../downloads/panelladikes-exams/2020___Ιστορία___Λύσεις.pdf
+2025-05-21 18:28:04,948 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:28:07,951 - INFO - Processing batch 5/31
+2025-05-21 18:28:07,952 - INFO - Starting batch download of 5 files
+2025-05-21 18:28:07,952 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2020/mathimatika170620neo.pdf (Attempt 1/3)
+2025-05-21 18:28:08,379 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2020/mathimatika170620neo.pdf to ../../downloads/panelladikes-exams/2020___Μαθηματικά___Θέματα.pdf
+2025-05-21 18:28:11,383 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2020/fsm_fra_math170620final.pdf (Attempt 1/3)
+2025-05-21 18:28:11,798 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2020/fsm_fra_math170620final.pdf to ../../downloads/panelladikes-exams/2020___Μαθηματικά___Λύσεις.pdf
+2025-05-21 18:28:14,801 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2020/fsm_fra_math170620final.pdf (Attempt 1/3)
+2025-05-21 18:28:15,213 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2020/fsm_fra_math170620final.pdf to ../../downloads/panelladikes-exams/2020___Φυσική___Θέματα.pdf
+2025-05-21 18:28:18,216 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2020/Fysiki220620.pdf (Attempt 1/3)
+2025-05-21 18:28:18,567 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2020/Fysiki220620.pdf to ../../downloads/panelladikes-exams/2020___Φυσική___Λύσεις.pdf
+2025-05-21 18:28:21,571 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2019/Istoria_120619.pdf (Attempt 1/3)
+2025-05-21 18:28:21,822 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2019/Istoria_120619.pdf to ../../downloads/panelladikes-exams/2019___Ιστορία___Θέματα.pdf
+2025-05-21 18:28:21,833 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:28:24,837 - INFO - Processing batch 6/31
+2025-05-21 18:28:24,838 - INFO - Starting batch download of 5 files
+2025-05-21 18:28:24,838 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2019/fsm_fra_istoria120619final.pdf (Attempt 1/3)
+2025-05-21 18:28:25,208 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2019/fsm_fra_istoria120619final.pdf to ../../downloads/panelladikes-exams/2019___Ιστορία___Λύσεις.pdf
+2025-05-21 18:28:28,212 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2019/Mathimatika_100619.pdf (Attempt 1/3)
+2025-05-21 18:28:28,515 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2019/Mathimatika_100619.pdf to ../../downloads/panelladikes-exams/2019___Μαθηματικά___Θέματα.pdf
+2025-05-21 18:28:31,519 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2019/fsm_fra_math100619final.pdf (Attempt 1/3)
+2025-05-21 18:28:31,937 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2019/fsm_fra_math100619final.pdf to ../../downloads/panelladikes-exams/2019___Μαθηματικά___Λύσεις.pdf
+2025-05-21 18:28:34,940 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2019/fsm_fra_math100619final.pdf (Attempt 1/3)
+2025-05-21 18:28:35,359 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2019/fsm_fra_math100619final.pdf to ../../downloads/panelladikes-exams/2019___Φυσική___Θέματα.pdf
+2025-05-21 18:28:38,363 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2019/Fysiki_120619.pdf (Attempt 1/3)
+2025-05-21 18:28:38,778 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2019/Fysiki_120619.pdf to ../../downloads/panelladikes-exams/2019___Φυσική___Λύσεις.pdf
+2025-05-21 18:28:38,788 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:28:41,792 - INFO - Processing batch 7/31
+2025-05-21 18:28:41,792 - INFO - Starting batch download of 5 files
+2025-05-21 18:28:41,792 - INFO - Downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 1/3)
+2025-05-21 18:28:41,852 - WARNING - Error downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 1/3): Cannot connect to host eduadvisor.grhttp:443 ssl:default [Name or service not known]
+2025-05-21 18:28:43,855 - INFO - Downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 2/3)
+2025-05-21 18:28:43,865 - WARNING - Error downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 2/3): Cannot connect to host eduadvisor.grhttp:443 ssl:default [Name or service not known]
+2025-05-21 18:28:47,869 - INFO - Downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 3/3)
+2025-05-21 18:28:47,882 - WARNING - Error downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 3/3): Cannot connect to host eduadvisor.grhttp:443 ssl:default [Name or service not known]
+2025-05-21 18:28:53,889 - ERROR - Failed to download https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf after 3 attempts
+2025-05-21 18:28:56,893 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2018/fsm_fra_ist_130618.pdf (Attempt 1/3)
+2025-05-21 18:28:57,246 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2018/fsm_fra_ist_130618.pdf to ../../downloads/panelladikes-exams/2018___Ιστορία___Λύσεις.pdf
+2025-05-21 18:29:00,250 - INFO - Downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 1/3)
+2025-05-21 18:29:00,260 - WARNING - Error downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 1/3): Cannot connect to host eduadvisor.grhttp:443 ssl:default [Name or service not known]
+2025-05-21 18:29:02,263 - INFO - Downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 2/3)
+2025-05-21 18:29:02,342 - WARNING - Error downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 2/3): Cannot connect to host eduadvisor.grhttp:443 ssl:default [Name or service not known]
+2025-05-21 18:29:06,347 - INFO - Downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 3/3)
+2025-05-21 18:29:06,363 - WARNING - Error downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 3/3): Cannot connect to host eduadvisor.grhttp:443 ssl:default [Name or service not known]
+2025-05-21 18:29:12,369 - ERROR - Failed to download https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf after 3 attempts
+2025-05-21 18:29:15,373 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2018/fsm_fra_math_110618final.pdf (Attempt 1/3)
+2025-05-21 18:29:15,771 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2018/fsm_fra_math_110618final.pdf to ../../downloads/panelladikes-exams/2018___Μαθηματικά___Λύσεις.pdf
+2025-05-21 18:29:18,774 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2018/fsm_fra_math_110618final.pdf (Attempt 1/3)
+2025-05-21 18:29:19,080 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2018/fsm_fra_math_110618final.pdf to ../../downloads/panelladikes-exams/2018___Φυσική___Θέματα.pdf
+2025-05-21 18:29:19,091 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:29:22,094 - INFO - Processing batch 8/31
+2025-05-21 18:29:22,095 - INFO - Starting batch download of 5 files
+2025-05-21 18:29:22,095 - INFO - Downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 1/3)
+2025-05-21 18:29:22,106 - WARNING - Error downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 1/3): Cannot connect to host eduadvisor.grhttp:443 ssl:default [Name or service not known]
+2025-05-21 18:29:24,109 - INFO - Downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 2/3)
+2025-05-21 18:29:24,119 - WARNING - Error downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 2/3): Cannot connect to host eduadvisor.grhttp:443 ssl:default [Name or service not known]
+2025-05-21 18:29:28,124 - INFO - Downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 3/3)
+2025-05-21 18:29:28,136 - WARNING - Error downloading https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 3/3): Cannot connect to host eduadvisor.grhttp:443 ssl:default [Name or service not known]
+2025-05-21 18:29:34,137 - ERROR - Failed to download https://eduadvisor.grhttp://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf after 3 attempts
+2025-05-21 18:29:37,141 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Neo_Genikis_themata_070617.pdf (Attempt 1/3)
+2025-05-21 18:29:37,545 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Neo_Genikis_themata_070617.pdf to ../../downloads/panelladikes-exams/2017___Νεοελληνική_Γλώσσα___Θέματα.pdf
+2025-05-21 18:29:40,548 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Neo_Genikis_lyseis_070617.pdf (Attempt 1/3)
+2025-05-21 18:29:40,738 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Neo_Genikis_lyseis_070617.pdf to ../../downloads/panelladikes-exams/2017___Νεοελληνική_Γλώσσα___Λύσεις.pdf
+2025-05-21 18:29:43,742 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/MathimatikaKat_Themata090617.pdf (Attempt 1/3)
+2025-05-21 18:29:44,055 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/MathimatikaKat_Themata090617.pdf to ../../downloads/panelladikes-exams/2017___Μαθηματικά___Θέματα.pdf
+2025-05-21 18:29:47,059 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/MathimatikaKat_Lyseis090617.pdf (Attempt 1/3)
+2025-05-21 18:29:47,467 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/MathimatikaKat_Lyseis090617.pdf to ../../downloads/panelladikes-exams/2017___Μαθηματικά___Λύσεις.pdf
+2025-05-21 18:29:47,477 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:29:50,481 - INFO - Processing batch 9/31
+2025-05-21 18:29:50,481 - INFO - Starting batch download of 5 files
+2025-05-21 18:29:50,481 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Istoria_Themata_120617.pdf (Attempt 1/3)
+2025-05-21 18:29:50,856 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Istoria_Themata_120617.pdf to ../../downloads/panelladikes-exams/2017___Ιστορία___Θέματα.pdf
+2025-05-21 18:29:53,861 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Istoria_Lyseis_120617.pdf (Attempt 1/3)
+2025-05-21 18:29:54,053 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Istoria_Lyseis_120617.pdf to ../../downloads/panelladikes-exams/2017___Ιστορία___Λύσεις.pdf
+2025-05-21 18:29:57,057 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/MathimatikaKat_Lyseis090617.pdf (Attempt 1/3)
+2025-05-21 18:29:57,464 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/MathimatikaKat_Lyseis090617.pdf to ../../downloads/panelladikes-exams/2017___Φυσική___Θέματα.pdf
+2025-05-21 18:30:00,468 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Fysiki_Themata_120617.pdf (Attempt 1/3)
+2025-05-21 18:30:00,794 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Fysiki_Themata_120617.pdf to ../../downloads/panelladikes-exams/2017___Φυσική___Λύσεις.pdf
+2025-05-21 18:30:03,798 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/Neoelliniki16_themata.pdf (Attempt 1/3)
+2025-05-21 18:30:04,052 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/Neoelliniki16_themata.pdf to ../../downloads/panelladikes-exams/2016___Νεοελληνική_Γλώσσα___Θέματα.pdf
+2025-05-21 18:30:04,063 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:30:07,066 - INFO - Processing batch 10/31
+2025-05-21 18:30:07,067 - INFO - Starting batch download of 5 files
+2025-05-21 18:30:07,067 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_neo_16052016new.pdf (Attempt 1/3)
+2025-05-21 18:30:07,337 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_neo_16052016new.pdf to ../../downloads/panelladikes-exams/2016___Νεοελληνική_Γλώσσα___Λύσεις.pdf
+2025-05-21 18:30:10,341 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/e_math_180516.pdf (Attempt 1/3)
+2025-05-21 18:30:10,560 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/e_math_180516.pdf to ../../downloads/panelladikes-exams/2016___Μαθηματικά___Θέματα.pdf
+2025-05-21 18:30:13,565 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_math_18052016new.pdf (Attempt 1/3)
+2025-05-21 18:30:13,827 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_math_18052016new.pdf to ../../downloads/panelladikes-exams/2016___Μαθηματικά___Λύσεις.pdf
+2025-05-21 18:30:16,831 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/e_ist_23052016.pdf (Attempt 1/3)
+2025-05-21 18:30:17,038 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/e_ist_23052016.pdf to ../../downloads/panelladikes-exams/2016___Ιστορία___Θέματα.pdf
+2025-05-21 18:30:20,042 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_ist_23052016new.pdf (Attempt 1/3)
+2025-05-21 18:30:20,240 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_ist_23052016new.pdf to ../../downloads/panelladikes-exams/2016___Ιστορία___Λύσεις.pdf
+2025-05-21 18:30:20,250 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:30:23,254 - INFO - Processing batch 11/31
+2025-05-21 18:30:23,254 - INFO - Starting batch download of 5 files
+2025-05-21 18:30:23,255 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_math_18052016new.pdf (Attempt 1/3)
+2025-05-21 18:30:23,691 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_math_18052016new.pdf to ../../downloads/panelladikes-exams/2016___Φυσική___Θέματα.pdf
+2025-05-21 18:30:26,695 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/e_fys_23052016.pdf (Attempt 1/3)
+2025-05-21 18:30:27,007 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/e_fys_23052016.pdf to ../../downloads/panelladikes-exams/2016___Φυσική___Λύσεις.pdf
+2025-05-21 18:30:30,011 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_neo_18052015.pdf (Attempt 1/3)
+2025-05-21 18:30:30,264 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_neo_18052015.pdf to ../../downloads/panelladikes-exams/2015___Νεοελληνική_Γλώσσα___Θέματα.pdf
+2025-05-21 18:30:33,268 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_18052015_new.pdf (Attempt 1/3)
+2025-05-21 18:30:33,452 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_18052015_new.pdf to ../../downloads/panelladikes-exams/2015___Νεοελληνική_Γλώσσα___Λύσεις.pdf
+2025-05-21 18:30:36,456 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_18052015_new.pdf (Attempt 1/3)
+2025-05-21 18:30:36,744 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_18052015_new.pdf to ../../downloads/panelladikes-exams/2015___Μαθηματικά_και_Στοιχεία_Στατιστικής___Θέματα.pdf
+2025-05-21 18:30:36,754 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:30:39,759 - INFO - Processing batch 12/31
+2025-05-21 18:30:39,760 - INFO - Starting batch download of 5 files
+2025-05-21 18:30:39,760 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_math_20052015.pdf (Attempt 1/3)
+2025-05-21 18:30:40,180 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_math_20052015.pdf to ../../downloads/panelladikes-exams/2015___Μαθηματικά_και_Στοιχεία_Στατιστικής___Λύσεις.pdf
+2025-05-21 18:30:43,184 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_math_20052015.pdf (Attempt 1/3)
+2025-05-21 18:30:43,503 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_math_20052015.pdf to ../../downloads/panelladikes-exams/2015___Βιολογία___Θέματα.pdf
+2025-05-21 18:30:46,507 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_math_20052015new.pdf (Attempt 1/3)
+2025-05-21 18:30:46,804 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_math_20052015new.pdf to ../../downloads/panelladikes-exams/2015___Βιολογία___Λύσεις.pdf
+2025-05-21 18:30:49,808 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_xhm_22052015.pdf (Attempt 1/3)
+2025-05-21 18:30:50,244 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_xhm_22052015.pdf to ../../downloads/panelladikes-exams/2015___Φυσική___Θέματα.pdf
+2025-05-21 18:30:53,247 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_xhm_22052015new.pdf (Attempt 1/3)
+2025-05-21 18:30:53,431 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_xhm_22052015new.pdf to ../../downloads/panelladikes-exams/2015___Φυσική___Λύσεις.pdf
+2025-05-21 18:30:53,442 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:30:56,446 - INFO - Processing batch 13/31
+2025-05-21 18:30:56,446 - INFO - Starting batch download of 5 files
+2025-05-21 18:30:56,446 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_neo_22052015.pdf (Attempt 1/3)
+2025-05-21 18:30:56,822 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_neo_22052015.pdf to ../../downloads/panelladikes-exams/2015___Λογοτεχνία___Θέματα.pdf
+2025-05-21 18:30:59,826 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_22052015new.pdf (Attempt 1/3)
+2025-05-21 18:31:00,042 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_22052015new.pdf to ../../downloads/panelladikes-exams/2015___Λογοτεχνία___Λύσεις.pdf
+2025-05-21 18:31:03,046 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_22052015new.pdf (Attempt 1/3)
+2025-05-21 18:31:03,232 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_22052015new.pdf to ../../downloads/panelladikes-exams/2015___Ιστορία___Θέματα.pdf
+2025-05-21 18:31:06,236 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_ist_29052015.pdf (Attempt 1/3)
+2025-05-21 18:31:06,483 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_ist_29052015.pdf to ../../downloads/panelladikes-exams/2015___Ιστορία___Λύσεις.pdf
+2025-05-21 18:31:09,487 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_math_25052015.pdf (Attempt 1/3)
+2025-05-21 18:31:09,786 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_math_25052015.pdf to ../../downloads/panelladikes-exams/2015___Μαθηματικά___Θέματα.pdf
+2025-05-21 18:31:09,798 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:31:12,802 - INFO - Processing batch 14/31
+2025-05-21 18:31:12,803 - INFO - Starting batch download of 5 files
+2025-05-21 18:31:12,803 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_math_25052015new.pdf (Attempt 1/3)
+2025-05-21 18:31:13,287 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_math_25052015new.pdf to ../../downloads/panelladikes-exams/2015___Μαθηματικά___Λύσεις.pdf
+2025-05-21 18:31:16,291 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_math_25052015new.pdf (Attempt 1/3)
+2025-05-21 18:31:16,636 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_math_25052015new.pdf to ../../downloads/panelladikes-exams/2015___Χημεία_Βιοχημεία___Θέματα.pdf
+2025-05-21 18:31:19,640 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_xhm_22052015.pdf (Attempt 1/3)
+2025-05-21 18:31:19,972 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_xhm_22052015.pdf to ../../downloads/panelladikes-exams/2015___Χημεία_Βιοχημεία___Λύσεις.pdf
+2025-05-21 18:31:22,976 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_xhm_22052015new.pdf (Attempt 1/3)
+2025-05-21 18:31:23,164 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_xhm_22052015new.pdf to ../../downloads/panelladikes-exams/2015___Αρχές_Οργάνωσης_και_Διοίκησης_Επιχειρήσεων___Θέματα.pdf
+2025-05-21 18:31:26,168 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_fys_29052015.pdf (Attempt 1/3)
+2025-05-21 18:31:26,479 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_fys_29052015.pdf to ../../downloads/panelladikes-exams/2015___Αρχές_Οργάνωσης_και_Διοίκησης_Επιχειρήσεων___Λύσεις.pdf
+2025-05-21 18:31:26,490 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:31:29,494 - INFO - Processing batch 15/31
+2025-05-21 18:31:29,494 - INFO - Starting batch download of 5 files
+2025-05-21 18:31:29,494 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_neo_28052014.pdf (Attempt 1/3)
+2025-05-21 18:31:30,016 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_neo_28052014.pdf to ../../downloads/panelladikes-exams/2014___Νεοελληνική_Γλώσσα___Θέματα.pdf
+2025-05-21 18:31:33,020 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_updated.pdf (Attempt 1/3)
+2025-05-21 18:31:33,239 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_updated.pdf to ../../downloads/panelladikes-exams/2014___Νεοελληνική_Γλώσσα___Λύσεις.pdf
+2025-05-21 18:31:36,243 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_updated.pdf (Attempt 1/3)
+2025-05-21 18:31:36,427 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_updated.pdf to ../../downloads/panelladikes-exams/2014___Μαθηματικά_και_Στοιχεία_Στατιστικής___Θέματα.pdf
+2025-05-21 18:31:39,431 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_math_0530.pdf (Attempt 1/3)
+2025-05-21 18:31:39,733 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_math_0530.pdf to ../../downloads/panelladikes-exams/2014___Μαθηματικά_και_Στοιχεία_Στατιστικής___Λύσεις.pdf
+2025-05-21 18:31:42,737 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_math_0530.pdf (Attempt 1/3)
+2025-05-21 18:31:43,034 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_math_0530.pdf to ../../downloads/panelladikes-exams/2014___Βιολογία___Θέματα.pdf
+2025-05-21 18:31:43,044 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:31:46,047 - INFO - Processing batch 16/31
+2025-05-21 18:31:46,047 - INFO - Starting batch download of 5 files
+2025-05-21 18:31:46,047 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_math_0530_updated.pdf (Attempt 1/3)
+2025-05-21 18:31:46,725 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_math_0530_updated.pdf to ../../downloads/panelladikes-exams/2014___Βιολογία___Λύσεις.pdf
+2025-05-21 18:31:49,727 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_xhm_0604.pdf (Attempt 1/3)
+2025-05-21 18:31:50,026 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_xhm_0604.pdf to ../../downloads/panelladikes-exams/2014___Φυσική___Θέματα.pdf
+2025-05-21 18:31:53,030 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_xhm_0406_new.pdf (Attempt 1/3)
+2025-05-21 18:31:53,265 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_xhm_0406_new.pdf to ../../downloads/panelladikes-exams/2014___Φυσική___Λύσεις.pdf
+2025-05-21 18:31:56,269 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_neo_0604.pdf (Attempt 1/3)
+2025-05-21 18:31:56,520 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_neo_0604.pdf to ../../downloads/panelladikes-exams/2014___Λογοτεχνία___Θέματα.pdf
+2025-05-21 18:31:59,524 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_0406_updated.pdf (Attempt 1/3)
+2025-05-21 18:31:59,710 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_0406_updated.pdf to ../../downloads/panelladikes-exams/2014___Λογοτεχνία___Λύσεις.pdf
+2025-05-21 18:31:59,712 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:32:02,715 - INFO - Processing batch 17/31
+2025-05-21 18:32:02,716 - INFO - Starting batch download of 5 files
+2025-05-21 18:32:02,716 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_0406_updated.pdf (Attempt 1/3)
+2025-05-21 18:32:02,978 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_0406_updated.pdf to ../../downloads/panelladikes-exams/2014___Ιστορία___Θέματα.pdf
+2025-05-21 18:32:05,982 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_ist_1006.pdf (Attempt 1/3)
+2025-05-21 18:32:06,225 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_ist_1006.pdf to ../../downloads/panelladikes-exams/2014___Ιστορία___Λύσεις.pdf
+2025-05-21 18:32:09,228 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_math_0206.pdf (Attempt 1/3)
+2025-05-21 18:32:09,470 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_math_0206.pdf to ../../downloads/panelladikes-exams/2014___Μαθηματικά___Θέματα.pdf
+2025-05-21 18:32:12,475 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_math_0206_updated.pdf (Attempt 1/3)
+2025-05-21 18:32:12,784 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_math_0206_updated.pdf to ../../downloads/panelladikes-exams/2014___Μαθηματικά___Λύσεις.pdf
+2025-05-21 18:32:15,788 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_math_0206_updated.pdf (Attempt 1/3)
+2025-05-21 18:32:16,089 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_math_0206_updated.pdf to ../../downloads/panelladikes-exams/2014___Χημεία_Βιοχημεία___Θέματα.pdf
+2025-05-21 18:32:16,090 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:32:19,094 - INFO - Processing batch 18/31
+2025-05-21 18:32:19,095 - INFO - Starting batch download of 5 files
+2025-05-21 18:32:19,095 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_xhm_0604.pdf (Attempt 1/3)
+2025-05-21 18:32:19,442 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_xhm_0604.pdf to ../../downloads/panelladikes-exams/2014___Χημεία_Βιοχημεία___Λύσεις.pdf
+2025-05-21 18:32:22,446 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_xhm_0406_new.pdf (Attempt 1/3)
+2025-05-21 18:32:22,646 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_xhm_0406_new.pdf to ../../downloads/panelladikes-exams/2014___Αρχές_Οργάνωσης_και_Διοίκησης_Επιχειρήσεων___Θέματα.pdf
+2025-05-21 18:32:25,647 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_fys_1006.pdf (Attempt 1/3)
+2025-05-21 18:32:25,890 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_fys_1006.pdf to ../../downloads/panelladikes-exams/2014___Αρχές_Οργάνωσης_και_Διοίκησης_Επιχειρήσεων___Λύσεις.pdf
+2025-05-21 18:32:28,894 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf (Attempt 1/3)
+2025-05-21 18:32:29,088 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf: HTTP 404
+2025-05-21 18:32:31,090 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf (Attempt 2/3)
+2025-05-21 18:32:31,311 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf: HTTP 404
+2025-05-21 18:32:35,313 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf (Attempt 3/3)
+2025-05-21 18:32:35,502 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf: HTTP 404
+2025-05-21 18:32:41,508 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf after 3 attempts
+2025-05-21 18:32:44,513 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 1/3)
+2025-05-21 18:32:44,879 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 18:32:46,881 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 2/3)
+2025-05-21 18:32:47,087 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 18:32:51,089 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 3/3)
+2025-05-21 18:32:51,290 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 18:32:57,297 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf after 3 attempts
+2025-05-21 18:32:57,309 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:33:00,313 - INFO - Processing batch 19/31
+2025-05-21 18:33:00,314 - INFO - Starting batch download of 5 files
+2025-05-21 18:33:00,314 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 1/3)
+2025-05-21 18:33:00,644 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 18:33:02,647 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 2/3)
+2025-05-21 18:33:03,167 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 18:33:07,171 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 3/3)
+2025-05-21 18:33:07,368 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 18:33:13,374 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf after 3 attempts
+2025-05-21 18:33:16,376 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 1/3)
+2025-05-21 18:33:16,606 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 18:33:18,608 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 2/3)
+2025-05-21 18:33:18,914 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 18:33:22,919 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 3/3)
+2025-05-21 18:33:23,112 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 18:33:29,117 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf after 3 attempts
+2025-05-21 18:33:32,120 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 1/3)
+2025-05-21 18:33:32,315 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 18:33:34,317 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 2/3)
+2025-05-21 18:33:34,542 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 18:33:38,546 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 3/3)
+2025-05-21 18:33:38,784 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 18:33:44,787 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf after 3 attempts
+2025-05-21 18:33:47,789 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf (Attempt 1/3)
+2025-05-21 18:33:48,043 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf: HTTP 404
+2025-05-21 18:33:50,045 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf (Attempt 2/3)
+2025-05-21 18:33:50,337 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf: HTTP 404
+2025-05-21 18:33:54,342 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf (Attempt 3/3)
+2025-05-21 18:33:54,665 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf: HTTP 404
+2025-05-21 18:34:00,672 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf after 3 attempts
+2025-05-21 18:34:03,676 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf (Attempt 1/3)
+2025-05-21 18:34:03,955 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:34:05,957 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf (Attempt 2/3)
+2025-05-21 18:34:06,151 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:34:10,155 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf (Attempt 3/3)
+2025-05-21 18:34:10,409 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:34:16,415 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf after 3 attempts
+2025-05-21 18:34:16,427 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:34:19,431 - INFO - Processing batch 20/31
+2025-05-21 18:34:19,432 - INFO - Starting batch download of 5 files
+2025-05-21 18:34:19,432 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf (Attempt 1/3)
+2025-05-21 18:34:19,833 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:34:21,836 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf (Attempt 2/3)
+2025-05-21 18:34:22,099 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:34:26,104 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf (Attempt 3/3)
+2025-05-21 18:34:26,366 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:34:32,367 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf after 3 attempts
+2025-05-21 18:34:35,371 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_neo_22.pdf (Attempt 1/3)
+2025-05-21 18:34:35,736 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_neo_22.pdf: HTTP 404
+2025-05-21 18:34:37,738 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_neo_22.pdf (Attempt 2/3)
+2025-05-21 18:34:38,021 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_neo_22.pdf: HTTP 404
+2025-05-21 18:34:42,026 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_neo_22.pdf (Attempt 3/3)
+2025-05-21 18:34:42,447 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_neo_22.pdf: HTTP 404
+2025-05-21 18:34:48,454 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_neo_22.pdf after 3 attempts
+2025-05-21 18:34:51,459 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf (Attempt 1/3)
+2025-05-21 18:34:51,715 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf: HTTP 404
+2025-05-21 18:34:53,718 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf (Attempt 2/3)
+2025-05-21 18:34:53,911 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf: HTTP 404
+2025-05-21 18:34:57,916 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf (Attempt 3/3)
+2025-05-21 18:34:58,576 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf: HTTP 404
+2025-05-21 18:35:04,583 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf after 3 attempts
+2025-05-21 18:35:07,587 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf (Attempt 1/3)
+2025-05-21 18:35:07,970 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf: HTTP 404
+2025-05-21 18:35:09,973 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf (Attempt 2/3)
+2025-05-21 18:35:10,234 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf: HTTP 404
+2025-05-21 18:35:14,239 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf (Attempt 3/3)
+2025-05-21 18:35:14,456 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf: HTTP 404
+2025-05-21 18:35:20,463 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf after 3 attempts
+2025-05-21 18:35:23,467 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_ist_kat_24.pdf (Attempt 1/3)
+2025-05-21 18:35:23,930 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_ist_kat_24.pdf: HTTP 404
+2025-05-21 18:35:25,933 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_ist_kat_24.pdf (Attempt 2/3)
+2025-05-21 18:35:26,139 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_ist_kat_24.pdf: HTTP 404
+2025-05-21 18:35:30,144 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_ist_kat_24.pdf (Attempt 3/3)
+2025-05-21 18:35:30,436 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_ist_kat_24.pdf: HTTP 404
+2025-05-21 18:35:36,442 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_ist_kat_24.pdf after 3 attempts
+2025-05-21 18:35:36,455 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:35:39,458 - INFO - Processing batch 21/31
+2025-05-21 18:35:39,459 - INFO - Starting batch download of 5 files
+2025-05-21 18:35:39,459 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_math_kat_27.pdf (Attempt 1/3)
+2025-05-21 18:35:39,805 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_math_kat_27.pdf: HTTP 404
+2025-05-21 18:35:41,808 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_math_kat_27.pdf (Attempt 2/3)
+2025-05-21 18:35:42,111 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_math_kat_27.pdf: HTTP 404
+2025-05-21 18:35:46,116 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_math_kat_27.pdf (Attempt 3/3)
+2025-05-21 18:35:46,319 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_math_kat_27.pdf: HTTP 404
+2025-05-21 18:35:52,326 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_math_kat_27.pdf after 3 attempts
+2025-05-21 18:35:55,329 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf (Attempt 1/3)
+2025-05-21 18:35:55,727 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf: HTTP 404
+2025-05-21 18:35:57,730 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf (Attempt 2/3)
+2025-05-21 18:35:57,925 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf: HTTP 404
+2025-05-21 18:36:01,930 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf (Attempt 3/3)
+2025-05-21 18:36:02,363 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf: HTTP 404
+2025-05-21 18:36:08,370 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf after 3 attempts
+2025-05-21 18:36:11,374 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf (Attempt 1/3)
+2025-05-21 18:36:11,573 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf: HTTP 404
+2025-05-21 18:36:13,577 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf (Attempt 2/3)
+2025-05-21 18:36:13,837 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf: HTTP 404
+2025-05-21 18:36:17,841 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf (Attempt 3/3)
+2025-05-21 18:36:18,150 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf: HTTP 404
+2025-05-21 18:36:24,157 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf after 3 attempts
+2025-05-21 18:36:27,162 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf (Attempt 1/3)
+2025-05-21 18:36:27,684 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:36:29,687 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf (Attempt 2/3)
+2025-05-21 18:36:29,914 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:36:33,918 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf (Attempt 3/3)
+2025-05-21 18:36:34,116 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:36:40,123 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf after 3 attempts
+2025-05-21 18:36:43,128 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf (Attempt 1/3)
+2025-05-21 18:36:43,363 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:36:45,367 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf (Attempt 2/3)
+2025-05-21 18:36:45,666 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:36:49,671 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf (Attempt 3/3)
+2025-05-21 18:36:49,918 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf: HTTP 404
+2025-05-21 18:36:55,925 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf after 3 attempts
+2025-05-21 18:36:55,938 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:36:58,941 - INFO - Processing batch 22/31
+2025-05-21 18:36:58,942 - INFO - Starting batch download of 5 files
+2025-05-21 18:36:58,942 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_fys_22.pdf (Attempt 1/3)
+2025-05-21 18:36:59,270 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_fys_22.pdf: HTTP 404
+2025-05-21 18:37:01,273 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_fys_22.pdf (Attempt 2/3)
+2025-05-21 18:37:01,481 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_fys_22.pdf: HTTP 404
+2025-05-21 18:37:05,486 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_fys_22.pdf (Attempt 3/3)
+2025-05-21 18:37:05,681 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_fys_22.pdf: HTTP 404
+2025-05-21 18:37:11,688 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_fys_22.pdf after 3 attempts
+2025-05-21 18:37:14,692 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/NeoellinikiGlossa21.pdf (Attempt 1/3)
+2025-05-21 18:37:14,955 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/NeoellinikiGlossa21.pdf to ../../downloads/panelladikes-exams/2012___Νεοελληνική_Γλώσσα___Θέματα.pdf
+2025-05-21 18:37:17,957 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/tmthma_neo.pdf (Attempt 1/3)
+2025-05-21 18:37:18,142 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/tmthma_neo.pdf to ../../downloads/panelladikes-exams/2012___Νεοελληνική_Γλώσσα___Λύσεις.pdf
+2025-05-21 18:37:21,156 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/tmthma_neo.pdf (Attempt 1/3)
+2025-05-21 18:37:21,341 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/tmthma_neo.pdf to ../../downloads/panelladikes-exams/2012___Μαθηματικά_και_Στοιχεία_Στατιστικής___Θέματα.pdf
+2025-05-21 18:37:24,345 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Mathimatika23.pdf (Attempt 1/3)
+2025-05-21 18:37:24,594 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Mathimatika23.pdf to ../../downloads/panelladikes-exams/2012___Μαθηματικά_και_Στοιχεία_Στατιστικής___Λύσεις.pdf
+2025-05-21 18:37:24,605 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:37:27,607 - INFO - Processing batch 23/31
+2025-05-21 18:37:27,607 - INFO - Starting batch download of 5 files
+2025-05-21 18:37:27,607 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Mathimatika23.pdf (Attempt 1/3)
+2025-05-21 18:37:27,994 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Mathimatika23.pdf to ../../downloads/panelladikes-exams/2012___Βιολογία___Θέματα.pdf
+2025-05-21 18:37:30,997 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/tmthma_math.pdf (Attempt 1/3)
+2025-05-21 18:37:31,300 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/tmthma_math.pdf to ../../downloads/panelladikes-exams/2012___Βιολογία___Λύσεις.pdf
+2025-05-21 18:37:34,304 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/tmthma_mathEPAL.pdf (Attempt 1/3)
+2025-05-21 18:37:34,553 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/tmthma_mathEPAL.pdf to ../../downloads/panelladikes-exams/2012___Φυσική___Θέματα.pdf
+2025-05-21 18:37:37,557 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/FysikiKAT.pdf (Attempt 1/3)
+2025-05-21 18:37:37,866 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/FysikiKAT.pdf to ../../downloads/panelladikes-exams/2012___Φυσική___Λύσεις.pdf
+2025-05-21 18:37:40,870 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/NeoellKat.pdf (Attempt 1/3)
+2025-05-21 18:37:41,196 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/NeoellKat.pdf to ../../downloads/panelladikes-exams/2012___Λογοτεχνία___Θέματα.pdf
+2025-05-21 18:37:41,209 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:37:44,213 - INFO - Processing batch 24/31
+2025-05-21 18:37:44,214 - INFO - Starting batch download of 5 files
+2025-05-21 18:37:44,214 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/tmthma_neoKAT.pdf (Attempt 1/3)
+2025-05-21 18:37:44,525 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/tmthma_neoKAT.pdf to ../../downloads/panelladikes-exams/2012___Λογοτεχνία___Λύσεις.pdf
+2025-05-21 18:37:47,529 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/tmthma_neoKAT.pdf (Attempt 1/3)
+2025-05-21 18:37:47,709 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/tmthma_neoKAT.pdf to ../../downloads/panelladikes-exams/2012___Ιστορία___Θέματα.pdf
+2025-05-21 18:37:50,713 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Ist_kat30.pdf (Attempt 1/3)
+2025-05-21 18:37:50,955 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Ist_kat30.pdf to ../../downloads/panelladikes-exams/2012___Ιστορία___Λύσεις.pdf
+2025-05-21 18:37:53,960 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/MathI_EPAL24.pdf (Attempt 1/3)
+2025-05-21 18:37:54,211 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/MathI_EPAL24.pdf to ../../downloads/panelladikes-exams/2012___Μαθηματικά___Θέματα.pdf
+2025-05-21 18:37:57,215 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/tmthma_mathEPAL.pdf (Attempt 1/3)
+2025-05-21 18:37:57,459 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/tmthma_mathEPAL.pdf to ../../downloads/panelladikes-exams/2012___Μαθηματικά___Λύσεις.pdf
+2025-05-21 18:37:57,471 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 18:38:00,475 - INFO - Processing batch 25/31
+2025-05-21 18:38:00,476 - INFO - Starting batch download of 5 files
+2025-05-21 18:38:00,486 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/tmthma_math28.pdf (Attempt 1/3)
+2025-05-21 18:38:00,899 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/tmthma_math28.pdf to ../../downloads/panelladikes-exams/2012___Χημεία_Βιοχημεία___Θέματα.pdf
+2025-05-21 18:38:03,903 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/Biox_kat30.pdf (Attempt 1/3)
+2025-05-21 18:38:04,113 - INFO - Downloaded https://eduadvisor.gr/images/stories/pdf/Biox_kat30.pdf to ../../downloads/panelladikes-exams/2012___Χημεία_Βιοχημεία___Λύσεις.pdf
+2025-05-21 18:38:07,117 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf (Attempt 1/3)
+2025-05-21 18:38:07,368 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf: HTTP 404
+2025-05-21 18:38:09,371 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf (Attempt 2/3)
+2025-05-21 18:38:09,816 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf: HTTP 404
+2025-05-21 18:38:13,821 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf (Attempt 3/3)
+2025-05-21 18:38:14,176 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf: HTTP 404
+2025-05-21 18:38:20,181 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf after 3 attempts
+2025-05-21 18:38:23,185 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα%20(Λύσεις).pdf (Attempt 1/3)
+2025-05-21 18:38:23,479 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα%20(Λύσεις).pdf: HTTP 404
+2025-05-21 18:38:25,482 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα%20(Λύσεις).pdf (Attempt 2/3)
+2025-05-21 18:38:25,767 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα%20(Λύσεις).pdf: HTTP 404
+2025-05-21 22:50:21,614 - INFO - Arguments received: JSON file: ../../scraping/json_sitemaps/themata-lyseis-panelladikwn_pdf.json, Output dir: ../../downloads/panelladikes-exams, Batch size: 5, Sleep time: 3, Progress dir: progress_reports
+2025-05-21 22:50:21,625 - INFO - JSON file contains a dictionary with 154 items
+2025-05-21 22:50:21,625 - INFO - Fixed malformed URL for 2018 > Ιστορία > Θέματα: https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf
+2025-05-21 22:50:21,625 - INFO - Fixed malformed URL for 2018 > Μαθηματικά > Θέματα: https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf
+2025-05-21 22:50:21,625 - INFO - Fixed malformed URL for 2018 > Φυσική > Λύσεις: https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf
+2025-05-21 22:50:21,625 - WARNING - Skipping known problematic URL for 2013 > Φυσική > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf
+2025-05-21 22:50:21,625 - WARNING - Skipping known problematic URL for 2013 > Φυσική > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf
+2025-05-21 22:50:21,625 - WARNING - Skipping known problematic URL for 2013 > Λογοτεχνία > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_neo_22.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2013 > Λογοτεχνία > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2013 > Ιστορία > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_neo_22.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2013 > Ιστορία > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_ist_kat_24.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2013 > Μαθηματικά > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_math_kat_27.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2013 > Μαθηματικά > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2013 > Χημεία Βιοχημεία > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_math_kat_27_final2.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2013 > Χημεία Βιοχημεία > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_xhm_vio_kat_24.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2013 > Αρχές Οργάνωσης και Διοίκησης Επιχειρήσεων > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/fsm_fra_xhm_vio_kat_24.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2013 > Αρχές Οργάνωσης και Διοίκησης Επιχειρήσεων > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2013/pan_fys_22.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2011 > Νεοελληνική Γλώσσα > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2011 > Νεοελληνική Γλώσσα > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα%20(Λύσεις).pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2011 > Μαθηματικά και Στοιχεία Στατιστικής > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα%20(Λύσεις).pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2011 > Μαθηματικά και Στοιχεία Στατιστικής > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2011 > Βιολογία > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2011 > Βιολογία > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής%20(Λύσεις).pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2011 > Λογοτεχνία > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Λογοτεχνία.pdf
+2025-05-21 22:50:21,626 - WARNING - Skipping known problematic URL for 2011 > Λογοτεχνία > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Λογοτεχνία%20(Λύσεις).pdf
+2025-05-21 22:50:21,627 - WARNING - Skipping known problematic URL for 2011 > Ιστορία > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Λογοτεχνία%20(Λύσεις).pdf
+2025-05-21 22:50:21,627 - WARNING - Skipping known problematic URL for 2011 > Ιστορία > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία.pdf
+2025-05-21 22:50:21,627 - WARNING - Skipping known problematic URL for 2011 > Μαθηματικά > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Μαθηματικά.pdf
+2025-05-21 22:50:21,627 - WARNING - Skipping known problematic URL for 2011 > Μαθηματικά > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Μαθηματικά%20(Λύσεις).pdf
+2025-05-21 22:50:21,627 - WARNING - Skipping known problematic URL for 2011 > Φυσική > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Μαθηματικά%20(Λύσεις).pdf
+2025-05-21 22:50:21,627 - WARNING - Skipping known problematic URL for 2011 > Φυσική > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική.pdf
+2025-05-21 22:50:21,627 - WARNING - Skipping known problematic URL for 2011 > Χημεία Βιοχημεία > Θέματα: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Μαθηματικά%20(Λύσεις).pdf
+2025-05-21 22:50:21,627 - WARNING - Skipping known problematic URL for 2011 > Χημεία Βιοχημεία > Λύσεις: https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Χημεία%20-%20Βιοχημεία.pdf
+2025-05-21 22:50:21,627 - INFO - Loaded 126 items from ../../scraping/json_sitemaps/themata-lyseis-panelladikwn_pdf.json
+2025-05-21 22:50:21,627 - INFO - Loaded progress: 3 items already downloaded
+2025-05-21 22:50:21,627 - INFO - Found 124 new items to download
+2025-05-21 22:50:21,628 - INFO - Split into 25 batches of up to 5 items each
+2025-05-21 22:50:21,628 - INFO - Processing batch 1/25
+2025-05-21 22:50:21,628 - INFO - Starting batch download of 5 files
+2025-05-21 22:50:21,628 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2023/Istoria120623.pdf: File already exists
+2025-05-21 22:50:24,632 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2023/fsm_fra_istoria120623new.pdf: File already exists
+2025-05-21 22:50:27,636 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2023/Mathimatika060623.pdf: File already exists
+2025-05-21 22:50:30,637 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2023/fsm_fra_mathimatika_060623.pdf: File already exists
+2025-05-21 22:50:33,641 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2023/fsm_fra_mathimatika_060623.pdf: File already exists
+2025-05-21 22:50:33,653 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:50:36,656 - INFO - Processing batch 2/25
+2025-05-21 22:50:36,657 - INFO - Starting batch download of 5 files
+2025-05-21 22:50:36,657 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2023/Fysiki120623.pdf: File already exists
+2025-05-21 22:50:39,661 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2022/them_istoria100622.pdf: File already exists
+2025-05-21 22:50:42,665 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2022/fsm_fra_istoria100622.pdf: File already exists
+2025-05-21 22:50:45,667 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2022/them_math_gel_220606.pdf: File already exists
+2025-05-21 22:50:48,671 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2022/fsm_fra_math060622.pdf: File already exists
+2025-05-21 22:50:48,682 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:50:51,686 - INFO - Processing batch 3/25
+2025-05-21 22:50:51,687 - INFO - Starting batch download of 5 files
+2025-05-21 22:50:51,687 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2022/fsm_fra_math060622.pdf: File already exists
+2025-05-21 22:50:54,691 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2022/them_fysiki100622.pdf: File already exists
+2025-05-21 22:50:57,696 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2021/Istoria220621.pdf: File already exists
+2025-05-21 22:51:00,711 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2021/fsm_fra_istoria220621.pdf: File already exists
+2025-05-21 22:51:03,715 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2021/mathimatika_160621.pdf: File already exists
+2025-05-21 22:51:03,728 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:51:06,731 - INFO - Processing batch 4/25
+2025-05-21 22:51:06,732 - INFO - Starting batch download of 5 files
+2025-05-21 22:51:06,732 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2021/fsm_fra_math160621.pdf: File already exists
+2025-05-21 22:51:09,736 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2021/fsm_fra_math160621.pdf: File already exists
+2025-05-21 22:51:12,750 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2021/Fysiki220621.pdf: File already exists
+2025-05-21 22:51:15,754 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2020/Istoria240620.pdf: File already exists
+2025-05-21 22:51:18,757 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2020/fsm_fra_istoria240620.pdf: File already exists
+2025-05-21 22:51:18,767 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:51:21,771 - INFO - Processing batch 5/25
+2025-05-21 22:51:21,771 - INFO - Starting batch download of 5 files
+2025-05-21 22:51:21,781 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2020/mathimatika170620neo.pdf: File already exists
+2025-05-21 22:51:24,785 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2020/fsm_fra_math170620final.pdf: File already exists
+2025-05-21 22:51:27,788 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2020/fsm_fra_math170620final.pdf: File already exists
+2025-05-21 22:51:30,802 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2020/Fysiki220620.pdf: File already exists
+2025-05-21 22:51:33,806 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2019/Istoria_120619.pdf: File already exists
+2025-05-21 22:51:33,816 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:51:36,820 - INFO - Processing batch 6/25
+2025-05-21 22:51:36,820 - INFO - Starting batch download of 5 files
+2025-05-21 22:51:36,820 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2019/fsm_fra_istoria120619final.pdf: File already exists
+2025-05-21 22:51:39,824 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2019/Mathimatika_100619.pdf: File already exists
+2025-05-21 22:51:42,838 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2019/fsm_fra_math100619final.pdf: File already exists
+2025-05-21 22:51:45,842 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2019/fsm_fra_math100619final.pdf: File already exists
+2025-05-21 22:51:48,846 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2019/Fysiki_120619.pdf: File already exists
+2025-05-21 22:51:48,856 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:51:51,860 - INFO - Processing batch 7/25
+2025-05-21 22:51:51,861 - INFO - Starting batch download of 5 files
+2025-05-21 22:51:51,861 - INFO - Downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 1/3)
+2025-05-21 22:52:01,878 - WARNING - Error downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 1/3): Cannot connect to host http:443 ssl:default [Temporary failure in name resolution]
+2025-05-21 22:52:03,880 - INFO - Downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 2/3)
+2025-05-21 22:52:13,893 - WARNING - Error downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 2/3): Cannot connect to host http:443 ssl:default [Temporary failure in name resolution]
+2025-05-21 22:52:17,897 - INFO - Downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 3/3)
+2025-05-21 22:52:27,909 - WARNING - Error downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf (Attempt 3/3): Cannot connect to host http:443 ssl:default [Temporary failure in name resolution]
+2025-05-21 22:52:33,916 - ERROR - Failed to download https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_ist_op_c_hmer_180613.pdf after 3 attempts
+2025-05-21 22:52:36,921 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2018/fsm_fra_ist_130618.pdf: File already exists
+2025-05-21 22:52:39,925 - INFO - Downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 1/3)
+2025-05-21 22:52:49,938 - WARNING - Error downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 1/3): Cannot connect to host http:443 ssl:default [Temporary failure in name resolution]
+2025-05-21 22:52:51,940 - INFO - Downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 2/3)
+2025-05-21 22:53:01,952 - WARNING - Error downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 2/3): Cannot connect to host http:443 ssl:default [Temporary failure in name resolution]
+2025-05-21 22:53:05,957 - INFO - Downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 3/3)
+2025-05-21 22:53:15,969 - WARNING - Error downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf (Attempt 3/3): Cannot connect to host http:443 ssl:default [Temporary failure in name resolution]
+2025-05-21 22:53:21,976 - ERROR - Failed to download https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_mat_op_c_hmer_180611.pdf after 3 attempts
+2025-05-21 22:53:24,981 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2018/fsm_fra_math_110618final.pdf: File already exists
+2025-05-21 22:53:27,985 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2018/fsm_fra_math_110618final.pdf: File already exists
+2025-05-21 22:53:27,996 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:53:31,000 - INFO - Processing batch 8/25
+2025-05-21 22:53:31,000 - INFO - Starting batch download of 5 files
+2025-05-21 22:53:31,000 - INFO - Downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 1/3)
+2025-05-21 22:53:41,013 - WARNING - Error downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 1/3): Cannot connect to host http:443 ssl:default [Temporary failure in name resolution]
+2025-05-21 22:53:43,015 - INFO - Downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 2/3)
+2025-05-21 22:53:53,028 - WARNING - Error downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 2/3): Cannot connect to host http:443 ssl:default [Temporary failure in name resolution]
+2025-05-21 22:53:57,032 - INFO - Downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 3/3)
+2025-05-21 22:54:07,044 - WARNING - Error downloading https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf (Attempt 3/3): Cannot connect to host http:443 ssl:default [Temporary failure in name resolution]
+2025-05-21 22:54:13,047 - ERROR - Failed to download https://http://www.minedu.gov.gr/publications/docs2018/EXETASEIS-2018/them_fis_op_c_hmer_180613.pdf after 3 attempts
+2025-05-21 22:54:16,051 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Neo_Genikis_themata_070617.pdf: File already exists
+2025-05-21 22:54:19,055 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Neo_Genikis_lyseis_070617.pdf: File already exists
+2025-05-21 22:54:22,070 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/MathimatikaKat_Themata090617.pdf: File already exists
+2025-05-21 22:54:25,074 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/MathimatikaKat_Lyseis090617.pdf: File already exists
+2025-05-21 22:54:25,086 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:54:28,089 - INFO - Processing batch 9/25
+2025-05-21 22:54:28,090 - INFO - Starting batch download of 5 files
+2025-05-21 22:54:28,090 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Istoria_Themata_120617.pdf: File already exists
+2025-05-21 22:54:31,094 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Istoria_Lyseis_120617.pdf: File already exists
+2025-05-21 22:54:34,098 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/MathimatikaKat_Lyseis090617.pdf: File already exists
+2025-05-21 22:54:37,102 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2017/Fysiki_Themata_120617.pdf: File already exists
+2025-05-21 22:54:40,107 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/Neoelliniki16_themata.pdf: File already exists
+2025-05-21 22:54:40,119 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:54:43,122 - INFO - Processing batch 10/25
+2025-05-21 22:54:43,123 - INFO - Starting batch download of 5 files
+2025-05-21 22:54:43,123 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_neo_16052016new.pdf: File already exists
+2025-05-21 22:54:46,128 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/e_math_180516.pdf: File already exists
+2025-05-21 22:54:49,132 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_math_18052016new.pdf: File already exists
+2025-05-21 22:54:52,136 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/e_ist_23052016.pdf: File already exists
+2025-05-21 22:54:55,140 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_ist_23052016new.pdf: File already exists
+2025-05-21 22:54:55,153 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:54:58,157 - INFO - Processing batch 11/25
+2025-05-21 22:54:58,157 - INFO - Starting batch download of 5 files
+2025-05-21 22:54:58,158 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/fsm_fra_math_18052016new.pdf: File already exists
+2025-05-21 22:55:01,162 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2016/e_fys_23052016.pdf: File already exists
+2025-05-21 22:55:04,166 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_neo_18052015.pdf: File already exists
+2025-05-21 22:55:07,171 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_18052015_new.pdf: File already exists
+2025-05-21 22:55:10,175 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_18052015_new.pdf: File already exists
+2025-05-21 22:55:10,187 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:55:13,191 - INFO - Processing batch 12/25
+2025-05-21 22:55:13,191 - INFO - Starting batch download of 5 files
+2025-05-21 22:55:13,192 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_math_20052015.pdf: File already exists
+2025-05-21 22:55:16,196 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_math_20052015.pdf: File already exists
+2025-05-21 22:55:19,200 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_math_20052015new.pdf: File already exists
+2025-05-21 22:55:22,204 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_xhm_22052015.pdf: File already exists
+2025-05-21 22:55:25,208 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_xhm_22052015new.pdf: File already exists
+2025-05-21 22:55:25,219 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:55:28,223 - INFO - Processing batch 13/25
+2025-05-21 22:55:28,223 - INFO - Starting batch download of 5 files
+2025-05-21 22:55:28,224 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_neo_22052015.pdf: File already exists
+2025-05-21 22:55:31,228 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_22052015new.pdf: File already exists
+2025-05-21 22:55:34,232 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_neo_22052015new.pdf: File already exists
+2025-05-21 22:55:37,236 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_ist_29052015.pdf: File already exists
+2025-05-21 22:55:40,240 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_math_25052015.pdf: File already exists
+2025-05-21 22:55:40,251 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:55:43,255 - INFO - Processing batch 14/25
+2025-05-21 22:55:43,255 - INFO - Starting batch download of 5 files
+2025-05-21 22:55:43,256 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_math_25052015new.pdf: File already exists
+2025-05-21 22:55:46,257 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_math_25052015new.pdf: File already exists
+2025-05-21 22:55:49,261 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_xhm_22052015.pdf: File already exists
+2025-05-21 22:55:52,265 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/fsm_fra_xhm_22052015new.pdf: File already exists
+2025-05-21 22:55:55,267 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies2015/e_fys_29052015.pdf: File already exists
+2025-05-21 22:55:55,279 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:55:58,283 - INFO - Processing batch 15/25
+2025-05-21 22:55:58,284 - INFO - Starting batch download of 5 files
+2025-05-21 22:55:58,285 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_neo_28052014.pdf: File already exists
+2025-05-21 22:56:01,287 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_updated.pdf: File already exists
+2025-05-21 22:56:04,291 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_updated.pdf: File already exists
+2025-05-21 22:56:07,295 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_math_0530.pdf: File already exists
+2025-05-21 22:56:10,298 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_math_0530.pdf: File already exists
+2025-05-21 22:56:10,309 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:56:13,313 - INFO - Processing batch 16/25
+2025-05-21 22:56:13,313 - INFO - Starting batch download of 5 files
+2025-05-21 22:56:13,313 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_math_0530_updated.pdf: File already exists
+2025-05-21 22:56:16,317 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_xhm_0604.pdf: File already exists
+2025-05-21 22:56:19,321 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_xhm_0406_new.pdf: File already exists
+2025-05-21 22:56:22,325 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_neo_0604.pdf: File already exists
+2025-05-21 22:56:25,329 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_0406_updated.pdf: File already exists
+2025-05-21 22:56:25,340 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:56:28,343 - INFO - Processing batch 17/25
+2025-05-21 22:56:28,344 - INFO - Starting batch download of 5 files
+2025-05-21 22:56:28,344 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_neo_0406_updated.pdf: File already exists
+2025-05-21 22:56:31,348 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_ist_1006.pdf: File already exists
+2025-05-21 22:56:34,352 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_math_0206.pdf: File already exists
+2025-05-21 22:56:37,356 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_math_0206_updated.pdf: File already exists
+2025-05-21 22:56:40,361 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_math_0206_updated.pdf: File already exists
+2025-05-21 22:56:40,372 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:56:43,376 - INFO - Processing batch 18/25
+2025-05-21 22:56:43,376 - INFO - Starting batch download of 5 files
+2025-05-21 22:56:43,376 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_xhm_0604.pdf: File already exists
+2025-05-21 22:56:46,381 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/fsm_fra_xhm_0406_new.pdf: File already exists
+2025-05-21 22:56:49,384 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Panellinies_2014/e_fys_1006.pdf: File already exists
+2025-05-21 22:56:52,388 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf (Attempt 1/3)
+2025-05-21 22:56:52,804 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf: HTTP 404
+2025-05-21 22:56:54,806 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf (Attempt 2/3)
+2025-05-21 22:56:55,025 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf: HTTP 404
+2025-05-21 22:56:59,030 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf (Attempt 3/3)
+2025-05-21 22:56:59,320 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf: HTTP 404
+2025-05-21 22:57:05,327 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/Pan_neo_gen_17.pdf after 3 attempts
+2025-05-21 22:57:08,331 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 1/3)
+2025-05-21 22:57:08,535 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 22:57:10,538 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 2/3)
+2025-05-21 22:57:10,733 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 22:57:14,738 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 3/3)
+2025-05-21 22:57:14,932 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 22:57:20,939 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf after 3 attempts
+2025-05-21 22:57:20,951 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:57:23,955 - INFO - Processing batch 19/25
+2025-05-21 22:57:23,955 - INFO - Starting batch download of 5 files
+2025-05-21 22:57:23,955 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 1/3)
+2025-05-21 22:57:24,279 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 22:57:26,281 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 2/3)
+2025-05-21 22:57:26,475 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 22:57:30,480 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf (Attempt 3/3)
+2025-05-21 22:57:30,749 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf: HTTP 404
+2025-05-21 22:57:36,756 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_neo_gen_17.pdf after 3 attempts
+2025-05-21 22:57:39,757 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 1/3)
+2025-05-21 22:57:39,995 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 22:57:41,998 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 2/3)
+2025-05-21 22:57:42,262 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 22:57:46,267 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 3/3)
+2025-05-21 22:57:46,462 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 22:57:52,468 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf after 3 attempts
+2025-05-21 22:57:55,472 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 1/3)
+2025-05-21 22:57:55,668 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 22:57:57,671 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 2/3)
+2025-05-21 22:57:57,863 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 22:58:01,867 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf (Attempt 3/3)
+2025-05-21 22:58:02,141 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf: HTTP 404
+2025-05-21 22:58:08,148 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/pan_math_gen_20.pdf after 3 attempts
+2025-05-21 22:58:11,152 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf (Attempt 1/3)
+2025-05-21 22:58:11,350 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf: HTTP 404
+2025-05-21 22:58:13,354 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf (Attempt 2/3)
+2025-05-21 22:58:13,586 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf: HTTP 404
+2025-05-21 22:58:17,591 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf (Attempt 3/3)
+2025-05-21 22:58:17,786 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf: HTTP 404
+2025-05-21 22:58:23,793 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/%CE%A0%CE%91%CE%9D%CE%95%CE%9B%CE%9B%CE%97%CE%9D%CE%99%CE%95%CE%A3%202013/%CE%98%CE%95%CE%9C%CE%91%CE%A4%CE%91%20%CE%9A%CE%91%CE%99%20%CE%91%CE%A0%CE%91%CE%9D%CE%A4%CE%97%CE%A3%CE%95%CE%99%CE%A3/2013/fsm_fra_math_20_final.pdf after 3 attempts
+2025-05-21 22:58:26,797 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/NeoellinikiGlossa21.pdf: File already exists
+2025-05-21 22:58:26,810 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:58:29,814 - INFO - Processing batch 20/25
+2025-05-21 22:58:29,814 - INFO - Starting batch download of 5 files
+2025-05-21 22:58:29,815 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/tmthma_neo.pdf: File already exists
+2025-05-21 22:58:32,817 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/tmthma_neo.pdf: File already exists
+2025-05-21 22:58:35,821 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Mathimatika23.pdf: File already exists
+2025-05-21 22:58:38,836 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Mathimatika23.pdf: File already exists
+2025-05-21 22:58:41,840 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/tmthma_math.pdf: File already exists
+2025-05-21 22:58:41,851 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:58:44,855 - INFO - Processing batch 21/25
+2025-05-21 22:58:44,855 - INFO - Starting batch download of 5 files
+2025-05-21 22:58:44,855 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/tmthma_mathEPAL.pdf: File already exists
+2025-05-21 22:58:47,859 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/FysikiKAT.pdf: File already exists
+2025-05-21 22:58:50,873 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/NeoellKat.pdf: File already exists
+2025-05-21 22:58:53,877 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/tmthma_neoKAT.pdf: File already exists
+2025-05-21 22:58:56,891 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/tmthma_neoKAT.pdf: File already exists
+2025-05-21 22:58:56,902 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:58:59,905 - INFO - Processing batch 22/25
+2025-05-21 22:58:59,906 - INFO - Starting batch download of 5 files
+2025-05-21 22:58:59,915 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/Ist_kat30.pdf: File already exists
+2025-05-21 22:59:02,917 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/MathI_EPAL24.pdf: File already exists
+2025-05-21 22:59:05,921 - INFO - Skipping https://eduadvisor.gr/images/stories/pdf/tmthma_mathEPAL.pdf: File already exists
+2025-05-21 22:59:08,945 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf (Attempt 1/3)
+2025-05-21 22:59:09,364 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf: HTTP 404
+2025-05-21 22:59:11,367 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf (Attempt 2/3)
+2025-05-21 22:59:11,571 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf: HTTP 404
+2025-05-21 22:59:15,575 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf (Attempt 3/3)
+2025-05-21 22:59:15,880 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf: HTTP 404
+2025-05-21 22:59:21,887 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Νεοελληνική%20Γλώσσα.pdf after 3 attempts
+2025-05-21 22:59:24,898 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf (Attempt 1/3)
+2025-05-21 22:59:25,098 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf: HTTP 404
+2025-05-21 22:59:27,101 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf (Attempt 2/3)
+2025-05-21 22:59:27,533 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf: HTTP 404
+2025-05-21 22:59:31,538 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf (Attempt 3/3)
+2025-05-21 22:59:31,731 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf: HTTP 404
+2025-05-21 22:59:37,738 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf after 3 attempts
+2025-05-21 22:59:37,749 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 22:59:40,753 - INFO - Processing batch 23/25
+2025-05-21 22:59:40,754 - INFO - Starting batch download of 5 files
+2025-05-21 22:59:40,754 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf (Attempt 1/3)
+2025-05-21 22:59:41,066 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf: HTTP 404
+2025-05-21 22:59:43,069 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf (Attempt 2/3)
+2025-05-21 22:59:43,254 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf: HTTP 404
+2025-05-21 22:59:47,258 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf (Attempt 3/3)
+2025-05-21 22:59:47,480 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf: HTTP 404
+2025-05-21 22:59:53,486 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Μαθηματικά%20και%20Στοιχεία%20Στατιστικής.pdf after 3 attempts
+2025-05-21 22:59:56,490 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf (Attempt 1/3)
+2025-05-21 22:59:56,685 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf: HTTP 404
+2025-05-21 22:59:58,687 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf (Attempt 2/3)
+2025-05-21 22:59:58,934 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf: HTTP 404
+2025-05-21 23:00:02,938 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf (Attempt 3/3)
+2025-05-21 23:00:06,668 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf: HTTP 404
+2025-05-21 23:00:12,675 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf after 3 attempts
+2025-05-21 23:00:15,679 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf (Attempt 1/3)
+2025-05-21 23:00:15,865 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf: HTTP 404
+2025-05-21 23:00:17,868 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf (Attempt 2/3)
+2025-05-21 23:00:18,156 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf: HTTP 404
+2025-05-21 23:00:22,160 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf (Attempt 3/3)
+2025-05-21 23:00:22,346 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf: HTTP 404
+2025-05-21 23:00:28,352 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Βιολογία%20Γενικής%20Παιδείας.pdf after 3 attempts
+2025-05-21 23:00:31,356 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Φυσική%20Γενικής%20Παιδείας.pdf (Attempt 1/3)
+2025-05-21 23:00:31,976 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Φυσική%20Γενικής%20Παιδείας.pdf: HTTP 404
+2025-05-21 23:00:33,979 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Φυσική%20Γενικής%20Παιδείας.pdf (Attempt 2/3)
+2025-05-21 23:00:34,163 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Φυσική%20Γενικής%20Παιδείας.pdf: HTTP 404
+2025-05-21 23:00:38,167 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Φυσική%20Γενικής%20Παιδείας.pdf (Attempt 3/3)
+2025-05-21 23:00:38,452 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Φυσική%20Γενικής%20Παιδείας.pdf: HTTP 404
+2025-05-21 23:00:44,459 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΓΕΝΙΚΗ%20ΠΑΙΔΕΙΑ/Φυσική%20Γενικής%20Παιδείας.pdf after 3 attempts
+2025-05-21 23:00:47,463 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Λογοτεχνία.pdf (Attempt 1/3)
+2025-05-21 23:00:47,649 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Λογοτεχνία.pdf: HTTP 404
+2025-05-21 23:00:49,652 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Λογοτεχνία.pdf (Attempt 2/3)
+2025-05-21 23:00:49,866 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Λογοτεχνία.pdf: HTTP 404
+2025-05-21 23:00:53,871 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Λογοτεχνία.pdf (Attempt 3/3)
+2025-05-21 23:00:54,069 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Λογοτεχνία.pdf: HTTP 404
+2025-05-21 23:01:00,076 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Λογοτεχνία.pdf after 3 attempts
+2025-05-21 23:01:00,090 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 23:01:03,093 - INFO - Processing batch 24/25
+2025-05-21 23:01:03,094 - INFO - Starting batch download of 5 files
+2025-05-21 23:01:03,094 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf (Attempt 1/3)
+2025-05-21 23:01:03,846 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:01:05,849 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf (Attempt 2/3)
+2025-05-21 23:01:06,105 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:01:10,110 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf (Attempt 3/3)
+2025-05-21 23:01:10,307 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:01:16,314 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf after 3 attempts
+2025-05-21 23:01:19,318 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf (Attempt 1/3)
+2025-05-21 23:01:19,517 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:01:21,520 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf (Attempt 2/3)
+2025-05-21 23:01:21,713 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:01:25,718 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf (Attempt 3/3)
+2025-05-21 23:01:25,914 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:01:31,921 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Ιστορία%20Κατεύθυνσης.pdf after 3 attempts
+2025-05-21 23:01:34,924 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Αρχαία.pdf (Attempt 1/3)
+2025-05-21 23:01:35,121 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Αρχαία.pdf: HTTP 404
+2025-05-21 23:01:37,124 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Αρχαία.pdf (Attempt 2/3)
+2025-05-21 23:01:37,417 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Αρχαία.pdf: HTTP 404
+2025-05-21 23:01:41,422 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Αρχαία.pdf (Attempt 3/3)
+2025-05-21 23:01:41,660 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Αρχαία.pdf: HTTP 404
+2025-05-21 23:01:47,666 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΘΕΩΡΗΤΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Αρχαία.pdf after 3 attempts
+2025-05-21 23:01:50,670 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Μαθηματικά%20Κατεύθυνσης.pdf (Attempt 1/3)
+2025-05-21 23:01:50,896 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Μαθηματικά%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:01:52,899 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Μαθηματικά%20Κατεύθυνσης.pdf (Attempt 2/3)
+2025-05-21 23:01:53,099 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Μαθηματικά%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:01:57,104 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Μαθηματικά%20Κατεύθυνσης.pdf (Attempt 3/3)
+2025-05-21 23:01:57,300 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Μαθηματικά%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:02:03,306 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Μαθηματικά%20Κατεύθυνσης.pdf after 3 attempts
+2025-05-21 23:02:06,307 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf (Attempt 1/3)
+2025-05-21 23:02:06,504 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:02:08,506 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf (Attempt 2/3)
+2025-05-21 23:02:08,705 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:02:12,710 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf (Attempt 3/3)
+2025-05-21 23:02:12,905 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:02:18,907 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf after 3 attempts
+2025-05-21 23:02:18,910 - INFO - Sleeping for 3 seconds before next batch
+2025-05-21 23:02:21,914 - INFO - Processing batch 25/25
+2025-05-21 23:02:21,914 - INFO - Starting batch download of 4 files
+2025-05-21 23:02:21,914 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf (Attempt 1/3)
+2025-05-21 23:02:22,307 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:02:24,310 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf (Attempt 2/3)
+2025-05-21 23:02:24,509 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:02:28,513 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf (Attempt 3/3)
+2025-05-21 23:02:28,707 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:02:34,713 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Φυσική%20Κατεύθυνσης.pdf after 3 attempts
+2025-05-21 23:02:37,714 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Αρχές%20Οργάνωσης%20&%20Διοίκησης.pdf (Attempt 1/3)
+2025-05-21 23:02:37,994 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Αρχές%20Οργάνωσης%20&%20Διοίκησης.pdf: HTTP 404
+2025-05-21 23:02:39,996 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Αρχές%20Οργάνωσης%20&%20Διοίκησης.pdf (Attempt 2/3)
+2025-05-21 23:02:40,190 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Αρχές%20Οργάνωσης%20&%20Διοίκησης.pdf: HTTP 404
+2025-05-21 23:02:44,195 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Αρχές%20Οργάνωσης%20&%20Διοίκησης.pdf (Attempt 3/3)
+2025-05-21 23:02:44,390 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Αρχές%20Οργάνωσης%20&%20Διοίκησης.pdf: HTTP 404
+2025-05-21 23:02:50,397 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ%20ΙΙ/Αρχές%20Οργάνωσης%20&%20Διοίκησης.pdf after 3 attempts
+2025-05-21 23:02:53,401 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Χημεία%20-%20Βιοχημεία.pdf (Attempt 1/3)
+2025-05-21 23:02:53,595 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Χημεία%20-%20Βιοχημεία.pdf: HTTP 404
+2025-05-21 23:02:55,599 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Χημεία%20-%20Βιοχημεία.pdf (Attempt 2/3)
+2025-05-21 23:02:55,829 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Χημεία%20-%20Βιοχημεία.pdf: HTTP 404
+2025-05-21 23:02:59,833 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Χημεία%20-%20Βιοχημεία.pdf (Attempt 3/3)
+2025-05-21 23:03:00,217 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Χημεία%20-%20Βιοχημεία.pdf: HTTP 404
+2025-05-21 23:03:06,223 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Χημεία%20-%20Βιοχημεία.pdf after 3 attempts
+2025-05-21 23:03:09,227 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Φυσική%20Κατεύθυνσης.pdf (Attempt 1/3)
+2025-05-21 23:03:09,423 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Φυσική%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:03:11,426 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Φυσική%20Κατεύθυνσης.pdf (Attempt 2/3)
+2025-05-21 23:03:11,714 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Φυσική%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:03:15,717 - INFO - Downloading https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Φυσική%20Κατεύθυνσης.pdf (Attempt 3/3)
+2025-05-21 23:03:15,929 - WARNING - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Φυσική%20Κατεύθυνσης.pdf: HTTP 404
+2025-05-21 23:03:21,936 - ERROR - Failed to download https://eduadvisor.gr/images/stories/pdf/ΠΑΝΕΛΛΗΝΙΕΣ%202013/ΘΕΜΑΤΑ%20ΚΑΙ%20ΑΠΑΝΤΗΣΕΙΣ/2001-2011/ΤΕΧΝΟΛΟΓΙΚΗ%20ΚΑΤΕΥΘΥΝΣΗ/Φυσική%20Κατεύθυνσης.pdf after 3 attempts
+2025-05-21 23:03:21,938 - INFO - Download complete. Summary: 2 successful, 99 already existed, 26 failed

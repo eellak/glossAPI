@@ -1,0 +1,73 @@
+2025-03-30 04:04:18,266 - INFO - Logging initialized. Log file: ./logs/download_20250330_040418.log
+2025-03-30 04:04:18,267 - INFO - PDF Downloader starting with arguments: {'json': '../json_sitemaps/kallipos_pdf.json', 'sleep': 2.0, 'type': 'pdf', 'req': 'get', 'output': './downloads', 'little_potato': './downloads', 'batch': 5, 'concurrent': 3, 'max_retries': 3, 'timeout': 120, 'log_dir': './logs', 'start_at': 0, 'skip_every': 0, 'randomize': False, 'kallipos_mode': False}
+2025-03-30 04:04:18,275 - INFO - Loaded 5169 items from ../json_sitemaps/kallipos_pdf.json
+2025-03-30 04:04:18,275 - INFO - Loaded existing failed downloads report with 10 entries
+2025-03-30 04:04:18,275 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/295
+2025-03-30 04:04:18,275 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/562
+2025-03-30 04:04:18,275 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/774
+2025-03-30 04:04:18,275 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/513
+2025-03-30 04:04:18,275 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/49
+2025-03-30 04:04:18,275 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/53
+2025-03-30 04:04:18,275 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/56
+2025-03-30 04:04:18,276 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/698
+2025-03-30 04:04:18,276 - INFO - Adding 8 alternative URLs to the download queue
+2025-03-30 04:04:18,277 - INFO - Final processing list contains 5169 items
+2025-03-30 04:04:18,277 - INFO - Loaded progress report with 45 entries
+2025-03-30 04:04:18,278 - INFO - Total files: 5169, Already processed: 45, Remaining: 5124
+2025-03-30 04:04:21,016 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:21,157 - ERROR - Failed to download https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf. Status code: 500
+2025-03-30 04:04:21,502 - ERROR - Failed to download https://repository.kallipos.gr/retrieve/e51ef661-b962-4b35-b170-f4ecd02a3188/562-DASSIOS-Partial-Differential-Equations.pdf. Status code: 500
+2025-03-30 04:04:25,038 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:25,079 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:25,079 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ/ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Τεχνικές Αναζήτησης και Ανάκτηση Πληροφοριών
+2025-03-30 04:04:25,079 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΔΙΑΦΟΡΙΚΕΣ ΕΞΙΣΩΣΕΙΣ ΜΕ ΜΕΡΙΚΕΣ ΠΑΡΑΓΩΓΟΥΣ > Μερικές Διαφορικές Εξισώσεις
+2025-03-30 04:04:25,080 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ/ΠΛΗΡΟΦΟΡΙΚΗ > ΚΟΙΝΩΝΙΚΑ ΖΗΤΗΜΑΤΑ ΚΑΙ ΕΠΑΓΓΕΛΜΑΤΙΚΕΣ ΠΡΑΚΤΙΚΕΣ > Εισαγωγή στο Κυβερνοέγκλημα
+2025-03-30 04:04:25,080 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Εισαγωγή στην Αντιμεταθετική Άλγεβρα
+2025-03-30 04:04:25,080 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Μία Εισαγωγή στη Μαθηματική Βιολογία
+2025-03-30 04:04:25,080 - INFO - Retrying download for 5 failed files
+2025-03-30 04:04:27,483 - ERROR - Failed to download https://repository.kallipos.gr/retrieve/e51ef661-b962-4b35-b170-f4ecd02a3188/562-DASSIOS-Partial-Differential-Equations.pdf. Status code: 500
+2025-03-30 04:04:27,850 - ERROR - Failed to download https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf. Status code: 500
+2025-03-30 04:04:28,435 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:31,554 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:31,598 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:31,599 - INFO - Downloading 5 additional files to complete batch
+2025-03-30 04:04:33,908 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:34,103 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:34,852 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:36,898 - ERROR - Failed to download https://repository.kallipos.gr/retrieve/b5d477dd-7b8b-485e-8140-41fb1a7e5595/20230714_ΠΑ_Βαγιάνος_Γραφιστική Επιμέλεια.pdf. Status code: 500
+2025-03-30 04:04:37,992 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:37,993 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΜΑΘΗΜΑΤΙΚΗ ΛΟΓΙΚΗ ΚΑΙ ΘΕΜΕΛΙΩΣΗ ΤΩΝ MΑΘΗΜΑΤΙΚΩΝ > Θεμελιώδεις Έννοιες των Μαθηματικών
+2025-03-30 04:04:37,993 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ/ΠΛΗΡΟΦΟΡΙΚΗ > ΓΛΩΣΣΕΣ ΠΡΟΓΡΑΜΜΑΤΙΣΜΟΥ > Επίλυση προβλημάτων με τη γλώσσα C#
+2025-03-30 04:04:37,993 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ/ΠΛΗΡΟΦΟΡΙΚΗ > Ασύρματες Επικοινωνίες
+2025-03-30 04:04:37,993 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΣΤΑΤΙΣΤΙΚΗ > Στατιστικές Μέθοδοι Έρευνας
+2025-03-30 04:04:37,993 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΑΝΘΡΩΠΟΛΟΓΙΑ (ΜΗ ΦΥΣΙΚΗ) > ΚΟΙΝΩΝΙΚΗ ΚΑΙ ΠΟΛΙΤΙΣΜΙΚΗ ΑΝΘΡΩΠΟΛΟΓΙΑ > Ψηφιακά Μέσα και Κοινωνία
+2025-03-30 04:04:37,993 - INFO - Retrying download for 5 failed files
+2025-03-30 04:04:41,540 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:41,712 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:41,946 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:45,056 - WARNING - Downloaded content is not a PDF file, status was 200 but content doesn't start with %PDF-
+2025-03-30 04:04:45,409 - ERROR - Failed to download https://repository.kallipos.gr/retrieve/b5d477dd-7b8b-485e-8140-41fb1a7e5595/20230714_ΠΑ_Βαγιάνος_Γραφιστική Επιμέλεια.pdf. Status code: 500
+2025-03-30 04:04:45,411 - WARNING - Failed to download 10 files in this session.
+2025-03-30 04:04:45,411 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/295
+2025-03-30 04:04:45,411 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/562
+2025-03-30 04:04:45,411 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/774
+2025-03-30 04:04:45,411 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/513
+2025-03-30 04:04:45,411 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/49
+2025-03-30 04:04:45,411 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/53
+2025-03-30 04:04:45,412 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/56
+2025-03-30 04:04:45,412 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/698
+2025-03-30 04:04:45,412 - INFO - PDF downloads completed. Downloaded 0 new files out of 5 requested.
+2025-03-30 04:04:45,412 - INFO - Progress report written to progress_report.json
+2025-03-30 04:04:45,413 - INFO - Failed downloads report written to ./downloads/failed_downloads.json with 10 entries
+2025-03-30 04:04:45,413 - INFO - === DOWNLOAD SESSION SUMMARY ===
+2025-03-30 04:04:45,413 - INFO - Requested batch size: 5
+2025-03-30 04:04:45,413 - INFO - Successfully downloaded: 0
+2025-03-30 04:04:45,413 - INFO - Failed downloads in this session: 10
+2025-03-30 04:04:45,413 - INFO - Total failed downloads recorded: 10
+2025-03-30 04:04:45,416 - INFO - Remaining files to download: 5124
+2025-03-30 04:04:45,416 - INFO - === Download Statistics ===
+2025-03-30 04:04:45,416 - INFO - Total files in JSON: 5169
+2025-03-30 04:04:45,416 - INFO - Files processed so far: 45 (0.9%)
+2025-03-30 04:04:45,417 - INFO - Files remaining: 5124 (99.1%)
+2025-03-30 04:04:45,417 - INFO - ===============================
+2025-03-30 04:04:45,419 - INFO - Total execution time: 27.15 seconds (0.45 minutes)

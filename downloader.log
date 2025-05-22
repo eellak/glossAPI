@@ -1,0 +1,101 @@
+2025-03-29 03:14:37,949 - INFO - System info: {'platform': 'Linux-5.15.153.1-microsoft-standard-WSL2-x86_64-with-glibc2.35', 'python': '3.10.12', 'time': '2025-03-29 03:14:37'}
+2025-03-29 03:14:37,950 - INFO - Arguments received: JSON file: scraping/json_sitemaps/kallipos_pdf.json, Sleep time: 1.0, File type: pdf, Request type: get, Output path: downloads/kallipos, Progress report path: downloads/kallipos, Batch size: 100, Max retries: 3
+2025-03-29 03:14:37,959 - INFO - Loaded 5169 metadata entries from scraping/json_sitemaps/kallipos_pdf.json
+2025-03-29 03:14:37,959 - INFO - Using 3 concurrent requests for batch size 100
+2025-03-29 03:14:37,959 - INFO - Loaded existing progress report with 224 entries
+2025-03-29 03:14:37,960 - INFO - Starting PDF downloads. 4945 files remaining.
+2025-03-29 03:14:37,961 - INFO - Scheduled 10/100 downloads
+2025-03-29 03:14:37,961 - INFO - Scheduled 20/100 downloads
+2025-03-29 03:14:37,961 - INFO - Scheduled 30/100 downloads
+2025-03-29 03:14:37,962 - INFO - Scheduled 40/100 downloads
+2025-03-29 03:14:37,962 - INFO - Scheduled 50/100 downloads
+2025-03-29 03:14:37,962 - INFO - Scheduled 60/100 downloads
+2025-03-29 03:14:37,963 - INFO - Scheduled 70/100 downloads
+2025-03-29 03:14:37,963 - INFO - Scheduled 80/100 downloads
+2025-03-29 03:14:37,964 - INFO - Scheduled 90/100 downloads
+2025-03-29 03:14:37,964 - INFO - Scheduled 100/100 downloads
+2025-03-29 03:14:38,915 - ERROR - Server error 500 when downloading https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf
+2025-03-29 03:14:38,916 - INFO - Retry attempt 1/3 - waiting 2.52 seconds
+2025-03-29 03:14:39,328 - ERROR - Server error 500 when downloading https://repository.kallipos.gr/retrieve/b5d477dd-7b8b-485e-8140-41fb1a7e5595/20230714_%CE%A0%CE%91_%CE%92%CE%B1%CE%B3%CE%B9%CE%B1%CC%81%CE%BD%CE%BF%CF%82_%CE%93%CF%81%CE%B1%CF%86%CE%B9%CF%83%CF%84%CE%B9%CE%BA%CE%B7%CC%81%20%CE%95%CF%80%CE%B9%CE%BC%CE%B5%CC%81%CE%BB%CE%B5%CE%B9%CE%B1.pdf
+2025-03-29 03:14:39,328 - WARNING - Increased request delay to 1.50s after 2 consecutive errors
+2025-03-29 03:14:39,329 - INFO - Retry attempt 1/3 - waiting 3.18 seconds
+2025-03-29 03:14:39,419 - ERROR - Server error 500 when downloading https://repository.kallipos.gr/retrieve/e51ef661-b962-4b35-b170-f4ecd02a3188/562-DASSIOS-Partial-Differential-Equations.pdf
+2025-03-29 03:14:39,420 - WARNING - Increased request delay to 3.38s after 3 consecutive errors
+2025-03-29 03:14:39,420 - INFO - Retry attempt 1/3 - waiting 2.40 seconds
+2025-03-29 03:31:05,024 - INFO - System info: {'platform': 'Linux-5.15.153.1-microsoft-standard-WSL2-x86_64-with-glibc2.35', 'python': '3.10.12', 'time': '2025-03-29 03:31:05'}
+2025-03-29 03:31:05,025 - INFO - Arguments received: JSON file: scraping/json_sitemaps/kallipos_pdf.json, Sleep time: 3.0, File type: pdf, Request type: get, Output path: downloads/kallipos, Progress report path: downloads/kallipos, Batch size: 100, Max retries: 3
+2025-03-29 03:31:05,033 - INFO - Loaded 5169 metadata entries from scraping/json_sitemaps/kallipos_pdf.json
+2025-03-29 03:31:05,033 - INFO - 🚀 KALLIPOS MODE ENABLED: Using optimized settings for Kallipos repository
+2025-03-29 03:31:05,033 - INFO - Using 1 concurrent requests for batch size 100
+2025-03-29 03:31:05,033 - INFO - Using Kallipos-specific settings: max_retries=6, base_wait=5.0s, max_wait=120.0s
+2025-03-29 03:31:05,034 - INFO - Loaded existing progress report with 224 entries
+2025-03-29 03:31:05,034 - INFO - Starting PDF downloads. 4945 files remaining.
+2025-03-29 03:31:05,035 - INFO - Scheduled 10/100 downloads
+2025-03-29 03:31:05,035 - INFO - Scheduled 20/100 downloads
+2025-03-29 03:31:05,036 - INFO - Scheduled 30/100 downloads
+2025-03-29 03:31:05,036 - INFO - Scheduled 40/100 downloads
+2025-03-29 03:31:05,036 - INFO - Scheduled 50/100 downloads
+2025-03-29 03:31:05,037 - INFO - Scheduled 60/100 downloads
+2025-03-29 03:31:05,037 - INFO - Scheduled 70/100 downloads
+2025-03-29 03:31:05,037 - INFO - Scheduled 80/100 downloads
+2025-03-29 03:31:05,038 - INFO - Scheduled 90/100 downloads
+2025-03-29 03:31:05,038 - INFO - Scheduled 100/100 downloads
+2025-03-29 03:31:05,038 - INFO - Adding 7.19s extra delay for repository.kallipos.gr (every 10 requests)
+2025-03-29 03:31:13,138 - ERROR - Server error 500 when downloading https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf from repository.kallipos.gr
+2025-03-29 03:31:13,139 - WARNING - Kallipos server returned 500 error - this is common and usually temporary
+2025-03-29 03:31:13,139 - INFO - Retry attempt 1/6 - waiting 33.16 seconds
+2025-03-29 03:31:34,395 - INFO - Progress report written to downloads/kallipos/progress_report.json
+2025-03-29 03:31:34,396 - INFO - Download summary: 224/5169 files (4.3%) processed
+2025-03-29 03:31:34,396 - INFO - Total elapsed time: 1016.45 seconds
+2025-03-29 03:31:34,396 - INFO - Average time per downloaded file: 4.54 seconds
+2025-03-29 03:31:34,396 - INFO - Download rate: 0.22 files/second
+2025-03-29 03:31:34,398 - INFO - Program terminated by user
+2025-03-29 03:44:24,237 - INFO - System info: {'platform': 'Linux-5.15.153.1-microsoft-standard-WSL2-x86_64-with-glibc2.35', 'python': '3.10.12', 'time': '2025-03-29 03:44:24'}
+2025-03-29 03:45:14,236 - INFO - System info: {'platform': 'Linux-5.15.153.1-microsoft-standard-WSL2-x86_64-with-glibc2.35', 'python': '3.10.12', 'time': '2025-03-29 03:45:14'}
+2025-03-29 03:45:47,122 - INFO - System info: {'platform': 'Linux-5.15.153.1-microsoft-standard-WSL2-x86_64-with-glibc2.35', 'python': '3.10.12', 'time': '2025-03-29 03:45:47'}
+2025-03-29 03:45:47,123 - INFO - Arguments received: JSON file: scraping/json_sitemaps/kallipos_pdf.json, Sleep time: 3.0, File type: pdf, Request type: get, Output path: downloads/kallipos, Progress report path: downloads/kallipos, Batch size: 100, Max retries: 3
+2025-03-29 03:45:47,133 - INFO - Loaded 5169 metadata entries from scraping/json_sitemaps/kallipos_pdf.json
+2025-03-29 03:45:47,133 - INFO - 🚀 KALLIPOS MODE ENABLED: Using optimized settings for Kallipos repository
+2025-03-29 03:45:47,133 - INFO - Using 1 concurrent requests for batch size 100
+2025-03-29 03:45:47,133 - INFO - Using Kallipos-specific settings: max_retries=6, base_wait=5.0s, max_wait=120.0s
+2025-03-29 03:45:47,134 - INFO - Loaded existing progress report with 224 entries
+2025-03-29 03:45:47,134 - INFO - Starting PDF downloads. 4945 files remaining.
+2025-03-29 03:45:47,135 - INFO - Scheduled 10/100 downloads
+2025-03-29 03:45:47,135 - INFO - Scheduled 20/100 downloads
+2025-03-29 03:45:47,136 - INFO - Scheduled 30/100 downloads
+2025-03-29 03:45:47,136 - INFO - Scheduled 40/100 downloads
+2025-03-29 03:45:47,136 - INFO - Scheduled 50/100 downloads
+2025-03-29 03:45:47,137 - INFO - Scheduled 60/100 downloads
+2025-03-29 03:45:47,137 - INFO - Scheduled 70/100 downloads
+2025-03-29 03:45:47,137 - INFO - Scheduled 80/100 downloads
+2025-03-29 03:45:47,138 - INFO - Scheduled 90/100 downloads
+2025-03-29 03:45:47,138 - INFO - Scheduled 100/100 downloads
+2025-03-29 03:45:47,138 - INFO - Adding 3.12s extra delay for repository.kallipos.gr (every 10 requests)
+2025-03-29 03:45:51,170 - ERROR - Server error 500 when downloading https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf from repository.kallipos.gr
+2025-03-29 03:45:51,171 - WARNING - Kallipos server returned 500 error - this is common and usually temporary
+2025-03-29 03:45:51,171 - INFO - Retry attempt 1/6 - waiting 32.74 seconds
+2025-03-29 03:46:30,798 - INFO - Progress report written to downloads/kallipos/progress_report.json
+2025-03-29 03:46:30,798 - INFO - Download summary: 224/5169 files (4.3%) processed
+2025-03-29 03:46:30,799 - INFO - Total elapsed time: 43.68 seconds
+2025-03-29 03:46:30,799 - INFO - Average time per downloaded file: 0.19 seconds
+2025-03-29 03:46:30,799 - INFO - Download rate: 5.13 files/second
+2025-03-29 03:46:30,801 - INFO - Program terminated by user
+2025-03-29 03:47:04,073 - INFO - System info: {'platform': 'Linux-5.15.153.1-microsoft-standard-WSL2-x86_64-with-glibc2.35', 'python': '3.10.12', 'time': '2025-03-29 03:47:04'}
+2025-03-29 03:47:04,074 - INFO - Arguments received: JSON file: scraping/json_sitemaps/kallipos_pdf.json, Sleep time: 5.0, File type: pdf, Request type: get, Output path: downloads/kallipos, Progress report path: downloads/kallipos, Batch size: 10, Max retries: 8
+2025-03-29 03:47:04,081 - INFO - Loaded 5169 metadata entries from scraping/json_sitemaps/kallipos_pdf.json
+2025-03-29 03:47:04,081 - INFO - 🚀 KALLIPOS MODE ENABLED: Using optimized settings for Kallipos repository
+2025-03-29 03:47:04,081 - INFO - Using 1 concurrent requests for batch size 10
+2025-03-29 03:47:04,081 - INFO - Using Kallipos-specific settings: max_retries=6, base_wait=5.0s, max_wait=120.0s
+2025-03-29 03:47:04,081 - INFO - Loaded existing progress report with 224 entries
+2025-03-29 03:47:04,081 - INFO - Starting PDF downloads. 4945 files remaining.
+2025-03-29 03:47:04,083 - INFO - Scheduled 10/10 downloads
+2025-03-29 03:47:04,083 - INFO - Adding 7.59s extra delay for repository.kallipos.gr (every 10 requests)
+2025-03-29 03:47:12,621 - ERROR - Server error 500 when downloading https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf from repository.kallipos.gr
+2025-03-29 03:47:12,621 - WARNING - Kallipos server returned 500 error - this is common and usually temporary
+2025-03-29 03:47:12,621 - INFO - Retry attempt 1/6 - waiting 23.08 seconds
+2025-03-29 04:10:48,703 - INFO - Progress report written to downloads/kallipos/progress_report.json
+2025-03-29 04:10:48,704 - INFO - Download summary: 224/5169 files (4.3%) processed
+2025-03-29 04:10:48,704 - INFO - Total elapsed time: 1424.63 seconds
+2025-03-29 04:10:48,704 - INFO - Average time per downloaded file: 6.36 seconds
+2025-03-29 04:10:48,704 - INFO - Download rate: 0.16 files/second
+2025-03-29 04:10:48,707 - INFO - Program terminated by user

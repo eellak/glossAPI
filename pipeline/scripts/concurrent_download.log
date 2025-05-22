@@ -1,0 +1,16 @@
+2025-03-25 02:52:59,411 - INFO - Reading input parquet file: ../../test_urls.parquet
+2025-03-25 02:52:59,454 - INFO - Loaded 3 rows from parquet file
+2025-03-25 02:52:59,454 - INFO - Using rate limit of 100 requests per 60 seconds
+2025-03-25 02:52:59,454 - INFO - Starting downloads with concurrency: 2
+2025-03-25 02:52:59,458 - INFO - Found 3 unprocessed rows out of 3 total
+2025-03-25 02:52:59,458 - INFO - Processing batch 1 of 1: rows 0 to 2
+2025-03-25 02:53:01,664 - INFO - Successfully downloaded AAA_000.pdf from http://www.study4exams.gr/mod_greek/pdf/NG_D/NG_D1_THEMATA_1h_ekdoxh.pdf
+2025-03-25 02:53:02,765 - INFO - Successfully downloaded AAB_001.pdf from http://www.study4exams.gr/mod_greek/pdf/NG_D/NG_D1_APANTHSEIS_1h_ekdoxh.pdf
+2025-03-25 02:53:04,306 - INFO - Successfully downloaded AAC_002.pdf from http://www.study4exams.gr/mod_greek/pdf/NG_D/NG_D1_THEMATA_2h_ekdoxh.pdf
+2025-03-25 02:53:04,306 - INFO - Batch complete. Saving progress to ../../test_pdf_input/test_urls.parquet
+2025-03-25 02:53:04,308 - INFO - Saving updated parquet file to: ../../test_pdf_input/test_urls.parquet
+2025-03-25 02:53:04,320 - INFO - Download summary:
+2025-03-25 02:53:04,320 - INFO -   Total URLs: 3
+2025-03-25 02:53:04,320 - INFO -   Successfully downloaded: 3
+2025-03-25 02:53:04,320 - INFO -   Failed: 0
+2025-03-25 02:53:04,320 - INFO - Updated parquet file saved to: ../../test_pdf_input/test_urls.parquet

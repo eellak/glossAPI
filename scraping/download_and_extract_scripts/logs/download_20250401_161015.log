@@ -1,0 +1,866 @@
+2025-04-01 16:10:15,138 - INFO - Logging initialized. Log file: ./logs/download_20250401_161015.log
+2025-04-01 16:10:15,138 - INFO - PDF Downloader starting with arguments: {'json': '../../scraping/json_sitemaps/kallipos_pdf.json', 'sleep': 3.0, 'type': 'pdf', 'req': 'get', 'output': '../../downloads/kallipos', 'little_potato': '../../downloads/kallipos', 'batch': 100, 'concurrent': 3, 'max_retries': 3, 'timeout': 120, 'log_dir': './logs', 'start_at': 0, 'skip_every': 0, 'randomize': False, 'kallipos_mode': True}
+2025-04-01 16:10:15,153 - INFO - Loaded 5169 items from ../../scraping/json_sitemaps/kallipos_pdf.json
+2025-04-01 16:10:15,154 - INFO - Loaded existing failed downloads report with 2 entries
+2025-04-01 16:10:15,154 - INFO - Filtered out 0 problematic URLs
+2025-04-01 16:10:15,154 - INFO - Final processing list contains 5169 items
+2025-04-01 16:10:15,154 - INFO - 🚀 KALLIPOS MODE ENABLED: Using optimized settings for Kallipos repository
+2025-04-01 16:10:15,155 - INFO - Using 2 concurrent downloads, 3.0s delay, 3 max retries
+2025-04-01 16:10:15,155 - INFO - Loaded progress report with 224 entries
+2025-04-01 16:10:15,161 - INFO - Total files: 5169, Already processed: 224, Remaining: 4945
+2025-04-01 16:10:15,161 - INFO - Scheduled 10/100 downloads
+2025-04-01 16:10:15,161 - INFO - Scheduled 20/100 downloads
+2025-04-01 16:10:15,161 - INFO - Scheduled 30/100 downloads
+2025-04-01 16:10:15,161 - INFO - Scheduled 40/100 downloads
+2025-04-01 16:10:15,161 - INFO - Scheduled 50/100 downloads
+2025-04-01 16:10:15,162 - INFO - Scheduled 60/100 downloads
+2025-04-01 16:10:15,162 - INFO - Scheduled 70/100 downloads
+2025-04-01 16:10:15,162 - INFO - Scheduled 80/100 downloads
+2025-04-01 16:10:15,162 - INFO - Scheduled 90/100 downloads
+2025-04-01 16:10:15,162 - INFO - Scheduled 100/100 downloads
+2025-04-01 16:10:15,162 - INFO - 🔄 Kallipos rate limit prevention: Taking a 107 second break after 20 attempts
+2025-04-01 16:10:15,162 - INFO - 🔄 Kallipos rate limit prevention: Taking a 75 second break after 40 attempts
+2025-04-01 16:10:15,162 - INFO - 🔄 Kallipos rate limit prevention: Taking a 104 second break after 60 attempts
+2025-04-01 16:10:15,162 - INFO - 🔄 Kallipos rate limit prevention: Taking a 63 second break after 80 attempts
+2025-04-01 16:10:15,162 - INFO - 🔄 Kallipos rate limit prevention: Taking a 61 second break after 100 attempts
+2025-04-01 16:10:19,761 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/e51ef661-b962-4b35-b170-f4ecd02a3188/562-DASSIOS-Partial-Differential-Equations.pdf (common with Kallipos repository)
+2025-04-01 16:10:19,761 - INFO - Adding 12.4s extra delay for Kallipos 500 error
+2025-04-01 16:10:20,871 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf (common with Kallipos repository)
+2025-04-01 16:10:20,871 - INFO - Adding 10.9s extra delay for Kallipos 500 error
+2025-04-01 16:10:36,437 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/99dc8ba8-f04b-4e59-bfc5-68eb59ab7402/768_DAMASKINIDIS_Social-reflections-translation.pdf (common with Kallipos repository)
+2025-04-01 16:10:36,437 - INFO - Adding 10.9s extra delay for Kallipos 500 error
+2025-04-01 16:10:36,439 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/b5d477dd-7b8b-485e-8140-41fb1a7e5595/20230714_ΠΑ_Βαγιάνος_Γραφιστική Επιμέλεια.pdf (common with Kallipos repository)
+2025-04-01 16:10:36,439 - INFO - Adding 13.4s extra delay for Kallipos 500 error
+2025-04-01 16:10:51,498 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/17b93495-5b2c-452a-b836-1ed2a796364c/904_KALIAMPAKOS-904-Regeneration-of-mountainous-and-isolated-areas.pdf (common with Kallipos repository)
+2025-04-01 16:10:51,498 - INFO - Adding 12.2s extra delay for Kallipos 500 error
+2025-04-01 16:10:55,260 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9dac3635-1ecd-4e10-bc41-a1cbf74506c2/408-PANAGIOTAKOPOULOS-Computational-linguistics.pdf (common with Kallipos repository)
+2025-04-01 16:10:55,261 - INFO - Adding 10.1s extra delay for Kallipos 500 error
+2025-04-01 16:11:07,542 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/cc45048e-46da-4626-885a-03037ecc3542/42-POULAKIS-Repetition-Number-Theory.pdf (common with Kallipos repository)
+2025-04-01 16:11:07,543 - INFO - Adding 13.5s extra delay for Kallipos 500 error
+2025-04-01 16:11:10,633 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/45229982-d66d-4350-9cf3-a07e327e697e/1_MARMARIDIS-BASIC_GALOIS_THEORY.pdf (common with Kallipos repository)
+2025-04-01 16:11:10,634 - INFO - Adding 13.2s extra delay for Kallipos 500 error
+2025-04-01 16:11:25,739 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/f8a8c5c6-38ce-4a98-b936-b5cb8ca23da6/00_master_document-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:11:25,739 - INFO - Adding 10.1s extra delay for Kallipos 500 error
+2025-04-01 16:11:27,669 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/67b5ad49-7574-4d8d-9f90-fbd8b2a19bf0/9662_master_document .pdf (common with Kallipos repository)
+2025-04-01 16:11:27,669 - INFO - Adding 13.5s extra delay for Kallipos 500 error
+2025-04-01 16:11:40,057 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/25bdfaa2-51d5-462e-ad32-3e3e1e26d3e7/00_master_document-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:11:40,057 - INFO - Adding 12.3s extra delay for Kallipos 500 error
+2025-04-01 16:11:45,293 - ERROR - ClientError while downloading https://repository.kallipos.grNone: Cannot connect to host repository.kallipos.grnone:443 ssl:<ssl.SSLContext object at 0x7f0234f90f40> [Name or service not known]
+2025-04-01 16:11:49,056 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/e42d0a78-e6ba-4615-abf1-f5f5288c352e/8534_Μαθηματική_Ανάλυση.pdf (common with Kallipos repository)
+2025-04-01 16:11:49,056 - INFO - Adding 11.1s extra delay for Kallipos 500 error
+2025-04-01 16:11:57,691 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/94bbe325-8586-499e-bbe9-d01437f2002b/master-ΚΟΥ.pdf (common with Kallipos repository)
+2025-04-01 16:11:57,692 - INFO - Adding 12.0s extra delay for Kallipos 500 error
+2025-04-01 16:12:05,076 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/2e3af1ff-d393-47b9-9ebd-d5d1acbec637/00_master_document-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:12:05,076 - INFO - Adding 11.4s extra delay for Kallipos 500 error
+2025-04-01 16:12:14,422 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/99fd35e9-f0d8-4274-a036-2adc406d490b/main-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:12:14,422 - INFO - Adding 10.9s extra delay for Kallipos 500 error
+2025-04-01 16:12:21,087 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a68b44e0-f889-4da9-9ed1-169d105da3cf/00_master_document-ΚΟΥ.pdf (common with Kallipos repository)
+2025-04-01 16:12:21,088 - INFO - Adding 13.8s extra delay for Kallipos 500 error
+2025-04-01 16:12:30,328 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/032c0f69-283e-457b-98bb-6e3d3d585cd0/fourier-pdf-ΚΟΥ.pdf (common with Kallipos repository)
+2025-04-01 16:12:30,329 - INFO - Adding 13.4s extra delay for Kallipos 500 error
+2025-04-01 16:12:39,690 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/173529c2-be8b-48ab-85cb-3b87e5a56628/discr-pdf-ΚΟΥ.pdf (common with Kallipos repository)
+2025-04-01 16:12:39,691 - INFO - Adding 14.6s extra delay for Kallipos 500 error
+2025-04-01 16:12:49,007 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/0528b493-472e-4712-b4eb-8dc8d13f7426/AlgebraBook-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:12:49,007 - INFO - Adding 14.7s extra delay for Kallipos 500 error
+2025-04-01 16:12:58,569 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/78d350ec-5dcf-40fb-af79-3a2ea9a61dda/ΑΣΠΡΙΔΗΣ Μ. ΓΕΩΡΓΙΟΣ - Εταιρική Κοινωνική Ευθύνη - Η Όψη του Ανθρώπινου Παράγοντα στην Επιχείρηση-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:12:58,569 - INFO - Adding 11.8s extra delay for Kallipos 500 error
+2025-04-01 16:13:09,106 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/d5999d5b-17f2-4119-8a29-d3685265f9f1/ebookmain_updated-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:13:09,107 - INFO - Adding 14.4s extra delay for Kallipos 500 error
+2025-04-01 16:13:14,909 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/eb6cf2a2-8a22-4c9e-b90b-d1d454fce666/00_master_document.pdf (common with Kallipos repository)
+2025-04-01 16:13:14,909 - INFO - Adding 13.1s extra delay for Kallipos 500 error
+2025-04-01 16:13:28,475 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a3431b53-3136-46fb-94b1-dfb953a999f7/Τεχνητή Νοημοσύνη.pdf (common with Kallipos repository)
+2025-04-01 16:13:28,476 - INFO - Adding 12.5s extra delay for Kallipos 500 error
+2025-04-01 16:13:32,704 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/0f8b6fce-c18a-4e22-8bac-6dd01c25c849/Signal_and_Systems_22_11_2015-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:13:32,705 - INFO - Adding 10.6s extra delay for Kallipos 500 error
+2025-04-01 16:13:45,349 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/54a9646e-2643-4aa2-9723-39f911cbbc67/eoact-xetex-utf.pdf (common with Kallipos repository)
+2025-04-01 16:13:45,350 - INFO - Adding 10.5s extra delay for Kallipos 500 error
+2025-04-01 16:13:47,524 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/902439cb-0e9e-4ee7-96d6-54381b3241f1/00_master_document-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:13:47,525 - INFO - Adding 13.8s extra delay for Kallipos 500 error
+2025-04-01 16:14:00,934 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9cb837a1-13ac-4d85-938e-4a803997b91e/new_book.pdf (common with Kallipos repository)
+2025-04-01 16:14:00,935 - INFO - Adding 11.7s extra delay for Kallipos 500 error
+2025-04-01 16:14:05,261 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/b0ae037b-f930-496c-9588-3750b0c70e96/00_master_document.pdf (common with Kallipos repository)
+2025-04-01 16:14:05,261 - INFO - Adding 11.6s extra delay for Kallipos 500 error
+2025-04-01 16:14:17,459 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/958e5823-ed4c-4714-85ec-6442e6383f6d/00_master_document_KOY.pdf (common with Kallipos repository)
+2025-04-01 16:14:17,459 - INFO - Adding 12.5s extra delay for Kallipos 500 error
+2025-04-01 16:14:20,696 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/0fec94d3-4644-4c92-b071-fdd98c13dd69/00_master document.pdf (common with Kallipos repository)
+2025-04-01 16:14:20,696 - INFO - Adding 10.0s extra delay for Kallipos 500 error
+2025-04-01 16:14:35,184 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/6f8f58b6-a8c2-4e56-9f3a-966e0cc8a2ab/13pouliezosv5bm.pdf (common with Kallipos repository)
+2025-04-01 16:14:35,184 - INFO - Adding 14.0s extra delay for Kallipos 500 error
+2025-04-01 16:14:35,968 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/8df7acbd-5b02-4bd9-b428-70c141495fdb/01_chapter_07.pdf (common with Kallipos repository)
+2025-04-01 16:14:35,969 - INFO - Adding 14.5s extra delay for Kallipos 500 error
+2025-04-01 16:14:53,759 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/d6ddc2fc-74da-4880-b1a8-4072df2f96f7/01_chapter_06.pdf (common with Kallipos repository)
+2025-04-01 16:14:53,760 - INFO - Adding 14.2s extra delay for Kallipos 500 error
+2025-04-01 16:14:54,642 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/691354a7-07ae-437a-9b03-67bfbcdb8e58/01_chapter_05.pdf (common with Kallipos repository)
+2025-04-01 16:14:54,643 - INFO - Adding 11.9s extra delay for Kallipos 500 error
+2025-04-01 16:15:10,100 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9b9afd83-bd1b-4917-844d-bfa8a1ed9dd7/02_chapter_4.pdf (common with Kallipos repository)
+2025-04-01 16:15:10,100 - INFO - Adding 12.8s extra delay for Kallipos 500 error
+2025-04-01 16:15:12,180 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/5c9b4211-4054-4e2b-aefc-3ab4c2f42c30/02_chapter_2.pdf (common with Kallipos repository)
+2025-04-01 16:15:12,180 - INFO - Adding 13.6s extra delay for Kallipos 500 error
+2025-04-01 16:15:27,424 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a34deb34-cdef-4b63-9f2c-988d7a88d2d7/02_chapter_3.pdf (common with Kallipos repository)
+2025-04-01 16:15:27,425 - INFO - Adding 12.8s extra delay for Kallipos 500 error
+2025-04-01 16:15:29,808 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7b225883-5949-4ff6-9e40-d0592eb37559/02_chapter_1.pdf (common with Kallipos repository)
+2025-04-01 16:15:29,808 - INFO - Adding 10.4s extra delay for Kallipos 500 error
+2025-04-01 16:15:44,126 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/eb7298d9-5ec9-4d32-add9-d850bccd1c76/04_chapter_11.pdf (common with Kallipos repository)
+2025-04-01 16:15:44,127 - INFO - Adding 10.1s extra delay for Kallipos 500 error
+2025-04-01 16:15:45,262 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9751c5ec-b84b-485a-88bf-f5476971f0a2/04_chapter_05.pdf (common with Kallipos repository)
+2025-04-01 16:15:45,262 - INFO - Adding 13.8s extra delay for Kallipos 500 error
+2025-04-01 16:15:57,939 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/0687280e-5568-4299-8404-1da082459fbf/04_chapter_04.pdf (common with Kallipos repository)
+2025-04-01 16:15:57,939 - INFO - Adding 10.8s extra delay for Kallipos 500 error
+2025-04-01 16:16:03,933 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/648013ba-9685-442b-b815-d68ca31d03c4/04_chapter_02.pdf (common with Kallipos repository)
+2025-04-01 16:16:03,933 - INFO - Adding 11.3s extra delay for Kallipos 500 error
+2025-04-01 16:16:14,059 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/e9ee9287-97ab-42c1-a60e-e34e96c6d667/04_chapter_03.pdf (common with Kallipos repository)
+2025-04-01 16:16:14,060 - INFO - Adding 14.1s extra delay for Kallipos 500 error
+2025-04-01 16:16:20,326 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/b87da8c4-6e72-4698-a41f-2f3bff7e00cf/04_chapter_01.pdf (common with Kallipos repository)
+2025-04-01 16:16:20,326 - INFO - Adding 11.2s extra delay for Kallipos 500 error
+2025-04-01 16:16:32,759 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/8bde1bc3-955b-434a-9310-ae6fb5f31df3/04_chapter_10.pdf (common with Kallipos repository)
+2025-04-01 16:16:32,759 - INFO - Adding 14.9s extra delay for Kallipos 500 error
+2025-04-01 16:16:36,917 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/19e31a27-d35b-48b5-b670-8e58fdc36b4e/04_chapter_09.pdf (common with Kallipos repository)
+2025-04-01 16:16:36,917 - INFO - Adding 11.5s extra delay for Kallipos 500 error
+2025-04-01 16:16:51,345 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/461da700-80d1-4765-8e06-ea202cf62673/04_chapter_07.pdf (common with Kallipos repository)
+2025-04-01 16:16:51,345 - INFO - Adding 10.2s extra delay for Kallipos 500 error
+2025-04-01 16:16:52,054 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/dee6589c-707a-46c4-af73-da864f492e53/04_chapter_06.pdf (common with Kallipos repository)
+2025-04-01 16:16:52,055 - INFO - Adding 12.5s extra delay for Kallipos 500 error
+2025-04-01 16:17:06,885 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7c2603fa-4cee-4beb-91af-a23890edddb2/04_chapter_08.pdf (common with Kallipos repository)
+2025-04-01 16:17:06,886 - INFO - Adding 13.2s extra delay for Kallipos 500 error
+2025-04-01 16:17:09,252 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a25d6696-4063-4d8f-9827-4689e177974d/Chapter9.pdf (common with Kallipos repository)
+2025-04-01 16:17:09,252 - INFO - Adding 14.8s extra delay for Kallipos 500 error
+2025-04-01 16:17:23,733 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/772abbc5-6a95-443d-85a9-c7d527258fb4/Chapter1.pdf (common with Kallipos repository)
+2025-04-01 16:17:23,733 - INFO - Adding 13.8s extra delay for Kallipos 500 error
+2025-04-01 16:17:27,975 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/d2373d29-78b2-4605-9cef-4818049c1466/Chapter7.pdf (common with Kallipos repository)
+2025-04-01 16:17:27,975 - INFO - Adding 14.1s extra delay for Kallipos 500 error
+2025-04-01 16:17:41,181 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/405c9bfc-dd8f-4672-83dc-27ac928238dc/Chapter2.pdf (common with Kallipos repository)
+2025-04-01 16:17:41,182 - INFO - Adding 12.2s extra delay for Kallipos 500 error
+2025-04-01 16:17:46,660 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/35717bb1-f1f2-4a2b-b640-1754cc539509/Chapter4.pdf (common with Kallipos repository)
+2025-04-01 16:17:46,660 - INFO - Adding 12.2s extra delay for Kallipos 500 error
+2025-04-01 16:17:57,468 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/eb646c59-54a2-43a0-ae8f-43d56e855ce9/Chapter3.pdf (common with Kallipos repository)
+2025-04-01 16:17:57,468 - INFO - Adding 13.0s extra delay for Kallipos 500 error
+2025-04-01 16:18:02,667 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/4b29acd3-c2bf-40d0-98c2-9ffc5ccbe618/Chapter8.pdf (common with Kallipos repository)
+2025-04-01 16:18:02,668 - INFO - Adding 11.2s extra delay for Kallipos 500 error
+2025-04-01 16:18:15,117 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a8d3b579-7c2d-4471-8837-1154bf6fcaec/Chapter10.pdf (common with Kallipos repository)
+2025-04-01 16:18:15,118 - INFO - Adding 11.9s extra delay for Kallipos 500 error
+2025-04-01 16:18:19,271 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/55ba8ea9-6aab-40ad-a0d4-6e01f0639c0f/Chapter6.pdf (common with Kallipos repository)
+2025-04-01 16:18:19,271 - INFO - Adding 14.1s extra delay for Kallipos 500 error
+2025-04-01 16:18:31,935 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/98a3b0a0-c380-40d2-9056-1f7118a727c1/02_chapter_4.pdf (common with Kallipos repository)
+2025-04-01 16:18:31,935 - INFO - Adding 12.0s extra delay for Kallipos 500 error
+2025-04-01 16:18:37,610 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/3fddbeb6-2915-459d-b9fb-173faa47c425/02_chapter_7.pdf (common with Kallipos repository)
+2025-04-01 16:18:37,610 - INFO - Adding 10.1s extra delay for Kallipos 500 error
+2025-04-01 16:18:48,525 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/d85ba8a8-13b8-4167-96dd-a928832d1810/Ch5.pdf (common with Kallipos repository)
+2025-04-01 16:18:48,526 - INFO - Adding 10.8s extra delay for Kallipos 500 error
+2025-04-01 16:18:51,563 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/12d9664f-6aad-43d0-9d0e-93702c02389d/Ch3.pdf (common with Kallipos repository)
+2025-04-01 16:18:51,563 - INFO - Adding 10.6s extra delay for Kallipos 500 error
+2025-04-01 16:19:04,737 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/faa290b1-fe4c-4b66-8cc5-c6d2b5a7e3b1/Ch4.pdf (common with Kallipos repository)
+2025-04-01 16:19:04,737 - INFO - Adding 14.6s extra delay for Kallipos 500 error
+2025-04-01 16:19:07,090 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/caabfe74-5c27-4c03-8ff2-6d2cd5e1cec9/Ch2.pdf (common with Kallipos repository)
+2025-04-01 16:19:07,090 - INFO - Adding 11.5s extra delay for Kallipos 500 error
+2025-04-01 16:19:23,474 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/c98068bc-3ba9-4672-b8b2-7f881839c3c8/Ch9.pdf (common with Kallipos repository)
+2025-04-01 16:19:23,474 - INFO - Adding 10.5s extra delay for Kallipos 500 error
+2025-04-01 16:19:23,826 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7b64d3c0-baa4-47f4-b044-880bfbb2c1d9/Κεφάλαιο1.pdf (common with Kallipos repository)
+2025-04-01 16:19:23,827 - INFO - Adding 13.4s extra delay for Kallipos 500 error
+2025-04-01 16:19:37,844 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/87369d74-9e1d-42ad-b54b-4c6a01d21992/Κεφάλαιο3.pdf (common with Kallipos repository)
+2025-04-01 16:19:37,845 - INFO - Adding 10.6s extra delay for Kallipos 500 error
+2025-04-01 16:19:42,394 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/f91238f6-050a-4fea-9e9b-4665592b9235/Κεφάλαιο2.pdf (common with Kallipos repository)
+2025-04-01 16:19:42,395 - INFO - Adding 12.6s extra delay for Kallipos 500 error
+2025-04-01 16:19:52,951 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/777dcd89-7227-4c55-b655-e5a8316676aa/Κεφάλαιο4.pdf (common with Kallipos repository)
+2025-04-01 16:19:52,952 - INFO - Adding 13.2s extra delay for Kallipos 500 error
+2025-04-01 16:20:00,276 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7876553f-cfd3-4d40-bf86-6f0d1d7b560d/12 ΣΕΙΡΕΣ.pdf (common with Kallipos repository)
+2025-04-01 16:20:00,276 - INFO - Adding 11.0s extra delay for Kallipos 500 error
+2025-04-01 16:20:11,206 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/cdbe2952-addc-4076-b73b-70ac67143d2b/02 ΑΝΑΛΥΤΙΚΗ ΓΕΩΜΕΤΡΙΑ.pdf (common with Kallipos repository)
+2025-04-01 16:20:11,207 - INFO - Adding 10.2s extra delay for Kallipos 500 error
+2025-04-01 16:20:15,827 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/f8a2ebf7-db51-46bd-a6e2-ea88c1906454/13 ΣΕΙΡΑ FOURIER.pdf (common with Kallipos repository)
+2025-04-01 16:20:15,828 - INFO - Adding 13.9s extra delay for Kallipos 500 error
+2025-04-01 16:20:25,754 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/1a8d4187-e6ce-492c-8b73-c9e359f61222/02_chapter_5.pdf (common with Kallipos repository)
+2025-04-01 16:20:25,755 - INFO - Adding 11.7s extra delay for Kallipos 500 error
+2025-04-01 16:20:33,430 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/63c0dd54-148e-4e26-8fc0-4f203195a97c/02_chapter_6.pdf (common with Kallipos repository)
+2025-04-01 16:20:33,430 - INFO - Adding 15.0s extra delay for Kallipos 500 error
+2025-04-01 16:20:42,269 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/4cc2c5da-d5af-43c2-99e0-4340ff5fbda4/Ch7.pdf (common with Kallipos repository)
+2025-04-01 16:20:42,270 - INFO - Adding 12.8s extra delay for Kallipos 500 error
+2025-04-01 16:20:53,589 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/37414b25-279b-4160-9fff-595447c3de84/Ch6.pdf (common with Kallipos repository)
+2025-04-01 16:20:53,590 - INFO - Adding 11.8s extra delay for Kallipos 500 error
+2025-04-01 16:20:59,530 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/cd114e5a-556e-4fab-a5e4-e1262519c9b5/Ch8.pdf (common with Kallipos repository)
+2025-04-01 16:20:59,530 - INFO - Adding 14.6s extra delay for Kallipos 500 error
+2025-04-01 16:21:09,860 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/1a0ad10d-d8eb-4e47-a61c-0aa6839d73b2/Παράρτημα.pdf (common with Kallipos repository)
+2025-04-01 16:21:09,860 - INFO - Adding 10.1s extra delay for Kallipos 500 error
+2025-04-01 16:21:19,496 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/64624bf1-3b9a-4caf-b496-70d5d1716871/Κεφάλαιο6.pdf (common with Kallipos repository)
+2025-04-01 16:21:19,496 - INFO - Adding 11.6s extra delay for Kallipos 500 error
+2025-04-01 16:21:23,498 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/08d9bec6-795c-486f-99f4-021c90375139/Κεφάλαιο5.pdf (common with Kallipos repository)
+2025-04-01 16:21:23,498 - INFO - Adding 14.4s extra delay for Kallipos 500 error
+2025-04-01 16:21:34,894 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/725dd95a-f686-47aa-ac89-dfc0c0156462/Κεφάλαιο7.pdf (common with Kallipos repository)
+2025-04-01 16:21:34,894 - INFO - Adding 11.4s extra delay for Kallipos 500 error
+2025-04-01 16:21:43,226 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/600a9d85-4e39-4dd8-9185-168b6158fa48/Κεφάλαιο8.pdf (common with Kallipos repository)
+2025-04-01 16:21:43,227 - INFO - Adding 14.8s extra delay for Kallipos 500 error
+2025-04-01 16:21:50,298 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9b6fe62d-adcf-49b3-809c-796835652072/04 ΜΙΓΑΔΙΚΟΙ ΑΡΙΘΜΟΙ.pdf (common with Kallipos repository)
+2025-04-01 16:21:50,298 - INFO - Adding 14.1s extra delay for Kallipos 500 error
+2025-04-01 16:22:03,007 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/e3d434f1-16cc-4866-942c-a23334088104/01 ΔΙΑΝΥΣΜΑΤΑ.pdf (common with Kallipos repository)
+2025-04-01 16:22:03,008 - INFO - Adding 10.4s extra delay for Kallipos 500 error
+2025-04-01 16:22:08,712 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/8a80cf60-fcd4-494f-837d-c0c9ca1f42f9/03 ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ.pdf (common with Kallipos repository)
+2025-04-01 16:22:08,712 - INFO - Adding 10.5s extra delay for Kallipos 500 error
+2025-04-01 16:22:17,595 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:22:22,280 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/72d81e3c-4e35-45e3-9ada-c22a5858befb/05 ΜΙΓΑΔΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ.pdf (common with Kallipos repository)
+2025-04-01 16:22:22,280 - INFO - Adding 14.4s extra delay for Kallipos 500 error
+2025-04-01 16:22:23,879 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:22:29,392 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:22:33,643 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:22:38,670 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/3272f23e-dab3-48ce-993a-ea10d917012a/02_chapter_2.pdf (common with Kallipos repository)
+2025-04-01 16:22:38,670 - INFO - Adding 13.0s extra delay for Kallipos 500 error
+2025-04-01 16:22:41,525 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:22:45,990 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/b838713c-c33e-482d-ab91-90d13957e11c/02_chapter_3.pdf (common with Kallipos repository)
+2025-04-01 16:22:45,990 - INFO - Adding 14.3s extra delay for Kallipos 500 error
+2025-04-01 16:22:56,558 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:23:00,643 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:23:04,041 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/23ed2b29-39b8-41d6-a645-4dcccb17a0ee/parartA.pdf (common with Kallipos repository)
+2025-04-01 16:23:04,041 - INFO - Adding 11.1s extra delay for Kallipos 500 error
+2025-04-01 16:23:05,399 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/ab42e89f-34a8-4984-8449-baf55fe67daa/14 ΣΥΝΑΡΤΗΣΕΙΣ ΠΟΛΛΩΝ ΜΕΤΑΒΛΗΤΩΝ.pdf (common with Kallipos repository)
+2025-04-01 16:23:05,399 - INFO - Adding 13.8s extra delay for Kallipos 500 error
+2025-04-01 16:23:19,347 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:23:23,542 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/eba02b5b-81cf-4437-8f7e-52ff6d161376/16 ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΣ LAPLACE.pdf (common with Kallipos repository)
+2025-04-01 16:23:23,542 - INFO - Adding 10.3s extra delay for Kallipos 500 error
+2025-04-01 16:23:33,864 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ/ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Τεχνικές Αναζήτησης και Ανάκτηση Πληροφοριών
+2025-04-01 16:23:33,865 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΔΙΑΦΟΡΙΚΕΣ ΕΞΙΣΩΣΕΙΣ ΜΕ ΜΕΡΙΚΕΣ ΠΑΡΑΓΩΓΟΥΣ > Μερικές Διαφορικές Εξισώσεις
+2025-04-01 16:23:33,865 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΑΝΘΡΩΠΟΛΟΓΙΑ (ΜΗ ΦΥΣΙΚΗ) > ΚΟΙΝΩΝΙΚΗ ΚΑΙ ΠΟΛΙΤΙΣΜΙΚΗ ΑΝΘΡΩΠΟΛΟΓΙΑ > Ψηφιακά Μέσα και Κοινωνία
+2025-04-01 16:23:33,865 - WARNING - Failed to download file for metadata: ΑΝΘΡΩΠΙΣΤΙΚΕΣ ΕΠΙΣΤΗΜΕΣ ΚΑΙ ΤΕΧΝΕΣ > ΓΛΩΣΣΟΛΟΓΙΑ > ΠΕΔΙΑ ΓΛΩΣΣΟΛΟΓΙΑΣ > Κοινωνικές αντανακλάσεις στη μετάφραση
+2025-04-01 16:23:33,865 - WARNING - Failed to download file for metadata: ΦΥΣΙΚΕΣ ΚΑΙ ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > Έρευνα και δράσεις για την αναγέννηση των ορεινών και απομονωμένων περιοχών
+2025-04-01 16:23:33,865 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ/ΠΛΗΡΟΦΟΡΙΚΗ > Υπολογιστική γλωσσολογία
+2025-04-01 16:23:33,865 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΑΡΙΘΜΩΝ > Επανάληψη στη Θεωρία Αριθμών
+2025-04-01 16:23:33,866 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΣΩΜΑΤΩΝ ΚΑΙ ΠΟΛΥΩΝΥΜΩΝ > Βασική Θεωρία Galois
+2025-04-01 16:23:33,866 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Προστασία και Διαχείριση της Πνευματικής Ιδιοκτησίας Ψηφιακού Περιεχομένου στο Διαδίκτυο και τα Σύγχρονα Δίκτυα
+2025-04-01 16:23:33,866 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Βασικές Αρχές και Τεχνολογίες στην Επιστήμη της Πληροφόρησης
+2025-04-01 16:23:33,866 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Εφαρμοσμένα Μαθηματικά – Διαφορικές εξισώσεις
+2025-04-01 16:23:33,866 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΚΑΙ ΟΡΓΑΝΩΣΗ > Μαθήματα Ψηφιακών Ηλεκτρονικών
+2025-04-01 16:23:33,866 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ > Μαθηματική Ανάλυση
+2025-04-01 16:23:33,867 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Ανάλυση Επίδοσης Υπολογιστικών Συστημάτων
+2025-04-01 16:23:33,867 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Στατιστική Υδρολογία
+2025-04-01 16:23:33,867 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Υπολογιστική κρυπτογραφία
+2025-04-01 16:23:33,867 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Δασική βιομετρία
+2025-04-01 16:23:33,867 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Ανάλυση Fourier
+2025-04-01 16:23:33,867 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΚΡΙΤΕΣ ΔΟΜΕΣ > Διακριτά μαθηματικά
+2025-04-01 16:23:33,868 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Μια εισαγωγή στη βασική άλγεβρα
+2025-04-01 16:23:33,868 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΔΙΟΙΚΗΣΗ ΕΠΙΧΕΙΡΗΣΕΩΝ ΚΑΙ ΟΙΚΟΝΟΜΙΚΑ ΤΩΝ ΕΠΙΧΕΙΡΗΣΕΩΝ, ΜΑΡΚΕΤΙΝΓΚ, ΛΟΓΙΣΤΙΚΗ > Εταιρική κοινωνική ευθύνη - Η όψη του ανθρώπινου παράγοντα στην επιχείρηση
+2025-04-01 16:23:33,868 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Υπολογιστική μηχανική
+2025-04-01 16:23:33,868 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΓΡΑΦΙΚΑ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ > Γραφικά και εικονική πραγματικότητα
+2025-04-01 16:23:33,868 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Τεχνητή νοημοσύνη
+2025-04-01 16:23:33,868 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Σήματα και Συστήματα
+2025-04-01 16:23:33,868 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Μια εισαγωγή στην αλγεβρική θεωρία κωδίκων
+2025-04-01 16:23:33,868 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Διδακτική της πληροφορικής
+2025-04-01 16:23:33,868 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΑΡΙΘΜΗΤΙΚΗ ΑΝΑΛΥΣΗ > Αριθμητική επίλυση μερικών διαφορικών εξισώσεων
+2025-04-01 16:23:33,869 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Διακριτές μαθηματικές δομές για την επιστήμη των υπολογιστών
+2025-04-01 16:23:33,869 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Μαθήματα ανώτερων μαθηματικών
+2025-04-01 16:23:33,869 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Οι Τεχνολογίες Πληροφορίας και Επικοινωνιών στην υγεία
+2025-04-01 16:23:33,869 - WARNING - Failed to download file for metadata: ΕΠΙΣΤΗΜΕΣ ΜΗΧΑΝΙΚΩΝ ΚΑΙ ΤΕΧΝΟΛΟΓΙΑ > ΤΕΧΝΟΛΟΓΙΑ ΚΑΙ ΕΠΙΣΤΗΜΕΣ ΜΗΧΑΝΙΚΩΝ > ΤΕΧΝΟΛΟΓΙΑ ΚΑΙ ΜΗΧΑΝΙΚΗ ΟΡΓΑΝΩΝ ΜΕΤΡΗΣΗΣ ΚΑΙ ΕΛΕΓΧΟΥ > Σύγχρονη Θεωρία Ελέγχου
+2025-04-01 16:23:33,869 - WARNING - Failed to download file for metadata: ΙΑΤΡΙΚΗ ΚΑΙ ΕΠΙΣΤΗΜΕΣ ΥΓΕΙΑΣ, ΕΠΙΣΤΗΜΕΣ ΖΩΗΣ, ΒΙΟΛΟΓΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΕΠΙΣΤΗΜΕΣ ΤΗΣ ΖΩΗΣ > Επαγωγική Στατιστική
+2025-04-01 16:23:33,869 - WARNING - Failed to download file for metadata: ΙΑΤΡΙΚΗ ΚΑΙ ΕΠΙΣΤΗΜΕΣ ΥΓΕΙΑΣ, ΕΠΙΣΤΗΜΕΣ ΖΩΗΣ, ΒΙΟΛΟΓΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΕΠΙΣΤΗΜΕΣ ΤΗΣ ΖΩΗΣ > Περιγραφική Στατιστική
+2025-04-01 16:23:33,869 - WARNING - Failed to download file for metadata: ΙΑΤΡΙΚΗ ΚΑΙ ΕΠΙΣΤΗΜΕΣ ΥΓΕΙΑΣ, ΕΠΙΣΤΗΜΕΣ ΖΩΗΣ, ΒΙΟΛΟΓΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΕΠΙΣΤΗΜΕΣ ΤΗΣ ΖΩΗΣ > Προετοιμασία και Καταχώρηση των Δεδομένων
+2025-04-01 16:23:33,869 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Σχεδιασμός και Ανάπτυξη Πληροφοριακού Συστήματος Προστασίας και Διαχείρισης των Πνευματικών Δικαιωμάτων
+2025-04-01 16:23:33,870 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Πνευματική Ιδιοκτησία και Κοινωνία της Πληροφορίας
+2025-04-01 16:23:33,870 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Πλήρης Ανάλυση του Προβλήματος: ΠΙ και ΚτΠ
+2025-04-01 16:23:33,870 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Εισαγωγικά Στοιχεία
+2025-04-01 16:23:33,870 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Τηλεπισκόπηση στη δασική μέτρηση
+2025-04-01 16:23:33,870 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Μέτρηση δασοσυστάδων
+2025-04-01 16:23:33,870 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Μετρήσεις μεμονωμένων δέντρων
+2025-04-01 16:23:33,870 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Στατιστικές προϋποθέσεις
+2025-04-01 16:23:33,870 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Όργανα
+2025-04-01 16:23:33,870 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΔΑΣΙΚΗ ΒΙΟΜΕΤΡΙΑ: Εισαγωγή
+2025-04-01 16:23:33,870 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Δειγματοληψία για δασικές απογραφές
+2025-04-01 16:23:33,871 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Αύξηση και παραγωγή
+2025-04-01 16:23:33,871 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Μαζοπίνακες δέντρων και μοντέλα
+2025-04-01 16:23:33,871 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Πίνακες κωνικότητας και μοντέλα
+2025-04-01 16:23:33,871 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Βιομάζα δέντρου και δασοσυστάδας
+2025-04-01 16:23:33,871 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ > Σειρές συναρτήσεων
+2025-04-01 16:23:33,871 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ > Πραγματικές συναρτήσεις πραγματικής μεταβλητής
+2025-04-01 16:23:33,871 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ > Ολοκλήρωμα πραγματικής συνάρτησης
+2025-04-01 16:23:33,871 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ > Ακολουθίες πραγματικών αριθμών
+2025-04-01 16:23:33,871 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ > Όριο και συνέχεια πραγματικής συνάρτησης
+2025-04-01 16:23:33,871 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ > Σειρές πραγματικών αριθμών
+2025-04-01 16:23:33,871 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ > Εφαρμογές Ορισμένου και Αόριστου Ολοκληρώματος
+2025-04-01 16:23:33,872 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ > Γενικευμένα Ολοκληρώματα και εφαρμογές
+2025-04-01 16:23:33,872 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ > Θεμελιώδη θεωρήματα διαφορικού λογισμού και Εφαρμογές
+2025-04-01 16:23:33,872 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > "Ενδιαφέροντες" Κώδικες
+2025-04-01 16:23:33,872 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Στοιχεία από την Άλγεβρα
+2025-04-01 16:23:33,872 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΑΡΙΘΜΗΤΙΚΗ ΑΝΑΛΥΣΗ > Η μέθοδος των πεπερασμένων διαφορών για την εξίσωση της θερμότητας
+2025-04-01 16:23:33,872 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΑΡΙΘΜΗΤΙΚΗ ΑΝΑΛΥΣΗ > Πρόβλημα δύο σημείων
+2025-04-01 16:23:33,872 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΑΡΙΘΜΗΤΙΚΗ ΑΝΑΛΥΣΗ > Η μέθοδος των πεπερασμένων στοιχείων για το πρόβλημα δύο σημείων
+2025-04-01 16:23:33,872 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΑΡΙΘΜΗΤΙΚΗ ΑΝΑΛΥΣΗ > Πεπερασμένες διαφορές
+2025-04-01 16:23:33,872 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΑΡΙΘΜΗΤΙΚΗ ΑΝΑΛΥΣΗ > Πεπερασμένες διαφορές για την ελλειπτική εξίσωση στις δύο διαστάσεις
+2025-04-01 16:23:33,872 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΣΩΜΑΤΩΝ ΚΑΙ ΠΟΛΥΩΝΥΜΩΝ > Βασικές έννοιες
+2025-04-01 16:23:33,873 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΣΩΜΑΤΩΝ ΚΑΙ ΠΟΛΥΩΝΥΜΩΝ > Θεμελιώδες Θεώρημα της Θεωρίας Galois
+2025-04-01 16:23:33,873 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΣΩΜΑΤΩΝ ΚΑΙ ΠΟΛΥΩΝΥΜΩΝ > Σώματα και βαθμοί επεκτάσεων
+2025-04-01 16:23:33,873 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΣΩΜΑΤΩΝ ΚΑΙ ΠΟΛΥΩΝΥΜΩΝ > Πεπερασμένα Σώματα
+2025-04-01 16:23:33,873 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Σειρές (Μαθήματα Ανώτερων Μαθηματικών)
+2025-04-01 16:23:33,873 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Αναλυτική Γεωμετρία
+2025-04-01 16:23:33,874 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Σειρά Fourier
+2025-04-01 16:23:33,874 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Κώδικες Reed-Solom και Συναφείς Κώδικες
+2025-04-01 16:23:33,874 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Κώδικες και συνδυαστικές κατασκευές
+2025-04-01 16:23:33,874 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΑΡΙΘΜΗΤΙΚΗ ΑΝΑΛΥΣΗ > Εξίσωση μεταφοράς
+2025-04-01 16:23:33,874 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΑΡΙΘΜΗΤΙΚΗ ΑΝΑΛΥΣΗ > Η μέθοδος των πεπερασμένων στοιχείων για την εξίσωση της θερμότητας
+2025-04-01 16:23:33,874 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΑΡΙΘΜΗΤΙΚΗ ΑΝΑΛΥΣΗ > Εξίσωση κύματος
+2025-04-01 16:23:33,875 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΣΩΜΑΤΩΝ ΚΑΙ ΠΟΛΥΩΝΥΜΩΝ > Παράρτημα. ΘΕΩΡΙΑ GALOIS
+2025-04-01 16:23:33,875 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΣΩΜΑΤΩΝ ΚΑΙ ΠΟΛΥΩΝΥΜΩΝ > Εφαρμογές
+2025-04-01 16:23:33,875 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΣΩΜΑΤΩΝ ΚΑΙ ΠΟΛΥΩΝΥΜΩΝ > Κυκλοτομικά Πολυώνυμα
+2025-04-01 16:23:33,875 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΣΩΜΑΤΩΝ ΚΑΙ ΠΟΛΥΩΝΥΜΩΝ > Απλές Επεκτάσεις και Αλγεβρικές Θήκες
+2025-04-01 16:23:33,875 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΣΩΜΑΤΩΝ ΚΑΙ ΠΟΛΥΩΝΥΜΩΝ > Το γενικό πολυώνυμο και το αντίστροφο πρόβλημα
+2025-04-01 16:23:33,875 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Μιγαδικοί Αριθμοί
+2025-04-01 16:23:33,875 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Διανύσματα
+2025-04-01 16:23:33,875 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Πραγματικές Συναρτήσεις
+2025-04-01 16:23:33,875 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Παραγοντοποίηση Ακεραίων
+2025-04-01 16:23:33,876 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Μιγαδικές Συναρτήσεις
+2025-04-01 16:23:33,876 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΘΕΩΡΙΑ ΣΩΜΑΤΩΝ ΚΑΙ ΠΟΛΥΩΝΥΜΩΝ > Απλά Κρυπτοσυστήματα
+2025-04-01 16:23:33,876 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Διακριτός Λογάριθμος
+2025-04-01 16:23:33,876 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Συνεχή κλάσματα
+2025-04-01 16:23:33,876 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Γραμμικοί Κώδικες
+2025-04-01 16:23:33,876 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Βασικές Έννοιες
+2025-04-01 16:23:33,876 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Πολυωνυμικοί - Κυκλικοί Κώδικες
+2025-04-01 16:23:33,876 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΟΜΑΔΕΣ (ΤΟΥ) LIE > Πολλαπλότητες Riemann
+2025-04-01 16:23:33,876 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΔΙΑΦΟΡΙΚΗ ΓΕΩΜΕΤΡΙΑ > Η απεικόνιση Gauss και Καμπυλότητα
+2025-04-01 16:23:33,876 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Θεωρία Αριθμών και Εφαρμογές: Παράρτημα Α
+2025-04-01 16:23:33,876 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Συναρτήσεις Πολλών Μεταβλητών
+2025-04-01 16:23:33,877 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΜΑΘΗΜΑΤΙΚΗ ΛΟΓΙΚΗ ΚΑΙ ΘΕΜΕΛΙΩΣΗ ΤΩΝ ΜΑΘΗΜΑΤΙΚΩΝ > Εξισώσεις, Ανισώσεις και Συναρτήσεις
+2025-04-01 16:23:33,877 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Μετασχηματισμός  Laplace
+2025-04-01 16:23:33,877 - INFO - Retrying download for 100 failed files
+2025-04-01 16:23:38,489 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf (common with Kallipos repository)
+2025-04-01 16:23:38,489 - INFO - Adding 11.8s extra delay for Kallipos 500 error
+2025-04-01 16:23:38,629 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/e51ef661-b962-4b35-b170-f4ecd02a3188/562-DASSIOS-Partial-Differential-Equations.pdf (common with Kallipos repository)
+2025-04-01 16:23:38,630 - INFO - Adding 14.5s extra delay for Kallipos 500 error
+2025-04-01 16:23:55,120 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/b5d477dd-7b8b-485e-8140-41fb1a7e5595/20230714_ΠΑ_Βαγιάνος_Γραφιστική Επιμέλεια.pdf (common with Kallipos repository)
+2025-04-01 16:23:55,121 - INFO - Adding 13.5s extra delay for Kallipos 500 error
+2025-04-01 16:23:57,369 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/99dc8ba8-f04b-4e59-bfc5-68eb59ab7402/768_DAMASKINIDIS_Social-reflections-translation.pdf (common with Kallipos repository)
+2025-04-01 16:23:57,370 - INFO - Adding 13.8s extra delay for Kallipos 500 error
+2025-04-01 16:24:13,457 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/17b93495-5b2c-452a-b836-1ed2a796364c/904_KALIAMPAKOS-904-Regeneration-of-mountainous-and-isolated-areas.pdf (common with Kallipos repository)
+2025-04-01 16:24:13,458 - INFO - Adding 10.1s extra delay for Kallipos 500 error
+2025-04-01 16:24:14,791 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9dac3635-1ecd-4e10-bc41-a1cbf74506c2/408-PANAGIOTAKOPOULOS-Computational-linguistics.pdf (common with Kallipos repository)
+2025-04-01 16:24:14,792 - INFO - Adding 14.7s extra delay for Kallipos 500 error
+2025-04-01 16:24:27,304 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/cc45048e-46da-4626-885a-03037ecc3542/42-POULAKIS-Repetition-Number-Theory.pdf (common with Kallipos repository)
+2025-04-01 16:24:27,305 - INFO - Adding 11.2s extra delay for Kallipos 500 error
+2025-04-01 16:24:33,890 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/45229982-d66d-4350-9cf3-a07e327e697e/1_MARMARIDIS-BASIC_GALOIS_THEORY.pdf (common with Kallipos repository)
+2025-04-01 16:24:33,891 - INFO - Adding 14.6s extra delay for Kallipos 500 error
+2025-04-01 16:24:42,579 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/f8a8c5c6-38ce-4a98-b936-b5cb8ca23da6/00_master_document-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:24:42,579 - INFO - Adding 13.9s extra delay for Kallipos 500 error
+2025-04-01 16:24:52,677 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/67b5ad49-7574-4d8d-9f90-fbd8b2a19bf0/9662_master_document .pdf (common with Kallipos repository)
+2025-04-01 16:24:52,677 - INFO - Adding 12.1s extra delay for Kallipos 500 error
+2025-04-01 16:25:01,677 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/25bdfaa2-51d5-462e-ad32-3e3e1e26d3e7/00_master_document-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:25:01,677 - INFO - Adding 14.5s extra delay for Kallipos 500 error
+2025-04-01 16:25:09,747 - ERROR - ClientError while downloading https://repository.kallipos.grNone: Cannot connect to host repository.kallipos.grnone:443 ssl:<ssl.SSLContext object at 0x7f0234f922c0> [Name or service not known]
+2025-04-01 16:25:13,308 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/e42d0a78-e6ba-4615-abf1-f5f5288c352e/8534_Μαθηματική_Ανάλυση.pdf (common with Kallipos repository)
+2025-04-01 16:25:13,308 - INFO - Adding 10.2s extra delay for Kallipos 500 error
+2025-04-01 16:25:21,276 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/94bbe325-8586-499e-bbe9-d01437f2002b/master-ΚΟΥ.pdf (common with Kallipos repository)
+2025-04-01 16:25:21,277 - INFO - Adding 13.2s extra delay for Kallipos 500 error
+2025-04-01 16:25:27,714 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/2e3af1ff-d393-47b9-9ebd-d5d1acbec637/00_master_document-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:25:27,714 - INFO - Adding 11.7s extra delay for Kallipos 500 error
+2025-04-01 16:25:39,788 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/99fd35e9-f0d8-4274-a036-2adc406d490b/main-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:25:39,788 - INFO - Adding 11.8s extra delay for Kallipos 500 error
+2025-04-01 16:25:44,813 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a68b44e0-f889-4da9-9ed1-169d105da3cf/00_master_document-ΚΟΥ.pdf (common with Kallipos repository)
+2025-04-01 16:25:44,813 - INFO - Adding 13.9s extra delay for Kallipos 500 error
+2025-04-01 16:25:56,155 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/032c0f69-283e-457b-98bb-6e3d3d585cd0/fourier-pdf-ΚΟΥ.pdf (common with Kallipos repository)
+2025-04-01 16:25:56,156 - INFO - Adding 10.6s extra delay for Kallipos 500 error
+2025-04-01 16:26:03,899 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/173529c2-be8b-48ab-85cb-3b87e5a56628/discr-pdf-ΚΟΥ.pdf (common with Kallipos repository)
+2025-04-01 16:26:03,899 - INFO - Adding 11.1s extra delay for Kallipos 500 error
+2025-04-01 16:26:11,377 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/0528b493-472e-4712-b4eb-8dc8d13f7426/AlgebraBook-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:26:11,378 - INFO - Adding 11.4s extra delay for Kallipos 500 error
+2025-04-01 16:26:18,785 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/78d350ec-5dcf-40fb-af79-3a2ea9a61dda/ΑΣΠΡΙΔΗΣ Μ. ΓΕΩΡΓΙΟΣ - Εταιρική Κοινωνική Ευθύνη - Η Όψη του Ανθρώπινου Παράγοντα στην Επιχείρηση-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:26:18,785 - INFO - Adding 11.5s extra delay for Kallipos 500 error
+2025-04-01 16:26:26,952 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/d5999d5b-17f2-4119-8a29-d3685265f9f1/ebookmain_updated-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:26:26,953 - INFO - Adding 13.7s extra delay for Kallipos 500 error
+2025-04-01 16:26:35,666 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/eb6cf2a2-8a22-4c9e-b90b-d1d454fce666/00_master_document.pdf (common with Kallipos repository)
+2025-04-01 16:26:35,666 - INFO - Adding 14.9s extra delay for Kallipos 500 error
+2025-04-01 16:26:44,316 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a3431b53-3136-46fb-94b1-dfb953a999f7/Τεχνητή Νοημοσύνη.pdf (common with Kallipos repository)
+2025-04-01 16:26:44,316 - INFO - Adding 12.2s extra delay for Kallipos 500 error
+2025-04-01 16:26:55,327 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/0f8b6fce-c18a-4e22-8bac-6dd01c25c849/Signal_and_Systems_22_11_2015-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:26:55,328 - INFO - Adding 13.7s extra delay for Kallipos 500 error
+2025-04-01 16:27:00,436 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/54a9646e-2643-4aa2-9723-39f911cbbc67/eoact-xetex-utf.pdf (common with Kallipos repository)
+2025-04-01 16:27:00,436 - INFO - Adding 13.1s extra delay for Kallipos 500 error
+2025-04-01 16:27:13,764 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/902439cb-0e9e-4ee7-96d6-54381b3241f1/00_master_document-KOY.pdf (common with Kallipos repository)
+2025-04-01 16:27:13,764 - INFO - Adding 14.7s extra delay for Kallipos 500 error
+2025-04-01 16:27:17,989 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9cb837a1-13ac-4d85-938e-4a803997b91e/new_book.pdf (common with Kallipos repository)
+2025-04-01 16:27:17,990 - INFO - Adding 14.0s extra delay for Kallipos 500 error
+2025-04-01 16:27:33,421 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/b0ae037b-f930-496c-9588-3750b0c70e96/00_master_document.pdf (common with Kallipos repository)
+2025-04-01 16:27:33,422 - INFO - Adding 14.2s extra delay for Kallipos 500 error
+2025-04-01 16:27:37,022 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/958e5823-ed4c-4714-85ec-6442e6383f6d/00_master_document_KOY.pdf (common with Kallipos repository)
+2025-04-01 16:27:37,022 - INFO - Adding 11.4s extra delay for Kallipos 500 error
+2025-04-01 16:27:51,957 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/0fec94d3-4644-4c92-b071-fdd98c13dd69/00_master document.pdf (common with Kallipos repository)
+2025-04-01 16:27:51,957 - INFO - Adding 14.7s extra delay for Kallipos 500 error
+2025-04-01 16:27:53,469 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/6f8f58b6-a8c2-4e56-9f3a-966e0cc8a2ab/13pouliezosv5bm.pdf (common with Kallipos repository)
+2025-04-01 16:27:53,469 - INFO - Adding 10.8s extra delay for Kallipos 500 error
+2025-04-01 16:28:09,766 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/8df7acbd-5b02-4bd9-b428-70c141495fdb/01_chapter_07.pdf (common with Kallipos repository)
+2025-04-01 16:28:09,766 - INFO - Adding 10.4s extra delay for Kallipos 500 error
+2025-04-01 16:28:10,479 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/d6ddc2fc-74da-4880-b1a8-4072df2f96f7/01_chapter_06.pdf (common with Kallipos repository)
+2025-04-01 16:28:10,479 - INFO - Adding 14.7s extra delay for Kallipos 500 error
+2025-04-01 16:28:23,678 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/691354a7-07ae-437a-9b03-67bfbcdb8e58/01_chapter_05.pdf (common with Kallipos repository)
+2025-04-01 16:28:23,678 - INFO - Adding 10.2s extra delay for Kallipos 500 error
+2025-04-01 16:28:30,631 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9b9afd83-bd1b-4917-844d-bfa8a1ed9dd7/02_chapter_4.pdf (common with Kallipos repository)
+2025-04-01 16:28:30,631 - INFO - Adding 10.3s extra delay for Kallipos 500 error
+2025-04-01 16:28:39,240 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/5c9b4211-4054-4e2b-aefc-3ab4c2f42c30/02_chapter_2.pdf (common with Kallipos repository)
+2025-04-01 16:28:39,240 - INFO - Adding 10.0s extra delay for Kallipos 500 error
+2025-04-01 16:28:45,342 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a34deb34-cdef-4b63-9f2c-988d7a88d2d7/02_chapter_3.pdf (common with Kallipos repository)
+2025-04-01 16:28:45,343 - INFO - Adding 12.2s extra delay for Kallipos 500 error
+2025-04-01 16:28:53,572 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7b225883-5949-4ff6-9e40-d0592eb37559/02_chapter_1.pdf (common with Kallipos repository)
+2025-04-01 16:28:53,572 - INFO - Adding 13.6s extra delay for Kallipos 500 error
+2025-04-01 16:29:01,780 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/eb7298d9-5ec9-4d32-add9-d850bccd1c76/04_chapter_11.pdf (common with Kallipos repository)
+2025-04-01 16:29:01,780 - INFO - Adding 14.4s extra delay for Kallipos 500 error
+2025-04-01 16:29:12,013 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9751c5ec-b84b-485a-88bf-f5476971f0a2/04_chapter_05.pdf (common with Kallipos repository)
+2025-04-01 16:29:12,013 - INFO - Adding 12.2s extra delay for Kallipos 500 error
+2025-04-01 16:29:19,891 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/0687280e-5568-4299-8404-1da082459fbf/04_chapter_04.pdf (common with Kallipos repository)
+2025-04-01 16:29:19,892 - INFO - Adding 14.0s extra delay for Kallipos 500 error
+2025-04-01 16:29:29,184 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/648013ba-9685-442b-b815-d68ca31d03c4/04_chapter_02.pdf (common with Kallipos repository)
+2025-04-01 16:29:29,185 - INFO - Adding 11.9s extra delay for Kallipos 500 error
+2025-04-01 16:29:38,481 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/e9ee9287-97ab-42c1-a60e-e34e96c6d667/04_chapter_03.pdf (common with Kallipos repository)
+2025-04-01 16:29:38,481 - INFO - Adding 12.8s extra delay for Kallipos 500 error
+2025-04-01 16:29:44,841 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/b87da8c4-6e72-4698-a41f-2f3bff7e00cf/04_chapter_01.pdf (common with Kallipos repository)
+2025-04-01 16:29:44,842 - INFO - Adding 11.8s extra delay for Kallipos 500 error
+2025-04-01 16:29:55,719 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/8bde1bc3-955b-434a-9310-ae6fb5f31df3/04_chapter_10.pdf (common with Kallipos repository)
+2025-04-01 16:29:55,720 - INFO - Adding 12.5s extra delay for Kallipos 500 error
+2025-04-01 16:30:00,536 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/19e31a27-d35b-48b5-b670-8e58fdc36b4e/04_chapter_09.pdf (common with Kallipos repository)
+2025-04-01 16:30:00,536 - INFO - Adding 10.2s extra delay for Kallipos 500 error
+2025-04-01 16:30:12,640 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/461da700-80d1-4765-8e06-ea202cf62673/04_chapter_07.pdf (common with Kallipos repository)
+2025-04-01 16:30:12,640 - INFO - Adding 14.9s extra delay for Kallipos 500 error
+2025-04-01 16:30:14,820 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/dee6589c-707a-46c4-af73-da864f492e53/04_chapter_06.pdf (common with Kallipos repository)
+2025-04-01 16:30:14,820 - INFO - Adding 10.5s extra delay for Kallipos 500 error
+2025-04-01 16:30:30,169 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7c2603fa-4cee-4beb-91af-a23890edddb2/04_chapter_08.pdf (common with Kallipos repository)
+2025-04-01 16:30:30,169 - INFO - Adding 14.3s extra delay for Kallipos 500 error
+2025-04-01 16:30:32,886 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a25d6696-4063-4d8f-9827-4689e177974d/Chapter9.pdf (common with Kallipos repository)
+2025-04-01 16:30:32,886 - INFO - Adding 12.2s extra delay for Kallipos 500 error
+2025-04-01 16:30:49,458 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/772abbc5-6a95-443d-85a9-c7d527258fb4/Chapter1.pdf (common with Kallipos repository)
+2025-04-01 16:30:49,459 - INFO - Adding 11.8s extra delay for Kallipos 500 error
+2025-04-01 16:30:49,619 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/d2373d29-78b2-4605-9cef-4818049c1466/Chapter7.pdf (common with Kallipos repository)
+2025-04-01 16:30:49,619 - INFO - Adding 14.5s extra delay for Kallipos 500 error
+2025-04-01 16:31:05,924 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/405c9bfc-dd8f-4672-83dc-27ac928238dc/Chapter2.pdf (common with Kallipos repository)
+2025-04-01 16:31:05,924 - INFO - Adding 10.5s extra delay for Kallipos 500 error
+2025-04-01 16:31:08,328 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/35717bb1-f1f2-4a2b-b640-1754cc539509/Chapter4.pdf (common with Kallipos repository)
+2025-04-01 16:31:08,328 - INFO - Adding 12.9s extra delay for Kallipos 500 error
+2025-04-01 16:31:21,226 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/eb646c59-54a2-43a0-ae8f-43d56e855ce9/Chapter3.pdf (common with Kallipos repository)
+2025-04-01 16:31:21,227 - INFO - Adding 12.0s extra delay for Kallipos 500 error
+2025-04-01 16:31:25,292 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/4b29acd3-c2bf-40d0-98c2-9ffc5ccbe618/Chapter8.pdf (common with Kallipos repository)
+2025-04-01 16:31:25,292 - INFO - Adding 13.7s extra delay for Kallipos 500 error
+2025-04-01 16:31:37,296 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a8d3b579-7c2d-4471-8837-1154bf6fcaec/Chapter10.pdf (common with Kallipos repository)
+2025-04-01 16:31:37,296 - INFO - Adding 10.6s extra delay for Kallipos 500 error
+2025-04-01 16:31:43,558 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/55ba8ea9-6aab-40ad-a0d4-6e01f0639c0f/Chapter6.pdf (common with Kallipos repository)
+2025-04-01 16:31:43,558 - INFO - Adding 14.7s extra delay for Kallipos 500 error
+2025-04-01 16:31:52,129 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/98a3b0a0-c380-40d2-9056-1f7118a727c1/02_chapter_4.pdf (common with Kallipos repository)
+2025-04-01 16:31:52,129 - INFO - Adding 14.5s extra delay for Kallipos 500 error
+2025-04-01 16:32:02,892 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/3fddbeb6-2915-459d-b9fb-173faa47c425/02_chapter_7.pdf (common with Kallipos repository)
+2025-04-01 16:32:02,892 - INFO - Adding 11.4s extra delay for Kallipos 500 error
+2025-04-01 16:32:11,949 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/d85ba8a8-13b8-4167-96dd-a928832d1810/Ch5.pdf (common with Kallipos repository)
+2025-04-01 16:32:11,950 - INFO - Adding 12.8s extra delay for Kallipos 500 error
+2025-04-01 16:32:19,268 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/12d9664f-6aad-43d0-9d0e-93702c02389d/Ch3.pdf (common with Kallipos repository)
+2025-04-01 16:32:19,269 - INFO - Adding 11.4s extra delay for Kallipos 500 error
+2025-04-01 16:32:29,582 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/faa290b1-fe4c-4b66-8cc5-c6d2b5a7e3b1/Ch4.pdf (common with Kallipos repository)
+2025-04-01 16:32:29,582 - INFO - Adding 12.9s extra delay for Kallipos 500 error
+2025-04-01 16:32:35,865 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/caabfe74-5c27-4c03-8ff2-6d2cd5e1cec9/Ch2.pdf (common with Kallipos repository)
+2025-04-01 16:32:35,866 - INFO - Adding 12.5s extra delay for Kallipos 500 error
+2025-04-01 16:32:46,436 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/c98068bc-3ba9-4672-b8b2-7f881839c3c8/Ch9.pdf (common with Kallipos repository)
+2025-04-01 16:32:46,437 - INFO - Adding 12.9s extra delay for Kallipos 500 error
+2025-04-01 16:32:52,876 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7b64d3c0-baa4-47f4-b044-880bfbb2c1d9/Κεφάλαιο1.pdf (common with Kallipos repository)
+2025-04-01 16:32:52,876 - INFO - Adding 13.6s extra delay for Kallipos 500 error
+2025-04-01 16:33:03,871 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/87369d74-9e1d-42ad-b54b-4c6a01d21992/Κεφάλαιο3.pdf (common with Kallipos repository)
+2025-04-01 16:33:03,871 - INFO - Adding 12.9s extra delay for Kallipos 500 error
+2025-04-01 16:33:10,148 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/f91238f6-050a-4fea-9e9b-4665592b9235/Κεφάλαιο2.pdf (common with Kallipos repository)
+2025-04-01 16:33:10,149 - INFO - Adding 14.7s extra delay for Kallipos 500 error
+2025-04-01 16:33:20,805 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/777dcd89-7227-4c55-b655-e5a8316676aa/Κεφάλαιο4.pdf (common with Kallipos repository)
+2025-04-01 16:33:20,806 - INFO - Adding 10.1s extra delay for Kallipos 500 error
+2025-04-01 16:33:28,633 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7876553f-cfd3-4d40-bf86-6f0d1d7b560d/12 ΣΕΙΡΕΣ.pdf (common with Kallipos repository)
+2025-04-01 16:33:28,634 - INFO - Adding 14.2s extra delay for Kallipos 500 error
+2025-04-01 16:33:34,690 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/cdbe2952-addc-4076-b73b-70ac67143d2b/02 ΑΝΑΛΥΤΙΚΗ ΓΕΩΜΕΤΡΙΑ.pdf (common with Kallipos repository)
+2025-04-01 16:33:34,691 - INFO - Adding 10.4s extra delay for Kallipos 500 error
+2025-04-01 16:33:48,084 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/f8a2ebf7-db51-46bd-a6e2-ea88c1906454/13 ΣΕΙΡΑ FOURIER.pdf (common with Kallipos repository)
+2025-04-01 16:33:48,085 - INFO - Adding 14.3s extra delay for Kallipos 500 error
+2025-04-01 16:33:49,932 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/1a8d4187-e6ce-492c-8b73-c9e359f61222/02_chapter_5.pdf (common with Kallipos repository)
+2025-04-01 16:33:49,932 - INFO - Adding 11.0s extra delay for Kallipos 500 error
+2025-04-01 16:34:04,768 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/63c0dd54-148e-4e26-8fc0-4f203195a97c/02_chapter_6.pdf (common with Kallipos repository)
+2025-04-01 16:34:04,768 - INFO - Adding 11.1s extra delay for Kallipos 500 error
+2025-04-01 16:34:07,769 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/4cc2c5da-d5af-43c2-99e0-4340ff5fbda4/Ch7.pdf (common with Kallipos repository)
+2025-04-01 16:34:07,769 - INFO - Adding 12.3s extra delay for Kallipos 500 error
+2025-04-01 16:34:20,664 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/37414b25-279b-4160-9fff-595447c3de84/Ch6.pdf (common with Kallipos repository)
+2025-04-01 16:34:20,665 - INFO - Adding 13.5s extra delay for Kallipos 500 error
+2025-04-01 16:34:24,234 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/cd114e5a-556e-4fab-a5e4-e1262519c9b5/Ch8.pdf (common with Kallipos repository)
+2025-04-01 16:34:24,234 - INFO - Adding 10.3s extra delay for Kallipos 500 error
+2025-04-01 16:34:38,310 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/1a0ad10d-d8eb-4e47-a61c-0aa6839d73b2/Παράρτημα.pdf (common with Kallipos repository)
+2025-04-01 16:34:38,310 - INFO - Adding 14.9s extra delay for Kallipos 500 error
+2025-04-01 16:34:40,016 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/64624bf1-3b9a-4caf-b496-70d5d1716871/Κεφάλαιο6.pdf (common with Kallipos repository)
+2025-04-01 16:34:40,016 - INFO - Adding 11.5s extra delay for Kallipos 500 error
+2025-04-01 16:34:56,910 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/08d9bec6-795c-486f-99f4-021c90375139/Κεφάλαιο5.pdf (common with Kallipos repository)
+2025-04-01 16:34:56,911 - INFO - Adding 12.6s extra delay for Kallipos 500 error
+2025-04-01 16:34:57,263 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/725dd95a-f686-47aa-ac89-dfc0c0156462/Κεφάλαιο7.pdf (common with Kallipos repository)
+2025-04-01 16:34:57,263 - INFO - Adding 14.6s extra delay for Kallipos 500 error
+2025-04-01 16:35:13,867 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/600a9d85-4e39-4dd8-9185-168b6158fa48/Κεφάλαιο8.pdf (common with Kallipos repository)
+2025-04-01 16:35:13,867 - INFO - Adding 10.9s extra delay for Kallipos 500 error
+2025-04-01 16:35:15,892 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9b6fe62d-adcf-49b3-809c-796835652072/04 ΜΙΓΑΔΙΚΟΙ ΑΡΙΘΜΟΙ.pdf (common with Kallipos repository)
+2025-04-01 16:35:15,892 - INFO - Adding 12.6s extra delay for Kallipos 500 error
+2025-04-01 16:35:29,512 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/e3d434f1-16cc-4866-942c-a23334088104/01 ΔΙΑΝΥΣΜΑΤΑ.pdf (common with Kallipos repository)
+2025-04-01 16:35:29,513 - INFO - Adding 11.1s extra delay for Kallipos 500 error
+2025-04-01 16:35:32,670 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/8a80cf60-fcd4-494f-837d-c0c9ca1f42f9/03 ΠΡΑΓΜΑΤΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ.pdf (common with Kallipos repository)
+2025-04-01 16:35:32,671 - INFO - Adding 10.8s extra delay for Kallipos 500 error
+2025-04-01 16:35:45,356 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:35:48,710 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/72d81e3c-4e35-45e3-9ada-c22a5858befb/05 ΜΙΓΑΔΙΚΕΣ ΣΥΝΑΡΤΗΣΕΙΣ.pdf (common with Kallipos repository)
+2025-04-01 16:35:48,710 - INFO - Adding 14.7s extra delay for Kallipos 500 error
+2025-04-01 16:35:50,581 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:35:55,783 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:36:01,371 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:36:06,725 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/3272f23e-dab3-48ce-993a-ea10d917012a/02_chapter_2.pdf (common with Kallipos repository)
+2025-04-01 16:36:06,725 - INFO - Adding 12.1s extra delay for Kallipos 500 error
+2025-04-01 16:36:07,277 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:36:11,395 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/b838713c-c33e-482d-ab91-90d13957e11c/02_chapter_3.pdf (common with Kallipos repository)
+2025-04-01 16:36:11,395 - INFO - Adding 12.3s extra delay for Kallipos 500 error
+2025-04-01 16:36:23,447 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:36:29,081 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/23ed2b29-39b8-41d6-a645-4dcccb17a0ee/parartA.pdf (common with Kallipos repository)
+2025-04-01 16:36:29,081 - INFO - Adding 12.8s extra delay for Kallipos 500 error
+2025-04-01 16:36:29,090 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:36:32,734 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/ab42e89f-34a8-4984-8449-baf55fe67daa/14 ΣΥΝΑΡΤΗΣΕΙΣ ΠΟΛΛΩΝ ΜΕΤΑΒΛΗΤΩΝ.pdf (common with Kallipos repository)
+2025-04-01 16:36:32,735 - INFO - Adding 10.2s extra delay for Kallipos 500 error
+2025-04-01 16:36:46,346 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:36:47,183 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/eba02b5b-81cf-4437-8f7e-52ff6d161376/16 ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΣ LAPLACE.pdf (common with Kallipos repository)
+2025-04-01 16:36:47,183 - INFO - Adding 11.2s extra delay for Kallipos 500 error
+2025-04-01 16:36:58,373 - INFO - Downloading 100 additional files to complete batch
+2025-04-01 16:37:02,245 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:02,629 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a2bfb143-11c5-481d-8cf4-68cd87e6b565/11 ΟΡΙΣΜΕΝΟ ΟΛΟΚΛΗΡΩΜΑ.pdf (common with Kallipos repository)
+2025-04-01 16:37:02,629 - INFO - Adding 11.2s extra delay for Kallipos 500 error
+2025-04-01 16:37:06,629 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:10,798 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:14,949 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:19,001 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/5785ea1c-3a7d-4369-8fd9-586f9f6de5b4/02_chapter_05.pdf (common with Kallipos repository)
+2025-04-01 16:37:19,002 - INFO - Adding 11.2s extra delay for Kallipos 500 error
+2025-04-01 16:37:19,196 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:23,451 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:29,408 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:33,930 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:35,228 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:38,738 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:40,236 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:44,183 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:44,226 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:49,622 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:49,792 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:54,797 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:55,278 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:37:59,565 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:00,500 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:04,698 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:05,057 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:09,066 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:09,689 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:13,181 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:14,321 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:18,089 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:18,924 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:22,482 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:24,139 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:26,616 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:29,915 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:30,575 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:35,368 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:35,902 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:39,184 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/cedc0d37-bd80-4639-82b8-0251eec7c586/chapter 8.pdf (common with Kallipos repository)
+2025-04-01 16:38:39,184 - INFO - Adding 14.7s extra delay for Kallipos 500 error
+2025-04-01 16:38:40,182 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/4d72768c-475a-4205-a27a-447c2c221fea/chapter 3.pdf (common with Kallipos repository)
+2025-04-01 16:38:40,183 - INFO - Adding 12.8s extra delay for Kallipos 500 error
+2025-04-01 16:38:58,059 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:38:58,550 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:03,253 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:03,899 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:07,155 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:09,690 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:12,038 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:14,941 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:16,111 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:19,056 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:20,707 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:24,012 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:26,125 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:29,320 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:29,875 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7c1f18b4-7e55-4a25-957d-6ffc6f1589ca/02_chapter_4.pdf (common with Kallipos repository)
+2025-04-01 16:39:29,876 - INFO - Adding 15.0s extra delay for Kallipos 500 error
+2025-04-01 16:39:33,437 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/547899c0-a68f-4af8-83f7-efd0902a57f8/02_chapter_5.pdf (common with Kallipos repository)
+2025-04-01 16:39:33,438 - INFO - Adding 11.8s extra delay for Kallipos 500 error
+2025-04-01 16:39:49,774 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:50,955 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:54,640 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:56,434 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:39:59,413 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/111e483c-18a0-4b8a-9079-87c14c972a4b/02_chapter_3.pdf (common with Kallipos repository)
+2025-04-01 16:39:59,414 - INFO - Adding 14.2s extra delay for Kallipos 500 error
+2025-04-01 16:40:01,065 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:40:06,232 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:40:11,607 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/2c255fbe-79a2-4d48-9543-4edbacf33ff1/02_chapter_2.pdf (common with Kallipos repository)
+2025-04-01 16:40:11,607 - INFO - Adding 14.0s extra delay for Kallipos 500 error
+2025-04-01 16:40:17,360 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/973f63d1-0bd4-4108-aa4e-9d78fcdae896/02_chapter_7.pdf (common with Kallipos repository)
+2025-04-01 16:40:17,360 - INFO - Adding 12.7s extra delay for Kallipos 500 error
+2025-04-01 16:40:29,261 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/1f430ebf-a2a3-478a-b24f-0ea4aa5aad23/02_chapter_8.pdf (common with Kallipos repository)
+2025-04-01 16:40:29,261 - INFO - Adding 13.5s extra delay for Kallipos 500 error
+2025-04-01 16:40:33,909 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9a054f70-164e-48da-84d6-a46e15b7d22e/02_chapter_1.pdf (common with Kallipos repository)
+2025-04-01 16:40:33,910 - INFO - Adding 14.8s extra delay for Kallipos 500 error
+2025-04-01 16:40:46,636 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:40:51,090 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:40:53,668 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:40:55,215 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:40:59,124 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:40:59,556 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:41:03,938 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:41:04,308 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/45e82f37-fc42-46ba-bbf5-775d1be79afa/02_chapter_6.pdf (common with Kallipos repository)
+2025-04-01 16:41:04,308 - INFO - Adding 14.8s extra delay for Kallipos 500 error
+2025-04-01 16:41:09,021 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:41:14,616 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:41:20,027 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:41:24,339 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:41:24,657 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:41:28,949 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:41:29,219 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/cf2ea591-cb32-45b4-a1bd-ce431c0d3187/02_chapter_4.pdf (common with Kallipos repository)
+2025-04-01 16:41:29,219 - INFO - Adding 11.4s extra delay for Kallipos 500 error
+2025-04-01 16:41:33,237 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/62c1d745-144a-4d77-8620-44f94db0a5a8/02_chapter_2.pdf (common with Kallipos repository)
+2025-04-01 16:41:33,237 - INFO - Adding 13.9s extra delay for Kallipos 500 error
+2025-04-01 16:41:44,445 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/b39c7b6a-82cf-4612-b3a3-221e417ccbae/02_chapter_3.pdf (common with Kallipos repository)
+2025-04-01 16:41:44,445 - INFO - Adding 11.8s extra delay for Kallipos 500 error
+2025-04-01 16:41:51,871 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7d911c15-ea80-4ba3-ae62-8cd3ffdde89f/02_chapter_1.pdf (common with Kallipos repository)
+2025-04-01 16:41:51,871 - INFO - Adding 14.5s extra delay for Kallipos 500 error
+2025-04-01 16:42:01,184 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:06,893 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:11,481 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:11,664 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/856cb1f0-3e8f-4a5d-942f-a6eb441c9f2b/Chapter5_sep.pdf (common with Kallipos repository)
+2025-04-01 16:42:11,665 - INFO - Adding 10.6s extra delay for Kallipos 500 error
+2025-04-01 16:42:15,475 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:21,188 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:25,215 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:26,662 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/62c85e63-8932-4cb3-a6f2-9197723b5d84/02_chapter_9.pdf (common with Kallipos repository)
+2025-04-01 16:42:26,662 - INFO - Adding 11.5s extra delay for Kallipos 500 error
+2025-04-01 16:42:29,009 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:34,753 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:40,497 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:43,250 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:45,338 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:49,184 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:49,275 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:53,629 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:54,349 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:54,350 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΜΑΘΗΜΑΤΙΚΗ ΛΟΓΙΚΗ ΚΑΙ ΘΕΜΕΛΙΩΣΗ ΤΩΝ ΜΑΘΗΜΑΤΙΚΩΝ > Επίπεδα Σχήματα
+2025-04-01 16:42:54,384 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Ορισμένο Ολοκλήρωμα
+2025-04-01 16:42:54,384 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Παράγωγος Συνάρτησης
+2025-04-01 16:42:54,385 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Διαγράμματα και Εργαλεία Προγραμματισμού
+2025-04-01 16:42:54,385 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Ανάπτυξη μοντέλων στη Διοίκηση Επιχειρήσεων
+2025-04-01 16:42:54,385 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Εισαγωγή στα Μοντέλα Προσομοίωσης
+2025-04-01 16:42:54,385 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Πληροφοριακά Συστήματα στην Υγεία
+2025-04-01 16:42:54,385 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Ψηφιακές υπογραφές και ψηφιακά πιστοποιητικά
+2025-04-01 16:42:54,385 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΑΡΧΙΤΕΚΤΟΝΙΚΗ ΚΑΙ ΟΡΓΑΝΩΣΗ > Ανάπτυξη και Διαχείριση Δικτύου Υπολογιστών: Εισαγωγή
+2025-04-01 16:42:54,385 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Αποθήκευση της Κβαντικής Πληροφορίας
+2025-04-01 16:42:54,386 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Τελεστές και Κβαντικές Πύλες
+2025-04-01 16:42:54,386 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Αξιολόγηση Ασφάλειας με Common Criteria
+2025-04-01 16:42:54,386 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Διαχείριση Συνθηματικών και Επιθέσεις
+2025-04-01 16:42:54,386 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Ανάπτυξη εφαρμογών σε περιβάλλον προσομοίωσης
+2025-04-01 16:42:54,386 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Ανάλυση Αποτελεσμάτων και Στατιστική Συμπερασματολογία
+2025-04-01 16:42:54,386 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Δημιουργώντας τυχαίους αριθμούς - Δειγματοληψία
+2025-04-01 16:42:54,386 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Επαλήθευση, Επικύρωση και Αξιοπιστία
+2025-04-01 16:42:54,386 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Πολυδιάστατη Ανάλυση και Αποθήκες Δεδομένων
+2025-04-01 16:42:54,387 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Εξόρυξη Γνώσης από Δεδομένα
+2025-04-01 16:42:54,387 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Κανόνες Συσχέτισης
+2025-04-01 16:42:54,387 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Εισαγωγή στην Επιχειρηματική Ευφυΐα
+2025-04-01 16:42:54,387 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Οπτική και Διερευνητική Ανάλυση Δεδομένων
+2025-04-01 16:42:54,387 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Ανάλυση Συστάδων
+2025-04-01 16:42:54,387 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Μοντελοποίηση Προβλημάτων
+2025-04-01 16:42:54,387 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Οδηγός WEKA
+2025-04-01 16:42:54,387 - WARNING - Failed to download file for metadata: ΦΥΣΙΚΕΣ ΚΑΙ ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > Συστήματα Επιχειρηματικής Ευφυΐας
+2025-04-01 16:42:54,388 - WARNING - Failed to download file for metadata: ΦΥΣΙΚΕΣ ΚΑΙ ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > Συστήματα Διαχείρισης Αποθηκών (Warehouse Management Systems - WMS)
+2025-04-01 16:42:54,388 - WARNING - Failed to download file for metadata: ΦΥΣΙΚΕΣ ΚΑΙ ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > Συστήματα Διαχείρισης Πελατειακών Σχέσεων (Customer Relationship Management – CRM)
+2025-04-01 16:42:54,388 - WARNING - Failed to download file for metadata: ΦΥΣΙΚΕΣ ΚΑΙ ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > Συστήματα Computer Aided Design (CAD) και Computer Aided Industrial Design (CAID)
+2025-04-01 16:42:54,389 - WARNING - Failed to download file for metadata: ΦΥΣΙΚΕΣ ΚΑΙ ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > Σχεδιαστικά Προγράμματα Επίπλου
+2025-04-01 16:42:54,389 - WARNING - Failed to download file for metadata: ΦΥΣΙΚΕΣ ΚΑΙ ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΓΕΩΠΟΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > Συστήματα Computer Numerical Control (CNS) και Computer Aided Manufacturing (CAM)
+2025-04-01 16:42:54,390 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Εναλλακτικές Μέθοδοι και ειδικά θέματα Κατηγοριοποίησης
+2025-04-01 16:42:54,390 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Κατηγοριοποίηση
+2025-04-01 16:42:54,390 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Διαχείριση Έργων Επιχειρηματικής Ευφυΐας
+2025-04-01 16:42:54,390 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Προεπεξεργασία Δεδομένων
+2025-04-01 16:42:54,390 - WARNING - Failed to download file for metadata: ΔΙΚΑΙΟ ΚΑΙ ΚΟΙΝΩΝΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΟΙΚΟΝΟΜΙΚΕΣ ΕΠΙΣΤΗΜΕΣ > ΜΑΘΗΜΑΤΙΚΕΣ ΚΑΙ ΠΟΣΟΤΙΚΕΣ ΜΕΘΟΔΟΙ > Συστήματα Υποστήριξης Αποφάσεων
+2025-04-01 16:42:54,390 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Τεχνικές Μετρήσεων
+2025-04-01 16:42:54,390 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Απλά Συστήματα Αναμονής
+2025-04-01 16:42:54,390 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Εισαγωγή στην ασαφή λογική – ασαφή σύνολα – συναρτήσεις συμμετοχής
+2025-04-01 16:42:54,391 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Νομικά θέματα μουσικών δεδομένων
+2025-04-01 16:42:54,391 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Προκαταρκτικές έννοιες μουσικής
+2025-04-01 16:42:54,391 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Ασαφής αριθμητική
+2025-04-01 16:42:54,391 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Γραφήματα
+2025-04-01 16:42:54,391 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΑΛΓΟΡΙΘΜΟΙ ΚΑΙ ΠΟΛΥΠΛΟΚΟΤΗΤΑ > Αλγόριθμοι Ταξινόμησης Στοιχείων
+2025-04-01 16:42:54,391 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΑΛΓΟΡΙΘΜΟΙ ΚΑΙ ΠΟΛΥΠΛΟΚΟΤΗΤΑ > Τυχαιοποιημένοι Αλγόριθμοι
+2025-04-01 16:42:54,391 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΑΛΓΟΡΙΘΜΟΙ ΚΑΙ ΠΟΛΥΠΛΟΚΟΤΗΤΑ > Επιμερισμένη και Ανταγωνιστική Ανάλυση
+2025-04-01 16:42:54,391 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Θεωρητικό Υπόβαθρο
+2025-04-01 16:42:54,391 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Βασικά Στοιχεία Πολυπλοκότητας
+2025-04-01 16:42:54,392 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Βασικοί Αλγόριθμοι Γραφημάτων
+2025-04-01 16:42:54,392 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Αλγόριθμοι Συμβολοσειρών
+2025-04-01 16:42:54,392 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΕΥΦΥΗ ΣΥΣΤΗΜΑΤΑ > Οντολογίες και Περιγραφικές Λογικές
+2025-04-01 16:42:54,392 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΕΥΦΥΗ ΣΥΣΤΗΜΑΤΑ > Σημασιολογικά δεδομένα και Παγκόσμιος Ιστός
+2025-04-01 16:42:54,392 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΓΡΑΦΙΚΑ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ > Αναπαράσταση τρισδιάστατων αντικειμένων
+2025-04-01 16:42:54,392 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΓΡΑΦΙΚΑ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ > Χρώμα και Υφή
+2025-04-01 16:42:54,392 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Εισαγωγή στην Ανάκτηση Πληροφορίας
+2025-04-01 16:42:54,392 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Αποτίμηση Αποτελεσματικότητας
+2025-04-01 16:42:54,392 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Το Πιθανοκρατικό Μοντέλο
+2025-04-01 16:42:54,393 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Το Διανυσματικό Μοντέλο
+2025-04-01 16:42:54,393 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΓΡΑΦΙΚΑ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ > Γεωμετρικοί μετασχηματισμοί και προβολές
+2025-04-01 16:42:54,393 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΕΥΦΥΗ ΣΥΣΤΗΜΑΤΑ > Αυτόματη συλλογιστική σε οντολογίες
+2025-04-01 16:42:54,393 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΕΥΦΥΗ ΣΥΣΤΗΜΑΤΑ > Πρόσβαση σε δεδομένα με χρήση οντολογιών
+2025-04-01 16:42:54,393 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΓΡΑΦΙΚΑ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ > Σχεδίαση
+2025-04-01 16:42:54,393 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΓΡΑΦΙΚΑ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ > Διαχείριση σκηνής
+2025-04-01 16:42:54,393 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΓΡΑΦΙΚΑ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ > Συνθετική κίνηση
+2025-04-01 16:42:54,393 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΓΡΑΦΙΚΑ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ > ΓΡΑΦΙΚΑ ΚΑΙ ΕΙΚΟΝΙΚΗ ΠΡΑΓΜΑΤΙΚΟΤΗΤΑ: Εισαγωγή
+2025-04-01 16:42:54,393 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΕΥΦΥΗ ΣΥΣΤΗΜΑΤΑ > Αναπαράσταση γνώσης και συλλογιστική
+2025-04-01 16:42:54,393 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΑΛΓΟΡΙΘΜΟΙ ΚΑΙ ΠΟΛΥΠΛΟΚΟΤΗΤΑ > Αλγόριθμοι Αναζήτησης Στοιχείου
+2025-04-01 16:42:54,394 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Βασικοί Αλγόριθμοι
+2025-04-01 16:42:54,394 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Αλγόριθμοι Χαμηλού Επιπέδου
+2025-04-01 16:42:54,395 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΑΛΓΟΡΙΘΜΟΙ ΚΑΙ ΠΟΛΥΠΛΟΚΟΤΗΤΑ > Γεννήτριες Συναρτήσεις
+2025-04-01 16:42:54,395 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Το Λογικό Μοντέλο
+2025-04-01 16:42:54,395 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΓΡΑΦΙΚΑ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ > Μοντέλα φωτισμού
+2025-04-01 16:42:54,396 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Ο Κατάλογος Υπογραφών
+2025-04-01 16:42:54,396 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Ο Αντεστραμμένος Κατάλογος
+2025-04-01 16:42:54,396 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Λανθάνουσα Σημασιολογική Ανάλυση
+2025-04-01 16:42:54,396 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Ανάκτηση στον Παγκόσμιο Ιστό
+2025-04-01 16:42:54,396 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Μετατροπή Ερωτήματος και Ανατροφοδότηση Σχετικότητας
+2025-04-01 16:42:54,396 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Αλγοριθμικές Τεχνικές
+2025-04-01 16:42:54,397 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΣΧΕΔΙΑΣΗ ΚΑΙ ΑΝΑΛΥΣΗ ΑΛΓΟΡΙΘΜΩΝ: Εισαγωγή
+2025-04-01 16:42:54,397 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Martingales
+2025-04-01 16:42:54,397 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Μαρκοβιανές Αλυσίδες
+2025-04-01 16:42:54,397 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Θεωρία Δυναμικού
+2025-04-01 16:42:54,397 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Εισαγωγή στις Στοχαστικές Διαδικασίες
+2025-04-01 16:42:54,397 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Βασικές αρχές συστημάτων τηλεπικοινωνιών και τεχνικές μετάδοσης σήματος
+2025-04-01 16:42:54,397 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Υπολογιστικά συστήματα: Δομή, αρχιτεκτονική και λειτουργικά συστήματα
+2025-04-01 16:42:54,397 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Βασικές αρχές δικτύων δεδομένων
+2025-04-01 16:42:54,398 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Προβλήματα δύο και τριών Διαστάσεων
+2025-04-01 16:42:54,398 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Πληροφοριακά συστήματα στις σύγχρονες επιχειρήσεις
+2025-04-01 16:42:54,398 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Σύγχρονες τεχνολογίες διαδικτύου και υπολογιστική νέφους
+2025-04-01 16:42:54,398 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Βασικές αρχές ψηφιακών κυκλωμάτων και συστημάτων
+2025-04-01 16:42:54,398 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > ΓΡΑΦΙΚΑ ΚΑΙ ΟΠΤΙΚΟΠΟΙΗΣΗ > Εικονική Πραγματικότητα
+2025-04-01 16:42:54,398 - WARNING - Failed to download file for metadata: ΑΝΘΡΩΠΙΣΤΙΚΕΣ ΕΠΙΣΤΗΜΕΣ ΚΑΙ ΤΕΧΝΕΣ > ΛΟΓΙΚΗ ΚΑΙ ΦΙΛΟΣΟΦΙΑ ΤΗΣ ΛΟΓΙΚΗΣ > ΘΕΩΡΙΑ ΤΥΠΩΝ
+2025-04-01 16:42:54,398 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Σύγχρονες εφαρμογές των συστημάτων τηλεπικοινωνιών
+2025-04-01 16:42:54,398 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Έλεγχος και Ελεγκτές.
+2025-04-01 16:42:54,399 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Κοινωνικές επιπτώσεις των τεχνολογιών πληροφορικής και επικοινωνιών
+2025-04-01 16:42:54,399 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Αλγοριθμική Σύνθεση.
+2025-04-01 16:42:54,399 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Περιβάλλοντα Αλληλεπίδρασης.
+2025-04-01 16:42:54,399 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > Codetta. Συμπεράσματα.
+2025-04-01 16:42:54,399 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Ασφάλεια και προστασία της ιδιωτικότητας: Απειλές και τρόποι αντιμετώπισης
+2025-04-01 16:42:54,399 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ / ΠΛΗΡΟΦΟΡΙΚΗ > Επιχειρείν στο διαδίκτυο και σε ασύρματες συσκευές
+2025-04-01 16:42:54,399 - INFO - Retrying download for 100 failed files
+2025-04-01 16:42:58,328 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:42:59,040 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/a2bfb143-11c5-481d-8cf4-68cd87e6b565/11 ΟΡΙΣΜΕΝΟ ΟΛΟΚΛΗΡΩΜΑ.pdf (common with Kallipos repository)
+2025-04-01 16:42:59,040 - INFO - Adding 13.1s extra delay for Kallipos 500 error
+2025-04-01 16:43:03,691 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:43:09,066 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:43:15,116 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:43:22,021 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/5785ea1c-3a7d-4369-8fd9-586f9f6de5b4/02_chapter_05.pdf (common with Kallipos repository)
+2025-04-01 16:43:22,022 - INFO - Adding 14.4s extra delay for Kallipos 500 error
+2025-04-01 16:43:34,078 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:43:50,627 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:02,699 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:03,254 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:10,935 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:14,000 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:18,619 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:23,447 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:25,537 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:29,330 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:30,882 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:36,543 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:37,141 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:40,563 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:42,118 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:45,770 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:47,104 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:52,541 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:53,118 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:57,459 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:44:58,792 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:45:04,359 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:45:04,374 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:45:11,127 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:45:12,384 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:45:16,999 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:45:17,344 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:45:20,936 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:45:22,333 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:45:26,754 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:45:36,213 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/4d72768c-475a-4205-a27a-447c2c221fea/chapter 3.pdf (common with Kallipos repository)
+2025-04-01 16:45:36,214 - INFO - Adding 12.3s extra delay for Kallipos 500 error
+2025-04-01 16:45:44,520 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/cedc0d37-bd80-4639-82b8-0251eec7c586/chapter 8.pdf (common with Kallipos repository)
+2025-04-01 16:45:44,521 - INFO - Adding 13.2s extra delay for Kallipos 500 error
+2025-04-01 16:45:53,859 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:04,053 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:04,060 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:09,756 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:10,054 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:13,748 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:14,838 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:19,413 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:19,516 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:23,762 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:24,115 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:29,249 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:29,389 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:34,493 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:34,508 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7c1f18b4-7e55-4a25-957d-6ffc6f1589ca/02_chapter_4.pdf (common with Kallipos repository)
+2025-04-01 16:46:34,508 - INFO - Adding 14.4s extra delay for Kallipos 500 error
+2025-04-01 16:46:38,764 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/547899c0-a68f-4af8-83f7-efd0902a57f8/02_chapter_5.pdf (common with Kallipos repository)
+2025-04-01 16:46:38,765 - INFO - Adding 12.9s extra delay for Kallipos 500 error
+2025-04-01 16:46:52,847 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:56,410 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:46:58,056 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:47:01,367 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:47:05,514 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:47:05,719 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/111e483c-18a0-4b8a-9079-87c14c972a4b/02_chapter_3.pdf (common with Kallipos repository)
+2025-04-01 16:47:05,719 - INFO - Adding 13.0s extra delay for Kallipos 500 error
+2025-04-01 16:47:09,478 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:47:16,446 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/2c255fbe-79a2-4d48-9543-4edbacf33ff1/02_chapter_2.pdf (common with Kallipos repository)
+2025-04-01 16:47:16,446 - INFO - Adding 12.1s extra delay for Kallipos 500 error
+2025-04-01 16:47:25,078 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/973f63d1-0bd4-4108-aa4e-9d78fcdae896/02_chapter_7.pdf (common with Kallipos repository)
+2025-04-01 16:47:25,078 - INFO - Adding 10.1s extra delay for Kallipos 500 error
+2025-04-01 16:47:33,823 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/1f430ebf-a2a3-478a-b24f-0ea4aa5aad23/02_chapter_8.pdf (common with Kallipos repository)
+2025-04-01 16:47:33,823 - INFO - Adding 14.1s extra delay for Kallipos 500 error
+2025-04-01 16:47:41,783 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9a054f70-164e-48da-84d6-a46e15b7d22e/02_chapter_1.pdf (common with Kallipos repository)
+2025-04-01 16:47:41,783 - INFO - Adding 10.6s extra delay for Kallipos 500 error
+2025-04-01 16:47:54,510 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:47:58,946 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:00,901 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:06,242 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:08,547 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:12,581 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:13,846 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/45e82f37-fc42-46ba-bbf5-775d1be79afa/02_chapter_6.pdf (common with Kallipos repository)
+2025-04-01 16:48:13,847 - INFO - Adding 11.6s extra delay for Kallipos 500 error
+2025-04-01 16:48:19,452 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:24,467 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:29,608 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:32,235 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:35,056 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:38,329 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:40,701 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:48:43,068 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/cf2ea591-cb32-45b4-a1bd-ce431c0d3187/02_chapter_4.pdf (common with Kallipos repository)
+2025-04-01 16:48:43,068 - INFO - Adding 11.4s extra delay for Kallipos 500 error
+2025-04-01 16:48:46,024 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/62c1d745-144a-4d77-8620-44f94db0a5a8/02_chapter_2.pdf (common with Kallipos repository)
+2025-04-01 16:48:46,025 - INFO - Adding 13.4s extra delay for Kallipos 500 error
+2025-04-01 16:49:01,105 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/b39c7b6a-82cf-4612-b3a3-221e417ccbae/02_chapter_3.pdf (common with Kallipos repository)
+2025-04-01 16:49:01,106 - INFO - Adding 12.7s extra delay for Kallipos 500 error
+2025-04-01 16:49:04,834 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/7d911c15-ea80-4ba3-ae62-8cd3ffdde89f/02_chapter_1.pdf (common with Kallipos repository)
+2025-04-01 16:49:04,834 - INFO - Adding 10.8s extra delay for Kallipos 500 error
+2025-04-01 16:49:21,329 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:49:21,348 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:49:27,049 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/856cb1f0-3e8f-4a5d-942f-a6eb441c9f2b/Chapter5_sep.pdf (common with Kallipos repository)
+2025-04-01 16:49:27,050 - INFO - Adding 13.4s extra delay for Kallipos 500 error
+2025-04-01 16:49:27,572 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:49:34,899 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:49:40,392 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:49:45,493 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/62c85e63-8932-4cb3-a6f2-9197723b5d84/02_chapter_9.pdf (common with Kallipos repository)
+2025-04-01 16:49:45,493 - INFO - Adding 15.0s extra delay for Kallipos 500 error
+2025-04-01 16:49:45,937 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:49:52,578 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:50:00,509 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:50:06,806 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:50:06,842 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:50:12,136 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:50:12,694 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:50:17,656 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:50:18,202 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:50:24,282 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-04-01 16:50:24,295 - WARNING - Failed to download 200 files in this session.
+2025-04-01 16:50:24,295 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/295
+2025-04-01 16:50:24,295 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/562
+2025-04-01 16:50:24,296 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/408
+2025-04-01 16:50:24,296 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/42
+2025-04-01 16:50:24,296 - INFO - PDF downloads completed. Downloaded 0 new files out of 100 requested.
+2025-04-01 16:50:24,299 - INFO - Progress report written to progress_report.json
+2025-04-01 16:50:24,302 - INFO - Failed downloads report written to ../../downloads/kallipos/failed_downloads.json with 202 entries
+2025-04-01 16:50:24,302 - INFO - === DOWNLOAD SESSION SUMMARY ===
+2025-04-01 16:50:24,302 - INFO - Requested batch size: 100
+2025-04-01 16:50:24,302 - INFO - Successfully downloaded: 0
+2025-04-01 16:50:24,302 - INFO - Failed downloads in this session: 200
+2025-04-01 16:50:24,302 - INFO - Total failed downloads recorded: 202
+2025-04-01 16:50:24,312 - INFO - Remaining files to download: 4945
+2025-04-01 16:50:24,312 - INFO - === Download Statistics ===
+2025-04-01 16:50:24,312 - INFO - Total files in JSON: 5169
+2025-04-01 16:50:24,312 - INFO - Files processed so far: 224 (4.3%)
+2025-04-01 16:50:24,312 - INFO - Files remaining: 4945 (95.7%)
+2025-04-01 16:50:24,312 - INFO - ===============================
+2025-04-01 16:50:24,319 - INFO - Total execution time: 2409.18 seconds (40.15 minutes)

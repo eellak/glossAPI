@@ -1,0 +1,53 @@
+2025-03-30 04:09:02,677 - INFO - Logging initialized. Log file: ./logs/download_20250330_040902.log
+2025-03-30 04:09:02,677 - INFO - PDF Downloader starting with arguments: {'json': '../json_sitemaps/kallipos_pdf.json', 'sleep': 3.0, 'type': 'pdf', 'req': 'get', 'output': './downloads', 'little_potato': './downloads', 'batch': 2, 'concurrent': 1, 'max_retries': 1, 'timeout': 30, 'log_dir': './logs', 'start_at': 0, 'skip_every': 0, 'randomize': False, 'kallipos_mode': True}
+2025-03-30 04:09:02,685 - INFO - Loaded 5169 items from ../json_sitemaps/kallipos_pdf.json
+2025-03-30 04:09:02,686 - INFO - Loaded existing failed downloads report with 10 entries
+2025-03-30 04:09:02,686 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/295
+2025-03-30 04:09:02,686 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/562
+2025-03-30 04:09:02,686 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/774
+2025-03-30 04:09:02,686 - INFO - Adding alternative URL to try: https://repository.kallipos.gr/handle/11419/513
+2025-03-30 04:09:02,686 - INFO - Adding 4 alternative URLs to the download queue
+2025-03-30 04:09:02,687 - INFO - Final processing list contains 5169 items
+2025-03-30 04:09:02,687 - INFO - 🚀 KALLIPOS MODE ENABLED: Using optimized settings for Kallipos repository
+2025-03-30 04:09:02,687 - INFO - Using 1 concurrent downloads, 3.0s delay, 3 max retries
+2025-03-30 04:09:02,687 - INFO - Loaded progress report with 45 entries
+2025-03-30 04:09:02,688 - INFO - Total files: 5169, Already processed: 45, Remaining: 5124
+2025-03-30 04:09:08,642 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf (common with Kallipos repository)
+2025-03-30 04:09:08,643 - INFO - Adding 12.5s extra delay for Kallipos 500 error
+2025-03-30 04:09:26,431 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/e51ef661-b962-4b35-b170-f4ecd02a3188/562-DASSIOS-Partial-Differential-Equations.pdf (common with Kallipos repository)
+2025-03-30 04:09:26,432 - INFO - Adding 11.9s extra delay for Kallipos 500 error
+2025-03-30 04:09:38,383 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ/ΠΛΗΡΟΦΟΡΙΚΗ > ΔΙΑΧΕΙΡΙΣΗ ΠΛΗΡΟΦΟΡΙΑΣ > Τεχνικές Αναζήτησης και Ανάκτηση Πληροφοριών
+2025-03-30 04:09:38,383 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > ΔΙΑΦΟΡΙΚΕΣ ΕΞΙΣΩΣΕΙΣ ΜΕ ΜΕΡΙΚΕΣ ΠΑΡΑΓΩΓΟΥΣ > Μερικές Διαφορικές Εξισώσεις
+2025-03-30 04:09:38,383 - INFO - Retrying download for 2 failed files
+2025-03-30 04:09:43,443 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf (common with Kallipos repository)
+2025-03-30 04:09:43,443 - INFO - Adding 12.8s extra delay for Kallipos 500 error
+2025-03-30 04:10:00,883 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/e51ef661-b962-4b35-b170-f4ecd02a3188/562-DASSIOS-Partial-Differential-Equations.pdf (common with Kallipos repository)
+2025-03-30 04:10:00,883 - INFO - Adding 12.2s extra delay for Kallipos 500 error
+2025-03-30 04:10:13,090 - INFO - Downloading 2 additional files to complete batch
+2025-03-30 04:10:18,287 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-03-30 04:10:23,181 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-03-30 04:10:23,182 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΕΠΙΣΤΗΜΗ ΥΠΟΛΟΓΙΣΤΩΝ/ΠΛΗΡΟΦΟΡΙΚΗ > ΚΟΙΝΩΝΙΚΑ ΖΗΤΗΜΑΤΑ ΚΑΙ ΕΠΑΓΓΕΛΜΑΤΙΚΕΣ ΠΡΑΚΤΙΚΕΣ > Εισαγωγή στο Κυβερνοέγκλημα
+2025-03-30 04:10:23,182 - WARNING - Failed to download file for metadata: ΜΑΘΗΜΑΤΙΚΑ ΚΑΙ ΠΛΗΡΟΦΟΡΙΚΗ > ΜΑΘΗΜΑΤΙΚΑ > Εισαγωγή στην Αντιμεταθετική Άλγεβρα
+2025-03-30 04:10:23,182 - INFO - Retrying download for 2 failed files
+2025-03-30 04:10:27,734 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-03-30 04:10:32,949 - WARNING - Downloaded content is not a PDF file, status was 200 but not identified as PDF
+2025-03-30 04:10:32,951 - WARNING - Failed to download 4 files in this session.
+2025-03-30 04:10:32,960 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/295
+2025-03-30 04:10:32,961 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/562
+2025-03-30 04:10:32,961 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/774
+2025-03-30 04:10:32,961 - INFO - Alternative URL for failed download: https://repository.kallipos.gr/handle/11419/513
+2025-03-30 04:10:32,961 - INFO - PDF downloads completed. Downloaded 0 new files out of 2 requested.
+2025-03-30 04:10:32,961 - INFO - Progress report written to progress_report.json
+2025-03-30 04:10:32,962 - INFO - Failed downloads report written to ./downloads/failed_downloads.json with 10 entries
+2025-03-30 04:10:32,962 - INFO - === DOWNLOAD SESSION SUMMARY ===
+2025-03-30 04:10:32,962 - INFO - Requested batch size: 2
+2025-03-30 04:10:32,962 - INFO - Successfully downloaded: 0
+2025-03-30 04:10:32,962 - INFO - Failed downloads in this session: 4
+2025-03-30 04:10:32,962 - INFO - Total failed downloads recorded: 10
+2025-03-30 04:10:32,965 - INFO - Remaining files to download: 5124
+2025-03-30 04:10:32,965 - INFO - === Download Statistics ===
+2025-03-30 04:10:32,965 - INFO - Total files in JSON: 5169
+2025-03-30 04:10:32,966 - INFO - Files processed so far: 45 (0.9%)
+2025-03-30 04:10:32,966 - INFO - Files remaining: 5124 (99.1%)
+2025-03-30 04:10:32,966 - INFO - ===============================
+2025-03-30 04:10:32,968 - INFO - Total execution time: 90.29 seconds (1.50 minutes)

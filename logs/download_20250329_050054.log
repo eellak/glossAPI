@@ -1,0 +1,30 @@
+2025-03-29 05:00:54,822 - INFO - Logging initialized. Log file: /home/alexa/development/glossAPI/logs/download_20250329_050054.log
+2025-03-29 05:00:54,822 - INFO - PDF Downloader starting with arguments: {'json': '/home/alexa/development/glossAPI/scraping/json_sitemaps/kallipos_pdf.json', 'type': 'pdf', 'req': 'get', 'output': '/home/alexa/development/glossAPI/downloads/kallipos', 'little_potato': '/home/alexa/development/glossAPI/downloads/kallipos', 'batch': 5, 'sleep': 15.0, 'timeout': 180, 'max_retries': 10, 'concurrent': 1, 'log_dir': '/home/alexa/development/glossAPI/logs', 'kallipos_mode': True, 'start_at': 224, 'skip_every': 0, 'randomize': True}
+2025-03-29 05:00:54,830 - INFO - Loaded 5169 items from /home/alexa/development/glossAPI/scraping/json_sitemaps/kallipos_pdf.json
+2025-03-29 05:00:54,831 - INFO - Starting at position 224, skipped 224 items
+2025-03-29 05:00:54,831 - INFO - Randomizing download order to avoid server detection patterns
+2025-03-29 05:00:54,832 - INFO - Final processing list contains 4945 items
+2025-03-29 05:00:54,833 - INFO - 🚀 KALLIPOS MODE ENABLED: Using optimized settings for Kallipos repository
+2025-03-29 05:00:54,833 - INFO - Using 1 concurrent downloads, 15.0s delay, 10 max retries
+2025-03-29 05:00:54,833 - INFO - Loaded progress report with 224 entries
+2025-03-29 05:00:54,833 - INFO - Total files: 4945, Already processed: 224, Remaining: 4721
+2025-03-29 05:00:54,834 - INFO - Scheduled 5/5 downloads
+2025-03-29 05:00:54,834 - DEBUG - Waiting 23.2s before next request
+2025-03-29 05:01:19,037 - WARNING - Response claimed to be 200 OK but content doesn't appear to be a PDF (type: text/html;charset=utf-8, size: 56125)
+2025-03-29 05:01:19,038 - ERROR - Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x7f10b2226a10>
+2025-03-29 05:01:19,038 - DEBUG - Waiting 22.6s before next request
+2025-03-29 05:01:42,805 - WARNING - Response claimed to be 200 OK but content doesn't appear to be a PDF (type: text/html;charset=utf-8, size: 33790)
+2025-03-29 05:01:42,806 - ERROR - Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x7f10b22265c0>
+2025-03-29 05:01:42,806 - DEBUG - Waiting 22.0s before next request
+2025-03-29 05:02:08,883 - WARNING - Response claimed to be 200 OK but content doesn't appear to be a PDF (type: text/html;charset=utf-8, size: 52253)
+2025-03-29 05:02:08,883 - ERROR - Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x7f10b22245b0>
+2025-03-29 05:02:08,884 - DEBUG - Waiting 23.0s before next request
+2025-03-29 05:02:33,190 - WARNING - Response claimed to be 200 OK but content doesn't appear to be a PDF (type: text/html;charset=utf-8, size: 30537)
+2025-03-29 05:02:33,190 - ERROR - Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x7f10b2225120>
+2025-03-29 05:02:33,191 - DEBUG - Waiting 22.0s before next request
+2025-03-29 05:02:56,761 - ERROR - Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x7f10b22265c0>

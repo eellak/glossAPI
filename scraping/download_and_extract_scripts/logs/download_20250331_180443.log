@@ -1,0 +1,75 @@
+2025-03-31 18:04:43,047 - INFO - Logging initialized. Log file: ./logs/download_20250331_180443.log
+2025-03-31 18:04:43,047 - INFO - PDF Downloader starting with arguments: {'json': '../../scraping/json_sitemaps/kallipos_pdf.json', 'sleep': 3.0, 'type': 'pdf', 'req': 'get', 'output': '../../downloads/kallipos', 'little_potato': '../../downloads/kallipos', 'batch': 100, 'concurrent': 3, 'max_retries': 3, 'timeout': 120, 'log_dir': './logs', 'start_at': 0, 'skip_every': 0, 'randomize': False, 'kallipos_mode': True}
+2025-03-31 18:04:43,063 - INFO - Loaded 5169 items from ../../scraping/json_sitemaps/kallipos_pdf.json
+2025-03-31 18:04:43,064 - INFO - Loaded existing failed downloads report with 2 entries
+2025-03-31 18:04:43,065 - INFO - Filtered out 0 problematic URLs
+2025-03-31 18:04:43,065 - INFO - Final processing list contains 5169 items
+2025-03-31 18:04:43,065 - INFO - 🚀 KALLIPOS MODE ENABLED: Using optimized settings for Kallipos repository
+2025-03-31 18:04:43,065 - INFO - Using 2 concurrent downloads, 3.0s delay, 3 max retries
+2025-03-31 18:04:43,067 - INFO - Loaded progress report with 224 entries
+2025-03-31 18:04:43,079 - INFO - Total files: 5169, Already processed: 224, Remaining: 4945
+2025-03-31 18:04:43,079 - INFO - Scheduled 10/100 downloads
+2025-03-31 18:04:43,079 - INFO - Scheduled 20/100 downloads
+2025-03-31 18:04:43,079 - INFO - Scheduled 30/100 downloads
+2025-03-31 18:04:43,079 - INFO - Scheduled 40/100 downloads
+2025-03-31 18:04:43,079 - INFO - Scheduled 50/100 downloads
+2025-03-31 18:04:43,079 - INFO - Scheduled 60/100 downloads
+2025-03-31 18:04:43,079 - INFO - Scheduled 70/100 downloads
+2025-03-31 18:04:43,079 - INFO - Scheduled 80/100 downloads
+2025-03-31 18:04:43,079 - INFO - Scheduled 90/100 downloads
+2025-03-31 18:04:43,080 - INFO - Scheduled 100/100 downloads
+2025-03-31 18:04:43,080 - INFO - 🔄 Kallipos rate limit prevention: Taking a 117 second break after 20 attempts
+2025-03-31 18:04:43,080 - INFO - 🔄 Kallipos rate limit prevention: Taking a 63 second break after 40 attempts
+2025-03-31 18:04:43,080 - INFO - 🔄 Kallipos rate limit prevention: Taking a 66 second break after 60 attempts
+2025-03-31 18:04:43,080 - INFO - 🔄 Kallipos rate limit prevention: Taking a 118 second break after 80 attempts
+2025-03-31 18:04:43,080 - INFO - 🔄 Kallipos rate limit prevention: Taking a 100 second break after 100 attempts
+2025-03-31 18:04:46,675 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf (common with Kallipos repository)
+2025-03-31 18:04:46,675 - INFO - Adding 11.1s extra delay for Kallipos 500 error
+2025-03-31 18:04:47,916 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/e51ef661-b962-4b35-b170-f4ecd02a3188/562-DASSIOS-Partial-Differential-Equations.pdf (common with Kallipos repository)
+2025-03-31 18:04:47,916 - INFO - Adding 12.6s extra delay for Kallipos 500 error
+2025-03-31 18:05:02,181 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/b5d477dd-7b8b-485e-8140-41fb1a7e5595/20230714_ΠΑ_Βαγιάνος_Γραφιστική Επιμέλεια.pdf (common with Kallipos repository)
+2025-03-31 18:05:02,182 - INFO - Adding 13.7s extra delay for Kallipos 500 error
+2025-03-31 18:05:04,596 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/99dc8ba8-f04b-4e59-bfc5-68eb59ab7402/768_DAMASKINIDIS_Social-reflections-translation.pdf (common with Kallipos repository)
+2025-03-31 18:05:04,596 - INFO - Adding 14.3s extra delay for Kallipos 500 error
+2025-03-31 18:05:21,358 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/17b93495-5b2c-452a-b836-1ed2a796364c/904_KALIAMPAKOS-904-Regeneration-of-mountainous-and-isolated-areas.pdf (common with Kallipos repository)
+2025-03-31 18:05:21,358 - INFO - Adding 13.6s extra delay for Kallipos 500 error
+2025-03-31 18:05:23,636 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/9dac3635-1ecd-4e10-bc41-a1cbf74506c2/408-PANAGIOTAKOPOULOS-Computational-linguistics.pdf (common with Kallipos repository)
+2025-03-31 18:05:23,637 - INFO - Adding 12.9s extra delay for Kallipos 500 error
+2025-03-31 18:05:26,037 - INFO - Progress report written to progress_report.json
+2025-03-31 18:05:26,048 - INFO - Failed downloads report written to ../../downloads/kallipos/failed_downloads.json with 2 entries
+2025-03-31 18:05:26,048 - INFO - === DOWNLOAD SESSION SUMMARY ===
+2025-03-31 18:05:26,048 - INFO - Requested batch size: 100
+2025-03-31 18:05:26,048 - INFO - Successfully downloaded: 0
+2025-03-31 18:05:26,048 - INFO - Failed downloads in this session: 0
+2025-03-31 18:05:26,048 - INFO - Total failed downloads recorded: 2
+2025-03-31 18:05:26,061 - INFO - Remaining files to download: 4945
+2025-03-31 18:05:26,062 - ERROR - unhandled exception during asyncio.run() shutdown
+task: <Task finished name='Task-1' coro=<main() done, defined at /home/alexa/development/glossAPI/scraping/download_and_extract_scripts/downloader.py:557> exception=UnboundLocalError("local variable 'downloaded_count' referenced before assignment")>
+Traceback (most recent call last):
+  File "/usr/lib/python3.10/asyncio/runners.py", line 44, in run
+    return loop.run_until_complete(main)
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 636, in run_until_complete
+    self.run_forever()
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 603, in run_forever
+    self._run_once()
+  File "/usr/lib/python3.10/asyncio/base_events.py", line 1871, in _run_once
+    event_list = self._selector.select(timeout)
+  File "/usr/lib/python3.10/selectors.py", line 469, in select
+    fd_event_list = self._selector.poll(timeout, max_ev)
+KeyboardInterrupt
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/alexa/development/glossAPI/scraping/download_and_extract_scripts/downloader.py", line 683, in main
+    finished = await download_pdfs(metadata_dict, semaphore, visited, indexes, args, progress_report,
+  File "/home/alexa/development/glossAPI/scraping/download_and_extract_scripts/downloader.py", line 502, in download_pdfs
+    results = await asyncio.gather(*tasks)
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/alexa/development/glossAPI/scraping/download_and_extract_scripts/downloader.py", line 760, in main
+    if downloaded_count > 0:
+UnboundLocalError: local variable 'downloaded_count' referenced before assignment

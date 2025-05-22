@@ -1,6 +1,6 @@
-# GlossAPI Downloader Observations & Modifications
+# GlossAPI Downloader - Kallipos Implementation
 
-## Kallipos Downloader Issues
+## Kallipos Downloader Challenges & Solutions
 
 ### Initial Problem
 When attempting to download PDFs from Kallipos using the default `downloader.py` script in GlossAPI, we encountered consistent HTTP 500 errors (Internal Server Error) from the Kallipos server. The logs showed:
@@ -12,39 +12,43 @@ When attempting to download PDFs from Kallipos using the default `downloader.py`
 2025-05-20 20:39:50,102 - ERROR - Failed to download https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf. Status code: 500
 ```
 
-The command used:
-```bash
-python downloader.py --json ../../scraping/json_sitemaps/kallipos_pdf.json --type pdf --req get --output ../../downloads/kallipos --batch 10
-```
-
 ### Modifications Made
 Created a specialized version of the downloader script called `downloader_kallipos.py` with the following improvements:
 
-1. **Reduced Concurrency**
-   - Changed the semaphore from 3 to 1 to limit to only one download at a time
-   - This reduces server load and minimizes chances of triggering rate limits
+1. **Ultra-Conservative Approach**
+   - Reduced semaphore from 3 to 1 (only one download at a time)
+   - This minimizes server load and reduces chances of triggering rate limits
 
 2. **Enhanced Browser Simulation**
-   - Added more HTTP headers to mimic a real browser more authentically
-   - Updated User-Agent strings to use more recent browser versions
+   - Added comprehensive HTTP headers to mimic a real browser authentically
+   - Updated User-Agent strings to use recent browser versions (90-120)
    - Implemented proper handling of cookies and sessions
 
-3. **Improved Error Handling**
-   - Added fallback to POST requests when GET fails
-   - Implemented proper following of redirects
-   - Improved timeout and error recovery strategies
+3. **Multiple HTTP Method Support**
+   - Added fallback to POST requests when GET fails with 500 errors
+   - Implemented method iteration to try different approaches
 
-4. **Rate Limiting & Politeness**
-   - Increased sleep time between requests
-   - Added randomized delays to avoid detection
+4. **Extended Timeouts & Delays**
+   - Increased timeout from 60 to 120 seconds for slower responses
+   - Added longer sleep times between requests (up to +5 seconds)
    - Implemented more gradual approach to downloading
 
-5. **Technical Improvements**
-   - Disabled SSL verification that was causing issues
-   - Fixed path handling for progress_report.json
-   - Added directory creation if output directory doesn't exist
+5. **Enhanced Redirect Handling**
+   - Increased max redirects from 5 to 10
+   - Better handling of complex redirect chains
 
-### New Command to Run
+6. **Technical Improvements**
+   - Disabled SSL verification for compatibility issues
+   - Fixed path handling for progress_report.json
+   - Added comprehensive directory creation
+
+### Shell Scripts & Monitoring
+Created auxiliary scripts for automation:
+
+1. **download_all_kallipos.sh**: Shell script for automated downloading
+2. **monitor_kallipos.py**: Real-time monitoring of download progress
+
+### Command to Run
 The modified script should be run with:
 
 ```bash
@@ -54,56 +58,49 @@ python downloader_kallipos.py --json ../../scraping/json_sitemaps/kallipos_pdf.j
 Key changes in command parameters:
 - Using the specialized `downloader_kallipos.py` script
 - Reduced batch size from 10 to 3
-- Increased sleep time from 1 to 10 seconds
+- Increased sleep time to 10 seconds for maximum politeness
 
-### Results
-Despite all the improvements made to the downloader script, there was no change in the results. The Kallipos server continued to respond with HTTP 500 errors. This suggests that the issue might be:
+### Results & Analysis
+Despite all the comprehensive improvements made to the downloader script, the Kallipos server continued to respond with HTTP 500 errors. This suggests that the issue is likely:
 
-1. On the server side - Kallipos might have implemented stricter security measures or their API might have changed
-2. Authentication requirements - The repository might now require authentication to access PDFs
-3. Structural changes - The PDF URLs or access methods might have been modified
+1. **Server-side restrictions** - Kallipos may have implemented stricter security measures
+2. **Authentication requirements** - The repository might now require authentication to access PDFs
+3. **API changes** - The PDF URLs or access methods might have been modified
+4. **Rate limiting** - Even single requests might be triggering sophisticated bot detection
 
-Common errors encountered:
+Common persistent errors:
 ```
-2025-05-20 20:39:50,102 - ERROR - Failed to download https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf. Status code: 500
-2025-05-20 20:39:50,117 - ERROR - Failed to download https://repository.kallipos.gr/retrieve/e51ef661-b962-4b35-b170-f4ecd02a3188/562-DASSIOS-Partial-Differential-Equations.pdf. Status code: 500
+ERROR - Failed to download https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf. Status code: 500
+ERROR - Failed to download https://repository.kallipos.gr/retrieve/e51ef661-b962-4b35-b170-f4ecd02a3188/562-DASSIOS-Partial-Differential-Equations.pdf. Status code: 500
 ```
 
-In contrast, our approach was successful with the Kodiko repository, where we managed to download 403 PDF files successfully using our modified downloader script.
+### Technical Specifications
 
-Further investigation with more advanced techniques (like browser automation) might be needed to successfully download from Kallipos.
+- **Concurrent downloads**: 1 simultaneous connection (ultra-conservative)
+- **Request delay**: 1-6 seconds between requests (longest range)
+- **Timeout**: 120 seconds per request (double the standard)
+- **Retry strategy**: Single retry with method fallback
+- **SSL verification**: Disabled for compatibility
+- **Multiple HTTP methods**: GET with POST fallback
+- **Max redirects**: 10 (highest among all downloaders)
+- **User agent rotation**: Modern browser versions (90-120)
 
-## Other Sites
-[Space for documenting issues and solutions for other sites]
+### Comparison with Successful Implementations
 
-## General Observations about GlossAPI Downloader
+In contrast, our site-specific approach was highly successful with other repositories:
+- **Kodiko**: 86.95% success rate (23,086/26,552 files)
+- **Greek Language**: Complete success with specialized approach
+- **Cyprus Exams**: Effective with PDF validation
+- **Panelladikes**: Good success rate with URL fixing
 
-The GlossAPI downloader script provides a flexible way to download documents from various sources, but requires site-specific customization in many cases. Common challenges include:
+### Recommendations for Future Work
 
-1. **Rate Limiting**: Many academic repositories implement rate limiting to prevent excessive downloading
-2. **Bot Detection**: Advanced websites can detect and block automated downloading
-3. **Authentication**: Some repositories require login or special sessions
-4. **Server-Side Issues**: Sometimes servers respond with 5xx errors due to internal issues
+To successfully download from Kallipos, more advanced techniques might be needed:
 
-For contributing effectively to GlossAPI, it's important to customize downloaders for each specific repository and implement polite scraping practices.
+1. **Browser automation** (Selenium/Playwright) to handle JavaScript
+2. **Session management** with proper authentication flow
+3. **Proxy rotation** to avoid IP-based blocking
+4. **Manual analysis** of the Kallipos access mechanism
+5. **Contact with Kallipos** administrators for API access
 
-## Future Improvements
-
-Potential improvements to make the downloader more robust:
-
-1. Site-specific configuration files rather than hard-coded parameters
-2. Proxy rotation to avoid IP-based blocking
-3. Session persistence between runs
-4. Automatic retries with exponential backoff
-5. Better metadata handling and extraction
-6. More sophisticated browser simulation (e.g. headless browser integration)
-
-## Contributing Guidelines
-
-When working on downloading from a new site:
-
-1. Start with small batches and long sleep times
-2. Analyze response patterns and errors
-3. Create a site-specific version of the downloader if needed
-4. Document your findings and modifications
-5. Be respectful of the target website's resources
+The Kallipos case demonstrates that some academic repositories have sophisticated protection mechanisms that require specialized approaches beyond traditional web scraping techniques.

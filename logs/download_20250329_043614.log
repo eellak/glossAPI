@@ -1,0 +1,11 @@
+2025-03-29 04:36:14,476 - INFO - Logging initialized. Log file: logs/download_20250329_043614.log
+2025-03-29 04:36:14,477 - INFO - PDF Downloader starting with arguments: {'json': 'scraping/json_sitemaps/kallipos_pdf.json', 'type': 'pdf', 'req': 'get', 'output': 'downloads/kallipos', 'little_potato': 'downloads/kallipos', 'batch': 5, 'sleep': 8.0, 'timeout': 120, 'max_retries': 5, 'concurrent': 1, 'log_dir': 'logs', 'kallipos_mode': True}
+2025-03-29 04:36:14,484 - INFO - Loaded 5169 items from scraping/json_sitemaps/kallipos_pdf.json
+2025-03-29 04:36:14,484 - INFO - 🚀 KALLIPOS MODE ENABLED: Using optimized settings for Kallipos repository
+2025-03-29 04:36:14,484 - INFO - Using 1 concurrent downloads, 8.0s delay, 5 max retries
+2025-03-29 04:36:14,484 - INFO - Loaded progress report with 224 entries
+2025-03-29 04:36:14,485 - INFO - Total files: 5169, Already processed: 224, Remaining: 4945
+2025-03-29 04:36:14,485 - INFO - Scheduled 5/5 downloads
+2025-03-29 04:36:23,027 - ERROR - Server error 500 for https://repository.kallipos.gr/retrieve/257938a8-2fba-4151-8100-5c0342d8ff71/295-TRIANTAFYLLOU-Information-Retrieval-and-Search-Techniques.pdf (common with Kallipos repository)
+2025-03-29 04:36:23,027 - INFO - Adding 18.2s extra delay for Kallipos 500 error
+2025-03-29 04:36:41,210 - INFO - Retry 1/5 - waiting 16.1s
