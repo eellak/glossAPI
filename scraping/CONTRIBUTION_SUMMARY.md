@@ -212,7 +212,7 @@ for attempt in range(3):
 - **Discord Community**: Real-time collaboration and support
 
 ### Student Information
-- **Name**: Alexander Liakopoulos
+- **Name**: Alexandros Liakopoulos
 - **Student ID**: 2121384
 - **Program**: BSc Computing (Open Source Software Development)
 - **Module**: SWE6005 - Assessment 001 Portfolio
