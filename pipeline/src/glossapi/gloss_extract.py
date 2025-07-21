@@ -1,4 +1,4 @@
-from typing import Dict, Set, List, Optional, Iterable, Tuple, Any
+from typing import Dict, Set, List, Optional, Iterable, Tuple, Any, Union
 
 from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
 from docling.backend.docling_parse_v2_backend import DoclingParseV2DocumentBackend
@@ -253,6 +253,42 @@ class GlossExtract:
                 unprocessed_files.append(file_path)
                 
         return unprocessed_files
+
+    def _find_metadata_parquet(self, input_dir: Union[str, Path]) -> Optional[Path]:
+        """
+        Locate the metadata parquet (e.g. *download_results.parquet*) starting in
+        ``input_dir``. The search order is:
+        1. ``input_dir``
+        2. ``input_dir/download_results``
+        The first match is cached in ``self._metadata_parquet_path`` so later
+        look-ups are O(1).
+        """
+        if self._metadata_parquet_path is not None:
+            return self._metadata_parquet_path
+
+        from glossapi.parquet_schema import ParquetSchema  # local import to avoid circular deps
+        import logging
+
+        logger = logging.getLogger(__name__)
+        input_dir = Path(input_dir)
+
+        parquet_schema = ParquetSchema({'url_column': getattr(self, 'url_column', 'url')})
+        logger.info(f"Using URL column: {parquet_schema.url_column}")
+
+        input_parquet_path: Optional[Path] = parquet_schema.find_metadata_parquet(input_dir, require_url_column=False)
+
+        # Fallback: look inside download_results sub-directory
+        if input_parquet_path is None:
+            download_results_dir = input_dir / "download_results"
+            if download_results_dir.exists():
+                input_parquet_path = parquet_schema.find_metadata_parquet(download_results_dir, require_url_column=False)
+
+        if input_parquet_path is not None:
+            self._metadata_parquet_path = input_parquet_path
+            logger.info(f"Found metadata parquet file: {input_parquet_path}")
+
+        return input_parquet_path
+
     
     @contextmanager
     def _timeout(self, seconds):
@@ -787,14 +823,7 @@ class GlossExtract:
                 print(f"Updated parquet file with extraction quality in {parent_dir}")
                 # Load the now-annotated parquet file to get extraction quality mappings
                 # Use cached path if available
-                if self._metadata_parquet_path is not None:
-                    input_parquet_path = self._metadata_parquet_path
-                else:
-                    parquet_schema = ParquetSchema({'url_column': self.url_column})
-                    input_parquet_path = parquet_schema.find_metadata_parquet(parent_dir)
-                    # Cache for future use
-                    if input_parquet_path is not None:
-                        self._metadata_parquet_path = input_parquet_path
+                input_parquet_path = self._find_metadata_parquet(parent_dir)
                 if input_parquet_path:
                     try:
                         df = pd.read_parquet(input_parquet_path)
@@ -957,14 +986,7 @@ class GlossExtract:
             # This ensures our extraction quality is saved even if the parquet annotation failed
             for parent_dir in parent_dirs:
                 # Use cached path if available, otherwise find it
-                if self._metadata_parquet_path is not None:
-                    input_parquet_path = self._metadata_parquet_path
-                else:
-                    parquet_schema = ParquetSchema({'url_column': self.url_column})
-                    input_parquet_path = parquet_schema.find_metadata_parquet(parent_dir)
-                    # Cache for future use
-                    if input_parquet_path is not None:
-                        self._metadata_parquet_path = input_parquet_path
+                input_parquet_path = self._find_metadata_parquet(parent_dir)
                 
                 if input_parquet_path:
                     try:
@@ -1022,21 +1044,9 @@ class GlossExtract:
         
         # Step 1: Find input parquet file
         print("Looking for input parquet file...")
-        # Use cached path if available
-        if self._metadata_parquet_path is not None:
-            input_parquet_path = self._metadata_parquet_path
-            print(f"Using cached metadata parquet path: {input_parquet_path}")
-        else:
-            # Initialize with proper URL column configuration
-            parquet_schema = ParquetSchema({
-                'url_column': getattr(self, 'url_column', 'url')  # Use the class url_column if exists or default to 'url'
-            })
-            print(f"Using URL column: {parquet_schema.url_column}")
-            # Find metadata parquet (with require_url_column=False by default)
-            input_parquet_path = parquet_schema.find_metadata_parquet(input_dir)
-            # Cache the found path
-            if input_parquet_path is not None:
-                self._metadata_parquet_path = input_parquet_path
+        input_parquet_path = self._find_metadata_parquet(input_dir)
+        if input_parquet_path is not None:
+            print(f"Using metadata parquet file: {input_parquet_path}")
         
         if input_parquet_path is None:
             print("Error: Could not find a valid input parquet file with filename column")

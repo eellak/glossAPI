@@ -515,9 +515,15 @@ class Corpus:
             self.logger.info(f"Good filenames: {good_filenames}")
             
         if not good_filenames:
-            error_msg = "No good quality files found for sectioning. Check extraction quality or run split_bad() first."
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
+            self.logger.warning("No files marked as 'good' – falling back to processing all extracted markdown files.")
+            good_filenames = [
+                os.path.splitext(p.name)[0]
+                for p in Path(self.markdown_dir).glob("*.md")
+            ]
+            if not good_filenames:
+                error_msg = "No markdown files found to section. Extraction might have failed."
+                self.logger.error(error_msg)
+                raise ValueError(error_msg)
         
         # Extract sections - pass list of good filenames to the sectioner
         # We will pass the original markdown directory and the list of good filenames 
@@ -554,9 +560,18 @@ class Corpus:
         if not model_exists:
             self.logger.warning(f"Model file not found at {self.section_classifier_model_path}. To train a new model, run GlossSectionClassifier.train_from_csv()")
         
-        # Use section classifier model path
-        model_path = str(self.section_classifier_model_path) if model_exists else None
-        
+        # If no trained model, skip annotation with a clear message
+        if not model_exists:
+            self.logger.warning(
+                "No section-classifier model found at %s. "
+                "If you are running from a git checkout (not the pip package), make sure the "
+                "'models/section_classifier.joblib' file is present or pass "
+                "section_classifier_model_path explicitly. Skipping annotation.",
+                self.section_classifier_model_path
+            )
+            return
+
+        model_path = str(self.section_classifier_model_path)
         # Classify sections and save output to 'classified_sections.parquet'
         self.classifier.classify_sections(
             input_parquet=str(self.sections_parquet),
@@ -565,6 +580,7 @@ class Corpus:
             n_cpus=4,
             column_name='title'
         )
+
         
         # Perform full annotation if requested
         if fully_annotate:

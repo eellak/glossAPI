@@ -646,7 +646,7 @@ class GlossDownloader:
         
         return df
     
-    def download_files(self, input_parquet: str) -> pd.DataFrame:
+    def download_files(self, input_parquet: str, **kwargs) -> pd.DataFrame:
         """
         Download files from URLs in a parquet file
         
