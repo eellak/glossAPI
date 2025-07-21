@@ -12,6 +12,15 @@ pyarrow>=7.0.0
 # Document processing
 docling>=1.0.0
 
+# Async operations
+aiohttp>=3.8.0
+aiofiles>=23.0.0
+
+# Text processing and utilities
+ftfy>=6.0.0
+tenacity>=8.0.0
+tqdm>=4.65.0
+
 # Python standard libraries (included for reference)
 # logging
 # os

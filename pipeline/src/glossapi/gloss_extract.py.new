@@ -1,0 +1,45 @@
+    def _find_metadata_parquet(self, input_dir: Union[str, Path]) -> Optional[Path]:
+        """
+        Helper method to find the metadata parquet file.
+        Stores the path as a class variable to avoid repeated searches.
+        
+        Args:
+            input_dir: Directory to search for the parquet file
+            
+        Returns:
+            Path or None: Path to the metadata parquet file, or None if not found
+        """
+        # If we've already found the parquet path, return it
+        if self._metadata_parquet_path is not None:
+            return self._metadata_parquet_path
+            
+        from glossapi.parquet_schema import ParquetSchema
+        from pathlib import Path
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        input_dir = Path(input_dir)
+        
+        # Initialize with proper URL column configuration
+        parquet_schema = ParquetSchema({
+            'url_column': getattr(self, 'url_column', 'url')  # Use the class url_column or default
+        })
+        logger.info(f"Using URL column: {parquet_schema.url_column}")
+        
+        # Always use require_url_column=False to focus on filename column
+        input_parquet_path = parquet_schema.find_metadata_parquet(input_dir, require_url_column=False)
+        
+        # If not found in input_dir, check download_results folder
+        if input_parquet_path is None:
+            download_results_dir = input_dir / "download_results"
+            if download_results_dir.exists():
+                input_parquet_path = parquet_schema.find_metadata_parquet(
+                    download_results_dir, require_url_column=False
+                )
+        
+        # Store the found path for future use
+        if input_parquet_path is not None:
+            self._metadata_parquet_path = input_parquet_path
+            logger.info(f"Found metadata parquet file: {input_parquet_path}")
+        
+        return input_parquet_path

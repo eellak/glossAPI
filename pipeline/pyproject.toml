@@ -29,7 +29,8 @@ dependencies = [
     "ftfy",
     "tenacity",
     "aiohttp",
-    "aiofiles"
+    "aiofiles",
+    "tqdm"
 ]
 
 [tool.setuptools]

@@ -8,8 +8,6 @@ from docling.datamodel.pipeline_options import (
     AcceleratorDevice,
     AcceleratorOptions,
     PdfPipelineOptions,
-    TesseractCliOcrOptions,
-    TesseractOcrOptions,
 )
 from docling.datamodel.document import ConversionResult
 from docling.datamodel.settings import settings
@@ -30,6 +28,7 @@ import ftfy
 import logging
 import os
 import pickle
+import signal
 import time
 import re
 from pathlib import Path
@@ -41,9 +40,11 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 import shutil
+from shutil import copy2
 from collections import defaultdict
 import json
 import joblib
+from contextlib import contextmanager
 
 class GlossExtract:
     """
@@ -57,6 +58,8 @@ class GlossExtract:
         Args:
             url_column: The URL column name to use in the parquet schema
         """
+        # Default timeout for processing files (10 minutes in seconds)
+        self.processing_timeout = 600
         self.pipeline_options = PdfPipelineOptions()
         self.pipeline_options.do_ocr = False
         self.pipeline_options.do_table_structure = True
@@ -251,13 +254,39 @@ class GlossExtract:
                 
         return unprocessed_files
     
-    def _process_batch(self, batch: List[Path], output_dir: Path) -> Tuple[List[str], List[str]]:
+    @contextmanager
+    def _timeout(self, seconds):
+        """Context manager for setting a timeout for a block of code.
+        
+        Args:
+            seconds: Timeout in seconds
+            
+        Raises:
+            TimeoutError: If the timeout is reached
+        """
+        def timeout_handler(signum, frame):
+            raise TimeoutError(f"Processing timed out after {seconds} seconds")
+            
+        # Set the timeout handler
+        original_handler = signal.getsignal(signal.SIGALRM)
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(seconds)
+        
+        try:
+            yield
+        finally:
+            # Cancel the alarm and restore original handler
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, original_handler)
+    
+    def _process_batch(self, batch: List[Path], output_dir: Path, timeout_dir: Path = None) -> Tuple[List[str], List[str]]:
         """
         Process a batch of files and return the successful and problematic filenames.
         
         Args:
             batch: List of file paths to process
             output_dir: Output directory
+            timeout_dir: Directory to store timeout files (optional)
             
         Returns:
             Tuple of (successful_filenames, problematic_filenames)
@@ -267,20 +296,22 @@ class GlossExtract:
         
         # Try processing as a batch first
         try:
-            # Convert all input documents
-            conv_results = self.converter.convert_all(
-                batch,
-                raises_on_error=False,
-            )
-            
-            # Export results to markdown files
-            success_count, partial_success_count, failure_count = self._export_documents(
-                conv_results, output_dir=output_dir
-            )
-            
-            # All files in batch were processed successfully
-            successful = [Path(file_path).name for file_path in batch]
-            return successful, problematic
+            # Apply timeout to batch processing
+            with self._timeout(self.processing_timeout):
+                # Convert all input documents
+                conv_results = self.converter.convert_all(
+                    batch,
+                    raises_on_error=False,
+                )
+                
+                # Export results to markdown files
+                success_count, partial_success_count, failure_count = self._export_documents(
+                    conv_results, output_dir=output_dir
+                )
+                
+                # All files in batch were processed successfully
+                successful = [Path(file_path).name for file_path in batch]
+                return successful, problematic
             
         except Exception as batch_error:
             self._log.warning(f"Batch processing failed with error: {batch_error}. Processing files individually.")
@@ -288,22 +319,37 @@ class GlossExtract:
             # Process files individually to identify problematic ones
             for file_path in batch:
                 try:
-                    # Try to process this file individually
-                    conv_results = self.converter.convert_all(
-                        [file_path],
-                        raises_on_error=False,
-                    )
+                    # Apply timeout to individual file processing
+                    with self._timeout(self.processing_timeout):
+                        # Try to process this file individually
+                        conv_results = self.converter.convert_all(
+                            [file_path],
+                            raises_on_error=False,
+                        )
+                        
+                        # Export results to markdown files
+                        success_count, partial_success_count, failure_count = self._export_documents(
+                            conv_results, output_dir=output_dir
+                        )
+                        
+                        if success_count > 0 or partial_success_count > 0:
+                            successful.append(Path(file_path).name)
+                        else:
+                            problematic.append(Path(file_path).name)
+                            self._log.error(f"Failed to process file: {Path(file_path).name}")
+                
+                except TimeoutError as timeout_error:
+                    filename = Path(file_path).name
+                    problematic.append(filename)
+                    self._log.error(f"Timeout processing file {filename}: {timeout_error}")
                     
-                    # Export results to markdown files
-                    success_count, partial_success_count, failure_count = self._export_documents(
-                        conv_results, output_dir=output_dir
-                    )
-                    
-                    if success_count > 0 or partial_success_count > 0:
-                        successful.append(Path(file_path).name)
-                    else:
-                        problematic.append(Path(file_path).name)
-                        self._log.error(f"Failed to process file: {Path(file_path).name}")
+                    # Copy timeout file to timeout directory if provided
+                    if timeout_dir:
+                        try:
+                            copy2(file_path, timeout_dir / filename)
+                            self._log.info(f"Copied timeout file to {timeout_dir / filename}")
+                        except Exception as e:
+                            self._log.error(f"Failed to copy timeout file {filename}: {e}")
                         
                 except Exception as individual_error:
                     problematic.append(Path(file_path).name)
@@ -324,9 +370,13 @@ class GlossExtract:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create a directory for problematic files
+        # Create directories for problematic files and timeout files
         problematic_dir = output_dir / "problematic_files"
         problematic_dir.mkdir(exist_ok=True)
+        
+        # Create a separate directory specifically for timeout files
+        timeout_dir = output_dir / "timeout_files"
+        timeout_dir.mkdir(exist_ok=True)
         
         # State file for tracking progress
         state_file = output_dir / ".processing_state.pkl"
@@ -372,7 +422,7 @@ class GlossExtract:
             self._log.info(f"Processing batch {i//batch_size + 1}/{batch_count} ({len(batch)} files)")
             
             # Process the batch
-            successful, problematic = self._process_batch(batch, output_dir)
+            successful, problematic = self._process_batch(batch, output_dir, timeout_dir)
             
             # Update counts
             success_count += len(successful)
