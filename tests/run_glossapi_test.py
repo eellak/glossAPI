@@ -33,7 +33,10 @@ def main() -> None:
     parser.add_argument("--clean", action="store_true", help="Delete existing workspace before running")
     args = parser.parse_args()
 
-    # Ten small public PDFs from the arXiv archive (first ten IDs of 2021-01-01).
+    # Default dataset preference order:
+    #   1. Pergamos Greek corpus (`/mnt/data/greek_pdf_urls.parquet`) – exercises Greek-script filtering.
+    #   2. Fallback tiny arXiv sample if the Pergamos list is absent.
+    # Fallback arXiv URLs (used only if Pergamos parquet is unavailable and --parquet not supplied)
     pdf_urls = [
         "https://arxiv.org/pdf/2101.00001.pdf",
         "https://arxiv.org/pdf/2101.00002.pdf",
@@ -61,12 +64,17 @@ def main() -> None:
         if not parquet_path.exists():
             raise FileNotFoundError(f"Provided parquet not found: {parquet_path}")
     else:
-        parquet_path = base_dir / "sample_urls.parquet"
-        # Create sample Parquet if it doesn't exist yet
-        if not parquet_path.exists():
-            base_dir.mkdir(parents=True, exist_ok=True)
-            pd.DataFrame({"url": pdf_urls}).to_parquet(parquet_path, index=False)
-            print(f"Saved default test URL list to {parquet_path}")
+        pergamos_parquet = Path("/mnt/data/greek_pdf_urls.parquet")
+        if pergamos_parquet.exists():
+            parquet_path = pergamos_parquet
+            print(f"Using Pergamos Greek PDF list: {parquet_path}")
+        else:
+            parquet_path = base_dir / "sample_urls.parquet"
+            # Create sample Parquet if it doesn't exist yet
+            if not parquet_path.exists():
+                base_dir.mkdir(parents=True, exist_ok=True)
+                pd.DataFrame({"url": pdf_urls}).to_parquet(parquet_path, index=False)
+                print(f"Saved fallback arXiv URL list to {parquet_path}")
 
     # Ensure output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -91,15 +99,18 @@ def main() -> None:
     )
 
     # 2. Convert to Markdown
-    corpus.extract(num_threads=2, accel_type="CPU")  # Use CPU to stay portable
+    corpus.extract(num_threads=2, accel_type="CPU")
 
-    # 3. Cluster good/bad quality (optional but quick on small set)
-    corpus.filter()
-
-    # 4. Split into logical sections
+    # 3. Split into logical sections _before_ cleaning so the Rust cleaner operates on per-section markdown
     corpus.section()
 
-    # 5. Classify sections
+    # 4. Clean & compute badness score with Rust (no dropping yet)
+    corpus.clean(drop_bad=False)
+
+    # 5. Cluster (legacy split_bad) after cleaning/evaluation
+    corpus.split_bad()
+
+    # 6. Classify sections
     corpus.annotate()
 
     print("\nGlossAPI smoke test finished successfully.")

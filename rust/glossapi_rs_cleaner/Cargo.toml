@@ -1,0 +1,30 @@
+[package]
+name = "glossapi_rs_cleaner"
+version = "0.1.0"
+edition = "2021"
+authors = ["GlossAPI Team <glossapi.team@eellak.gr>"]
+
+[lib]
+name = "glossapi_rs_cleaner"
+crate-type = ["cdylib"]
+
+[dependencies]
+regex = "1.10.2"
+lazy_static = "1.4.0"
+rayon = "1.8.0"
+walkdir = "2.4.0"
+serde = { version = "1.0", features = ["derive"] }
+csv = "1.3.0"
+arrow = "50"
+parquet = { version = "50", features = ["arrow"] }
+futures = "0.3.30"
+once_cell = "1.19.0"
+pyo3 = { version = "0.19.0", features = ["extension-module", "abi3-py38", "macros"] }
+memchr = "2"
+aho-corasick = "1"
+htmlentity = "~1.3.0"
+chrono = { version = "=0.4.33", features = ["serde"] }
+
+[tool.maturin]
+bindings = "pyo3-abi3-py38"
+manifest-path = "./Cargo.toml"

@@ -72,6 +72,8 @@ class ParquetSchema:
         ('download_error', pa.string()),
         ('extraction_quality', pa.string()),  # Values: "good", "bad", "unknown"
         ('processing_stage', pa.string()),  # Tracks progress through pipeline
+        ('badness_score', pa.float64()),
+        ('bytes_removed', pa.int64()),
     ])
     
     # Additional schemas for specific pipeline stages

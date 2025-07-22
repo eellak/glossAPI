@@ -105,11 +105,14 @@ class Corpus:
         # Create necessary directories
         self.markdown_dir = self.output_dir / "markdown"
         self.sections_dir = self.output_dir / "sections"
+        # Directory that will hold cleaned markdown after Rust-powered cleaning
+        self.cleaned_markdown_dir = self.output_dir / "clean_markdown"
         # Define models_dir path but don't create the directory yet - only create it when needed
         self.models_dir = self.output_dir / "models"
         
         os.makedirs(self.markdown_dir, exist_ok=True)
         os.makedirs(self.sections_dir, exist_ok=True)
+        os.makedirs(self.cleaned_markdown_dir, exist_ok=True)
         
         # Setup output files
         self.sections_parquet = self.sections_dir / "sections_for_annotation.parquet"
@@ -178,110 +181,129 @@ class Corpus:
             if self.metadata_path:
                 self.logger.warning(f"Metadata file not found: {self.metadata_path}")
     
-    def filter(self, input_dir: Union[str, Path] = None, split_bad: bool = True, model_path: Optional[Union[str, Path]] = None) -> None:
-        """
-        Filter markdown files based on quality to separate good from bad quality.
-        
+    def clean(
+        self,
+        input_dir: Union[str, Path] = None,
+        threshold: float = 0.10,
+        num_threads: int = None,
+        drop_bad: bool = True,
+    ) -> None:
+        """Clean markdown files and evaluate badness using the Rust extension.
+
         Args:
-            input_dir: Directory containing markdown files to filter (defaults to self.markdown_dir)
-            split_bad: Whether to separate files into good/bad quality or keep all as good
-            model_path: Path to the pre-trained model for clustering (defaults to self.extraction_model_path)
-        """
-        # Handle default parameters
+            input_dir: Folder with `.md` files to process (defaults to `self.markdown_dir`).
+            threshold: Badness threshold for optional dropping.
+            num_threads: Rayon thread-count to pass to Rust.
+            drop_bad: If True, files with badness_score > threshold are removed from downstream processing. Set to False to keep all files and only record the score."""
+        import importlib
+        from pathlib import Path
+        import shutil
+        import pandas as pd
+        from glossapi.parquet_schema import ParquetSchema
+
         if input_dir is None:
             input_dir = self.markdown_dir
         else:
             input_dir = Path(input_dir)
-            
-        # Skip quality assessment if not splitting bad files
-        if not split_bad:
-            self.logger.info("Skipping quality clustering as split_bad=False")
-            # Just use the original markdown directory for good files
-            self.good_markdown_dir = input_dir
-            self.markdown_dir = input_dir
-            self.logger.info(f"Using all files from {input_dir} as good quality")
-            return
-        
-        # First run the parquet-based quality assessment
-        if model_path is None:
-            model_path = str(self.extraction_model_path)
-            
-        # We need the parquet file first before we can update it with extraction quality
-        import pandas as pd
-        from glossapi.parquet_schema import ParquetSchema
-        
-        # First, find or create the parquet file
-        download_results_dir = self.input_dir / "download_results"
-        parquet_schema = ParquetSchema({
-            'url_column': self.downloader_config.get('url_column', 'url')
-        })
-        
-        # Find the parquet file
-        input_parquet_path = None
-        for dir_to_check in [self.input_dir, download_results_dir]:
-            if dir_to_check.exists():
-                # In filter stage, we don't need URL column, just filename
-                found_path = parquet_schema.find_metadata_parquet(dir_to_check, require_url_column=False)
-                if found_path:
-                    input_parquet_path = found_path
-                    break
-        
-        # If no parquet file was found, create a new one based on markdown files
-        if input_parquet_path is None:
-            self.logger.info(f"No metadata parquet file found, creating one from markdown files in {input_dir}")
-            input_parquet_path = parquet_schema.create_basic_metadata_parquet(input_dir, self.output_dir)
-            
-            if input_parquet_path is None:
-                self.logger.warning("Failed to create metadata parquet file")
-            else:
-                self.logger.info(f"Created new metadata parquet file at {input_parquet_path}")
-        
-        # Now use the modern approach - update parquet file with extraction quality
-        self.logger.info("Analyzing markdown files and updating parquet file with extraction quality...")
-        # Call extractor.split_bad which updates the parquet file with extraction quality
-        if input_parquet_path:
-            self.extractor.split_bad(
-                input_folder=str(input_dir),
-                # No need to pass output_folder as it's no longer used
-                model_file=model_path
-            )
-            self.logger.info("Extraction quality assessment complete and saved to parquet.")
-        else:
-            self.logger.warning("Skipping extraction quality assessment as no parquet file is available.")
-        
-        # Read extraction quality from parquet
-        good_count = 0
-        bad_count = 0
-        good_files = []
-        bad_files = []
-        
-        if input_parquet_path:
-            try:
-                df = pd.read_parquet(input_parquet_path)
-                if 'filename' in df.columns and 'extraction' in df.columns:
-                    self.logger.info(f"Found extraction quality information in {input_parquet_path}")
-                    for _, row in df.iterrows():
-                        if 'filename' in row and 'extraction' in row:
-                            if row['extraction'] == 'good':
-                                good_files.append(row['filename'])
-                                good_count += 1
-                            elif row['extraction'] == 'bad':
-                                bad_files.append(row['filename'])
-                                bad_count += 1
-            except Exception as e:
-                self.logger.warning(f"Error reading extraction quality from parquet: {e}")
-        
-        self.logger.info(f"Found {good_count} good quality files and {bad_count} bad quality files in parquet")
-        
-        # Set the good_markdown_dir to be the same as the input_dir
-        # This ensures that section() will read from the original directory
-        # but only process files marked as 'good' in the parquet
-        self.good_markdown_dir = input_dir
-        self.markdown_dir = input_dir
-        
-        # Store the good filenames for later use when needed
-        self.good_files = [f for f in good_files]
 
+        # Try to import the compiled extension
+        try:
+            cleaner_mod = importlib.import_module("glossapi_rs_cleaner")
+            self.logger.info("Using compiled glossapi_rs_cleaner extension for fast cleaning")
+        except ModuleNotFoundError as e:
+            raise RuntimeError(
+                "The Rust extension 'glossapi_rs_cleaner' is required but not found. "
+                "Install the pre-built wheel (pip install glossapi --upgrade) or build from source via maturin."
+            ) from e
+
+        # Ensure cleaned directory exists and is empty (idempotent runs)
+        if self.cleaned_markdown_dir.exists():
+            shutil.rmtree(self.cleaned_markdown_dir)
+        self.cleaned_markdown_dir.mkdir(parents=True, exist_ok=True)
+
+        # Prepare parquet helper
+        parquet_schema = ParquetSchema({"url_column": self.url_column})
+        parquet_path = parquet_schema.find_metadata_parquet(self.input_dir) or (
+            self.input_dir / "download_results" / "download_results.parquet"
+        )
+
+        import os
+        records: list = []  # will hold metrics for parquet merge
+
+        # ----- Call Rust high-level pipeline once -----
+        scripts_to_keep = ["greek", "latin"]  # keep common alphabetic scripts; numbers/punctuation are added internally
+        report_parquet_path = self.cleaned_markdown_dir.parent / "cleaning_report.parquet"
+
+        self.logger.info(
+            "Invoking glossapi_rs_cleaner.run_complete_pipeline on %d markdown files…",
+            len(list(input_dir.glob("*.md"))),
+        )
+        try:
+            cleaner_mod.run_complete_pipeline(
+                str(input_dir),
+                str(self.cleaned_markdown_dir),
+                str(report_parquet_path),
+                scripts_to_keep,
+                int(num_threads or os.cpu_count() or 4),
+            )
+        except Exception as e:
+            self.logger.error("Rust cleaning pipeline failed: %s", e)
+            raise
+
+        # ----- Parse metrics Parquet produced by Rust -----
+        if report_parquet_path.exists():
+            try:
+                df_metrics_parquet = pd.read_parquet(report_parquet_path)
+                for _, row in df_metrics_parquet.iterrows():
+                    records.append(
+                        {
+                            "filename": f"{Path(row['file_name']).stem}.pdf",  # match original PDF filename
+                            "badness_score": row.get("badness_score_all_chars", 0.0),
+                            "bytes_removed": 0,
+                        }
+                    )
+            except Exception as e:
+                self.logger.warning("Failed to parse cleaning report %s: %s", report_parquet_path, e)
+        else:
+            self.logger.warning("Cleaning report Parquet not found: %s", report_parquet_path)
+
+
+        self.logger.info(f"Cleaned {len(records)} markdown files → {self.cleaned_markdown_dir}")
+
+        # Merge or create parquet with new metrics
+        if records:
+            df_metrics = pd.DataFrame(records)
+            if parquet_path and parquet_path.exists():
+                df = pd.read_parquet(parquet_path)
+                df = df.merge(df_metrics, on="filename", how="left")
+            else:
+                parquet_path = self.output_dir / "download_results" / "download_results.parquet"
+                parquet_path.parent.mkdir(parents=True, exist_ok=True)
+                df = df_metrics
+            df.to_parquet(parquet_path, index=False)
+            self.logger.info(f"Updated metrics written to {parquet_path}")
+
+            # Determine good / bad based on threshold
+            if drop_bad:
+                good_df = df[df["badness_score"] <= threshold]
+                self.good_files = [Path(f).stem for f in good_df["filename"].tolist()]
+                self.logger.info(f"After threshold filtering, {len(self.good_files)} good files remain")
+            else:
+                self.good_files = [r["base_name"] for r in records]
+        else:
+            self.good_files = []
+
+        # After cleaning, point markdown_dir to cleaned files for downstream stages
+        self.markdown_dir = self.cleaned_markdown_dir
+
+    # ------------------------------------------------------------------
+    # Backwards-compatibility shim – filter() now delegates to clean()
+    # ------------------------------------------------------------------
+    def filter(self, *args, **kwargs):  # type: ignore[override]
+        """Deprecated: use :py:meth:`clean` instead.  Retained for one release."""
+        self.logger.warning("Corpus.filter() is deprecated – calling clean() instead")
+        self.clean(*args, **kwargs)
+    
     def extract(
         self, 
         input_format: str = "all", 
@@ -400,8 +422,7 @@ class Corpus:
         
         self.logger.info(f"Extraction complete. Markdown files saved to {self.markdown_dir}")
         
-        # Run filtering on extracted markdown files
-        self.filter(input_dir=self.markdown_dir, split_bad=split_bad, model_path=model_path)
+
     
     def split_bad(self, model_path: Optional[Union[str, Path]] = None) -> None:
         """
@@ -436,79 +457,89 @@ class Corpus:
         # Create output directory
         os.makedirs(self.sections_dir, exist_ok=True)
         
-        # Filter markdown files based on extraction quality in parquet files
-        # Initialize the good_filenames list that will be used with the sectioner
-        good_filenames = []
+        # Determine which markdown files to section
+        # Priority 1: self.good_files collected from clean()
+        # Priority 2: legacy parquet 'extraction' column logic (for backward compatibility)
+        # ------------------------------------------------------------------
         
-        # Try to find files marked as 'good' in the parquet
-        from glossapi.parquet_schema import ParquetSchema
-        
-        # Initialize with proper URL column configuration
-        parquet_schema = ParquetSchema({
-            'url_column': self.downloader_config.get('url_column', 'url')  # Use the configured URL column or default to 'url'
-        })
-        self.logger.info(f"Using URL column for parquet search: {parquet_schema.url_column}")
-        
-        # Look for input parquet with extraction column
-        input_parquet_path = parquet_schema.find_metadata_parquet(self.input_dir)
-        
-        # If not in input_dir, check download_results folder
-        if input_parquet_path is None:
-            download_results_dir = self.input_dir / "download_results"
-            if download_results_dir.exists():
-                input_parquet_path = parquet_schema.find_metadata_parquet(download_results_dir)
+        good_filenames: List[str] = []
+
+        if getattr(self, "good_files", None):
+            good_filenames = self.good_files
+            self.logger.info(f"Using {len(good_filenames)} good filenames from clean()")
+        else:
+            # Fallback to legacy behaviour
+            self.logger.info("No good_files from clean(); falling back to parquet extraction field")
             
-        if input_parquet_path is not None:
-            try:
-                # Load parquet and filter by 'good' extraction
-                df = pd.read_parquet(input_parquet_path)
-                if 'filename' in df.columns and 'extraction' in df.columns:
-                    good_rows = df[df['extraction'] == 'good']
-                    if not good_rows.empty:
-                        # Get filenames (without extension) of good extractions
-                        good_filenames = [
-                            os.path.splitext(filename)[0] 
-                            for filename in good_rows['filename'].tolist() 
-                            if filename
-                        ]
-                        self.logger.info(f"Found {len(good_filenames)} files marked as 'good' in parquet")
-                        
-                        # Update the processing_stage in the download results parquet
-                        try:
-                            # Update processing_stage for all good rows
-                            if 'processing_stage' in df.columns:
-                                # Only update rows where extraction is 'good'
-                                for idx in good_rows.index:
-                                    current_stage = df.loc[idx, 'processing_stage']
-                                    # Append section to stages if not already there
-                                    if current_stage is not None and 'section' not in str(current_stage):
-                                        df.loc[idx, 'processing_stage'] = current_stage + ',section'
-                            else:
-                                # Create processing_stage column if it doesn't exist
-                                df['processing_stage'] = None
-                                for idx in good_rows.index:
-                                    df.loc[idx, 'processing_stage'] = 'download,extract,section'
+            # Try to find files marked as 'good' in the parquet
+            from glossapi.parquet_schema import ParquetSchema
+            
+            # Initialize with proper URL column configuration
+            parquet_schema = ParquetSchema({
+                'url_column': self.downloader_config.get('url_column', 'url')  # Use the configured URL column or default to 'url'
+            })
+            self.logger.info(f"Using URL column for parquet search: {parquet_schema.url_column}")
+            
+            # Look for input parquet with extraction column
+            input_parquet_path = parquet_schema.find_metadata_parquet(self.input_dir)
+            
+            # If not in input_dir, check download_results folder
+            if input_parquet_path is None:
+                download_results_dir = self.input_dir / "download_results"
+                if download_results_dir.exists():
+                    input_parquet_path = parquet_schema.find_metadata_parquet(download_results_dir)
+            
+            if input_parquet_path is not None:
+                try:
+                    # Load parquet and filter by 'good' extraction
+                    df = pd.read_parquet(input_parquet_path)
+                    if 'filename' in df.columns and 'extraction' in df.columns:
+                        good_rows = df[df['extraction'] == 'good']
+                        if not good_rows.empty:
+                            # Get filenames (without extension) of good extractions
+                            good_filenames = [
+                                os.path.splitext(filename)[0] 
+                                for filename in good_rows['filename'].tolist() 
+                                if filename
+                            ]
+                            self.logger.info(f"Found {len(good_filenames)} files marked as 'good' in parquet")
                             
-                            standard_path = Path(os.path.dirname(input_parquet_path)) / "download_results.parquet"
-                            
-                            # If the file already has the standardized name, just update it
-                            # Otherwise, save with standardized name and log the change
-                            df.to_parquet(standard_path, index=False)
-                            self.logger.info(f"Updated processing_stage column in {standard_path} for good quality files")
-                            
-                            # If we renamed the file, log this and remove the original
-                            if standard_path != input_parquet_path:
-                                self.logger.info(f"Standardized parquet name from {os.path.basename(input_parquet_path)} to download_results.parquet")
-                                # Remove the original file to avoid duplication
-                                try:
-                                    os.remove(input_parquet_path)
-                                    self.logger.info(f"Removed original parquet file: {input_parquet_path}")
-                                except Exception as e:
-                                    self.logger.warning(f"Failed to remove original parquet file: {e}")
-                        except Exception as e:
-                            self.logger.warning(f"Error updating processing_stage in download results parquet: {e}")
-            except Exception as e:
-                self.logger.warning(f"Error reading parquet for extraction quality: {e}")
+                            # Update the processing_stage in the download results parquet
+                            try:
+                                # Update processing_stage for all good rows
+                                if 'processing_stage' in df.columns:
+                                    # Only update rows where extraction is 'good'
+                                    for idx in good_rows.index:
+                                        current_stage = df.loc[idx, 'processing_stage']
+                                        # Append section to stages if not already there
+                                        if current_stage is not None and 'section' not in str(current_stage):
+                                            df.loc[idx, 'processing_stage'] = current_stage + ',section'
+                                else:
+                                    # Create processing_stage column if it doesn't exist
+                                    df['processing_stage'] = None
+                                    for idx in good_rows.index:
+                                        df.loc[idx, 'processing_stage'] = 'download,extract,section'
+                                
+                                standard_path = Path(os.path.dirname(input_parquet_path)) / "download_results.parquet"
+                                
+                                # If the file already has the standardized name, just update it
+                                # Otherwise, save with standardized name and log the change
+                                df.to_parquet(standard_path, index=False)
+                                self.logger.info(f"Updated processing_stage column in {standard_path} for good quality files")
+                                
+                                # If we renamed the file, log this and remove the original
+                                if standard_path != input_parquet_path:
+                                    self.logger.info(f"Standardized parquet name from {os.path.basename(input_parquet_path)} to download_results.parquet")
+                                    # Remove the original file to avoid duplication
+                                    try:
+                                        os.remove(input_parquet_path)
+                                        self.logger.info(f"Removed original parquet file: {input_parquet_path}")
+                                    except Exception as e:
+                                        self.logger.warning(f"Failed to remove original parquet file: {e}")
+                            except Exception as e:
+                                self.logger.warning(f"Error reading parquet for extraction quality: {e}")
+                except Exception as e:
+                    self.logger.warning(f"Error reading parquet file: {e}")
         
         self.logger.info(f"Found {len(good_filenames)} good quality files for sectioning")
         if good_filenames:
