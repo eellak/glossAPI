@@ -4,14 +4,14 @@ build-backend = "maturin"
 
 [project]
 name = "glossapi"
-dynamic = ["version"]
+version = "0.1.1"
 description = "Academic document processing pipeline with Rust-powered markdown cleaning"
 authors = [
     {name = "GlossAPI Team", email = "glossapi.team@eellak.gr"}
 ]
 readme = "README.md"
 requires-python = ">=3.8"
-packages = [
+python-packages = [
     "glossapi"
 ]
 
@@ -24,14 +24,14 @@ classifiers = [
 ]
 
 [tool.maturin]
-bindings = "pyo3-abi3-py38"
+bindings = "pyo3"
 # The crate is located under rust/glossapi_rs_cleaner
 module-name = "glossapi_rs_cleaner"
-python-source = "pipeline/src"
+python-source = "src"
 
 manifest-path = "rust/glossapi_rs_cleaner/Cargo.toml"
 
-packages = [
+python-packages = [
     "glossapi"
 ]
-include = ["glossapi/**", "pipeline/src/glossapi/**"]
+include = ["src/**"]

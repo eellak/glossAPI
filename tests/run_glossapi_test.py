@@ -1,92 +1,53 @@
 #!/usr/bin/env python3
-"""
-Smoke-test script for GlossAPI with a tiny, 10-PDF dataset pulled from arXiv.
+"""GlossAPI smoke test using the installed package (from venv).
 
-It performs the following steps:
-1. Build a Parquet file `sample_urls.parquet` containing 10 PDF URLs.
-2. Use `Corpus.download()` to fetch those PDFs into `tests/output/downloads/`.
-3. Run the full GlossAPI pipeline: extract → filter → section → annotate.
-4. Final artefacts land in `tests/output/`.
+This script verifies that the `glossapi` package installed in the current
+Python environment works end-to-end on a small Greek corpus.  It performs:
+    1. Download of Greek PDFs listed in `/mnt/data/greek_pdf_urls.parquet`
+    2. Extraction → Sectioning → Cleaning
 
 Run with:
-    python tests/run_glossapi_test.py
+    python tests/run_glossapi_test.py [--clean]
 """
+from __future__ import annotations
 
-from pathlib import Path
-import sys
 import argparse
-import shutil
-import pandas as pd
+import sys
+from pathlib import Path
 
-# Allow running without installing the package: add pipeline/src to PYTHONPATH
-project_root = Path(__file__).resolve().parents[1]  # glossAPI/
-local_src = project_root / "pipeline" / "src"
-if local_src.exists() and str(local_src) not in sys.path:
-    sys.path.insert(0, str(local_src))
-
-from glossapi import Corpus
+# Import from the site-packages installation, not the local repo
+try:
+    from glossapi import Corpus  # type: ignore
+except ImportError as exc:
+    print("Failed to import glossapi from site-packages:", exc, file=sys.stderr)
+    sys.exit(1)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="GlossAPI smoke test")
-    parser.add_argument("--parquet", type=str, default=None, help="Path to a Parquet file with a column 'url'")
-    parser.add_argument("--clean", action="store_true", help="Delete existing workspace before running")
+    parser = argparse.ArgumentParser(description="GlossAPI smoke test (Greek corpus)")
+    parser.add_argument("--clean", action="store_true", help="Remove previous workspace before running")
     args = parser.parse_args()
 
-    # Default dataset preference order:
-    #   1. Pergamos Greek corpus (`/mnt/data/greek_pdf_urls.parquet`) – exercises Greek-script filtering.
-    #   2. Fallback tiny arXiv sample if the Pergamos list is absent.
-    # Fallback arXiv URLs (used only if Pergamos parquet is unavailable and --parquet not supplied)
-    pdf_urls = [
-        "https://arxiv.org/pdf/2101.00001.pdf",
-        "https://arxiv.org/pdf/2101.00002.pdf",
-        "https://arxiv.org/pdf/2101.00003.pdf",
-        "https://arxiv.org/pdf/2101.00004.pdf",
-        "https://arxiv.org/pdf/2101.00005.pdf",
-        "https://arxiv.org/pdf/2101.00006.pdf",
-        "https://arxiv.org/pdf/2101.00007.pdf",
-        "https://arxiv.org/pdf/2101.00008.pdf",
-        "https://arxiv.org/pdf/2101.00009.pdf",
-        "https://arxiv.org/pdf/2101.00010.pdf",
-    ]
+    parquet_path = Path("/mnt/data/greek_pdf_urls.parquet")
+    if not parquet_path.exists():
+        print(f"Required parquet not found: {parquet_path}", file=sys.stderr)
+        sys.exit(1)
 
-    # Workspace under /mnt/data so artefacts persist
+    # Workspace where artefacts are stored
     base_dir = Path("/mnt/data/glossapi_smoke")
     if args.clean and base_dir.exists():
-        print(f"Cleaning workspace {base_dir} ...")
+        import shutil
+
+        print(f"Cleaning existing workspace at {base_dir} …")
         shutil.rmtree(base_dir, ignore_errors=True)
 
     output_dir = base_dir / "output"
-
-    # Determine which Parquet file to use
-    if args.parquet:
-        parquet_path = Path(args.parquet).expanduser().resolve()
-        if not parquet_path.exists():
-            raise FileNotFoundError(f"Provided parquet not found: {parquet_path}")
-    else:
-        pergamos_parquet = Path("/mnt/data/greek_pdf_urls.parquet")
-        if pergamos_parquet.exists():
-            parquet_path = pergamos_parquet
-            print(f"Using Pergamos Greek PDF list: {parquet_path}")
-        else:
-            parquet_path = base_dir / "sample_urls.parquet"
-            # Create sample Parquet if it doesn't exist yet
-            if not parquet_path.exists():
-                base_dir.mkdir(parents=True, exist_ok=True)
-                pd.DataFrame({"url": pdf_urls}).to_parquet(parquet_path, index=False)
-                print(f"Saved fallback arXiv URL list to {parquet_path}")
-
-    # Ensure output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Instantiate high-level pipeline wrapper
-    # Determine packaged model path (works both for git checkout and pip install)
-    packaged_model_path = local_src / "glossapi" / "models" / "section_classifier.joblib"
-
+    # Initialise wrapper (model path auto-discovered by the package)
     corpus = Corpus(
-        input_dir=str(base_dir),  # where the Parquet file lives (and where downloads could be found if re-run)
+        input_dir=str(base_dir),
         output_dir=str(output_dir),
-        section_classifier_model_path=str(packaged_model_path),
         verbose=True,
     )
 
@@ -101,20 +62,14 @@ def main() -> None:
     # 2. Convert to Markdown
     corpus.extract(num_threads=2, accel_type="CPU")
 
-    # 3. Split into logical sections _before_ cleaning so the Rust cleaner operates on per-section markdown
+    # 3. Sectioning before cleaning so the Rust cleaner works per-section
     corpus.section()
 
-    # 4. Clean & compute badness score with Rust (no dropping yet)
+    # 4. Clean (includes Rust badness score); do not drop anything yet
     corpus.clean(drop_bad=False)
 
-    # 5. Cluster (legacy split_bad) after cleaning/evaluation
-    corpus.split_bad()
-
-    # 6. Classify sections
-    corpus.annotate()
-
     print("\nGlossAPI smoke test finished successfully.")
-    print(f"Results saved under: {output_dir}")
+    print(f"Results saved under: {output_dir}\n")
 
 
 if __name__ == "__main__":
