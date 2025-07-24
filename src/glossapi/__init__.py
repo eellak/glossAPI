@@ -30,4 +30,9 @@ __all__ = [
     'GlossDownloader'
 ]
 
-__version__ = '0.0.10'
+# Derive version dynamically from installed package metadata if possible
+try:
+    from importlib.metadata import version as _pkg_version
+    __version__: str = _pkg_version(__name__)
+except Exception:
+    __version__ = "0.1.1"

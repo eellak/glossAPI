@@ -274,7 +274,8 @@ class Corpus:
                         {
                             "filename": f"{Path(row['file_name']).stem}.pdf",  # match original PDF filename
                             "badness_score": row.get("badness_score_all_chars", 0.0),
-                            "bytes_removed": 0,
+                            "percentage_greek": row.get("percentage_greek_cleaned"),
+                            "percentage_latin": row.get("percentage_latin_cleaned"),
                         }
                     )
             except Exception as e:
@@ -282,6 +283,14 @@ class Corpus:
         else:
             self.logger.warning("Cleaning report Parquet not found: %s", report_parquet_path)
 
+
+        # ---- Delete cleaning report to avoid retaining it ----
+        try:
+            if report_parquet_path.exists():
+                report_parquet_path.unlink(missing_ok=True)
+                self.logger.debug("Deleted temporary cleaning report %s", report_parquet_path)
+        except Exception as e:
+            self.logger.warning("Could not delete cleaning report %s: %s", report_parquet_path, e)
 
         self.logger.info(f"Cleaned {len(records)} markdown files → {self.cleaned_markdown_dir}")
 
@@ -297,6 +306,30 @@ class Corpus:
                 df = df_metrics
             df.to_parquet(parquet_path, index=False)
             self.logger.info(f"Updated metrics written to {parquet_path}")
+
+        # ----- Clustering on cleaned markdown (trigram-based) -----
+        try:
+            self.logger.info("Running clustering on cleaned markdown files …")
+            self.extractor.split_bad(
+                input_folder=str(self.cleaned_markdown_dir),
+                model_file=str(self.extraction_model_path)
+            )
+        except Exception as e:
+            self.logger.warning("Clustering step after cleaning failed: %s", e)
+
+        # ----- Rename extraction column to natural / unnatural -----
+        try:
+            if parquet_path and parquet_path.exists():
+                df_post = pd.read_parquet(parquet_path)
+                if "extraction" in df_post.columns:
+                    df_post["trigrams"] = df_post["extraction"].map(
+                        {"good": "natural", "bad": "unnatural"}
+                    ).fillna(df_post["extraction"])
+                    df_post.drop(columns=["extraction"], inplace=True)
+                    df_post.to_parquet(parquet_path, index=False)
+                    self.logger.info("Renamed 'extraction' column → 'trigrams' with mapped values")
+        except Exception as e:
+            self.logger.warning("Failed to rename extraction column: %s", e)
 
             # Determine good / bad based on threshold
             if drop_bad:

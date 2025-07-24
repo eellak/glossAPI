@@ -11,6 +11,9 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.8"
+dependencies = [
+    "maturin>=1.9"
+]
 python-packages = [
     "glossapi"
 ]

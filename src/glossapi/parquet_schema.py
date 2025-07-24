@@ -70,10 +70,11 @@ class ParquetSchema:
         ('url', pa.string()),  # Can be customized with url_column parameter
         ('download_success', pa.bool_()),
         ('download_error', pa.string()),
-        ('extraction_quality', pa.string()),  # Values: "good", "bad", "unknown"
+        ('trigrams', pa.string()),  # Values: "natural", "unnatural", "unknown"
         ('processing_stage', pa.string()),  # Tracks progress through pipeline
         ('badness_score', pa.float64()),
-        ('bytes_removed', pa.int64()),
+        ('percentage_greek', pa.float64()),
+        ('percentage_latin', pa.float64()),
     ])
     
     # Additional schemas for specific pipeline stages
