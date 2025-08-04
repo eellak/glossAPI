@@ -245,15 +245,17 @@ class ParquetSchema:
         if download_files:
             logger.debug(f"Found {len(download_files)} download_results files")
         
-        # Examine all files
-        for file_path in parquet_files:
+        # If any download_results parquets exist, check them first
+        search_order = download_files + [f for f in parquet_files if f not in download_files]
+        # Examine files in this preferred order
+        for file_path in search_order:
             try:
                 df = pd.read_parquet(file_path)
                 columns = df.columns.tolist()
                 
-                # Skip section parquets - they have title/header columns
-                if 'title' in columns or 'header' in columns or 'section' in columns:
-                    logger.debug(f"Skipping sections parquet: {file_path}")
+                # Skip section-level parquets – identified by a 'section' column
+                if 'section' in columns:
+                    logger.debug(f"Skipping section-level parquet: {file_path}")
                     continue
                     
                 # For metadata parquets - they don't have title/header but have filename

@@ -553,10 +553,12 @@ class GlossDownloader:
                 self.logger.error(f"Error while downloading {url}: {error_msg}")
                 return False, "", error_msg, retry_count + 1
 
-    async def _download_files_async(self, df: pd.DataFrame, semaphore: asyncio.Semaphore, 
-                                   rate_limiter: RateLimiter) -> pd.DataFrame:
+    async def _download_files_async(self, df: pd.DataFrame, semaphore: asyncio.Semaphore,
+                                   rate_limiter: RateLimiter,
+                                   results_path: Path) -> pd.DataFrame:
         """
-        Core async function to download files from URLs in a DataFrame
+        Core async function to download files from URLs in a DataFrame and write
+        incremental checkpoints so interrupted runs can be resumed.
         
         Args:
             df: DataFrame with URLs
@@ -638,6 +640,12 @@ class GlossDownloader:
                         # Periodically save progress
                         if successful_downloads % self.save_every == 0:
                             self.logger.info(f"Periodic save: Completed {successful_downloads} downloads.")
+                            try:
+                                os.makedirs(results_path.parent, exist_ok=True)
+                                df.to_parquet(results_path, index=False)
+                                self.logger.debug(f"Checkpoint written to {results_path}")
+                            except Exception as e:
+                                self.logger.error(f"Failed to write checkpoint: {e}")
                     
                 except Exception as e:
                     self.logger.error(f"Error processing task for row {row_idx}: {e}")
@@ -688,10 +696,15 @@ class GlossDownloader:
         # Run async download
         self.logger.info(f"Starting download with concurrency={self.concurrency}, rate_limit={rate_limiter.rate_limit}/{rate_limiter.time_period}s")
         
+        # Prepare path for incremental checkpointing
+        results_dir = self.output_dir / "download_results"
+        os.makedirs(results_dir, exist_ok=True)
+        results_path = results_dir / f"download_results_{Path(input_parquet).name}"
+
         # Run the async pipeline
         loop = asyncio.get_event_loop()
         updated_df = loop.run_until_complete(
-            self._download_files_async(df, semaphore, rate_limiter)
+            self._download_files_async(df, semaphore, rate_limiter, results_path)
         )
         
         # Summary of download results

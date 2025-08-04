@@ -244,8 +244,10 @@ class ParquetSchema:
         if download_files:
             logger.debug(f"Found {len(download_files)} download_results files")
         
-        # Examine all files
-        for file_path in parquet_files:
+        # If any download_results parquets exist, check them first
+        search_order = download_files + [f for f in parquet_files if f not in download_files]
+        # Examine files in search order
+        for file_path in search_order:
             try:
                 df = pd.read_parquet(file_path)
                 columns = df.columns.tolist()

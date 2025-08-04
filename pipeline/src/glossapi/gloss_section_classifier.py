@@ -596,11 +596,10 @@ class GlossSectionClassifier:
         
         self.logger.info("Processing each file group for text annotation...")
         for filename, group in df.groupby('filename'):
-            updated_group = self.fully_annotate_text_group(group)
-            if updated_group is None:
+            processed_group, missing_flag = self.fully_annotate_text_group(group)
+            if missing_flag:
                 files_missing_boundaries += 1
-            else:
-                updated_groups.append(updated_group)
+            updated_groups.append(processed_group)
         
         # Concatenate updated groups back into a single DataFrame
         df_updated = pd.concat(updated_groups) if updated_groups else pd.DataFrame()
@@ -608,7 +607,7 @@ class GlossSectionClassifier:
         self.logger.info(f"Files missing one or both boundaries (π and β): {files_missing_boundaries}")
         return df_updated
     
-    def fully_annotate_text_group(self, group: pd.DataFrame) -> pd.DataFrame:
+    def fully_annotate_text_group(self, group: pd.DataFrame) -> Tuple[pd.DataFrame, bool]:
         """
         Process a single document group for text annotation.
         
@@ -633,8 +632,9 @@ class GlossSectionClassifier:
             
             # Check if markers are in the correct order
             if first_pi_id > last_beta_id:
+                missing_boundaries = True
                 self.logger.warning(f"Boundary markers in wrong order for {group['filename'].iloc[0]}. Keeping original labels.")
-                return group  # Return with original labels
+                return group, missing_boundaries
             
             # Create a boolean mask for rows with label "άλλο" (i.e. not yet fully annotated)
             mask = group['predicted_section'] == 'άλλο'

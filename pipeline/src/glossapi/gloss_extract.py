@@ -788,6 +788,8 @@ class GlossExtract:
             model_file: Path to the pre-trained model for clustering
         """
         print("Starting document quality analysis...")
+        logger = logging.getLogger(__name__)
+        logger.info("Starting document quality analysis...")
         
         # First try to handle this using the modern parquet annotation approach
         from pathlib import Path
@@ -1182,6 +1184,8 @@ class GlossExtract:
         # Map markdown filenames to parquet rows
         match_count = 0
         for i, row in tqdm(df.iterrows(), total=len(df), desc="Matching files"):
+            if (i + 1) % 10000 == 0:  # Log every 10k rows to give the user feedback
+                logger.info("Matching progress: %d / %d (%.1f%%)", i + 1, len(df), 100 * (i + 1) / len(df))
             if 'filename' in row and row['filename']:
                 # Remove file extension for comparison
                 parquet_filename = row['filename']

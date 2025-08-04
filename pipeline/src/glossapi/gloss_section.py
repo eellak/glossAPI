@@ -5,6 +5,7 @@ from typing import List, Tuple, Dict, Any
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+from datetime import datetime
 
 
 class Section:
@@ -535,11 +536,9 @@ class GlossSection:
         print(f"\n===== SECTIONING PHASE =====")
         print(f"Input directory: {input_dir}")
         print(f"Output directory: {output_dir}")
-        print(f"Good files list (length {len(filenames_to_process)}): {filenames_to_process}")
-        print(f"Available files in directory:")
+        print(f"Good files list count: {len(filenames_to_process)}")
         md_files = [f for f in os.listdir(input_dir) if f.endswith(".md")]
-        for i, md_file in enumerate(md_files):
-            print(f"  {i+1}. {md_file} (basename: {os.path.splitext(md_file)[0]})")
+        print(f"Markdown files available in directory: {len(md_files)}")
         
         for filename in os.listdir(input_dir):
             if filename.endswith(".md"):
@@ -549,11 +548,13 @@ class GlossSection:
                 # Only process files that are in our whitelist
                 if base_name not in filenames_to_process:
                     skipped_files.append(base_name)
-                    print(f"⚠️ SKIPPED: {base_name} - not in the good files list")
+                    # Skipping verbose output for skipped files; they will be summarised later
                     continue  # Skip this file as it's not in our list of good files
                 
                 processed_files_count += 1
-                print(f"✅ PROCESSING: {base_name} - in good files list")
+                if (processed_files_count == 1) or (processed_files_count % 100 == 0):
+                    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"[{ts}] Progress: {processed_files_count}/{len(filenames_to_process)} files processed")
                 input_path = os.path.join(input_dir, filename)
                 with open(input_path, 'r', encoding='utf-8') as f:
                     text = f.read()

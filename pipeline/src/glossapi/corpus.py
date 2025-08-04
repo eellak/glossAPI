@@ -797,6 +797,21 @@ class Corpus:
         input_df = pd.read_parquet(input_parquet)
         total_urls = len(input_df)
         self.logger.info(f"Total URLs in input file: {total_urls}")
+
+        # Ensure the specified URL column exists; if not, try to auto-detect one
+        if url_column not in input_df.columns:
+            available_cols = input_df.columns.tolist()
+            alt_cols = [c for c in available_cols if 'url' in c.lower()]
+            if alt_cols:
+                self.logger.warning(
+                    f"URL column '{url_column}' not found in input parquet; using '{alt_cols[0]}' instead")
+                url_column = alt_cols[0]
+            else:
+                raise ValueError(
+                    f"URL column '{url_column}' not found in input parquet and no alternative URL-like columns detected")
+
+        # Keep Corpus instance and downstream components consistent with the resolved column
+        self.url_column = url_column
         
         # Look for existing download results file by the specific input filename first
         input_filename = Path(input_parquet).name
@@ -879,6 +894,14 @@ class Corpus:
         # Download files
         self.logger.info(f"Downloading files from URLs in {input_parquet}...")
         new_results = downloader.download_files(input_parquet=str(input_parquet), **kwargs)
+
+        # In case GlossDownloader auto-detected a different URL column, adopt it
+        if hasattr(downloader, 'url_column') and downloader.url_column != url_column:
+            self.logger.info(
+                f"Downloader switched URL column from '{url_column}' to '{downloader.url_column}'. "
+                "Updating merge logic accordingly.")
+            url_column = downloader.url_column
+            self.url_column = url_column
         
         # Merge with existing results
         if not existing_results.empty:
@@ -896,15 +919,29 @@ class Corpus:
         # Ensure we have a download_results directory
         os.makedirs(download_results_dir, exist_ok=True)
         
-        # Save results using the input filename pattern
-        output_parquet = download_results_dir / f"download_results_{Path(input_parquet).name}"
+        # Decide canonical output parquet path – avoid keeping temp_* result files
+        if Path(input_parquet).name.startswith("temp_") and existing_results_path is not None:
+            # We resumed from a temp list – overwrite original results parquet
+            output_parquet = existing_results_path
+        else:
+            output_parquet = download_results_dir / f"download_results_{Path(input_parquet).name}"
+
         final_results.to_parquet(output_parquet, index=False)
         self.logger.info(f"Saved download results to {output_parquet}")
-        
-        # Clean up temporary files if created
-        temp_path = self.output_dir / "temp_download_input.parquet"
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+
+        # Clean up temporary INPUT parquet and any temp_* result parquets that may exist
+        temp_input_path = self.output_dir / "temp_download_input.parquet"
+        if temp_input_path.exists():
+            temp_input_path.unlink()
+
+        for temp_res in download_results_dir.glob("download_results_temp_*.parquet"):
+            # Remove stale temp result files unless it's the file we just wrote (shouldn't happen)
+            if temp_res != output_parquet:
+                try:
+                    temp_res.unlink()
+                    self.logger.debug(f"Removed stale temp result parquet: {temp_res}")
+                except Exception as e:
+                    self.logger.warning(f"Could not remove temp result parquet {temp_res}: {e}")
             
         # Report download completion
         success_count = len(final_results[final_results['download_success'] == True]) if 'download_success' in final_results.columns else 0
