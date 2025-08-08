@@ -3,6 +3,8 @@ from pathlib import Path
 import os
 import pandas as pd
 import random
+import numpy as np
+from glossapi_rs_noise import score_markdown_directory
 from typing import Dict, Optional, Union, List, Any
 import shutil
 
@@ -294,51 +296,123 @@ class Corpus:
 
         self.logger.info(f"Cleaned {len(records)} markdown files → {self.cleaned_markdown_dir}")
 
-        # Merge or create parquet with new metrics
+        # ------------------------------------------------------------------
+        # Update parquet with Mojibake metrics (single authoritative schema)
+        # ------------------------------------------------------------------
         if records:
             df_metrics = pd.DataFrame(records)
+            df_metrics = df_metrics.rename(columns={
+                "badness_score": "mojibake_badness_score",
+                "percentage_latin": "mojibake_latin_percentage",
+            })
+
             if parquet_path and parquet_path.exists():
                 df = pd.read_parquet(parquet_path)
-                df = df.merge(df_metrics, on="filename", how="left")
             else:
                 parquet_path = self.output_dir / "download_results" / "download_results.parquet"
                 parquet_path.parent.mkdir(parents=True, exist_ok=True)
-                df = df_metrics
+                df = pd.DataFrame({"filename": df_metrics["filename"]})
+
+            # ensure full schema exists
+            for col in [
+                "mojibake_badness_score",
+                "mojibake_latin_percentage",
+                "greek_badness_score",
+                "greek_latin_percentage",
+                "rejection_reason",
+            ]:
+                if col not in df.columns:
+                    df[col] = pd.NA
+
+            # fill mojibake values
+            df = df.set_index("filename")
+            df.update(df_metrics.set_index("filename"))
+            df.reset_index(inplace=True)
             df.to_parquet(parquet_path, index=False)
-            self.logger.info(f"Updated metrics written to {parquet_path}")
+            self.logger.info(f"Mojibake metrics updated in {parquet_path}")
 
-        # ----- Clustering on cleaned markdown (trigram-based) -----
+        # ----- Noise-metrics scoring (Rust) -----
         try:
-            self.logger.info("Running clustering on cleaned markdown files …")
-            self.extractor.split_bad(
-                input_folder=str(self.cleaned_markdown_dir),
-                model_file=str(self.extraction_model_path)
-            )
-        except Exception as e:
-            self.logger.warning("Clustering step after cleaning failed: %s", e)
+            self.logger.info("Scoring cleaned markdown files with glossapi_rs_noise …")
+            results = score_markdown_directory(str(self.cleaned_markdown_dir), os.cpu_count())
+            if results:
+                df_scores = pd.DataFrame(results, columns=["filepath", "greek_badness_score", "greek_latin_percentage"])
+                df_scores["md_filename"] = df_scores["filepath"].apply(lambda p: Path(p).name)
+                df_scores["stem"] = df_scores["md_filename"].str.replace(r"\.md$", "", regex=True)
+                conditions = [
+                    df_scores["greek_badness_score"] > 60,
+                    df_scores["greek_badness_score"] > 0.1,
+                    df_scores["greek_latin_percentage"] > 0.6,
+                ]
+                choices = ["badness>60", "badness>0.1", "latin>0.6"]
+                df_scores["rejection_reason"] = np.select(conditions, choices, default="ok")
+                # Load authoritative parquet (must exist from earlier step)
+                if not parquet_path or not parquet_path.exists():
+                    self.logger.error("Expected parquet %s not found when adding noise metrics", parquet_path)
+                else:
+                    df = pd.read_parquet(parquet_path)
+                    df["stem"] = df["filename"].str.replace(r"\.pdf$", "", regex=True)
 
-        # ----- Rename extraction column to natural / unnatural -----
-        try:
-            if parquet_path and parquet_path.exists():
-                df_post = pd.read_parquet(parquet_path)
-                if "extraction" in df_post.columns:
-                    df_post["trigrams"] = df_post["extraction"].map(
-                        {"good": "natural", "bad": "unnatural"}
-                    ).fillna(df_post["extraction"])
-                    df_post.drop(columns=["extraction"], inplace=True)
-                    df_post.to_parquet(parquet_path, index=False)
-                    self.logger.info("Renamed 'extraction' column → 'trigrams' with mapped values")
+                    for _, row in df_scores.iterrows():
+                        idx = df["stem"] == row["stem"]
+                        df.loc[idx, [
+                            "greek_badness_score",
+                            "greek_latin_percentage",
+                            "rejection_reason",
+                        ]] = row[[
+                            "greek_badness_score",
+                            "greek_latin_percentage",
+                            "rejection_reason",
+                        ]].values
+                    df.drop(columns=["stem"], inplace=True)
+                    df.to_parquet(parquet_path, index=False)
+                    self.logger.info(f"Noise metrics filled in {parquet_path}")
         except Exception as e:
-            self.logger.warning("Failed to rename extraction column: %s", e)
+            self.logger.warning("Noise-metrics scoring failed: %s", e)
 
-            # Determine good / bad based on threshold
+
+        # Determine good / bad list based on rejection_reason
+        if parquet_path and parquet_path.exists():
+            df_final = pd.read_parquet(parquet_path)
+            # --- tidy schema ---
+            df_final.rename(columns={
+                "badness_score": "mojibake_badness_score",
+                "percentage_latin": "mojibake_latin_percentage",
+            }, inplace=True, errors="ignore")
+
+            # drop duplicate pandas merge suffixes and keep clean names
+            df_final = df_final.loc[:, ~df_final.columns.str.endswith('_x')]
+            df_final.columns = df_final.columns.str.replace('_y$','', regex=True)
+
+            # round Greek scores for readability
+            for _col in ("greek_badness_score", "greek_latin_percentage"):
+                if _col in df_final.columns:
+                    df_final[_col] = df_final[_col].round(3)
+
+            # drop any leftover placeholder columns to avoid duplicates
+            df_final.drop(columns=["badness_score", "percentage_latin"], errors="ignore", inplace=True)
+
+            # ensure no duplicate column names
+            df_final = df_final.loc[:, ~df_final.columns.duplicated()]
+
+            # recompute rejection_reason with correct thresholds
+            if {"greek_badness_score", "mojibake_badness_score", "greek_latin_percentage"}.issubset(df_final.columns):
+                _conds = [
+                    df_final["greek_badness_score"] > 60,
+                    df_final["mojibake_badness_score"] > 0.1,
+                    df_final["greek_latin_percentage"] > 0.6,
+                ]
+                _choices = ["greek>60", "mojibake>0.1", "latin>0.6"]
+                df_final["rejection_reason"] = np.select(_conds, _choices, default="ok")
+
+            # persist cleaned parquet
+            df_final.to_parquet(parquet_path, index=False)
             if drop_bad:
-                good_df = df[df["badness_score"] <= threshold]
+                good_df = df_final[df_final["rejection_reason"] == "ok"]
                 self.good_files = [Path(f).stem for f in good_df["filename"].tolist()]
-                self.logger.info(f"After threshold filtering, {len(self.good_files)} good files remain")
+                self.logger.info(f"After filtering, {len(self.good_files)} good files remain")
             else:
-                from pathlib import Path
-                self.good_files = [Path(r["filename"]).stem for r in records]
+                self.good_files = [Path(f).stem for f in df_final["filename"].tolist()]
         else:
             self.good_files = []
 

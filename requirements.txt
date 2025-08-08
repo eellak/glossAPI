@@ -21,6 +21,9 @@ ftfy>=6.0.0
 tenacity>=8.0.0
 tqdm>=4.65.0
 
+# Rust-based noise metrics extension
+noise-metrics-rs>=0.1.0
+
 # Python standard libraries (included for reference)
 # logging
 # os
