@@ -12,29 +12,35 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
-    "maturin>=1.9"
+    "pandas>=1.3.0",
+    "numpy>=1.20.0",
+    "scikit-learn==1.6.1",
+    "joblib>=1.0.0",
+    "dask>=2022.1.0",
+    "pyarrow>=7.0.0",
+    "docling>=1.0.0",
+    "aiohttp>=3.8.0",
+    "aiofiles>=23.0.0",
+    "ftfy>=6.0.0",
+    "tenacity>=8.0.0",
+    "tqdm>=4.65.0"
 ]
-python-packages = [
-    "glossapi"
-]
-
-license = {text = "MIT"}
+license = {text = "EUPL-1.2"}
 classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Rust",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: European Union Public Licence 1.2 (EUPL 1.2)",
 ]
 
 [tool.maturin]
 bindings = "pyo3"
-# The crate is located under rust/glossapi_rs_cleaner
-module-name = "glossapi_rs_cleaner"
+# The crate is located under rust/glossapi_rs_noise
+module-name = "glossapi_rs_noise"
 python-source = "src"
 
-manifest-path = "rust/glossapi_rs_cleaner/Cargo.toml"
-
+manifest-path = "rust/glossapi_rs_noise/Cargo.toml"
+include = ["src/**"]
 python-packages = [
     "glossapi"
 ]
-include = ["src/**"]

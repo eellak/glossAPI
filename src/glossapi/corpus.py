@@ -4,7 +4,6 @@ import os
 import pandas as pd
 import random
 import numpy as np
-from glossapi_rs_noise import score_markdown_directory
 from typing import Dict, Optional, Union, List, Any
 import shutil
 
@@ -333,8 +332,26 @@ class Corpus:
 
         # ----- Noise-metrics scoring (Rust) -----
         try:
+            import importlib
             self.logger.info("Scoring cleaned markdown files with glossapi_rs_noise …")
-            results = score_markdown_directory(str(self.cleaned_markdown_dir), os.cpu_count())
+            try:
+                noise_mod = importlib.import_module("glossapi_rs_noise")
+            except ModuleNotFoundError:
+                # Attempt in-place build like with cleaner
+                self.logger.warning("Rust extension glossapi_rs_noise missing; attempting in-place build via maturin …")
+                import subprocess, sys
+                try:
+                    root_dir = Path(__file__).resolve().parents[3]
+                    manifest = root_dir / "rust" / "glossapi_rs_noise" / "Cargo.toml"
+                    subprocess.run([sys.executable, "-m", "pip", "install", "maturin>=1.5,<2.0"], check=True)
+                    subprocess.run([sys.executable, "-m", "maturin", "develop", "--release", "--manifest-path", str(manifest)], check=True)
+                    noise_mod = importlib.import_module("glossapi_rs_noise")
+                    self.logger.info("Successfully built and loaded glossapi_rs_noise via maturin")
+                except Exception as build_err:
+                    self.logger.error(f"Automatic build of glossapi_rs_noise failed: {build_err}")
+                    raise
+
+            results = noise_mod.score_markdown_directory(str(self.cleaned_markdown_dir), os.cpu_count())
             if results:
                 df_scores = pd.DataFrame(results, columns=["filepath", "greek_badness_score", "greek_latin_percentage"])
                 df_scores["md_filename"] = df_scores["filepath"].apply(lambda p: Path(p).name)
@@ -431,9 +448,7 @@ class Corpus:
         self, 
         input_format: str = "all", 
         num_threads: int = 4, 
-        accel_type: str = "Auto",
-        split_bad: bool = True,
-        model_path: str = None
+        accel_type: str = "Auto"
     ) -> None:
         """
         Extract input files to markdown format.
@@ -443,8 +458,7 @@ class Corpus:
                           Note: Old .doc format (pre-2007) is not supported
             num_threads: Number of threads for processing (default: 4)
             accel_type: Acceleration type ("Auto", "CPU", "CUDA", "MPS") (default: "Auto")
-            split_bad: Whether to perform clustering to separate good and bad files (default: True)
-            model_path: Path to the KMeans clustering model (default: None, will use default path)
+
         """
         self.logger.info(f"Extracting {input_format} files to markdown...")
         
@@ -547,27 +561,7 @@ class Corpus:
         
 
     
-    def split_bad(self, model_path: Optional[Union[str, Path]] = None) -> None:
-        """
-        Analyze markdown files for extraction quality and update the input parquet file.
-        This adds an 'extraction' column to the parquet with values 'good' or 'bad'.
-        
-        Args:
-            model_path: Path to the pre-trained model for clustering (defaults to self.extraction_model_path)
-        """
-        self.logger.info("Analyzing extraction quality and updating parquet file...")
-        
-        # Set extraction model path
-        if model_path is None:
-            model_path = str(self.extraction_model_path)
-            
-        # Simply delegate to the GlossExtract implementation
-        self.extractor.split_bad(
-            input_folder=str(self.markdown_dir),
-            model_file=model_path
-        )
-        
-        self.logger.info("Parquet file successfully updated with extraction quality information.")
+
     
     def section(self) -> None:
         """

@@ -3,6 +3,8 @@ name = "glossapi_rs_noise"
 version = "0.1.0"
 edition = "2021"
 authors = ["GlossAPI Team <glossapi.team@eellak.gr>"]
+description = "Noise-based markdown quality metrics for GlossAPI (PyO3 extension)"
+license = "EUPL-1.2"
 
 [lib]
 name = "glossapi_rs_noise"

@@ -3,6 +3,8 @@ name = "glossapi_rs_cleaner"
 version = "0.1.1"
 edition = "2021"
 authors = ["GlossAPI Team <glossapi.team@eellak.gr>"]
+description = "Rust-accelerated markdown cleaning and mojibake detection for GlossAPI"
+license = "EUPL-1.2"
 
 [lib]
 name = "glossapi_rs_cleaner"

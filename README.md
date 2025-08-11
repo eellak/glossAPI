@@ -8,7 +8,7 @@ A library for processing texts in Greek and other languages, developed by [Open 
 
 - **Document Processing**: Extract text content from academic PDFs, DOCX, HTML, and other formats with structure preservation
 - **Document Downloading**: Download documents from URLs with automatic handling of various formats
-- **Quality Control**: Filter and cluster documents based on extraction quality
+- **Quality Control**: Assess extraction quality using fast Rust-based noise metrics and automatically filter low-quality documents
 - **Section Extraction**: Identify and extract academic sections from documents
 - **Section Classification**: Classify sections using machine learning models
 - **Greek Language Support**: Specialized processing for Greek academic texts
