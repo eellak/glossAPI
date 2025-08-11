@@ -38,3 +38,21 @@ wheels/
 *.egg
 
 rust/glossapi_rs_cleaner/Cargo.lock
+
+# === Python & Rust ignores ===
+# Rust build artifacts
+rust/**/target/
+# Top-level target (if created)
+target/
+# Maturin build cache
+.maturin/
+
+# Python caches and test artifacts
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
