@@ -40,6 +40,7 @@ from shutil import copy2
 from collections import defaultdict
 import json
 from contextlib import contextmanager
+import pandas as pd
 
 class GlossExtract:
     """
@@ -73,6 +74,11 @@ class GlossExtract:
         )
         self._log = logging.getLogger(__name__)
         self.converter = None
+        # Chunking / long-PDF controls
+        self.long_pdf_page_threshold = 600  # pages
+        self.chunk_size = 200  # pages per chunk
+        self.chunk_timeout_s = 600  # seconds per chunk
+        self.max_chunk_timeouts = 2  # abort after 2 timeouts
                     
     def set_log_file(self, logfile):
         """Set the log file path."""
@@ -194,6 +200,162 @@ class GlossExtract:
                 pickle.dump(state, f)
         except Exception as e:
             self._log.error(f"Failed to save processing state: {e}")
+
+    def _get_pdf_page_count(self, file_path: Path) -> Optional[int]:
+        """
+        Lightweight preflight to get total page count for a PDF.
+        Uses pypdfium2 which is already available via Docling backend.
+        Returns None if not a PDF or on failure.
+        """
+        try:
+            if file_path.suffix.lower() != ".pdf":
+                return None
+            import pypdfium2 as pdfium  # local import to avoid hard dep at import time
+            pdf = pdfium.PdfDocument(str(file_path))
+            n = len(pdf)
+            # Explicit close to release resources
+            try:
+                pdf.close()
+            except Exception:
+                pass
+            return int(n)
+        except Exception as e:
+            self._log.warning(f"Failed to get page count for {file_path}: {e}")
+            return None
+
+    def _process_file_chunked(self, file_path: Path, output_dir: Path, timeout_dir: Optional[Path] = None) -> bool:
+        """
+        Process a single long PDF in chunks using Docling's native page_range.
+        Writes per-chunk markdown under chunks/{stem}/ and assembles final {stem}.md.
+        Also writes a manifest {stem}.chunks.json with per-chunk status and timings.
+
+        Returns True if all chunks succeeded (or partial-success) and final MD assembled; False otherwise.
+        """
+        stem = file_path.stem
+        page_count = self._get_pdf_page_count(file_path)
+        if page_count is None:
+            # Fallback: treat as normal file (not chunked)
+            try:
+                with self._timeout(self.processing_timeout):
+                    conv_results = list(self.converter.convert_all([file_path], raises_on_error=False))
+                # Export and determine success
+                success_count, partial_success_count, failure_count = self._export_documents(conv_results, output_dir=output_dir)
+                return (success_count + partial_success_count) > 0 and failure_count == 0
+            except Exception as e:
+                self._log.error(f"Fallback non-chunked processing failed for {file_path.name}: {e}")
+                return False
+
+        # Mark as chunked in existing metadata parquet (minimal provenance)
+        try:
+            self._mark_is_chunked(output_dir=output_dir, src_file=file_path)
+        except Exception:
+            pass
+
+        chunk_dir = output_dir / "chunks" / stem
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = output_dir / f"{stem}.chunks.json"
+        manifest: Dict[str, Any] = {
+            "file": str(file_path),
+            "page_count": page_count,
+            "chunk_size": self.chunk_size,
+            "entries": [],
+        }
+
+        all_segments: List[str] = []
+        strikes = 0
+        completed = True
+
+        idx = 0
+        for start in range(1, page_count + 1, self.chunk_size):
+            end = min(start + self.chunk_size - 1, page_count)
+            idx += 1
+            tries = 0
+            status = None
+            t0 = time.time()
+            last_error: Optional[str] = None
+
+            while True:
+                tries += 1
+                try:
+                    with self._timeout(self.chunk_timeout_s):
+                        conv_res = self.converter.convert(
+                            file_path,
+                            raises_on_error=False,
+                            page_range=(start, end),
+                            max_num_pages=(end - start + 1),
+                        )
+                        if conv_res.status in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
+                            markdown_content = conv_res.document.export_to_markdown()
+                            fixed_content = self._fix_greek_text(markdown_content)
+                            chunk_name = f"{stem}__p{start:04d}-{end:04d}.md"
+                            with (chunk_dir / chunk_name).open("w", encoding="utf-8") as fp:
+                                fp.write(fixed_content)
+                            all_segments.append(fixed_content)
+                            status = "ok" if conv_res.status == ConversionStatus.SUCCESS else "partial"
+                            break
+                        else:
+                            status = "error"
+                            last_error = "; ".join([getattr(e, "error_message", str(e)) for e in getattr(conv_res, "errors", [])]) or "unknown"
+                            break
+                except TimeoutError as te:
+                    status = "timeout"
+                    last_error = str(te)
+                except Exception as e:
+                    status = "error"
+                    last_error = str(e)
+
+                if status == "timeout" and tries < self.max_chunk_timeouts:
+                    # retry this chunk once
+                    continue
+                else:
+                    break
+
+            duration_s = time.time() - t0
+            manifest["entries"].append({
+                "index": idx,
+                "page_start": start,
+                "page_end": end,
+                "status": status,
+                "duration_s": round(duration_s, 3),
+                "retries": max(0, tries - 1),
+            })
+
+            if status == "timeout":
+                strikes += 1
+                if strikes >= self.max_chunk_timeouts:
+                    completed = False
+                    break
+            if status == "error":
+                completed = False
+                break
+
+        # Persist manifest
+        try:
+            with manifest_path.open("w", encoding="utf-8") as fp:
+                json.dump(manifest, fp, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self._log.error(f"Failed to write chunk manifest for {file_path.name}: {e}")
+
+        if not completed:
+            # Copy source file to timeout_dir for inspection if provided
+            if timeout_dir is not None:
+                try:
+                    copy2(file_path, timeout_dir / file_path.name)
+                except Exception as e:
+                    self._log.error(f"Failed to copy timeout/failed file {file_path.name}: {e}")
+            return False
+
+        # Assemble final markdown
+        try:
+            final_md = "\n\n".join(all_segments)
+            out_md_path = output_dir / f"{stem}.md"
+            with out_md_path.open("w", encoding="utf-8") as fp:
+                fp.write(final_md)
+        except Exception as e:
+            self._log.error(f"Failed to assemble final markdown for {file_path.name}: {e}")
+            return False
+
+        return True
     
     def _get_unprocessed_files(self, input_doc_paths: List[Path], 
                               processed_files: Set[str], 
@@ -224,6 +386,8 @@ class GlossExtract:
         ``input_dir``. The search order is:
         1. ``input_dir``
         2. ``input_dir/download_results``
+        3. ``input_dir.parent``
+        4. ``input_dir.parent/download_results``
         The first match is cached in ``self._metadata_parquet_path`` so later
         look-ups are O(1).
         """
@@ -247,11 +411,195 @@ class GlossExtract:
             if download_results_dir.exists():
                 input_parquet_path = parquet_schema.find_metadata_parquet(download_results_dir, require_url_column=False)
 
+        # Additional fallbacks: parent directory and its download_results
+        if input_parquet_path is None:
+            parent_dir = input_dir.parent
+            if parent_dir.exists():
+                input_parquet_path = parquet_schema.find_metadata_parquet(parent_dir, require_url_column=False)
+                if input_parquet_path is None:
+                    parent_download_dir = parent_dir / "download_results"
+                    if parent_download_dir.exists():
+                        input_parquet_path = parquet_schema.find_metadata_parquet(parent_download_dir, require_url_column=False)
+
         if input_parquet_path is not None:
             self._metadata_parquet_path = input_parquet_path
             logger.info(f"Found metadata parquet file: {input_parquet_path}")
 
         return input_parquet_path
+
+    def _ensure_metadata_parquet(self, markdown_dir: Path) -> Optional[Path]:
+        """Ensure a metadata parquet exists and return its path.
+
+        We search via _find_metadata_parquet starting from the markdown_dir. If none is
+        found, create a basic one under the pipeline root (parent of markdown_dir)
+        using currently available markdown files.
+        """
+        try:
+            from glossapi.parquet_schema import ParquetSchema
+        except Exception as e:
+            self._log.error(f"ParquetSchema import failed: {e}")
+            return None
+
+        existing = self._find_metadata_parquet(markdown_dir)
+        if existing is not None:
+            return existing
+
+        # Create a basic parquet from markdown files
+        pipeline_root = markdown_dir.parent
+        schema = ParquetSchema({'url_column': getattr(self, 'url_column', 'url')})
+        created = schema.create_basic_metadata_parquet(markdown_dir, pipeline_root)
+        if created is None:
+            self._log.warning("Could not create a basic metadata parquet; extraction metadata will not be recorded.")
+        else:
+            self._metadata_parquet_path = created
+        return created
+
+    def _mark_is_chunked(self, output_dir: Path, src_file: Path) -> None:
+        """Mark a file as chunked in the existing metadata parquet by setting a boolean column 'is_chunked'.
+
+        - Only updates if a metadata parquet already exists.
+        - Does not create a parquet or add a new row if the filename does not exist in the parquet.
+        """
+        try:
+            parquet_path = self._find_metadata_parquet(Path(output_dir))
+            if parquet_path is None or not Path(parquet_path).exists():
+                return
+
+            df = pd.read_parquet(parquet_path)
+            if 'filename' not in df.columns:
+                return
+
+            filename = Path(src_file).name
+            mask = df['filename'] == filename
+            if not mask.any():
+                # Do not add new rows; minimal footprint
+                return
+
+            # Ensure column exists and set True for this file
+            if 'is_chunked' not in df.columns:
+                df['is_chunked'] = False
+            df.loc[mask, 'is_chunked'] = True
+
+            try:
+                df.to_parquet(parquet_path, index=False, compression='zstd')
+            except Exception:
+                df.to_parquet(parquet_path, index=False)
+        except Exception as e:
+            self._log.warning(f"Failed to mark is_chunked for {src_file}: {e}")
+
+    def _update_extraction_metadata(
+        self,
+        output_dir: Path,
+        src_file: Path,
+        status: str,
+        extraction_mode: str,
+        page_count: Optional[int] = None,
+        chunk_threshold: Optional[int] = None,
+        chunk_size: Optional[int] = None,
+        chunk_count: Optional[int] = None,
+        chunk_manifest_path: Optional[Path] = None,
+    ) -> None:
+        """Update or create metadata parquet row with extraction details for a source file.
+
+        Args:
+            output_dir: The markdown output directory used by extraction.
+            src_file: Path to the original source document (e.g., .pdf).
+            status: One of {'success','partial','failure'} or chunked {'ok','error','timeout'}.
+            extraction_mode: 'standard' for regular convert_all, 'chunked' for page-range splits.
+            page_count, chunk_*: Optional chunking related info.
+        """
+        try:
+            parquet_path = self._ensure_metadata_parquet(Path(output_dir))
+            filename = Path(src_file).name
+
+            if parquet_path is not None and Path(parquet_path).exists():
+                df = pd.read_parquet(parquet_path)
+            else:
+                # Create a minimal DataFrame with this single filename
+                pipeline_root = Path(output_dir).parent
+                download_results_dir = pipeline_root / "download_results"
+                download_results_dir.mkdir(parents=True, exist_ok=True)
+                parquet_path = download_results_dir / "download_results.parquet"
+                df = pd.DataFrame([{ 'filename': filename, getattr(self, 'url_column', 'url'): '' }])
+
+            # Make sure essential columns exist
+            for col in [
+                'filename',
+                'extraction',
+                'extraction_backend',
+                'extraction_mode',
+                'page_count',
+                'chunk_threshold',
+                'chunk_size',
+                'chunk_count',
+                'chunk_manifest_path',
+                'processing_stage',
+            ]:
+                if col not in df.columns:
+                    df[col] = pd.NA
+
+            # Determine backend name
+            backend_name = 'docling_parse'
+            try:
+                pdf_fmt = self.converter.format_options.get(InputFormat.PDF)
+                if getattr(pdf_fmt, 'backend', None) is DoclingParseV2DocumentBackend:
+                    backend_name = 'docling_parse_v2'
+            except Exception:
+                pass
+
+            if 'filename' not in df.columns:
+                df['filename'] = ''
+
+            mask = df['filename'] == filename
+            if not mask.any():
+                # Append a new row if missing
+                new_row = {
+                    'filename': filename,
+                }
+                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                mask = df['filename'] == filename
+
+            # Map status to legacy 'extraction' label used downstream
+            status_map = {
+                'success': 'good',
+                'partial': 'good',  # treat partial as good to keep downstream inclusive
+                'failure': 'bad',
+                'ok': 'good',
+                'error': 'bad',
+                'timeout': 'bad',
+            }
+            extraction_label = status_map.get(status, 'good' if status else pd.NA)
+
+            # Update fields
+            df.loc[mask, 'extraction'] = extraction_label
+            df.loc[mask, 'extraction_backend'] = backend_name
+            df.loc[mask, 'extraction_mode'] = extraction_mode
+            if page_count is not None:
+                df.loc[mask, 'page_count'] = int(page_count)
+            if chunk_threshold is not None:
+                df.loc[mask, 'chunk_threshold'] = int(chunk_threshold)
+            if chunk_size is not None:
+                df.loc[mask, 'chunk_size'] = int(chunk_size)
+            if chunk_count is not None:
+                df.loc[mask, 'chunk_count'] = int(chunk_count)
+            if chunk_manifest_path is not None:
+                df.loc[mask, 'chunk_manifest_path'] = str(chunk_manifest_path)
+
+            # processing_stage logic: append 'extract'
+            def _append_stage(val: Any) -> str:
+                s = '' if pd.isna(val) else str(val)
+                return 'extract' if not s else (s if 'extract' in s.split(',') else f"{s},extract")
+
+            df.loc[mask, 'processing_stage'] = df.loc[mask, 'processing_stage'].apply(_append_stage)
+
+            # Persist with compression (zstd)
+            try:
+                df.to_parquet(parquet_path, index=False, compression='zstd')
+            except Exception:
+                # Fallback without explicit compression
+                df.to_parquet(parquet_path, index=False)
+        except Exception as e:
+            self._log.warning(f"Failed to update extraction metadata for {src_file}: {e}")
 
     
     @contextmanager
@@ -291,70 +639,85 @@ class GlossExtract:
         Returns:
             Tuple of (successful_filenames, problematic_filenames)
         """
-        successful = []
-        problematic = []
-        
-        # Try processing as a batch first
-        try:
-            # Apply timeout to batch processing
-            with self._timeout(self.processing_timeout):
-                # Convert all input documents
-                conv_results = self.converter.convert_all(
-                    batch,
-                    raises_on_error=False,
-                )
-                
-                # Export results to markdown files
+        successful: List[str] = []
+        problematic: List[str] = []
+
+        # Preflight to split long PDFs (chunked) vs normal files (batch-capable)
+        normal_files: List[Path] = []
+        long_files: List[Path] = []
+        for file_path in batch:
+            try:
+                if file_path.suffix.lower() == ".pdf":
+                    n_pages = self._get_pdf_page_count(file_path)
+                    if n_pages is not None and n_pages > self.long_pdf_page_threshold:
+                        long_files.append(file_path)
+                    else:
+                        normal_files.append(file_path)
+                else:
+                    normal_files.append(file_path)
+            except Exception as e:
+                self._log.warning(f"Preflight failed for {file_path.name} (treating as normal): {e}")
+                normal_files.append(file_path)
+
+        # First try to process normal files as a batch
+        if normal_files:
+            try:
+                with self._timeout(self.processing_timeout):
+                    conv_results = list(self.converter.convert_all(
+                        normal_files,
+                        raises_on_error=False,
+                    ))
+                # Export results
                 success_count, partial_success_count, failure_count = self._export_documents(
                     conv_results, output_dir=output_dir
                 )
-                
-                # All files in batch were processed successfully
-                successful = [Path(file_path).name for file_path in batch]
-                return successful, problematic
-            
-        except Exception as batch_error:
-            self._log.warning(f"Batch processing failed with error: {batch_error}. Processing files individually.")
-            
-            # Process files individually to identify problematic ones
-            for file_path in batch:
-                try:
-                    # Apply timeout to individual file processing
-                    with self._timeout(self.processing_timeout):
-                        # Try to process this file individually
-                        conv_results = self.converter.convert_all(
-                            [file_path],
-                            raises_on_error=False,
-                        )
-                        
-                        # Export results to markdown files
+                # Derive per-file outcomes from statuses
+                for res in conv_results:
+                    fname = Path(res.input.file).name
+                    if res.status in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
+                        successful.append(fname)
+                    else:
+                        problematic.append(fname)
+            except Exception as batch_error:
+                self._log.warning(f"Batch processing for normal files failed: {batch_error}. Falling back to per-file.")
+                for file_path in normal_files:
+                    try:
+                        with self._timeout(self.processing_timeout):
+                            conv_results = list(self.converter.convert_all([file_path], raises_on_error=False))
                         success_count, partial_success_count, failure_count = self._export_documents(
                             conv_results, output_dir=output_dir
                         )
-                        
                         if success_count > 0 or partial_success_count > 0:
                             successful.append(Path(file_path).name)
                         else:
                             problematic.append(Path(file_path).name)
                             self._log.error(f"Failed to process file: {Path(file_path).name}")
-                
-                except TimeoutError as timeout_error:
-                    filename = Path(file_path).name
-                    problematic.append(filename)
-                    self._log.error(f"Timeout processing file {filename}: {timeout_error}")
-                    
-                    # Copy timeout file to timeout directory if provided
-                    if timeout_dir:
-                        try:
-                            copy2(file_path, timeout_dir / filename)
-                            self._log.info(f"Copied timeout file to {timeout_dir / filename}")
-                        except Exception as e:
-                            self._log.error(f"Failed to copy timeout file {filename}: {e}")
-                        
-                except Exception as individual_error:
+                    except TimeoutError as timeout_error:
+                        filename = Path(file_path).name
+                        problematic.append(filename)
+                        self._log.error(f"Timeout processing file {filename}: {timeout_error}")
+                        if timeout_dir:
+                            try:
+                                copy2(file_path, timeout_dir / filename)
+                                self._log.info(f"Copied timeout file to {timeout_dir / filename}")
+                            except Exception as e:
+                                self._log.error(f"Failed to copy timeout file {filename}: {e}")
+                    except Exception as individual_error:
+                        problematic.append(Path(file_path).name)
+                        self._log.error(f"Failed to process file {Path(file_path).name}: {individual_error}")
+
+        # Process long PDFs individually with chunking
+        for file_path in long_files:
+            try:
+                ok = self._process_file_chunked(file_path, output_dir=output_dir, timeout_dir=timeout_dir)
+                if ok:
+                    successful.append(Path(file_path).name)
+                else:
                     problematic.append(Path(file_path).name)
-                    self._log.error(f"Failed to process file {Path(file_path).name}: {individual_error}")
-        
+            except Exception as e:
+                problematic.append(Path(file_path).name)
+                self._log.error(f"Failed during chunked processing for {Path(file_path).name}: {e}")
+
         return successful, problematic
         
     def extract_path(self, input_doc_paths, output_dir, batch_size: int = 5):
@@ -369,6 +732,9 @@ class GlossExtract:
         start_time = time.time()
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure converter is created
+        if self.converter is None:
+            self.create_extractor()
         
         # Create directories for problematic files and timeout files
         problematic_dir = output_dir / "problematic_files"
@@ -504,6 +870,8 @@ class GlossExtract:
                 with (output_dir / f"{doc_filename}.md").open("w", encoding='utf-8') as fp:
                     fp.write(fixed_content)
 
+                # Merge-only for normal files; no parquet updates
+
                 # Optionally can also export to other formats like JSON
                 # with (output_dir / f"{doc_filename}.json").open("w", encoding='utf-8') as fp:
                 #     json.dump(conv_res.document.export_to_dict(), fp, ensure_ascii=False, indent=2)
@@ -524,8 +892,11 @@ class GlossExtract:
                     fp.write(fixed_content)
                     
                 partial_success_count += 1
+
+                # Merge-only for normal files; no parquet updates
             else:
                 self._log.info(f"Document {conv_res.input.file} failed to extract.")
                 failure_count += 1
+                # Merge-only for normal files; no parquet updates
                 
         return success_count, partial_success_count, failure_count
