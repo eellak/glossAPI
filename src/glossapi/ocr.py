@@ -1,7 +1,9 @@
 """OCR fallback helpers for GlossAPI.
 
-Currently supports Nanonets OCR model downloaded locally under
-`/mnt/data/test_ocr/ocr_models/nanonets`.
+Supports the Nanonets OCR model via Hugging Face. By default, we use the
+model id `nanonets/Nanonets-OCR-s` and let `transformers` handle caching and
+downloads automatically. Users may also pass a local model directory path to
+reuse pre-downloaded weights.
 
 The API purposefully keeps the public surface extremely small and lightweight
 so that the heavy OCR stack is only imported when required.
@@ -10,9 +12,8 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 
-from huggingface_hub import snapshot_download
 
 class NanonetsHFOCR:
     """Embedded minimal implementation of the Nanonets OCR helper.
@@ -20,7 +21,7 @@ class NanonetsHFOCR:
     printing were removed for brevity.
     """
 
-    def __init__(self, model_path: str, *, device: str | None = None):
+    def __init__(self, model_id_or_path: str, *, device: str | None = None):
         # Lazy heavy imports
         import importlib
         torch = importlib.import_module("torch")
@@ -37,23 +38,15 @@ class NanonetsHFOCR:
         self.device = device
 
         # Load model and processor
-        self._load_model_and_processor(model_path)
+        self._load_model_and_processor(model_id_or_path)
 
-    def _load_model_and_processor(self, model_path: str):
-        """Load model, converting to safetensors on first run for speed."""
-        dtype = self._torch.float16 if self.device.startswith("cuda") else self._torch.bfloat16
-        safetensors_file = Path(model_path) / "model.safetensors"
-
-        if not safetensors_file.is_file():
-            print(f"[GlossAPI] Converting model to safetensors for faster loading... (one-time operation)")
-            model = self._QwenModel.from_pretrained(
-                model_path, torch_dtype=dtype, trust_remote_code=True
-            )
-            model.save_pretrained(model_path, safe_serialization=True)
-            del model # free memory
+    def _load_model_and_processor(self, model_id_or_path: str):
+        """Load model and processor via Transformers. Let HF handle caching/downloads."""
+        # Safer dtype selection: float16 on CUDA, float32 on CPU
+        dtype = self._torch.float16 if self.device.startswith("cuda") else self._torch.float32
 
         self.model = self._QwenModel.from_pretrained(
-            model_path,
+            model_id_or_path,
             torch_dtype=dtype,
             device_map="auto" if self.device.startswith("cuda") else None,
             trust_remote_code=True,
@@ -61,7 +54,7 @@ class NanonetsHFOCR:
         if self.device == "cpu":
             self.model = self.model.to(self.device)
         self.model.eval()
-        self.processor = self._AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+        self.processor = self._AutoProcessor.from_pretrained(model_id_or_path, trust_remote_code=True)
 
     def _pdf_to_images(self, pdf_path: str, dpi: int = 300):
         """Render PDF pages to PIL images in parallel."""
@@ -97,34 +90,17 @@ class NanonetsHFOCR:
         response = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
         return response
 
-    def process_pdf(self, pdf_path: str) -> dict:
+    def process_pdf(self, pdf_path: str, *, max_pages: Optional[int] = None, dpi: int = 300) -> dict:
         if not Path(pdf_path).exists():
             raise FileNotFoundError(pdf_path)
-        images = self._pdf_to_images(pdf_path)
+        images = self._pdf_to_images(pdf_path, dpi=dpi)
+        if max_pages is not None:
+            images = images[:max_pages]
 
-        # --- Run OCR on all images in a single batch ---
-        messages = []
-        for pil_image in images:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": pil_image},
-                        {"type": "text", "text": "This is a page from a scanned document. Please perform OCR and return the full text content. Preserve the original formatting, including paragraphs and line breaks, as much as possible."}
-                    ]
-                }
-            )
-
-        prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-        inputs = self.processor(text=prompt, images=images, return_tensors="pt").to(self.device)
-
-        with self._torch.no_grad():
-            generated_ids = self.model.generate(**inputs, max_new_tokens=4096, do_sample=False)
-        
-        responses = self.processor.batch_decode(generated_ids, skip_special_tokens=True)
-
+        # Page-wise OCR to reduce memory pressure
+        pages_md = [self._process_image(img) for img in images]
         return {
-            "markdown_text": "\n\n---\n\n".join(responses),
+            "markdown_text": "\n\n---\n\n".join(pages_md),
             "pages": len(images),
         }
 
@@ -133,67 +109,26 @@ __all__ = [
 ]
 
 
-def _get_default_model_dir() -> Path:
-    """Return a best-guess location of the Nanonets OCR directory.
-
-    Preference order:
-    1. `glossapi/models/nanonets` inside the *installed* package (data files).
-    2. Current working directory `./nanonets` (if present).
-    """
-    pkg_dir = Path(__file__).resolve().parent / "models" / "nanonets"
-    if pkg_dir.exists():
-        return pkg_dir
-
-    cwd_dir = Path.cwd() / "nanonets"
-    return cwd_dir
+# (No default local directory decision. We rely on HF model id by default.)
 
 
 # Resolved once at import time—not ideal for mutability but fine for defaults.
 # Lightweight cache to reuse an already-loaded OCR engine across multiple PDFs
 _ENGINE_CACHE: dict[tuple[str, str], "NanonetsHFOCR"] = {}
 
-_DEFAULT_MODEL_DIR = _get_default_model_dir()
+DEFAULT_MODEL_ID = "nanonets/Nanonets-OCR-s"
 
 
 
 def _ensure_model_dir(model_dir: Path) -> Path:
-    """Ensure the Nanonets model code is present locally; download if missing.
-
-    Uses `huggingface_hub.snapshot_download` which stores files under the given
-    directory. The full 7.5 GB model will be fetched on first use.
+    """Deprecated: no-op placeholder kept for backward compatibility.
+    Model downloads are handled by `transformers.from_pretrained` automatically.
     """
-    if model_dir.exists():
-        # Ensure python implementation present; if missing, pull it from the full
-        # open-source repo on Hugging Face (includes code + weights).
-        impl_path = model_dir / "nanonets_ocr.py"
-        if not impl_path.exists():
-            snapshot_download(
-                repo_id="nanonets/Nanonets-OCR-s",
-                local_dir=str(model_dir),
-                local_dir_use_symlinks=False,
-                resume_download=True,
-            )
-        return model_dir
-
-    model_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[GlossAPI] Downloading Nanonets OCR model to {model_dir} … (first time only, 7.5 GB)")
-    snapshot_download(
-        repo_id="nanonets/Nanonets-OCR-s",
-        local_dir=str(model_dir),
-        local_dir_use_symlinks=False,
-        resume_download=True,
-    )
     return model_dir
 
 
-def _lazy_import_nanonets(model_dir: Optional[Path] = None):
-    """Dynamically import the NanonetsHFOCR class from the local checkout.
-
-    We avoid a hard import at module load-time to keep dependency overhead
-    minimal for pipelines that never trigger OCR fallback.
-    """
-    """Ensure model weights present and return embedded NanonetsHFOCR class."""
-    _ensure_model_dir(Path(model_dir or _DEFAULT_MODEL_DIR))
+def _lazy_import_nanonets():
+    """Return the embedded NanonetsHFOCR class without side effects."""
     return NanonetsHFOCR
 
 
@@ -202,7 +137,7 @@ def run_nanonets_ocr(
     *,
     images: Optional[List[Any]] = None,
     device: Optional[str] = None,
-    model_dir: Optional[Path] = None,
+    model_dir: Optional[Union[str, Path]] = None,
     max_pages: int | None = None,
 ) -> Dict[str, Any]:
     """Run Nanonets OCR on either a PDF *or* a pre-rendered list of page images.
@@ -240,9 +175,10 @@ def run_nanonets_ocr(
     device: str | None, optional
         Device spec understood by PyTorch – e.g. "cuda", "cuda:1", "cpu". If
         *None*, the helper will auto-select GPU if available.
-    model_dir: Path, optional
-        Directory containing `nanonets_ocr.py` implementation. Defaults to the
-        canonical shared test location used in the project.
+    model_dir: Union[str, Path], optional
+        Hugging Face model id (e.g., 'nanonets/Nanonets-OCR-s') or a local path.
+        If None, defaults to 'nanonets/Nanonets-OCR-s'. The Transformers library
+        handles downloading and caching.
 
     Returns
     -------
@@ -263,9 +199,8 @@ def run_nanonets_ocr(
     # ---------------- argument validation ----------------
     if (pdf_path is None) == (images is None):
         raise ValueError("Provide exactly one of pdf_path or images")
-
-    model_dir = model_dir or _DEFAULT_MODEL_DIR
-    model_dir = _ensure_model_dir(Path(model_dir))
+    # Resolve model identifier or path
+    model_id_or_path = str(model_dir) if model_dir is not None else DEFAULT_MODEL_ID
 
     if pdf_path is not None:
         pdf_path = _Path(pdf_path)
@@ -273,30 +208,23 @@ def run_nanonets_ocr(
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
     import torch
-    # ----- GPU requirement -----
-    if not torch.cuda.is_available():
-        print("[GlossAPI] CUDA device not found – skipping OCR for", pdf_path or "images input")
-        return {
-            "markdown_text": "",
-            "duration_s": 0.0,
-            "pages": 0,
-            "skipped": "no_gpu",
-            "model_dir": None,
-        }
-
+    # Device resolution with graceful CPU fallback
     if device is None:
-        device = "cuda"
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        print("[GlossAPI] Requested CUDA but no CUDA device available; falling back to CPU.")
+        device = "cpu"
     # basic validation
     if not (device.startswith("cuda") or device == "cpu"):
         raise ValueError("device must be 'cuda' or 'cpu'")
 
     # Reuse engine if cached
-    cache_key = (str(Path(model_dir).resolve()), device)
+    cache_key = (str(model_id_or_path), device)
     if cache_key in _ENGINE_CACHE:
         ocr_engine = _ENGINE_CACHE[cache_key]
     else:
-        NanonetsHFOCR = _lazy_import_nanonets(model_dir)
-        ocr_engine = NanonetsHFOCR(str(model_dir), device=device)
+        NanonetsHFOCRClass = _lazy_import_nanonets()
+        ocr_engine = NanonetsHFOCRClass(str(model_id_or_path), device=device)
         _ENGINE_CACHE[cache_key] = ocr_engine
 
     t0 = perf_counter()
@@ -309,12 +237,15 @@ def run_nanonets_ocr(
             "pages": len(images),
         }
     else:
-        result = ocr_engine.process_pdf(str(pdf_path))
-        if max_pages is not None and isinstance(result, dict) and result.get("pages", 0) > max_pages:
-            # Truncate markdown_text to first max_pages delimiters
-            md_split = result.get("markdown_text", "").split("\n\n---\n\n")[:max_pages]
-            result["markdown_text"] = "\n\n---\n\n".join(md_split)
-            result["pages"] = max_pages
+        # Render pages and process one-by-one to limit memory
+        page_images = ocr_engine._pdf_to_images(str(pdf_path))
+        if max_pages is not None:
+            page_images = page_images[:max_pages]
+        pages_md = [ocr_engine._process_image(img) for img in page_images]
+        result = {
+            "markdown_text": "\n\n---\n\n".join(pages_md),
+            "pages": len(page_images),
+        }
     duration = perf_counter() - t0
 
     # Normalise return payload
@@ -332,5 +263,5 @@ def run_nanonets_ocr(
         "markdown_text": markdown_text,
         "duration_s": duration,
         "pages": pages,
-        "model_dir": str(model_dir),
+        "model_dir": str(model_id_or_path),
     }

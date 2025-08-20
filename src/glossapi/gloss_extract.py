@@ -119,6 +119,9 @@ class GlossExtract:
 
     def create_extractor(self):
         """Create a document converter with the configured options for multiple formats."""
+        # Record the PDF backend that will be used so we can write it to parquet metadata
+        # Currently we use Docling v2 backend which corresponds to the "vl_parse_2" engine.
+        self.pdf_backend_name = "vl_parse_2"
         self.converter = DocumentConverter(
             allowed_formats=[
                 InputFormat.PDF,
@@ -533,9 +536,10 @@ class GlossExtract:
         """Update or create metadata parquet row with minimal extraction details for a source file.
 
         Writes only:
-        - extraction_backend: 'text_layer' (default) or 'ocr' later
+        - extraction_backend: records Docling engine used (e.g., 'vl_parse_2'); OCR updates to 'nanonets_ocr' later
         - extraction_mode: 'standard' or 'chunked'
         - failure_mode: '', 'timeout', 'error', etc.
+        - ocr_success: boolean flag for OCR outcome (left unset here; updated in Corpus.ocr())
         Also appends 'extract' to processing_stage.
         """
         try:
@@ -559,11 +563,14 @@ class GlossExtract:
                 'extraction_backend',
                 'extraction_mode',
                 'failure_mode',
+                'ocr_success',
             ]:
                 if col not in df.columns:
                     # Initialize appropriate defaults
                     if col == 'extraction_mode':
                         df[col] = 'standard'
+                    elif col == 'ocr_success':
+                        df[col] = pd.NA
                     else:
                         df[col] = pd.NA
 
@@ -575,8 +582,12 @@ class GlossExtract:
             # Minimal extraction fields
             df.loc[mask, 'extraction_mode'] = extraction_mode
 
-            # Default extraction backend at extraction stage (OCR updates later)
-            df.loc[mask, 'extraction_backend'] = 'text_layer'
+            # Record the Docling extraction backend used (OCR updates later)
+            backend_name = getattr(self, 'pdf_backend_name', None)
+            if not backend_name:
+                # Fallback mapping if attribute is missing
+                backend_name = 'vl_parse_2' if getattr(self, 'USE_V2', True) else 'docling_parse'
+            df.loc[mask, 'extraction_backend'] = backend_name
 
             # Derive failure_mode from status
             failure = ''

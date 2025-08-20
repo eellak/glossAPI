@@ -201,11 +201,8 @@ class Corpus:
             threshold: Badness threshold for optional dropping.
             num_threads: Rayon thread-count to pass to Rust.
             drop_bad: If True, files with badness_score > threshold are removed from downstream processing. Set to False to keep all files and only record the score.
-            ocr_model_dir: Optional path to a pre-downloaded Nanonets OCR directory. If None,
-                GlossAPI will attempt to locate the model automatically via environment variable
-                or internal package data.
-            force_ocr_fallback: If True, run Nanonets OCR on *all* files regardless of noise
-                score. Useful for testing.
+            ocr_model_dir: [DEPRECATED – no effect] Use Corpus.ocr(model_dir=...) instead.
+            force_ocr_fallback: [DEPRECATED – no effect] Use Corpus.ocr(force=True) instead.
         """
         import importlib
         from pathlib import Path
@@ -435,12 +432,6 @@ class Corpus:
 
             # recompute rejection_reason with correct thresholds
             if {"greek_badness_score", "mojibake_badness_score", "latin_percentage"}.issubset(df_final.columns):
-                if force_ocr_fallback:
-                    need_ocr_idx = pd.Series(True, index=df_final.index)
-                else:
-                    need_ocr_idx = (df_final["greek_badness_score"] > 60) | (
-                        df_final["mojibake_badness_score"] > 0.1
-                    ) | (df_final["latin_percentage"] > 0.6)
                 _conds = [
                     df_final["greek_badness_score"] > 60,
                     df_final["mojibake_badness_score"] > 0.1,
@@ -449,46 +440,7 @@ class Corpus:
                 _choices = ["greek>60", "mojibake>0.1", "latin>0.6"]
                 df_final["filter"] = np.select(_conds, _choices, default="ok")
 
-            # ----------------------------------------------------------
-            # OCR fallback (Nanonets) for files failing Greek or Mojibake
-            # ----------------------------------------------------------
-            try:
-                from glossapi.ocr import run_nanonets_ocr  # lazy heavy import only if needed
-                import traceback
-
-                if not force_ocr_fallback:
-                    need_ocr_idx = df_final["filter"].isin(["greek>60", "mojibake>0.1", "latin>0.6"])
-                if need_ocr_idx.any():
-                    self.logger.info("Triggering OCR fallback for %d files …", need_ocr_idx.sum())
-
-                # ensure extraction_backend column present
-                if "extraction_backend" not in df_final.columns:
-                    df_final["extraction_backend"] = None  # Use None instead of pd.NA for string column
-
-
-                ocr_success_files = []
-                for _idx, row in df_final[need_ocr_idx].iterrows():
-                    filename = row["filename"]
-                    pdf_path = self.downloads_dir / filename
-                    self.logger.info("Running OCR fallback for %s", filename)
-                    try:
-                        ocr_result = run_nanonets_ocr(
-                            pdf_path=pdf_path, model_dir=self.ocr_model_dir
-                        )
-                        md_text = ocr_result.get("markdown_text", "")
-                        stem = pdf_path.stem
-                        md_out = self.cleaned_markdown_dir / f"{stem}.md"
-                        md_out.write_text(md_text, encoding="utf-8")
-                        ocr_success_files.append(filename)
-
-                    except Exception as ocr_err:
-                        self.logger.error("OCR fallback failed for %s: %s", filename, traceback.format_exc())
-
-                if ocr_success_files:
-                    self.logger.info(f"Updating extraction_backend for {len(ocr_success_files)} successfully OCR'd files.")
-                    df_final.loc[df_final["filename"].isin(ocr_success_files), "extraction_backend"] = "nanonets_ocr"
-            except ImportError:
-                self.logger.warning("glossapi.ocr module missing; OCR fallback disabled")
+            # OCR moved to Corpus.ocr(); no OCR is performed in clean()
 
             # persist cleaned parquet
             df_final.to_parquet(parquet_path, index=False)
@@ -513,6 +465,159 @@ class Corpus:
         self.logger.warning("Corpus.filter() is deprecated – calling clean() instead")
         self.clean(*args, **kwargs)
     
+    def ocr(
+        self,
+        *,
+        force: bool = False,
+        device: Optional[str] = None,
+        model_dir: Optional[Union[str, Path]] = None,
+        max_pages: Optional[int] = None,
+        persist_engine: bool = True,
+        limit: Optional[int] = None,
+        dpi: Optional[int] = None,        # reserved for future use
+        precision: Optional[str] = None,  # reserved for future use ("fp16","bf16")
+    ) -> None:
+        """Run OCR on PDFs and update outputs/Parquet.
+
+        This is the sole OCR entrypoint. It does not recompute Rust metrics.
+
+        Args:
+            force: If True, run OCR on all PDFs (except already OCR'd) without requiring Rust filter columns.
+            device: Device string (e.g., "cuda", "cuda:0", "cpu"). If None, autodetect handled in OCR helper.
+            model_dir: Hugging Face model id (e.g., "nanonets/Nanonets-OCR-s") or a local model directory path.
+                       If None, uses self.ocr_model_dir or the OCR helper's default model id.
+            max_pages: Optional cap on number of pages to OCR per document.
+            persist_engine: Keep OCR model resident on GPU for the entire run.
+            limit: Optional max number of files to process in this call.
+            dpi: Reserved for future use.
+            precision: Reserved for future use.
+        """
+        from glossapi.parquet_schema import ParquetSchema
+        import pandas as pd
+        import traceback
+
+        # Lazy import heavy OCR helper
+        try:
+            from glossapi.ocr import run_nanonets_ocr as _run_nanonets_ocr
+        except ImportError:
+            self.logger.error("glossapi.ocr module missing; cannot run OCR")
+            return
+
+        # Ensure output dirs exist
+        os.makedirs(self.cleaned_markdown_dir, exist_ok=True)
+
+        parquet_schema = ParquetSchema({"url_column": self.url_column})
+        parquet_path = parquet_schema.find_metadata_parquet(self.output_dir)
+
+        df = None
+        candidates: List[str] = []
+
+        if parquet_path is not None:
+            try:
+                df = pd.read_parquet(parquet_path)
+            except Exception as e:
+                self.logger.error("Failed to read parquet %s: %s", parquet_path, e)
+                df = None
+
+        if df is not None:
+            if "filename" not in df.columns:
+                self.logger.error("Parquet %s missing required 'filename' column", parquet_path)
+                return
+
+            # ensure extraction_backend column present
+            if "extraction_backend" not in df.columns:
+                df["extraction_backend"] = None
+            # ensure ocr_success column present
+            if "ocr_success" not in df.columns:
+                df["ocr_success"] = pd.NA
+
+            if not force:
+                if "filter" not in df.columns:
+                    self.logger.error("Parquet missing 'filter' column; run clean() first or use force=True")
+                    return
+                need_idx = (df["filter"] != "ok") & (df["extraction_backend"].fillna("") != "nanonets_ocr")
+            else:
+                need_idx = df["extraction_backend"].fillna("") != "nanonets_ocr"
+
+            candidates = df.loc[need_idx, "filename"].astype(str).tolist()
+        else:
+            if force:
+                # Fall back to scanning downloads dir for PDFs
+                candidates = [p.name for p in sorted(self.downloads_dir.glob("*.pdf"))]
+                if not candidates:
+                    self.logger.warning("No PDFs found in %s", self.downloads_dir)
+            else:
+                self.logger.error("No metadata parquet found; cannot select OCR candidates without force=True")
+                return
+
+        if not candidates:
+            self.logger.info("No OCR candidates to process (force=%s)", force)
+            return
+
+        if limit is not None:
+            candidates = candidates[: int(limit)]
+
+        self.logger.info("Running OCR on %d file(s) (force=%s)…", len(candidates), force)
+
+        ocr_success_files: List[str] = []
+        # Accept either an HF model id string or a local path; don't coerce to Path
+        chosen_model_dir = model_dir if model_dir is not None else self.ocr_model_dir
+
+        for filename in candidates:
+            pdf_path = self.downloads_dir / filename
+            if not pdf_path.exists():
+                self.logger.warning("PDF not found, skipping: %s", pdf_path)
+                continue
+            try:
+                result = _run_nanonets_ocr(
+                    pdf_path=pdf_path,
+                    device=device,
+                    model_dir=chosen_model_dir,
+                    max_pages=max_pages,
+                )
+                md_text = result.get("markdown_text", "")
+                pages = int(result.get("pages", 0) or 0)
+                if md_text and pages > 0:
+                    md_out = self.cleaned_markdown_dir / f"{pdf_path.stem}.md"
+                    md_out.write_text(md_text, encoding="utf-8")
+                    ocr_success_files.append(filename)
+                else:
+                    self.logger.warning("OCR produced no text for %s (result: %s)", filename, result.get("skipped", "no_text"))
+            except Exception:
+                self.logger.error("OCR failed for %s: %s", filename, traceback.format_exc())
+
+        # Update parquet if available
+        if df is not None:
+            try:
+                attempted = set(candidates)
+                succ = set(ocr_success_files)
+                fail = list(attempted - succ)
+
+                if succ:
+                    sel = df["filename"].isin(list(succ))
+                    df.loc[sel, "extraction_backend"] = "nanonets_ocr"
+                    df.loc[sel, "ocr_success"] = True
+                if fail:
+                    sel_fail = df["filename"].isin(fail)
+                    df.loc[sel_fail, "ocr_success"] = False
+
+                df.to_parquet(parquet_path, index=False)
+                self.logger.info(
+                    "Parquet updated: %d success OCR, %d failed attempts (path=%s)",
+                    len(succ), len(fail), parquet_path,
+                )
+            except Exception as e:
+                self.logger.error("Failed to write parquet %s: %s", parquet_path, e)
+
+        # Optionally clear engine cache to release GPU memory
+        if not persist_engine:
+            try:
+                import glossapi.ocr as _ocr_mod
+                if hasattr(_ocr_mod, "_ENGINE_CACHE"):
+                    _ocr_mod._ENGINE_CACHE.clear()
+            except Exception:
+                pass
+
     def extract(
         self, 
         input_format: str = "all", 
@@ -654,78 +759,53 @@ class Corpus:
             good_filenames = self.good_files
             self.logger.info(f"Using {len(good_filenames)} good filenames from clean()")
         else:
-            # Fallback to legacy behaviour
-            self.logger.info("No good_files from clean(); falling back to parquet extraction field")
-            
-            # Try to find files marked as 'good' in the parquet
+            # Fallback path: derive good filenames from parquet metadata
+            self.logger.info("No good_files from clean(); using parquet filter/ocr_success if available")
             from glossapi.parquet_schema import ParquetSchema
-            
-            # Initialize with proper URL column configuration
-            parquet_schema = ParquetSchema({
-                'url_column': self.downloader_config.get('url_column', 'url')  # Use the configured URL column or default to 'url'
-            })
-            self.logger.info(f"Using URL column for parquet search: {parquet_schema.url_column}")
-            
-            # Look for input parquet with extraction column
-            input_parquet_path = parquet_schema.find_metadata_parquet(self.input_dir)
-            
-            # If not in input_dir, check download_results folder
-            if input_parquet_path is None:
-                download_results_dir = self.input_dir / "download_results"
-                if download_results_dir.exists():
-                    input_parquet_path = parquet_schema.find_metadata_parquet(download_results_dir)
-            
-            if input_parquet_path is not None:
+            parquet_schema = ParquetSchema({'url_column': self.downloader_config.get('url_column', 'url')})
+            # Prefer the output_dir parquet which consolidates current run metadata
+            parquet_path = parquet_schema.find_metadata_parquet(self.output_dir)
+            if parquet_path is None:
+                # Try legacy input_dir locations
+                parquet_path = parquet_schema.find_metadata_parquet(self.input_dir)
+                if parquet_path is None:
+                    dl_dir = self.input_dir / 'download_results'
+                    if dl_dir.exists():
+                        parquet_path = parquet_schema.find_metadata_parquet(dl_dir)
+
+            if parquet_path is not None and Path(parquet_path).exists():
                 try:
-                    # Load parquet and filter by 'good' extraction
-                    df = pd.read_parquet(input_parquet_path)
-                    if 'filename' in df.columns and 'extraction' in df.columns:
-                        good_rows = df[df['extraction'] == 'good']
-                        if not good_rows.empty:
-                            # Get filenames (without extension) of good extractions
-                            good_filenames = [
-                                os.path.splitext(filename)[0] 
-                                for filename in good_rows['filename'].tolist() 
-                                if filename
-                            ]
-                            self.logger.info(f"Found {len(good_filenames)} files marked as 'good' in parquet")
-                            
-                            # Update the processing_stage in the download results parquet
-                            try:
-                                # Update processing_stage for all good rows
-                                if 'processing_stage' in df.columns:
-                                    # Only update rows where extraction is 'good'
-                                    for idx in good_rows.index:
-                                        current_stage = df.loc[idx, 'processing_stage']
-                                        # Append section to stages if not already there
-                                        if current_stage is not None and 'section' not in str(current_stage):
-                                            df.loc[idx, 'processing_stage'] = current_stage + ',section'
-                                else:
-                                    # Create processing_stage column if it doesn't exist
-                                    df['processing_stage'] = None
-                                    for idx in good_rows.index:
-                                        df.loc[idx, 'processing_stage'] = 'download,extract,section'
-                                
-                                standard_path = Path(os.path.dirname(input_parquet_path)) / "download_results.parquet"
-                                
-                                # If the file already has the standardized name, just update it
-                                # Otherwise, save with standardized name and log the change
-                                df.to_parquet(standard_path, index=False)
-                                self.logger.info(f"Updated processing_stage column in {standard_path} for good quality files")
-                                
-                                # If we renamed the file, log this and remove the original
-                                if standard_path != input_parquet_path:
-                                    self.logger.info(f"Standardized parquet name from {os.path.basename(input_parquet_path)} to download_results.parquet")
-                                    # Remove the original file to avoid duplication
-                                    try:
-                                        os.remove(input_parquet_path)
-                                        self.logger.info(f"Removed original parquet file: {input_parquet_path}")
-                                    except Exception as e:
-                                        self.logger.warning(f"Failed to remove original parquet file: {e}")
-                            except Exception as e:
-                                self.logger.warning(f"Error reading parquet for extraction quality: {e}")
+                    df_meta = pd.read_parquet(parquet_path)
+                    mask = pd.Series(False, index=df_meta.index)
+                    if 'filter' in df_meta.columns:
+                        mask = mask | (df_meta['filter'] == 'ok')
+                    if 'ocr_success' in df_meta.columns:
+                        mask = mask | (df_meta['ocr_success'].fillna(False))
+                    good_rows = df_meta[mask]
+                    # Legacy fallback: if nothing selected yet, try 'extraction' == 'good'
+                    if good_rows.empty and 'extraction' in df_meta.columns:
+                        legacy_rows = df_meta[df_meta['extraction'] == 'good']
+                        if not legacy_rows.empty:
+                            good_rows = legacy_rows
+                    if not good_rows.empty and 'filename' in good_rows.columns:
+                        good_filenames = [os.path.splitext(fn)[0] for fn in good_rows['filename'].astype(str).tolist() if fn]
+                        self.logger.info(f"Selected {len(good_filenames)} files via metadata from {parquet_path}")
+                        # Update processing_stage for selected rows
+                        try:
+                            if 'processing_stage' not in df_meta.columns:
+                                df_meta['processing_stage'] = pd.NA
+                            sel_idx = good_rows.index
+                            df_meta.loc[sel_idx, 'processing_stage'] = df_meta.loc[sel_idx, 'processing_stage'].apply(
+                                lambda x: (str(x) + ',section') if (pd.notna(x) and 'section' not in str(x)) else ('download,extract,section' if pd.isna(x) else x)
+                            )
+                            # Write back in-place
+                            df_meta.to_parquet(parquet_path, index=False)
+                        except Exception as e:
+                            self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
                 except Exception as e:
-                    self.logger.warning(f"Error reading parquet file: {e}")
+                    self.logger.warning(f"Error reading parquet file {parquet_path}: {e}")
+            else:
+                self.logger.info("No metadata parquet found for section selection; will fall back to all markdown files")
         
         self.logger.info(f"Found {len(good_filenames)} good quality files for sectioning")
         if good_filenames:
