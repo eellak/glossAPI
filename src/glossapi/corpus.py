@@ -103,8 +103,10 @@ class Corpus:
         self.sectioner = GlossSection()
         self.classifier = GlossSectionClassifier()
         
-        # Create necessary directories
+        self.output_dir = Path(output_dir)
+        self.downloads_dir = self.output_dir / "downloads"
         self.markdown_dir = self.output_dir / "markdown"
+        self.ocr_model_dir = None  # Will use default discovery or user-specified path
         self.sections_dir = self.output_dir / "sections"
         # Directory that will hold cleaned markdown after Rust-powered cleaning
         self.cleaned_markdown_dir = self.output_dir / "clean_markdown"
@@ -188,6 +190,9 @@ class Corpus:
         threshold: float = 0.10,
         num_threads: int = None,
         drop_bad: bool = True,
+        *,
+        ocr_model_dir: Union[str, Path, None] = None,
+        force_ocr_fallback: bool = False,
     ) -> None:
         """Clean markdown files and evaluate badness using the Rust extension.
 
@@ -195,7 +200,13 @@ class Corpus:
             input_dir: Folder with `.md` files to process (defaults to `self.markdown_dir`).
             threshold: Badness threshold for optional dropping.
             num_threads: Rayon thread-count to pass to Rust.
-            drop_bad: If True, files with badness_score > threshold are removed from downstream processing. Set to False to keep all files and only record the score."""
+            drop_bad: If True, files with badness_score > threshold are removed from downstream processing. Set to False to keep all files and only record the score.
+            ocr_model_dir: Optional path to a pre-downloaded Nanonets OCR directory. If None,
+                GlossAPI will attempt to locate the model automatically via environment variable
+                or internal package data.
+            force_ocr_fallback: If True, run Nanonets OCR on *all* files regardless of noise
+                score. Useful for testing.
+        """
         import importlib
         from pathlib import Path
         import shutil
@@ -206,6 +217,10 @@ class Corpus:
             input_dir = self.markdown_dir
         else:
             input_dir = Path(input_dir)
+        
+        # Handle OCR model directory override
+        if ocr_model_dir is not None:
+            self.ocr_model_dir = Path(ocr_model_dir)
 
         # Try to import the compiled extension; build it on-the-fly if absent
         try:
@@ -356,12 +371,14 @@ class Corpus:
                 df_scores = pd.DataFrame(results, columns=["filepath", "greek_badness_score", "greek_latin_percentage"])
                 df_scores["md_filename"] = df_scores["filepath"].apply(lambda p: Path(p).name)
                 df_scores["stem"] = df_scores["md_filename"].str.replace(r"\.md$", "", regex=True)
+                # Only compute a provisional reason based on noise metrics available here.
+                # IMPORTANT: latin percentage must come from rs_cleaner (mojibake_latin_percentage),
+                # not rs_noise. Therefore, do NOT use greek_latin_percentage here. The authoritative
+                # filter is recomputed later after merging cleaner metrics.
                 conditions = [
                     df_scores["greek_badness_score"] > 60,
-                    df_scores["greek_badness_score"] > 0.1,
-                    df_scores["greek_latin_percentage"] > 0.6,
                 ]
-                choices = ["badness>60", "badness>0.1", "latin>0.6"]
+                choices = ["greek>60"]
                 df_scores["rejection_reason"] = np.select(conditions, choices, default="ok")
                 # Load authoritative parquet (must exist from earlier step)
                 if not parquet_path or not parquet_path.exists():
@@ -395,6 +412,8 @@ class Corpus:
             df_final.rename(columns={
                 "badness_score": "mojibake_badness_score",
                 "percentage_latin": "mojibake_latin_percentage",
+                "mojibake_latin_percentage": "latin_percentage",  # ADD THIS
+                "rejection_reason": "filter"                      # ADD THIS
             }, inplace=True, errors="ignore")
 
             # drop duplicate pandas merge suffixes and keep clean names
@@ -408,24 +427,74 @@ class Corpus:
 
             # drop any leftover placeholder columns to avoid duplicates
             df_final.drop(columns=["badness_score", "percentage_latin"], errors="ignore", inplace=True)
+            # ADD: Drop unwanted columns
+            df_final.drop(columns=["greek_latin_percentage", "badness_before", "badness_after"], errors="ignore", inplace=True)
 
             # ensure no duplicate column names
             df_final = df_final.loc[:, ~df_final.columns.duplicated()]
 
             # recompute rejection_reason with correct thresholds
-            if {"greek_badness_score", "mojibake_badness_score", "greek_latin_percentage"}.issubset(df_final.columns):
+            if {"greek_badness_score", "mojibake_badness_score", "latin_percentage"}.issubset(df_final.columns):
+                if force_ocr_fallback:
+                    need_ocr_idx = pd.Series(True, index=df_final.index)
+                else:
+                    need_ocr_idx = (df_final["greek_badness_score"] > 60) | (
+                        df_final["mojibake_badness_score"] > 0.1
+                    ) | (df_final["latin_percentage"] > 0.6)
                 _conds = [
                     df_final["greek_badness_score"] > 60,
                     df_final["mojibake_badness_score"] > 0.1,
-                    df_final["greek_latin_percentage"] > 0.6,
+                    df_final["latin_percentage"] > 0.6,
                 ]
                 _choices = ["greek>60", "mojibake>0.1", "latin>0.6"]
-                df_final["rejection_reason"] = np.select(_conds, _choices, default="ok")
+                df_final["filter"] = np.select(_conds, _choices, default="ok")
+
+            # ----------------------------------------------------------
+            # OCR fallback (Nanonets) for files failing Greek or Mojibake
+            # ----------------------------------------------------------
+            try:
+                from glossapi.ocr import run_nanonets_ocr  # lazy heavy import only if needed
+                import traceback
+
+                if not force_ocr_fallback:
+                    need_ocr_idx = df_final["filter"].isin(["greek>60", "mojibake>0.1", "latin>0.6"])
+                if need_ocr_idx.any():
+                    self.logger.info("Triggering OCR fallback for %d files …", need_ocr_idx.sum())
+
+                # ensure extraction_backend column present
+                if "extraction_backend" not in df_final.columns:
+                    df_final["extraction_backend"] = None  # Use None instead of pd.NA for string column
+
+
+                ocr_success_files = []
+                for _idx, row in df_final[need_ocr_idx].iterrows():
+                    filename = row["filename"]
+                    pdf_path = self.downloads_dir / filename
+                    self.logger.info("Running OCR fallback for %s", filename)
+                    try:
+                        ocr_result = run_nanonets_ocr(
+                            pdf_path=pdf_path, model_dir=self.ocr_model_dir
+                        )
+                        md_text = ocr_result.get("markdown_text", "")
+                        stem = pdf_path.stem
+                        md_out = self.cleaned_markdown_dir / f"{stem}.md"
+                        md_out.write_text(md_text, encoding="utf-8")
+                        ocr_success_files.append(filename)
+
+                    except Exception as ocr_err:
+                        self.logger.error("OCR fallback failed for %s: %s", filename, traceback.format_exc())
+
+                if ocr_success_files:
+                    self.logger.info(f"Updating extraction_backend for {len(ocr_success_files)} successfully OCR'd files.")
+                    df_final.loc[df_final["filename"].isin(ocr_success_files), "extraction_backend"] = "nanonets_ocr"
+            except ImportError:
+                self.logger.warning("glossapi.ocr module missing; OCR fallback disabled")
 
             # persist cleaned parquet
             df_final.to_parquet(parquet_path, index=False)
+# ... (rest of the code remains the same)
             if drop_bad:
-                good_df = df_final[df_final["rejection_reason"] == "ok"]
+                good_df = df_final[df_final["filter"] == "ok"]
                 self.good_files = [Path(f).stem for f in good_df["filename"].tolist()]
                 self.logger.info(f"After filtering, {len(self.good_files)} good files remain")
             else:

@@ -337,6 +337,22 @@ class GlossExtract:
             self._log.error(f"Failed to write chunk manifest for {file_path.name}: {e}")
 
         if not completed:
+            # Record failure/timeout provenance in parquet
+            try:
+                last_status = manifest["entries"][-1]["status"] if manifest.get("entries") else "error"
+                self._update_extraction_metadata(
+                    output_dir=output_dir,
+                    src_file=file_path,
+                    status=last_status,
+                    extraction_mode="chunked",
+                    page_count=page_count,
+                    chunk_threshold=self.long_pdf_page_threshold,
+                    chunk_size=self.chunk_size,
+                    chunk_count=len(manifest.get("entries", [])),
+                    chunk_manifest_path=manifest_path,
+                )
+            except Exception as e:
+                self._log.warning(f"Failed to record chunked extraction metadata for {file_path.name}: {e}")
             # Copy source file to timeout_dir for inspection if provided
             if timeout_dir is not None:
                 try:
@@ -354,6 +370,21 @@ class GlossExtract:
         except Exception as e:
             self._log.error(f"Failed to assemble final markdown for {file_path.name}: {e}")
             return False
+        # Record success provenance in parquet
+        try:
+            self._update_extraction_metadata(
+                output_dir=output_dir,
+                src_file=file_path,
+                status="ok",
+                extraction_mode="chunked",
+                page_count=page_count,
+                chunk_threshold=self.long_pdf_page_threshold,
+                chunk_size=self.chunk_size,
+                chunk_count=len(manifest.get("entries", [])),
+                chunk_manifest_path=manifest_path,
+            )
+        except Exception as e:
+            self._log.warning(f"Failed to record chunked extraction metadata for {file_path.name}: {e}")
 
         return True
     
@@ -455,7 +486,7 @@ class GlossExtract:
         return created
 
     def _mark_is_chunked(self, output_dir: Path, src_file: Path) -> None:
-        """Mark a file as chunked in the existing metadata parquet by setting a boolean column 'is_chunked'.
+        """Mark a file as chunked in the existing metadata parquet by setting column 'extraction_mode' to 'chunked'.
 
         - Only updates if a metadata parquet already exists.
         - Does not create a parquet or add a new row if the filename does not exist in the parquet.
@@ -475,10 +506,10 @@ class GlossExtract:
                 # Do not add new rows; minimal footprint
                 return
 
-            # Ensure column exists and set True for this file
-            if 'is_chunked' not in df.columns:
-                df['is_chunked'] = False
-            df.loc[mask, 'is_chunked'] = True
+            # Ensure column exists and set to 'chunked' for this file
+            if 'extraction_mode' not in df.columns:
+                df['extraction_mode'] = 'standard'
+            df.loc[mask, 'extraction_mode'] = 'chunked'
 
             try:
                 df.to_parquet(parquet_path, index=False, compression='zstd')
@@ -499,14 +530,13 @@ class GlossExtract:
         chunk_count: Optional[int] = None,
         chunk_manifest_path: Optional[Path] = None,
     ) -> None:
-        """Update or create metadata parquet row with extraction details for a source file.
+        """Update or create metadata parquet row with minimal extraction details for a source file.
 
-        Args:
-            output_dir: The markdown output directory used by extraction.
-            src_file: Path to the original source document (e.g., .pdf).
-            status: One of {'success','partial','failure'} or chunked {'ok','error','timeout'}.
-            extraction_mode: 'standard' for regular convert_all, 'chunked' for page-range splits.
-            page_count, chunk_*: Optional chunking related info.
+        Writes only:
+        - extraction_backend: 'text_layer' (default) or 'ocr' later
+        - extraction_mode: 'standard' or 'chunked'
+        - failure_mode: '', 'timeout', 'error', etc.
+        Also appends 'extract' to processing_stage.
         """
         try:
             parquet_path = self._ensure_metadata_parquet(Path(output_dir))
@@ -522,68 +552,37 @@ class GlossExtract:
                 parquet_path = download_results_dir / "download_results.parquet"
                 df = pd.DataFrame([{ 'filename': filename, getattr(self, 'url_column', 'url'): '' }])
 
-            # Make sure essential columns exist
+            # Ensure required columns exist
             for col in [
                 'filename',
-                'extraction',
+                'processing_stage',
                 'extraction_backend',
                 'extraction_mode',
-                'page_count',
-                'chunk_threshold',
-                'chunk_size',
-                'chunk_count',
-                'chunk_manifest_path',
-                'processing_stage',
+                'failure_mode',
             ]:
                 if col not in df.columns:
-                    df[col] = pd.NA
-
-            # Determine backend name
-            backend_name = 'docling_parse'
-            try:
-                pdf_fmt = self.converter.format_options.get(InputFormat.PDF)
-                if getattr(pdf_fmt, 'backend', None) is DoclingParseV2DocumentBackend:
-                    backend_name = 'docling_parse_v2'
-            except Exception:
-                pass
-
-            if 'filename' not in df.columns:
-                df['filename'] = ''
+                    # Initialize appropriate defaults
+                    if col == 'extraction_mode':
+                        df[col] = 'standard'
+                    else:
+                        df[col] = pd.NA
 
             mask = df['filename'] == filename
             if not mask.any():
-                # Append a new row if missing
-                new_row = {
-                    'filename': filename,
-                }
-                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                df = pd.concat([df, pd.DataFrame([{'filename': filename}] )], ignore_index=True)
                 mask = df['filename'] == filename
 
-            # Map status to legacy 'extraction' label used downstream
-            status_map = {
-                'success': 'good',
-                'partial': 'good',  # treat partial as good to keep downstream inclusive
-                'failure': 'bad',
-                'ok': 'good',
-                'error': 'bad',
-                'timeout': 'bad',
-            }
-            extraction_label = status_map.get(status, 'good' if status else pd.NA)
-
-            # Update fields
-            df.loc[mask, 'extraction'] = extraction_label
-            df.loc[mask, 'extraction_backend'] = backend_name
+            # Minimal extraction fields
             df.loc[mask, 'extraction_mode'] = extraction_mode
-            if page_count is not None:
-                df.loc[mask, 'page_count'] = int(page_count)
-            if chunk_threshold is not None:
-                df.loc[mask, 'chunk_threshold'] = int(chunk_threshold)
-            if chunk_size is not None:
-                df.loc[mask, 'chunk_size'] = int(chunk_size)
-            if chunk_count is not None:
-                df.loc[mask, 'chunk_count'] = int(chunk_count)
-            if chunk_manifest_path is not None:
-                df.loc[mask, 'chunk_manifest_path'] = str(chunk_manifest_path)
+
+            # Default extraction backend at extraction stage (OCR updates later)
+            df.loc[mask, 'extraction_backend'] = 'text_layer'
+
+            # Derive failure_mode from status
+            failure = ''
+            if status in ('timeout', 'error', 'failure'):
+                failure = status
+            df.loc[mask, 'failure_mode'] = (failure if failure else pd.NA)
 
             # processing_stage logic: append 'extract'
             def _append_stage(val: Any) -> str:
@@ -702,9 +701,31 @@ class GlossExtract:
                                 self._log.info(f"Copied timeout file to {timeout_dir / filename}")
                             except Exception as e:
                                 self._log.error(f"Failed to copy timeout file {filename}: {e}")
+                        # Update parquet metadata for timeout in standard mode
+                        try:
+                            self._update_extraction_metadata(
+                                output_dir=output_dir,
+                                src_file=Path(file_path),
+                                status="timeout",
+                                extraction_mode="standard",
+                                page_count=self._get_pdf_page_count(Path(file_path)),
+                            )
+                        except Exception as e:
+                            self._log.warning(f"Failed to record timeout metadata for {filename}: {e}")
                     except Exception as individual_error:
                         problematic.append(Path(file_path).name)
                         self._log.error(f"Failed to process file {Path(file_path).name}: {individual_error}")
+                        # Update parquet metadata for failure in standard mode
+                        try:
+                            self._update_extraction_metadata(
+                                output_dir=output_dir,
+                                src_file=Path(file_path),
+                                status="failure",
+                                extraction_mode="standard",
+                                page_count=self._get_pdf_page_count(Path(file_path)),
+                            )
+                        except Exception as e:
+                            self._log.warning(f"Failed to record failure metadata for {Path(file_path).name}: {e}")
 
         # Process long PDFs individually with chunking
         for file_path in long_files:
@@ -869,8 +890,17 @@ class GlossExtract:
                 # Write the fixed content to file
                 with (output_dir / f"{doc_filename}.md").open("w", encoding='utf-8') as fp:
                     fp.write(fixed_content)
-
-                # Merge-only for normal files; no parquet updates
+                # Update parquet metadata for standard extraction
+                try:
+                    self._update_extraction_metadata(
+                        output_dir=output_dir,
+                        src_file=Path(conv_res.input.file),
+                        status="success",
+                        extraction_mode="standard",
+                        page_count=self._get_pdf_page_count(Path(conv_res.input.file)),
+                    )
+                except Exception as e:
+                    self._log.warning(f"Failed to update extraction metadata for {doc_filename}: {e}")
 
                 # Optionally can also export to other formats like JSON
                 # with (output_dir / f"{doc_filename}.json").open("w", encoding='utf-8') as fp:
@@ -892,11 +922,30 @@ class GlossExtract:
                     fp.write(fixed_content)
                     
                 partial_success_count += 1
-
-                # Merge-only for normal files; no parquet updates
+                # Update parquet metadata for partial standard extraction
+                try:
+                    self._update_extraction_metadata(
+                        output_dir=output_dir,
+                        src_file=Path(conv_res.input.file),
+                        status="partial",
+                        extraction_mode="standard",
+                        page_count=self._get_pdf_page_count(Path(conv_res.input.file)),
+                    )
+                except Exception as e:
+                    self._log.warning(f"Failed to update extraction metadata for {doc_filename}: {e}")
             else:
                 self._log.info(f"Document {conv_res.input.file} failed to extract.")
                 failure_count += 1
-                # Merge-only for normal files; no parquet updates
+                # Update parquet metadata for failed standard extraction
+                try:
+                    self._update_extraction_metadata(
+                        output_dir=output_dir,
+                        src_file=Path(conv_res.input.file),
+                        status="failure",
+                        extraction_mode="standard",
+                        page_count=self._get_pdf_page_count(Path(conv_res.input.file)),
+                    )
+                except Exception as e:
+                    self._log.warning(f"Failed to update extraction metadata for {Path(conv_res.input.file).name}: {e}")
                 
         return success_count, partial_success_count, failure_count

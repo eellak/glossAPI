@@ -56,3 +56,14 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# OCR test outputs
+test_ocr_*_output/
+*_demo_output/
+
+# OCR model weights (if downloaded locally)
+nanonets/
+ocr_models/
+
+# Noise analysis reports
+glossapi_noise_analysis_report.md
+
