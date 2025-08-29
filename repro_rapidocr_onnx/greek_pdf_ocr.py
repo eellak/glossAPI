@@ -33,6 +33,8 @@ from docling.document_converter import (
     DocumentConverter,
     PdfFormatOption,
 )
+from docling.datamodel.settings import settings
+from typing import Dict, Any, List
 
 # Ensure RapidOCR model registers with Docling's factory before pipeline init
 import docling.models.rapid_ocr_model  # force-register 'rapidocr' class
@@ -155,12 +157,41 @@ def export_results(conv: ConversionResult, out_dir: Path, pdf_path: Path) -> Non
     doc = conv.document
     md_path = out_dir / f"{pdf_path.stem}.md"
     json_path = out_dir / f"{pdf_path.stem}.json"
+    metrics_path = out_dir / f"{pdf_path.stem}.metrics.json"
     ensure_parent(md_path)
     ensure_parent(json_path)
     md = doc.export_to_markdown()
     md_path.write_text(md, encoding="utf-8")
     as_dict = doc.export_to_dict()
     json_path.write_text(json.dumps(as_dict, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Export timings if profiling is enabled
+    try:
+        metrics: Dict[str, Any] = {"file": str(pdf_path), "timings": {}}
+        def _quantiles(vals: List[float], q: float) -> float:
+            if not vals:
+                return 0.0
+            s = sorted(vals)
+            idx = int(round((len(s)-1) * q))
+            return float(s[idx])
+        for key, item in conv.timings.items():
+            times = list(item.times)
+            count = int(item.count)
+            total = float(sum(times)) if times else 0.0
+            avg = float(total / count) if count else 0.0
+            metrics["timings"][key] = {
+                "scope": str(item.scope.value) if hasattr(item, "scope") else "unknown",
+                "count": count,
+                "total_sec": total,
+                "avg_sec": avg,
+                "p50_sec": _quantiles(times, 0.50),
+                "p90_sec": _quantiles(times, 0.90),
+                "times_sec": times,
+            }
+        metrics_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        # Do not fail conversion because of metrics
+        pass
 
 
 def main() -> None:
@@ -181,6 +212,12 @@ def main() -> None:
     if not args.input_dir.exists():
         raise SystemExit(f"Input dir not found: {args.input_dir}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Enable per-stage timing collection so we can export metrics
+    try:
+        settings.debug.profile_pipeline_timings = True
+    except Exception:
+        pass
 
     opts = make_pipeline_options(
         backend=args.backend,
