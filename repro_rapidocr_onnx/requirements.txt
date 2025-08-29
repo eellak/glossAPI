@@ -1,0 +1,6 @@
+docling[rapidocr]==2.48.0
+rapidocr_onnxruntime==1.4.4
+onnxruntime-gpu==1.18.1
+numpy<2
+pyyaml>=6.0
+tqdm>=4.67
