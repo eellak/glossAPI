@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import tempfile
+import unicodedata
+import re
 from pathlib import Path
 from typing import Iterable
 
@@ -40,6 +43,34 @@ from typing import Dict, Any, List
 import docling.models.rapid_ocr_model  # force-register 'rapidocr' class
 
 
+# --- Normalization helpers (helps math-heavy Unicode stability) ---
+_ZW_RE = re.compile(r"[\u200B\u200C\u200D\uFEFF]")  # zero-width space/joiners + BOM
+
+
+def _normalize_str(s: str) -> str:
+    s = unicodedata.normalize("NFC", s)
+    s = _ZW_RE.sub("", s)
+    return s
+
+
+def _normalize_obj(obj: Any) -> Any:
+    if isinstance(obj, str):
+        return _normalize_str(obj)
+    if isinstance(obj, list):
+        return [_normalize_obj(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _normalize_obj(v) for k, v in obj.items()}
+    return obj
+
+
+# (removed heuristic math wrapping; rely on explicit math OCR injection instead)
+
+
+"""
+External math OCR hook removed. Docling's CodeFormula enrichment is the only math path.
+"""
+
+
 def iter_pdfs(root: Path) -> Iterable[Path]:
     for p in root.rglob("*.pdf"):
         if p.is_file():
@@ -60,6 +91,9 @@ def make_pipeline_options(
     onnx_cls: str | None = None,
     images_scale: float = 1.25,
     rec_keys: str | None = None,
+    formula_enrichment: bool = False,
+    code_enrichment: bool = False,
+    force_ocr: bool = True,
 ) -> PdfPipelineOptions:
     acc = AcceleratorOptions(
         device=AcceleratorDevice.CUDA if device.lower().startswith("cuda") else AcceleratorDevice.CPU
@@ -68,7 +102,7 @@ def make_pipeline_options(
     ocr_opts = RapidOcrOptions(
         backend=backend,                 # 'paddle' or 'onnxruntime'
         lang=["el", "en"],               # Greek + English
-        force_full_page_ocr=True,
+        force_full_page_ocr=bool(force_ocr),
         use_det=True,
         use_cls=True,
         use_rec=True,
@@ -128,6 +162,8 @@ def make_pipeline_options(
         layout_options=LayoutOptions(),
         do_ocr=True,
         do_table_structure=True,
+        do_formula_enrichment=bool(formula_enrichment),
+        do_code_enrichment=bool(code_enrichment),
         force_backend_text=False,
         generate_parsed_pages=False,
         table_structure_options=table_opts,
@@ -153,7 +189,12 @@ def convert_pdf(converter: DocumentConverter, pdf_path: Path) -> ConversionResul
     return converter.convert(source=str(pdf_path))
 
 
-def export_results(conv: ConversionResult, out_dir: Path, pdf_path: Path) -> None:
+def export_results(
+    conv: ConversionResult,
+    out_dir: Path,
+    pdf_path: Path,
+    normalize_output: bool = False,
+) -> None:
     doc = conv.document
     md_path = out_dir / f"{pdf_path.stem}.md"
     json_path = out_dir / f"{pdf_path.stem}.json"
@@ -161,8 +202,12 @@ def export_results(conv: ConversionResult, out_dir: Path, pdf_path: Path) -> Non
     ensure_parent(md_path)
     ensure_parent(json_path)
     md = doc.export_to_markdown()
-    md_path.write_text(md, encoding="utf-8")
     as_dict = doc.export_to_dict()
+    if normalize_output:
+        md = _normalize_str(md)
+    md_path.write_text(md, encoding="utf-8")
+    if normalize_output:
+        as_dict = _normalize_obj(as_dict)
     json_path.write_text(json.dumps(as_dict, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # Export timings if profiling is enabled
@@ -207,6 +252,21 @@ def main() -> None:
     ap.add_argument("--onnx-cls", type=str, default=None, help="Path to classifier ONNX (inference.onnx)")
     ap.add_argument("--images-scale", type=float, default=1.25, help="Raster scale factor before OCR (e.g., 1.25–1.5)")
     ap.add_argument("--rec-keys", type=str, default=None, help="Path to recognition keys dict (ppocr keys)")
+    ap.add_argument("--force-ocr", dest="force_ocr", action="store_true", help="Force full-page OCR (ignore embedded text)")
+    ap.add_argument("--no-force-ocr", dest="force_ocr", action="store_false", help="Let Docling decide when to OCR (use embedded text when available)")
+    ap.set_defaults(force_ocr=True)
+    ap.add_argument("--docling-formula", dest="docling_formula", action="store_true", help="Enable Docling formula enrichment (CodeFormula)")
+    ap.add_argument("--no-docling-formula", dest="docling_formula", action="store_false")
+    ap.set_defaults(docling_formula=False)
+    ap.add_argument("--formula-batch", type=int, default=5, help="Docling CodeFormula batch size (default 5)")
+    ap.add_argument("--docling-code", dest="docling_code", action="store_true", help="Enable Docling code enrichment (shares model with formula)")
+    ap.add_argument("--no-docling-code", dest="docling_code", action="store_false")
+    ap.set_defaults(docling_code=False)
+    # Output normalization (helps math-heavy pages by stabilizing Unicode forms)
+    ap.add_argument("--normalize-output", dest="normalize_output", action="store_true")
+    ap.add_argument("--no-normalize-output", dest="normalize_output", action="store_false")
+    ap.set_defaults(normalize_output=True)
+    # (external math OCR removed; rely on Docling formula enrichment only)
     args = ap.parse_args()
 
     if not args.input_dir.exists():
@@ -219,6 +279,24 @@ def main() -> None:
     except Exception:
         pass
 
+    # Optional: tune CodeFormula batch size and torch matmul precision
+    if args.docling_formula:
+        try:
+            import torch  # type: ignore
+            if torch.cuda.is_available():
+                try:
+                    torch.set_float32_matmul_precision('high')
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            from docling.models.code_formula_model import CodeFormulaModel  # type: ignore
+            if isinstance(args.formula_batch, int) and args.formula_batch > 0:
+                CodeFormulaModel.elements_batch_size = int(args.formula_batch)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
     opts = make_pipeline_options(
         backend=args.backend,
         device=args.device,
@@ -229,6 +307,9 @@ def main() -> None:
         onnx_cls=args.onnx_cls,
         images_scale=args.images_scale,
         rec_keys=args.rec_keys,
+        formula_enrichment=args.docling_formula,
+        code_enrichment=args.docling_code,
+        force_ocr=args.force_ocr,
     )
 
     # If ONNX backend with explicit ONNX paths is provided and PdfPipeline is available,
@@ -263,6 +344,9 @@ def main() -> None:
                 cls_model_path=args.onnx_cls,
                 print_verbose=False,
             )
+            if args.rec_keys:
+                # Ensure Greek keys are respected in the explicit injection path
+                ocr_opts.rec_keys_path = args.rec_keys
             acc = opts.accelerator_options
             ocr_model = RapidOcrModel(ocr_opts, acc)  # type: ignore[arg-type]
             pipeline = StandardPdfPipeline(opts, ocr_model=ocr_model)  # type: ignore
@@ -272,7 +356,12 @@ def main() -> None:
                 found = True
                 try:
                     conv = pipeline.convert(source=str(pdf))
-                    export_results(conv, args.output_dir, pdf)
+                    export_results(
+                        conv,
+                        args.output_dir,
+                        pdf,
+                        normalize_output=args.normalize_output,
+                    )
                     print(f"[OK] {pdf}")
                 except Exception as e:
                     print(f"[FAIL] {pdf}: {e}")
@@ -291,7 +380,12 @@ def main() -> None:
         found = True
         try:
             conv = convert_pdf(converter, pdf)
-            export_results(conv, args.output_dir, pdf)
+            export_results(
+                conv,
+                args.output_dir,
+                pdf,
+                normalize_output=args.normalize_output,
+            )
             print(f"[OK] {pdf}")
         except Exception as e:
             print(f"[FAIL] {pdf}: {e}")

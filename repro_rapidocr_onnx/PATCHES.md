@@ -19,3 +19,6 @@ Why it matters
 
 - Without this, passing `--rec-keys` is ignored and RapidOCR errors when trying to infer a dict URL for the Greek model.
 
+Note on explicit injection path
+
+- The repro runner now also sets `rec_keys_path` explicitly when using the explicit ONNX injection path. The patch remains recommended for users who rely on the factory path or run other Docling tools that construct the OCR engine via the factory.

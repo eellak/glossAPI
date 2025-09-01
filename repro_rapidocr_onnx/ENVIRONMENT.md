@@ -35,3 +35,38 @@ Reapply after reinstall:
 ```
 bash repro_rapidocr_onnx/scripts/repatch_docling.sh
 ```
+
+Optional: enable GPU layout
+
+If you want Docling’s layout to run on GPU as well (OCR already uses ORT GPU):
+
+```
+source .venv_docling/bin/activate
+pip install --index-url https://download.pytorch.org/whl/cu121 \
+  torch==2.5.1 torchvision==0.20.1
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+Optional stability vars if you see NCCL warnings:
+
+```
+export NCCL_P2P_DISABLE=1
+export NCCL_IB_DISABLE=1
+
+Optional: enable Docling formula/code enrichment (LaTeX + code blocks)
+
+- Enrichment is off by default. To enable with best performance on GPU:
+
+```
+source .venv_docling/bin/activate
+pip install --index-url https://download.pytorch.org/whl/cu121 \
+  torch torchvision
+```
+
+- Then add flags when running:
+
+```
+bash repro_rapidocr_onnx/scripts/run_onnx.sh ... \
+  --docling-formula --formula-batch 8 [--docling-code]
+```
+```

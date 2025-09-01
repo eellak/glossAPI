@@ -13,7 +13,11 @@ Quick Start
 4) Prepare keys file:
    - With your Paddle `inference.yml`: `bash scripts/prepare_keys.sh --yml /path/to/inference.yml --out /path/to/greek_keys.txt`
    - Or auto-download then extract: `bash scripts/prepare_keys.sh --download --out /path/to/greek_keys.txt`
-5) Run ONNX pipeline: `bash scripts/run_onnx.sh --det DET.onnx --rec REC.onnx --keys greek_keys.txt --in INPUT_PDFS --out OUTPUT_DIR [--device cuda:0]`
+5) Run ONNX pipeline:
+   - Basic: `bash scripts/run_onnx.sh --det DET.onnx --rec REC.onnx --keys greek_keys.txt --in INPUT_PDFS --out OUTPUT_DIR [--device cuda:0]`
+   - Use embedded text, OCR only bitmaps: add `--no-force-ocr`
+   - Normalize output (default on): `--normalize-output|--no-normalize-output`
+   - Optional math/code enrichment (Docling CodeFormula, GPU recommended): `--docling-formula [--formula-batch 8] [--docling-code]`
 
 What’s in this folder (and how they relate)
 
@@ -37,4 +41,3 @@ History and rationale (why we did these steps)
 - A mismatched CLS ONNX caused input shape errors. We auto-locate RapidOCR’s packaged `ch_ppocr_mobile_v2.0_cls_infer.onnx`, which is shape-compatible.
 
 Follow RUN.md for the exact sequence; use TROUBLESHOOTING.md if any step reports an error.
-
