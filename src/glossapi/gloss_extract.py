@@ -8,6 +8,10 @@ from docling.datamodel.pipeline_options import (
     AcceleratorDevice,
     AcceleratorOptions,
     PdfPipelineOptions,
+    RapidOcrOptions,
+    LayoutOptions,
+    TableStructureOptions,
+    TableFormerMode,
 )
 from docling.datamodel.document import ConversionResult
 from docling.datamodel.settings import settings
@@ -23,6 +27,8 @@ from docling.document_converter import (
 )
 from docling.pipeline.simple_pipeline import SimplePipeline
 from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
+from ._rapidocr_paths import resolve_packaged_onnx_and_keys
+import inspect
 
 import ftfy
 import logging
@@ -56,14 +62,32 @@ class GlossExtract:
         """
         # Default timeout for processing files (10 minutes in seconds)
         self.processing_timeout = 600
+        # Default to GPU-first OCR with auto/full-page control passed in create_extractor
         self.pipeline_options = PdfPipelineOptions()
-        self.pipeline_options.do_ocr = False
+        self.pipeline_options.do_ocr = True
         self.pipeline_options.do_table_structure = True
-        self.pipeline_options.table_structure_options.do_cell_matching = True
+        # Enable accurate table structure by default
+        try:
+            self.pipeline_options.table_structure_options = TableStructureOptions(mode=TableFormerMode.ACCURATE)
+            self.pipeline_options.table_structure_options.do_cell_matching = True
+        except Exception:
+            pass
+        # Default enrichment on
+        try:
+            self.pipeline_options.do_formula_enrichment = True
+            self.pipeline_options.do_code_enrichment = True
+            self.pipeline_options.layout_options = LayoutOptions()
+        except Exception:
+            pass
         self.USE_V2 = True
         self.log_file = Path('.') / 'conversion.log'
         self.url_column = url_column  # Store the URL column name for later use
         self._metadata_parquet_path = None  # Store metadata parquet path once found
+        # Chunking defaults for long PDFs
+        self.long_pdf_page_threshold = 600
+        self.chunk_size = 200
+        self.chunk_timeout_s = 600
+        self.max_chunk_timeouts = 2
         logging.basicConfig(
             level=logging.DEBUG, 
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -72,13 +96,36 @@ class GlossExtract:
                 logging.StreamHandler()
             ]
         )
+        # Per-instance logger
         self._log = logging.getLogger(__name__)
-        self.converter = None
-        # Chunking / long-PDF controls
-        self.long_pdf_page_threshold = 600  # pages
-        self.chunk_size = 200  # pages per chunk
-        self.chunk_timeout_s = 600  # seconds per chunk
-        self.max_chunk_timeouts = 2  # abort after 2 timeouts
+
+    def _supports_native_timeout(self) -> str | None:
+        """Return the timeout kwarg name if supported by Docling, else None."""
+        try:
+            sig = inspect.signature(self.converter.convert)  # type: ignore[attr-defined]
+            for name in ("timeout", "timeout_s"):
+                if name in sig.parameters:
+                    return name
+        except Exception:
+            pass
+        return None
+
+    def _convert_all_with_timeout(self, files: Iterable[Path], timeout_s: int, **kwargs):
+        """Use Docling native timeout if available; otherwise call directly (no fallback wrapper)."""
+        timeout_kw = self._supports_native_timeout()
+        kw = dict(raises_on_error=False)
+        kw.update(kwargs)
+        if timeout_kw:
+            kw[timeout_kw] = int(timeout_s)
+        return list(self.converter.convert_all(files, **kw))  # type: ignore
+
+    def _convert_with_timeout(self, file: Path, timeout_s: int, **kwargs):
+        timeout_kw = self._supports_native_timeout()
+        kw = dict(raises_on_error=False)
+        kw.update(kwargs)
+        if timeout_kw:
+            kw[timeout_kw] = int(timeout_s)
+        return self.converter.convert(file, **kw)  # type: ignore
                     
     def set_log_file(self, logfile):
         """Set the log file path."""
@@ -117,11 +164,84 @@ class GlossExtract:
                 num_threads=threads, device=AcceleratorDevice.AUTO
             )
 
-    def create_extractor(self):
-        """Create a document converter with the configured options for multiple formats."""
+    def create_extractor(
+        self,
+        *,
+        enable_ocr: bool = True,
+        force_full_page_ocr: bool = False,
+        text_score: float = 0.45,
+        images_scale: float = 1.25,
+        formula_enrichment: bool = True,
+        code_enrichment: bool = True,
+        ocr_langs: list[str] | None = None,
+    ):
+        """Create a document converter with configured options and RapidOCR (ONNX).
+
+        Parameters control OCR and enrichment. Models and keys are resolved from
+        packaged assets (or via env override) using resolve_packaged_onnx_and_keys().
+        """
         # Record the PDF backend that will be used so we can write it to parquet metadata
         # Currently we use Docling v2 backend which corresponds to the "vl_parse_2" engine.
         self.pdf_backend_name = "vl_parse_2"
+        # Attach OCR and enrichment settings
+        try:
+            self.pipeline_options.do_ocr = bool(enable_ocr)
+            self.pipeline_options.do_formula_enrichment = bool(formula_enrichment)
+            self.pipeline_options.do_code_enrichment = bool(code_enrichment)
+            # Best-effort image scaling for better detection on thin glyphs
+            try:
+                setattr(self.pipeline_options, "images_scale", images_scale)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Resolve ONNX and keys and configure RapidOCR options
+        if enable_ocr:
+            r = resolve_packaged_onnx_and_keys()
+            if not (r.det and r.rec and r.cls and r.keys):
+                raise FileNotFoundError(
+                    "RapidOCR ONNX models/keys not found. Ensure models exist under glossapi.models/rapidocr or set GLOSSAPI_RAPIDOCR_ONNX_DIR."
+                )
+            langs = ocr_langs or ["el", "en"]
+            ocr_opts = RapidOcrOptions(
+                backend="onnxruntime",
+                lang=langs,
+                force_full_page_ocr=bool(force_full_page_ocr),
+                use_det=True,
+                use_cls=True,
+                use_rec=True,
+                text_score=float(text_score),
+                det_model_path=r.det,
+                rec_model_path=r.rec,
+                cls_model_path=r.cls,
+                print_verbose=False,
+            )
+            ocr_opts.rec_keys_path = r.keys
+            self.pipeline_options.ocr_options = ocr_opts
+
+            # Enable pipeline timing profile (Docling) for richer metrics
+            try:
+                settings.debug.profile_pipeline_timings = True  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+            # Log OCR configuration (fine-grained visibility)
+            try:
+                import os as _os
+                self._log.info(
+                    "OCR enabled: backend=%s forced=%s langs=%s text_score=%.2f det=%s rec=%s cls=%s keys=%s",
+                    ocr_opts.backend,
+                    ocr_opts.force_full_page_ocr,
+                    ",".join(ocr_opts.lang),
+                    float(ocr_opts.text_score or 0.0),
+                    _os.path.basename(r.det) if r.det else None,
+                    _os.path.basename(r.rec) if r.rec else None,
+                    _os.path.basename(r.cls) if r.cls else None,
+                    _os.path.basename(r.keys) if r.keys else None,
+                )
+            except Exception:
+                pass
         self.converter = DocumentConverter(
             allowed_formats=[
                 InputFormat.PDF,
@@ -239,8 +359,7 @@ class GlossExtract:
         if page_count is None:
             # Fallback: treat as normal file (not chunked)
             try:
-                with self._timeout(self.processing_timeout):
-                    conv_results = list(self.converter.convert_all([file_path], raises_on_error=False))
+                conv_results = self._convert_all_with_timeout([file_path], timeout_s=self.processing_timeout)
                 # Export and determine success
                 success_count, partial_success_count, failure_count = self._export_documents(conv_results, output_dir=output_dir)
                 return (success_count + partial_success_count) > 0 and failure_count == 0
@@ -280,26 +399,25 @@ class GlossExtract:
             while True:
                 tries += 1
                 try:
-                    with self._timeout(self.chunk_timeout_s):
-                        conv_res = self.converter.convert(
-                            file_path,
-                            raises_on_error=False,
-                            page_range=(start, end),
-                            max_num_pages=(end - start + 1),
-                        )
-                        if conv_res.status in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
-                            markdown_content = conv_res.document.export_to_markdown()
-                            fixed_content = self._fix_greek_text(markdown_content)
-                            chunk_name = f"{stem}__p{start:04d}-{end:04d}.md"
-                            with (chunk_dir / chunk_name).open("w", encoding="utf-8") as fp:
-                                fp.write(fixed_content)
-                            all_segments.append(fixed_content)
-                            status = "ok" if conv_res.status == ConversionStatus.SUCCESS else "partial"
-                            break
-                        else:
-                            status = "error"
-                            last_error = "; ".join([getattr(e, "error_message", str(e)) for e in getattr(conv_res, "errors", [])]) or "unknown"
-                            break
+                    conv_res = self._convert_with_timeout(
+                        file_path,
+                        timeout_s=self.chunk_timeout_s,
+                        page_range=(start, end),
+                        max_num_pages=(end - start + 1),
+                    )
+                    if conv_res.status in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
+                        markdown_content = conv_res.document.export_to_markdown()
+                        fixed_content = self._fix_greek_text(markdown_content)
+                        chunk_name = f"{stem}__p{start:04d}-{end:04d}.md"
+                        with (chunk_dir / chunk_name).open("w", encoding="utf-8") as fp:
+                            fp.write(fixed_content)
+                        all_segments.append(fixed_content)
+                        status = "ok" if conv_res.status == ConversionStatus.SUCCESS else "partial"
+                        break
+                    else:
+                        status = "error"
+                        last_error = "; ".join([getattr(e, "error_message", str(e)) for e in getattr(conv_res, "errors", [])]) or "unknown"
+                        break
                 except TimeoutError as te:
                     status = "timeout"
                     last_error = str(te)
@@ -536,7 +654,7 @@ class GlossExtract:
         """Update or create metadata parquet row with minimal extraction details for a source file.
 
         Writes only:
-        - extraction_backend: records Docling engine used (e.g., 'vl_parse_2'); OCR updates to 'nanonets_ocr' later
+        - extraction_backend: records Docling engine used (e.g., 'vl_parse_2'); OCR is performed inside extract
         - extraction_mode: 'standard' or 'chunked'
         - failure_mode: '', 'timeout', 'error', etc.
         - ocr_success: boolean flag for OCR outcome (left unset here; updated in Corpus.ocr())
@@ -564,6 +682,12 @@ class GlossExtract:
                 'extraction_mode',
                 'failure_mode',
                 'ocr_success',
+                'page_count',
+                'is_chunked',
+                'chunk_threshold',
+                'chunk_size',
+                'chunk_count',
+                'chunk_manifest_path',
             ]:
                 if col not in df.columns:
                     # Initialize appropriate defaults
@@ -581,6 +705,13 @@ class GlossExtract:
 
             # Minimal extraction fields
             df.loc[mask, 'extraction_mode'] = extraction_mode
+            df.loc[mask, 'page_count'] = page_count if page_count is not None else pd.NA
+            df.loc[mask, 'is_chunked'] = (extraction_mode == 'chunked')
+            if extraction_mode == 'chunked':
+                df.loc[mask, 'chunk_threshold'] = chunk_threshold if chunk_threshold is not None else pd.NA
+                df.loc[mask, 'chunk_size'] = chunk_size if chunk_size is not None else pd.NA
+                df.loc[mask, 'chunk_count'] = chunk_count if chunk_count is not None else pd.NA
+                df.loc[mask, 'chunk_manifest_path'] = str(chunk_manifest_path) if chunk_manifest_path else pd.NA
 
             # Record the Docling extraction backend used (OCR updates later)
             backend_name = getattr(self, 'pdf_backend_name', None)
@@ -612,30 +743,7 @@ class GlossExtract:
             self._log.warning(f"Failed to update extraction metadata for {src_file}: {e}")
 
     
-    @contextmanager
-    def _timeout(self, seconds):
-        """Context manager for setting a timeout for a block of code.
-        
-        Args:
-            seconds: Timeout in seconds
-            
-        Raises:
-            TimeoutError: If the timeout is reached
-        """
-        def timeout_handler(signum, frame):
-            raise TimeoutError(f"Processing timed out after {seconds} seconds")
-            
-        # Set the timeout handler
-        original_handler = signal.getsignal(signal.SIGALRM)
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(seconds)
-        
-        try:
-            yield
-        finally:
-            # Cancel the alarm and restore original handler
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, original_handler)
+    # Removed legacy SIGALRM timeout; rely on Docling native timeout when available
     
     def _process_batch(self, batch: List[Path], output_dir: Path, timeout_dir: Path = None) -> Tuple[List[str], List[str]]:
         """
@@ -672,11 +780,9 @@ class GlossExtract:
         # First try to process normal files as a batch
         if normal_files:
             try:
-                with self._timeout(self.processing_timeout):
-                    conv_results = list(self.converter.convert_all(
-                        normal_files,
-                        raises_on_error=False,
-                    ))
+                conv_results = self._convert_all_with_timeout(
+                    normal_files, timeout_s=self.processing_timeout
+                )
                 # Export results
                 success_count, partial_success_count, failure_count = self._export_documents(
                     conv_results, output_dir=output_dir
@@ -692,8 +798,7 @@ class GlossExtract:
                 self._log.warning(f"Batch processing for normal files failed: {batch_error}. Falling back to per-file.")
                 for file_path in normal_files:
                     try:
-                        with self._timeout(self.processing_timeout):
-                            conv_results = list(self.converter.convert_all([file_path], raises_on_error=False))
+                        conv_results = self._convert_all_with_timeout([file_path], timeout_s=self.processing_timeout)
                         success_count, partial_success_count, failure_count = self._export_documents(
                             conv_results, output_dir=output_dir
                         )
@@ -752,7 +857,7 @@ class GlossExtract:
 
         return successful, problematic
         
-    def extract_path(self, input_doc_paths, output_dir, batch_size: int = 5):
+    def extract_path(self, input_doc_paths, output_dir, batch_size: int = 5, *, skip_existing: bool = True):
         """
         Extract all documents in the input paths to Markdown with robust batch processing and resumption.
         
@@ -781,6 +886,8 @@ class GlossExtract:
         
         # Load the current processing state
         state = self._load_processing_state(state_file)
+        if not skip_existing:
+            state = {'processed': set(), 'problematic': set()}
         processed_files = state.get('processed', set())
         problematic_files = state.get('problematic', set())
         
@@ -818,6 +925,18 @@ class GlossExtract:
             batch_start_time = time.time()
             
             self._log.info(f"Processing batch {i//batch_size + 1}/{batch_count} ({len(batch)} files)")
+            try:
+                # Surface intended OCR mode for this batch
+                forced = False
+                try:
+                    forced = bool(getattr(self.pipeline_options.ocr_options, "force_full_page_ocr", False))  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                self._log.info("Batch OCR mode: %s", "forced" if forced else "auto")
+                for idx, _p in enumerate(batch, 1):
+                    self._log.info("Queueing [%d/%d]: %s", idx, len(batch), Path(_p).name)
+            except Exception:
+                pass
             
             # Process the batch
             successful, problematic = self._process_batch(batch, output_dir, timeout_dir)
@@ -901,6 +1020,10 @@ class GlossExtract:
                 # Write the fixed content to file
                 with (output_dir / f"{doc_filename}.md").open("w", encoding='utf-8') as fp:
                     fp.write(fixed_content)
+                try:
+                    self._log.info("[OK] %s", Path(conv_res.input.file).name)
+                except Exception:
+                    pass
                 # Update parquet metadata for standard extraction
                 try:
                     self._update_extraction_metadata(
@@ -923,7 +1046,7 @@ class GlossExtract:
                 )
                 for item in conv_res.errors:
                     self._log.info(f"\t{item.error_message}")
-                    
+                
                 # Still try to export the partial content
                 doc_filename = conv_res.input.file.stem
                 markdown_content = conv_res.document.export_to_markdown()
@@ -931,6 +1054,10 @@ class GlossExtract:
                 
                 with (output_dir / f"{doc_filename}_partial.md").open("w", encoding='utf-8') as fp:
                     fp.write(fixed_content)
+                try:
+                    self._log.info("[PARTIAL] %s", Path(conv_res.input.file).name)
+                except Exception:
+                    pass
                     
                 partial_success_count += 1
                 # Update parquet metadata for partial standard extraction
@@ -945,8 +1072,32 @@ class GlossExtract:
                 except Exception as e:
                     self._log.warning(f"Failed to update extraction metadata for {doc_filename}: {e}")
             else:
+                # Attempt best-effort export even on failure if a document exists
                 self._log.info(f"Document {conv_res.input.file} failed to extract.")
-                failure_count += 1
+                try:
+                    if getattr(conv_res, "document", None) is not None:
+                        doc_filename = getattr(conv_res.input.file, "stem", None)
+                        if not doc_filename:
+                            try:
+                                doc_filename = Path(conv_res.input.file).stem
+                            except Exception:
+                                doc_filename = None
+                        if doc_filename:
+                            markdown_content = conv_res.document.export_to_markdown()
+                            fixed_content = self._fix_greek_text(markdown_content)
+                            with (output_dir / f"{doc_filename}_partial.md").open("w", encoding='utf-8') as fp:
+                                fp.write(fixed_content)
+                            partial_success_count += 1
+                            try:
+                                self._log.info("[FAIL->PARTIAL] %s", Path(conv_res.input.file).name)
+                            except Exception:
+                                pass
+                        else:
+                            failure_count += 1
+                    else:
+                        failure_count += 1
+                except Exception:
+                    failure_count += 1
                 # Update parquet metadata for failed standard extraction
                 try:
                     self._update_extraction_metadata(

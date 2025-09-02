@@ -100,3 +100,34 @@ GlossAPI will automatically create a metadata folder in downloads if starting fr
 ## License
 
 This project is licensed under the [European Union Public Licence 1.2 (EUPL 1.2)](https://interoperable-europe.ec.europa.eu/collection/eupl/eupl-text-eupl-12).
+
+## GPU OCR with Docling + RapidOCR (general instructions)
+
+The project includes a GPU-first OCR pipeline using Docling for layout and RapidOCR (ONNXRuntime) for OCR. These steps are portable across machines:
+
+- Create a fresh venv and install packages
+  - `python -m venv .venv && source .venv/bin/activate`
+  - `pip install -U pip`
+  - `pip install docling==2.48.0 rapidocr rapidocr-onnxruntime onnxruntime-gpu==1.18.1`
+  - Remove CPU ORT if present: `pip uninstall -y onnxruntime || true`
+  - Install Torch CUDA for GPU layout and enrichment (choose a build matching your driver):
+    - `pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1`
+- Provide ONNX models and Greek keys
+  - Package files under `glossapi/models/rapidocr/{onnx,keys}` or set `GLOSSAPI_RAPIDOCR_ONNX_DIR` to a directory containing:
+    - `det/inference.onnx`, `rec/inference.onnx`, `cls/ch_ppocr_mobile_v2.0_cls_infer.onnx`, and `greek_ppocrv5_keys.txt`
+  - Generate keys from Paddle `inference.yml` using `repro_rapidocr_onnx/scripts/extract_keys.py`
+- Patch Docling to pass the keys path to RapidOCR
+  - File: `<venv>/lib/python3.10/site-packages/docling/models/rapid_ocr_model.py`
+  - Replace `"Rec.keys_path"` with `"Rec.rec_keys_path"` (or run `repro_rapidocr_onnx/scripts/repatch_docling.sh`)
+- Verify providers
+  - `python -c "import onnxruntime as ort; print(ort.get_available_providers())"` → should include `CUDAExecutionProvider`
+- Run the pipeline (GPU, math/code enrichment)
+  - `python -m glossapi.docling_rapidocr_pipeline IN_DIR OUT_DIR --device cuda:0 --timeout-s 600 --normalize-output --docling-formula --formula-batch 8 --docling-code`
+
+Automating Torch selection
+- Use `scripts/install_torch_auto.sh` to pick a suitable Torch build automatically:
+  - `bash scripts/install_torch_auto.sh` (uses CUDA 12.1 if available, falls back to 11.8, else installs CPU)
+
+Notes
+- OCR runs on ORT GPU when `onnxruntime-gpu` is installed; layout/enrichment use Torch CUDA.
+- If you encounter NCCL warnings on multi-GPU systems, set `NCCL_P2P_DISABLE=1` and `NCCL_IB_DISABLE=1`.

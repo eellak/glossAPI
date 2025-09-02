@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "glossapi"
-version = "0.1.1"
+version = "0.1.2"
 description = "Academic document processing pipeline with Rust-powered markdown cleaning"
 authors = [
     {name = "GlossAPI Team", email = "glossapi.team@eellak.gr"}
@@ -12,18 +12,23 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
+    # Core pipeline deps
     "pandas>=1.3.0",
-    "numpy>=1.20.0",
+    "numpy<2",  # ORT+RapidOCR best compatibility
     "scikit-learn==1.6.1",
     "joblib>=1.0.0",
     "dask>=2022.1.0",
     "pyarrow>=7.0.0",
-    "docling>=1.0.0",
     "aiohttp>=3.8.0",
     "aiofiles>=23.0.0",
     "ftfy>=6.0.0",
     "tenacity>=8.0.0",
-    "tqdm>=4.65.0"
+    "tqdm>=4.67.0",
+    # Docling + RapidOCR ONNX stack (aligned with repro)
+    "docling[rapidocr]==2.48.0",
+    "rapidocr_onnxruntime==1.4.4",
+    "onnxruntime-gpu==1.18.1",
+    "pyyaml>=6.0",
 ]
 license = "EUPL-1.2"
 classifiers = [
@@ -34,12 +39,10 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-ocr = [
-    "torch>=2.0.0",
-    "transformers>=4.40.0",
-    "Pillow>=10.0.0",
-    "PyMuPDF>=1.23.0",
-    "huggingface-hub>=0.19.0",
+# Optional CUDA layout acceleration (Docling)
+cuda = [
+    "torch==2.5.1",
+    "torchvision==0.20.1",
 ]
 
 [tool.maturin]

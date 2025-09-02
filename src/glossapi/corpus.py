@@ -363,9 +363,23 @@ class Corpus:
                     self.logger.error(f"Automatic build of glossapi_rs_noise failed: {build_err}")
                     raise
 
-            results = noise_mod.score_markdown_directory(str(self.cleaned_markdown_dir), os.cpu_count())
+            # Use detailed API to retrieve polytonic ratio as well
+            results = noise_mod.score_markdown_directory_detailed(str(self.cleaned_markdown_dir), os.cpu_count())
             if results:
-                df_scores = pd.DataFrame(results, columns=["filepath", "greek_badness_score", "greek_latin_percentage"])
+                # Unpack only the fields we need: path, score, latin_pct, table_ratio, poly_ratio
+                rows = []
+                for row in results:
+                    # row layout: (path, score, latin_pct, table_ratio, poly_ratio, ...)
+                    try:
+                        path, score, latin_pct, _table_ratio, poly_ratio = row[:5]
+                    except Exception:
+                        # Fallback: skip malformed rows
+                        continue
+                    rows.append((path, float(score), float(latin_pct), float(poly_ratio)))
+
+                df_scores = pd.DataFrame(rows, columns=["filepath", "greek_badness_score", "greek_latin_percentage", "polytonic_ratio"])
+                # round polytonic ratio to 2 decimals here
+                df_scores["polytonic_ratio"] = df_scores["polytonic_ratio"].round(2)
                 df_scores["md_filename"] = df_scores["filepath"].apply(lambda p: Path(p).name)
                 df_scores["stem"] = df_scores["md_filename"].str.replace(r"\.md$", "", regex=True)
                 # Only compute a provisional reason based on noise metrics available here.
@@ -386,13 +400,19 @@ class Corpus:
 
                     for _, row in df_scores.iterrows():
                         idx = df["stem"] == row["stem"]
+                        # Ensure destination columns exist
+                        for col in ["greek_badness_score", "greek_latin_percentage", "polytonic_ratio", "rejection_reason"]:
+                            if col not in df.columns:
+                                df[col] = pd.NA
                         df.loc[idx, [
                             "greek_badness_score",
                             "greek_latin_percentage",
+                            "polytonic_ratio",
                             "rejection_reason",
                         ]] = row[[
                             "greek_badness_score",
                             "greek_latin_percentage",
+                            "polytonic_ratio",
                             "rejection_reason",
                         ]].values
                     df.drop(columns=["stem"], inplace=True)
@@ -421,6 +441,8 @@ class Corpus:
             for _col in ("greek_badness_score", "greek_latin_percentage"):
                 if _col in df_final.columns:
                     df_final[_col] = df_final[_col].round(3)
+            if "polytonic_ratio" in df_final.columns:
+                df_final["polytonic_ratio"] = df_final["polytonic_ratio"].round(2)
 
             # drop any leftover placeholder columns to avoid duplicates
             df_final.drop(columns=["badness_score", "percentage_latin"], errors="ignore", inplace=True)
@@ -430,14 +452,13 @@ class Corpus:
             # ensure no duplicate column names
             df_final = df_final.loc[:, ~df_final.columns.duplicated()]
 
-            # recompute rejection_reason with correct thresholds
-            if {"greek_badness_score", "mojibake_badness_score", "latin_percentage"}.issubset(df_final.columns):
+            # recompute rejection_reason with correct thresholds (ignore latin percentage)
+            if {"greek_badness_score", "mojibake_badness_score"}.issubset(df_final.columns):
                 _conds = [
                     df_final["greek_badness_score"] > 60,
                     df_final["mojibake_badness_score"] > 0.1,
-                    df_final["latin_percentage"] > 0.6,
                 ]
-                _choices = ["greek>60", "mojibake>0.1", "latin>0.6"]
+                _choices = ["greek>60", "mojibake>0.1"]
                 df_final["filter"] = np.select(_conds, _choices, default="ok")
 
             # OCR moved to Corpus.ocr(); no OCR is performed in clean()
@@ -468,7 +489,7 @@ class Corpus:
     def ocr(
         self,
         *,
-        force: bool = False,
+        force: bool = True,
         device: Optional[str] = None,
         model_dir: Optional[Union[str, Path]] = None,
         max_pages: Optional[int] = None,
@@ -477,152 +498,46 @@ class Corpus:
         dpi: Optional[int] = None,        # reserved for future use
         precision: Optional[str] = None,  # reserved for future use ("fp16","bf16")
     ) -> None:
-        """Run OCR on PDFs and update outputs/Parquet.
+        """Compatibility shim: rerun extract with forced OCR.
 
-        This is the sole OCR entrypoint. It does not recompute Rust metrics.
-
-        Args:
-            force: If True, run OCR on all PDFs (except already OCR'd) without requiring Rust filter columns.
-            device: Device string (e.g., "cuda", "cuda:0", "cpu"). If None, autodetect handled in OCR helper.
-            model_dir: Hugging Face model id (e.g., "nanonets/Nanonets-OCR-s") or a local model directory path.
-                       If None, uses self.ocr_model_dir or the OCR helper's default model id.
-            max_pages: Optional cap on number of pages to OCR per document.
-            persist_engine: Keep OCR model resident on GPU for the entire run.
-            limit: Optional max number of files to process in this call.
-            dpi: Reserved for future use.
-            precision: Reserved for future use.
+        This method now delegates to extract() with force_ocr=True and skips
+        existing outputs (reprocess) to produce OCR-enforced markdown.
         """
-        from glossapi.parquet_schema import ParquetSchema
-        import pandas as pd
-        import traceback
-
-        # Lazy import heavy OCR helper
+        # Try to narrow to bad files if parquet is present; otherwise process PDFs
+        filenames: Optional[List[str]] = None
         try:
-            from glossapi.ocr import run_nanonets_ocr as _run_nanonets_ocr
-        except ImportError:
-            self.logger.error("glossapi.ocr module missing; cannot run OCR")
-            return
+            from glossapi.parquet_schema import ParquetSchema
+            parquet_schema = ParquetSchema({"url_column": self.url_column})
+            parquet_path = parquet_schema.find_metadata_parquet(self.output_dir)
+            if parquet_path and parquet_path.exists():
+                import pandas as _pd
+                df = _pd.read_parquet(parquet_path)
+                if "filename" in df.columns and "filter" in df.columns:
+                    filenames = df.loc[df["filter"] != "ok", "filename"].dropna().astype(str).tolist() or None
+        except Exception:
+            pass
 
-        # Ensure output dirs exist
-        os.makedirs(self.cleaned_markdown_dir, exist_ok=True)
-
-        parquet_schema = ParquetSchema({"url_column": self.url_column})
-        parquet_path = parquet_schema.find_metadata_parquet(self.output_dir)
-
-        df = None
-        candidates: List[str] = []
-
-        if parquet_path is not None:
-            try:
-                df = pd.read_parquet(parquet_path)
-            except Exception as e:
-                self.logger.error("Failed to read parquet %s: %s", parquet_path, e)
-                df = None
-
-        if df is not None:
-            if "filename" not in df.columns:
-                self.logger.error("Parquet %s missing required 'filename' column", parquet_path)
-                return
-
-            # ensure extraction_backend column present
-            if "extraction_backend" not in df.columns:
-                df["extraction_backend"] = None
-            # ensure ocr_success column present
-            if "ocr_success" not in df.columns:
-                df["ocr_success"] = pd.NA
-
-            if not force:
-                if "filter" not in df.columns:
-                    self.logger.error("Parquet missing 'filter' column; run clean() first or use force=True")
-                    return
-                need_idx = (df["filter"] != "ok") & (df["extraction_backend"].fillna("") != "nanonets_ocr")
-            else:
-                need_idx = df["extraction_backend"].fillna("") != "nanonets_ocr"
-
-            candidates = df.loc[need_idx, "filename"].astype(str).tolist()
-        else:
-            if force:
-                # Fall back to scanning downloads dir for PDFs
-                candidates = [p.name for p in sorted(self.downloads_dir.glob("*.pdf"))]
-                if not candidates:
-                    self.logger.warning("No PDFs found in %s", self.downloads_dir)
-            else:
-                self.logger.error("No metadata parquet found; cannot select OCR candidates without force=True")
-                return
-
-        if not candidates:
-            self.logger.info("No OCR candidates to process (force=%s)", force)
-            return
-
-        if limit is not None:
-            candidates = candidates[: int(limit)]
-
-        self.logger.info("Running OCR on %d file(s) (force=%s)…", len(candidates), force)
-
-        ocr_success_files: List[str] = []
-        # Accept either an HF model id string or a local path; don't coerce to Path
-        chosen_model_dir = model_dir if model_dir is not None else self.ocr_model_dir
-
-        for filename in candidates:
-            pdf_path = self.downloads_dir / filename
-            if not pdf_path.exists():
-                self.logger.warning("PDF not found, skipping: %s", pdf_path)
-                continue
-            try:
-                result = _run_nanonets_ocr(
-                    pdf_path=pdf_path,
-                    device=device,
-                    model_dir=chosen_model_dir,
-                    max_pages=max_pages,
-                )
-                md_text = result.get("markdown_text", "")
-                pages = int(result.get("pages", 0) or 0)
-                if md_text and pages > 0:
-                    md_out = self.cleaned_markdown_dir / f"{pdf_path.stem}.md"
-                    md_out.write_text(md_text, encoding="utf-8")
-                    ocr_success_files.append(filename)
-                else:
-                    self.logger.warning("OCR produced no text for %s (result: %s)", filename, result.get("skipped", "no_text"))
-            except Exception:
-                self.logger.error("OCR failed for %s: %s", filename, traceback.format_exc())
-
-        # Update parquet if available
-        if df is not None:
-            try:
-                attempted = set(candidates)
-                succ = set(ocr_success_files)
-                fail = list(attempted - succ)
-
-                if succ:
-                    sel = df["filename"].isin(list(succ))
-                    df.loc[sel, "extraction_backend"] = "nanonets_ocr"
-                    df.loc[sel, "ocr_success"] = True
-                if fail:
-                    sel_fail = df["filename"].isin(fail)
-                    df.loc[sel_fail, "ocr_success"] = False
-
-                df.to_parquet(parquet_path, index=False)
-                self.logger.info(
-                    "Parquet updated: %d success OCR, %d failed attempts (path=%s)",
-                    len(succ), len(fail), parquet_path,
-                )
-            except Exception as e:
-                self.logger.error("Failed to write parquet %s: %s", parquet_path, e)
-
-        # Optionally clear engine cache to release GPU memory
-        if not persist_engine:
-            try:
-                import glossapi.ocr as _ocr_mod
-                if hasattr(_ocr_mod, "_ENGINE_CACHE"):
-                    _ocr_mod._ENGINE_CACHE.clear()
-            except Exception:
-                pass
-
+        self.extract(
+            input_format="pdf",
+            num_threads=os.cpu_count() or 4,
+            accel_type="CUDA",
+            force_ocr=True,
+            formula_enrichment=True,
+            code_enrichment=True,
+            filenames=filenames,
+            skip_existing=False,
+        )
     def extract(
         self, 
         input_format: str = "all", 
         num_threads: int = 4, 
-        accel_type: str = "Auto"
+        accel_type: str = "CUDA",
+        *,
+        force_ocr: bool = False,
+        formula_enrichment: bool = True,
+        code_enrichment: bool = True,
+        filenames: Optional[List[str]] = None,
+        skip_existing: bool = True,
     ) -> None:
         """
         Extract input files to markdown format.
@@ -638,7 +553,12 @@ class Corpus:
         
         # Prepare extractor
         self.extractor.enable_accel(threads=num_threads, type=accel_type)
-        self.extractor.create_extractor()
+        self.extractor.create_extractor(
+            enable_ocr=True,
+            force_full_page_ocr=bool(force_ocr),
+            formula_enrichment=bool(formula_enrichment),
+            code_enrichment=bool(code_enrichment),
+        )
         
         # Create output directory
         os.makedirs(self.markdown_dir, exist_ok=True)
@@ -716,6 +636,11 @@ class Corpus:
                 
             input_files = list(downloads_dir.glob(f"*.{ext}"))
         
+        # Optional whitelist filtering by filenames list
+        if filenames:
+            names = set(str(n) for n in filenames)
+            input_files = [p for p in input_files if p.name in names]
+
         if not input_files:
             self.logger.warning(f"No {input_format} files found in {downloads_dir}")
             return
@@ -729,7 +654,7 @@ class Corpus:
         os.makedirs(self.markdown_dir, exist_ok=True)
         
         # Use multiple threads for extraction
-        self.extractor.extract_path(input_files, self.markdown_dir)
+        self.extractor.extract_path(input_files, self.markdown_dir, skip_existing=skip_existing)
         
         self.logger.info(f"Extraction complete. Markdown files saved to {self.markdown_dir}")
         
