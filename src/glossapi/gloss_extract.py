@@ -180,6 +180,22 @@ class GlossExtract:
         Parameters control OCR and enrichment. Models and keys are resolved from
         packaged assets (or via env override) using resolve_packaged_onnx_and_keys().
         """
+        # GPU-only preflight (enforce ORT CUDA provider; Torch CUDA when formula enrichment is enabled)
+        try:
+            import onnxruntime as _ort  # type: ignore
+            _providers = _ort.get_available_providers()
+            if "CUDAExecutionProvider" not in _providers:
+                raise RuntimeError(f"GPU-only policy: CUDAExecutionProvider not available in onnxruntime providers={_providers}")
+        except Exception as e:
+            raise RuntimeError(f"GPU-only policy: onnxruntime-gpu not available or misconfigured: {e}")
+        if formula_enrichment:
+            try:
+                import torch  # type: ignore
+                if not torch.cuda.is_available():
+                    raise RuntimeError("GPU-only policy: Torch CUDA not available but formula enrichment requested.")
+            except Exception as e:
+                raise RuntimeError(f"GPU-only policy: Torch CUDA preflight failed: {e}")
+
         # Record the PDF backend that will be used so we can write it to parquet metadata
         # Currently we use Docling v2 backend which corresponds to the "vl_parse_2" engine.
         self.pdf_backend_name = "vl_parse_2"
@@ -1109,5 +1125,143 @@ class GlossExtract:
                     )
                 except Exception as e:
                     self._log.warning(f"Failed to update extraction metadata for {Path(conv_res.input.file).name}: {e}")
-                
+            # Write per-document metrics JSON (Docling timings) and per-page metrics
+            try:
+                import json as _json
+                # Per-document timings (same structure as module runner)
+                metrics = {"file": str(getattr(conv_res.input.file, 'name', 'unknown')), "timings": {}}
+                for key, item in conv_res.timings.items():
+                    times = list(item.times)
+                    cnt = int(item.count)
+                    tot = float(sum(times)) if times else 0.0
+                    avg = float(tot / cnt) if cnt else 0.0
+                    metrics["timings"][key] = {
+                        "scope": str(item.scope.value) if hasattr(item, "scope") else "unknown",
+                        "count": cnt,
+                        "total_sec": tot,
+                        "avg_sec": avg,
+                        "p50_sec": float(times[int(round((len(times)-1)*0.50))]) if times else 0.0,
+                        "p90_sec": float(times[int(round((len(times)-1)*0.90))]) if times else 0.0,
+                        "times_sec": times,
+                    }
+                mpath = output_dir / f"{doc_filename}.metrics.json"
+                with mpath.open("w", encoding="utf-8") as fp:
+                    fp.write(_json.dumps(metrics, ensure_ascii=False, indent=2))
+                # Per-page metrics
+                try:
+                    per_page = self._compute_per_page_metrics(conv_res)
+                    pppath = output_dir / f"{doc_filename}.per_page.metrics.json"
+                    with pppath.open("w", encoding="utf-8") as fp:
+                        fp.write(_json.dumps(per_page, ensure_ascii=False, indent=2))
+                    # Emit concise per-page log line
+                    for row in per_page.get("pages", []):
+                        self._log.info("[PAGE] %s p%d: parse=%.3fs ocr=%.3fs formulas=%d code=%d",
+                                       getattr(conv_res.input.file, 'name', doc_filename),
+                                       int(row.get("page_no", 0)),
+                                       float(row.get("parse_sec", 0.0)),
+                                       float(row.get("ocr_sec", 0.0)),
+                                       int(row.get("formula_count", 0)),
+                                       int(row.get("code_count", 0)))
+                except Exception as _e:
+                    self._log.warning("Failed to compute per-page metrics for %s: %s", doc_filename, _e)
+            except Exception as _e:
+                self._log.debug("Metrics export failed for %s: %s", doc_filename, _e)
+
         return success_count, partial_success_count, failure_count
+
+    def _compute_per_page_metrics(self, conv_res: ConversionResult):
+        try:
+            doc = conv_res.document
+        except Exception:
+            return {"pages": []}
+        try:
+            page_count = len(doc.pages)  # type: ignore[attr-defined]
+        except Exception:
+            page_count = 0
+        timings = {}
+        try:
+            for key, item in conv_res.timings.items():
+                times = list(item.times)
+                timings[key] = {
+                    "scope": str(getattr(getattr(item, 'scope', None), 'value', 'unknown')),
+                    "times": times,
+                    "total": float(sum(times)) if times else float(getattr(item, 'total', 0.0)),
+                }
+        except Exception:
+            pass
+        def _pt(k):
+            arr = timings.get(k, {}).get("times", []) or []
+            if page_count and len(arr) == page_count:
+                return [float(x) for x in arr]
+            return [float(x) for x in (arr + [0.0] * page_count)[:page_count]]
+        ocr = _pt("ocr")
+        parse = _pt("page_parse")
+        layout = _pt("layout")
+        table = _pt("table_structure")
+        fcnt = [0] * max(1, page_count)
+        fch = [0] * max(1, page_count)
+        ftr = [0] * max(1, page_count)
+        ftrc = [0] * max(1, page_count)
+        ccnt = [0] * max(1, page_count)
+        try:
+            as_dict = doc.export_to_dict()
+            import re as _re
+            _run_pat = _re.compile(r"\\\\\s*&(?P<ws>(?:\\quad|\\;|\\:|\\,|\\\\s|\s){200,})")
+            _ws_collapse = _re.compile(r"(?:(?:\\quad|\\;|\\:|\\,|\\\\s)|\s){2,}")
+            _CAP = 3000
+            def _sanitize(s: str):
+                dropped=0
+                m=_run_pat.search(s)
+                if m:
+                    s_new=s[:m.start('ws')]; dropped+=len(s)-len(s_new); s=s_new
+                if len(s)>_CAP:
+                    cut=s.rfind('\\\\',0,_CAP); cut = cut if cut>=0 else _CAP; dropped+=len(s)-cut; s=s[:cut]
+                s2=_ws_collapse.sub(' ', s)
+                return s2, dropped
+            def _walk(label, cnt, chars=False):
+                for node in as_dict.get("texts", []):
+                    if str(node.get("label")) != label:
+                        continue
+                    raw = str(node.get("text") or node.get("orig") or "")
+                    txt, dropped = _sanitize(raw) if label=='formula' else (raw,0)
+                    ch = len(txt)
+                    for prov in node.get("prov", []) or []:
+                        pno = int(prov.get("page_no") or 0)
+                        if 1 <= pno <= len(cnt):
+                            cnt[pno - 1] += 1
+                            if chars:
+                                fch[pno - 1] += ch
+                            if label=='formula' and dropped:
+                                ftr[pno - 1] += 1
+                                ftrc[pno - 1] += int(dropped)
+            _walk("formula", fcnt, True)
+            _walk("code", ccnt, False)
+        except Exception:
+            pass
+        try:
+            den_total = float(timings.get("doc_enrich", {}).get("total", 0.0))
+        except Exception:
+            den_total = 0.0
+        shares = [0.0] * max(1, page_count)
+        if den_total and page_count:
+            s = float(sum(fch)) or float(sum(fcnt)) or 0.0
+            if s > 0:
+                base = fch if sum(fch) > 0 else fcnt
+                shares = [den_total * (float(x) / s) for x in base]
+        rows = []
+        n = max(page_count, len(ocr), len(parse))
+        for i in range(n):
+            rows.append({
+                "page_no": i + 1,
+                "ocr_sec": float(ocr[i]) if i < len(ocr) else 0.0,
+                "parse_sec": float(parse[i]) if i < len(parse) else 0.0,
+                "layout_sec": float(layout[i]) if i < len(layout) else 0.0,
+                "table_sec": float(table[i]) if i < len(table) else 0.0,
+                "formula_count": int(fcnt[i]) if i < len(fcnt) else 0,
+                "formula_chars": int(fch[i]) if i < len(fch) else 0,
+                "formula_truncated": int(ftr[i]) if i < len(ftr) else 0,
+                "formula_truncated_chars": int(ftrc[i]) if i < len(ftrc) else 0,
+                "code_count": int(ccnt[i]) if i < len(ccnt) else 0,
+                "doc_enrich_share_sec": float(shares[i]) if i < len(shares) else 0.0,
+            })
+        return {"file": str(getattr(conv_res.input.file, 'name', 'unknown')), "page_count": int(page_count), "totals": {"doc_enrich_total_sec": den_total}, "pages": rows}

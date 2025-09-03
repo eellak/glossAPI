@@ -7,7 +7,6 @@ import numpy as np
 from typing import Dict, Optional, Union, List, Any
 import shutil
 
-from .gloss_extract import GlossExtract
 from .gloss_section import GlossSection
 from .gloss_section_classifier import GlossSectionClassifier
 from .gloss_downloader import GlossDownloader
@@ -99,7 +98,8 @@ class Corpus:
         # Initialize component classes
         # Get the URL column from downloader config or use default 'url'
         self.url_column = self.downloader_config.get('url_column', 'url')
-        self.extractor = GlossExtract(url_column=self.url_column)
+        # Lazy-create extractor to avoid heavy imports unless needed
+        self.extractor = None
         self.sectioner = GlossSection()
         self.classifier = GlossSectionClassifier()
         
@@ -551,13 +551,57 @@ class Corpus:
         """
         self.logger.info(f"Extracting {input_format} files to markdown...")
         
-        # Prepare extractor
+        # Prepare extractor (lazy import + instantiate)
+        if self.extractor is None:
+            try:
+                from .gloss_extract import GlossExtract  # local import to avoid import-time heavy deps
+                self.extractor = GlossExtract(url_column=self.url_column)
+            except Exception as e:
+                self.logger.error(f"Failed to initialize GlossExtract: {e}")
+                raise
         self.extractor.enable_accel(threads=num_threads, type=accel_type)
+        # Harmonize GPU math throughput settings and images scale across runs
+        # Read from env with sensible defaults for our GPU-only tests
+        import os as _os
+        images_scale_env = _os.getenv("GLOSSAPI_IMAGES_SCALE", "1.1")
+        formula_batch_env = _os.getenv("GLOSSAPI_FORMULA_BATCH", "16")
+        try:
+            # Torch matmul precision for CodeFormula
+            if formula_enrichment:
+                try:
+                    import torch  # type: ignore
+                    if hasattr(torch, "set_float32_matmul_precision"):
+                        torch.set_float32_matmul_precision("high")
+                except Exception:
+                    pass
+                try:
+                    from docling.models.code_formula_model import CodeFormulaModel  # type: ignore
+                    fb = int(formula_batch_env) if str(formula_batch_env).isdigit() else 16
+                    CodeFormulaModel.elements_batch_size = int(fb)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Log cache policy and settings
+        try:
+            self.logger.info(
+                "Caches: HF_HOME=%s XDG_CACHE_HOME=%s DOCLING_CACHE_DIR=%s",
+                _os.getenv("HF_HOME"), _os.getenv("XDG_CACHE_HOME"), _os.getenv("DOCLING_CACHE_DIR"),
+            )
+            self.logger.info(
+                "GPU math settings: formula_enrichment=%s batch=%s matmul_precision=high images_scale=%s",
+                bool(formula_enrichment), formula_batch_env, images_scale_env,
+            )
+        except Exception:
+            pass
+
         self.extractor.create_extractor(
             enable_ocr=True,
             force_full_page_ocr=bool(force_ocr),
             formula_enrichment=bool(formula_enrichment),
             code_enrichment=bool(code_enrichment),
+            images_scale=float(images_scale_env),
         )
         
         # Create output directory

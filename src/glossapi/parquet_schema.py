@@ -84,6 +84,12 @@ class ParquetSchema:
         ('download_error', pa.string()),
         ('download_retry_count', pa.int32()),
         ('filename', pa.string()),
+        ('file_ext', pa.string()),
+        ('is_duplicate', pa.bool_()),
+        ('duplicate_of', pa.string()),
+        ('source_row', pa.int32()),
+        ('url_index', pa.int32()),
+        ('filename_base', pa.string()),
     ])
     
     SECTION_SCHEMA = pa.schema([
@@ -201,14 +207,18 @@ class ParquetSchema:
                 
                 # Add missing columns with default values
                 for col in missing_columns:
-                    if col in ['id', 'filename', 'title', 'section', 'predicted_section', 'download_error']:
+                    if col in ['id', 'filename', 'title', 'section', 'predicted_section', 'download_error', 'file_ext']:
                         df[col] = ''
-                    elif col in ['row_id', 'download_retry_count']:
+                    elif col in ['row_id', 'download_retry_count', 'source_row', 'url_index']:
                         df[col] = 0
                     elif col == 'download_success':
                         df[col] = False
+                    elif col == 'is_duplicate':
+                        df[col] = False
                     elif col == 'probability':
                         df[col] = 0.0
+                    elif col == 'filename_base':
+                        df[col] = ''
         
         return df
     
@@ -447,14 +457,18 @@ class ParquetSchema:
                 
                 # Add missing columns with default values
                 for col in missing_columns:
-                    if col in ['id', 'filename', 'title', 'section', 'predicted_section', 'download_error']:
+                    if col in ['id', 'filename', 'title', 'section', 'predicted_section', 'download_error', 'file_ext']:
                         df_copy[col] = ''
-                    elif col in ['row_id', 'download_retry_count']:
+                    elif col in ['row_id', 'download_retry_count', 'source_row', 'url_index']:
                         df_copy[col] = 0
                     elif col == 'download_success':
                         df_copy[col] = False
+                    elif col == 'is_duplicate':
+                        df_copy[col] = False
                     elif col == 'probability':
                         df_copy[col] = 0.0
+                    elif col == 'filename_base':
+                        df_copy[col] = ''
         
         # Convert to PyArrow Table
         table = pa.Table.from_pandas(df_copy)
