@@ -31,6 +31,7 @@ import pandas as pd
 from urllib.parse import urlparse, unquote
 from collections import deque
 from typing import Dict, List, Tuple, Set, Optional, Any, Iterator, Union
+from dataclasses import dataclass, field
 import mimetypes
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, stop_after_delay, wait_exponential, retry_if_exception_type, before_sleep_log
@@ -57,54 +58,20 @@ class RateLimiter:
         self.logger = logging.getLogger(__name__)
     
     async def acquire(self):
-        """
-        Acquire permission to make a request, waiting if necessary.
-        Includes safeguards against excessive waiting and better handling of cancellations.
-        """
-        try:
+        """Acquire permission to make a request, waiting if necessary."""
+        while True:
             async with self.lock:
-                current_time = time.time()
-                
-                # If we haven't reached the limit yet, allow immediately
+                now = time.time()
+                # purge expired within the window
+                while self.request_timestamps and (now - self.request_timestamps[0] >= self.time_period):
+                    self.request_timestamps.popleft()
                 if len(self.request_timestamps) < self.rate_limit:
-                    self.request_timestamps.append(current_time)
+                    self.request_timestamps.append(now)
                     return
-                
-                # Check if the oldest request is outside the time window
-                elapsed = current_time - self.request_timestamps[0]
-                if elapsed < self.time_period:
-                    # Calculate wait time but cap it to max_wait_time
-                    wait_time = min(self.time_period - elapsed, self.max_wait_time)
-                    self.logger.debug(f"Rate limit reached. Waiting {wait_time:.2f} seconds (capped at {self.max_wait_time}s)")
-                    
-                    # Create a cancellable wait task
-                    try:
-                        # Release the lock while waiting
-                        self.lock.release()
-                        await asyncio.wait_for(asyncio.sleep(wait_time), timeout=wait_time+1)
-                    except asyncio.TimeoutError:
-                        self.logger.warning(f"Rate limit wait timed out after {wait_time} seconds")
-                    except asyncio.CancelledError:
-                        self.logger.warning("Rate limit wait was cancelled")
-                        raise  # Re-raise to properly handle cancellation
-                    finally:
-                        # Make sure to reacquire the lock
-                        await self.lock.acquire()
-                    
-                    # Clean old timestamps that might have expired during our wait
-                    self._clean_expired_timestamps(current_time)
-                    
-                    # Add our timestamp now
-                    self.request_timestamps.append(time.time())
-                else:
-                    # We can make a request now
-                    self.request_timestamps.popleft()  # Remove oldest
-                    self.request_timestamps.append(current_time)
-        except Exception as e:
-            self.logger.error(f"Error in rate limiter: {e}")
-            # If we encounter any issue, allow the request to proceed
-            # Better to occasionally exceed rate limits than to hang indefinitely
-            return
+                # compute delay without holding lock
+                next_allowed = self.request_timestamps[0] + self.time_period
+                delay = min(max(0.0, next_allowed - now), self.max_wait_time)
+            await asyncio.sleep(delay)
     
     def _clean_expired_timestamps(self, current_time):
         """Remove any expired timestamps from the queue"""
@@ -136,7 +103,34 @@ class GlossDownloader:
         domain_cookies: Dict[str, Dict[str, str]] = None,
         supported_formats: List[str] = None,
         log_level: int = logging.INFO,
-        verbose: bool = False
+        verbose: bool = False,
+        # New scheduler controls (backwards-compatible defaults)
+        scheduler_mode: str = 'global',  # 'global' (existing) | 'per_domain'
+        scheduler_group_by: str = 'base_domain',  # 'base_domain' or a DataFrame column to group by (e.g., 'collection_slug')
+        per_domain_concurrency: int = 5,  # start each domain with up to 5 parallel requests
+        max_active_domains: Optional[int] = None,  # defaults based on global concurrency
+        eta_max_seconds: int = 4 * 24 * 3600,  # 4 days
+        dynamic_tuning: bool = True,
+        domain_concurrency_floor: int = 1,
+        domain_concurrency_ceiling: Optional[int] = None,
+        # High-level progress logging
+        progress_log_file: Optional[Union[str, Path]] = None,
+        request_log_file: Optional[Union[str, Path]] = None,
+        progress_log_level: int = logging.INFO,
+        # Domain availability probing
+        pre_ping_domains: bool = True,
+        ping_timeout_s: float = 5.0,
+        ping_concurrency: int = 20,
+        ping_method: str = 'head',  # 'head' or 'get'
+        ping_recheck_seconds: float = 60.0,
+        down_wait_max_seconds: float = 300.0,
+        timeout_streak_threshold: int = 5,
+        backoff_min_s: float = 60.0,
+        backoff_max_s: float = 900.0,
+        error_burst_window: int = 20,
+        error_burst_threshold: float = 0.5,
+        park_403_seconds: float = 600.0,
+        _used_filename_bases: Optional[Set[str]] = None,
     ):
         """
         Initialize the downloader with configuration parameters.
@@ -202,9 +196,11 @@ class GlossDownloader:
         # Set supported formats for validation
         self.supported_formats = supported_formats or ['pdf', 'docx', 'xml', 'html', 'pptx', 'csv', 'md']
         
-        # Create downloads directory inside output directory
+        # Create standard directories inside output directory
         self.downloads_dir = self.output_dir / "downloads"
         os.makedirs(self.downloads_dir, exist_ok=True)
+        self.logs_dir = self.output_dir / "logs"
+        os.makedirs(self.logs_dir, exist_ok=True)
         
         # Constants for filename generation
         self.LETTERS = string.ascii_uppercase
@@ -212,6 +208,69 @@ class GlossDownloader:
         
         # Set up user agent generator
         self.user_agents = self._user_agent_generator()
+        # Used filename bases to prevent collisions on resume
+        self._used_filename_bases: Set[str] = set(_used_filename_bases or [])
+
+        # Scheduler controls
+        self.scheduler_mode = scheduler_mode
+        self.per_domain_concurrency = max(1, int(per_domain_concurrency))
+        self.scheduler_group_by = str(scheduler_group_by)
+        self.max_active_domains = max_active_domains  # may be None to auto-compute
+        self.eta_max_seconds = int(eta_max_seconds)
+        self.dynamic_tuning = bool(dynamic_tuning)
+        self.domain_concurrency_floor = max(1, int(domain_concurrency_floor))
+        # Default ceiling: start value (per_domain_concurrency); user may raise if desired
+        self.domain_concurrency_ceiling = (
+            int(domain_concurrency_ceiling)
+            if domain_concurrency_ceiling is not None
+            else max(1, int(per_domain_concurrency))
+        )
+        # Warnings JSON path
+        self.domain_warnings_path = self.output_dir / 'domain_scheduler_warnings.json'
+
+        # Progress logger (separate file; default to output logs dir)
+        self.progress_logger = self.logger
+        try:
+            p = Path(progress_log_file) if progress_log_file else (self.logs_dir / 'download_progress.logs')
+            p.parent.mkdir(parents=True, exist_ok=True)
+            self.progress_logger = logging.getLogger(__name__ + ".progress")
+            self.progress_logger.setLevel(progress_log_level)
+            if not any(isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', '') == str(p) for h in self.progress_logger.handlers):
+                fh = logging.FileHandler(p)
+                fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s')
+                fh.setFormatter(fmt)
+                fh.setLevel(progress_log_level)
+                self.progress_logger.addHandler(fh)
+            self.progress_logger.propagate = False
+        except Exception:
+            self.progress_logger = self.logger
+
+        # Request-level logger to file (default to output logs dir)
+        try:
+            rp = Path(request_log_file) if request_log_file else (self.logs_dir / 'download_request.logs')
+            rp.parent.mkdir(parents=True, exist_ok=True)
+            if not any(isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', '') == str(rp) for h in self.logger.handlers):
+                rfh = logging.FileHandler(rp)
+                rfh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+                rfh.setLevel(self.logger.level)
+                self.logger.addHandler(rfh)
+        except Exception:
+            pass
+
+        # Ping/availability configuration
+        self.pre_ping_domains = bool(pre_ping_domains)
+        self.ping_timeout_s = float(ping_timeout_s)
+        self.ping_concurrency = max(1, int(ping_concurrency))
+        self.ping_method = ping_method.lower() if isinstance(ping_method, str) else 'head'
+        self.ping_recheck_seconds = float(ping_recheck_seconds)
+        self.down_wait_max_seconds = float(down_wait_max_seconds)
+        # Parking/backoff knobs
+        self.timeout_streak_threshold = int(timeout_streak_threshold)
+        self.backoff_min_s = float(backoff_min_s)
+        self.backoff_max_s = float(backoff_max_s)
+        self.error_burst_window = int(error_burst_window)
+        self.error_burst_threshold = float(error_burst_threshold)
+        self.park_403_seconds = float(park_403_seconds)
     
     def generate_filename(self, index: int, file_ext: str = None) -> str:
         """
@@ -259,9 +318,10 @@ class GlossDownloader:
             df['filename_base'] = ""
 
         # Collect already assigned bases
-        used: Set[str] = set(
+        used: Set[str] = set(self._used_filename_bases)
+        used |= {
             b for b in df.get('filename_base', pd.Series([], dtype=str)).astype(str).tolist() if b
-        )
+        }
 
         counter = 0
         for idx in df.index:
@@ -383,7 +443,7 @@ class GlossDownloader:
             for agent in user_agents:
                 yield agent
     
-    async def get_base_url(self, url: str) -> str:
+    def get_base_url(self, url: str) -> str:
         """
         Extract base URL from a full URL
         
@@ -398,6 +458,56 @@ class GlossDownloader:
         parsed_url = urlparse(url)
         base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
         return base_url
+
+    def _extract_base_domain(self, url: str) -> str:
+        """Synchronous helper: return scheme://netloc for a URL or empty string."""
+        try:
+            if not isinstance(url, str) or not url.strip():
+                return ''
+            u = url
+            if not u.startswith(("http://", "https://")):
+                u = f"https://{u}"
+            p = urlparse(u)
+            if not p.netloc:
+                return ''
+            scheme = p.scheme or 'https'
+            return f"{scheme}://{p.netloc.lower()}"
+        except Exception:
+            return ''
+
+    @dataclass
+    class _DomainState:
+        base: str
+        queue: deque = field(default_factory=deque)
+        active: int = 0
+        concurrency: int = 1
+        successes: int = 0
+        failures: int = 0
+        http_429: int = 0
+        http_403: int = 0
+        timeouts: int = 0
+        durations: deque = field(default_factory=lambda: deque(maxlen=200))  # seconds per completed
+        eta_exceeded_count: int = 0
+        last_eta_seconds: float = 0.0
+        warned: bool = False
+        # Rolling error window
+        recent_errors: deque = field(default_factory=lambda: deque(maxlen=50))  # strings like 'HTTP 429', 'Timeout'
+        # Availability
+        is_up: bool = True
+        last_ping_ts: float = 0.0
+        ping_failures: int = 0
+        # Parking/backoff
+        parked_until: Optional[float] = None
+        timeout_streak: int = 0
+
+        def avg_duration(self) -> float:
+            if not self.durations:
+                return 0.0
+            return sum(self.durations) / len(self.durations)
+
+        def remaining(self) -> int:
+            # Pending in queue + currently active
+            return len(self.queue) + self.active
     
     async def setup_session(self, session: aiohttp.ClientSession, url: str, headers: Dict[str, str]) -> Dict[str, str]:
         """
@@ -411,11 +521,11 @@ class GlossDownloader:
         Returns:
             Dict[str, str]: Updated headers
         """
-        base_url = await self.get_base_url(url)
+        base_url = self.get_base_url(url)
         initial_url = base_url
         try:
             # Access the base domain to get cookies
-            async with session.get(initial_url, headers=headers, timeout=10):
+            async with session.get(initial_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)):
                 pass
             return headers
         except Exception as e:
@@ -451,28 +561,30 @@ class GlossDownloader:
         """
         return file_ext.lower() in self.supported_formats
     
-    @retry(
-        stop=(stop_after_attempt(3) | stop_after_delay(30)),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=(retry_if_exception_type(aiohttp.ClientError) | 
-               retry_if_exception_type(asyncio.TimeoutError)),
-        before_sleep=before_sleep_log(logging.getLogger(__name__), logging.INFO)
-    )
     async def make_request(self, session, requester, url, headers, timeout):
         """Make a request with tenacity retry logic and return content, status, headers"""
-        if requester == 'get':
-            async with session.get(url, headers=headers, timeout=timeout) as response:
-                response.raise_for_status()
-                content = await response.read()
-                # Capture headers before context closes
-                resp_headers = dict(response.headers) if response.headers else {}
-                return content, response.status, resp_headers
-        else:  # post
-            async with session.post(url, headers=headers, timeout=timeout) as response:
-                response.raise_for_status()
-                content = await response.read()
-                resp_headers = dict(response.headers) if response.headers else {}
-                return content, response.status, resp_headers
+        from tenacity import AsyncRetrying
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(max(1, int(self.max_retries))),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=(retry_if_exception_type(aiohttp.ClientError) |
+                   retry_if_exception_type(asyncio.TimeoutError)),
+            before_sleep=before_sleep_log(logging.getLogger(__name__), logging.INFO),
+            reraise=True,
+        ):
+            with attempt:
+                if requester == 'get':
+                    async with session.get(url, headers=headers, timeout=timeout) as response:
+                        response.raise_for_status()
+                        content = await response.read()
+                        resp_headers = dict(response.headers) if response.headers else {}
+                        return content, response.status, resp_headers
+                else:  # post
+                    async with session.post(url, headers=headers, timeout=timeout) as response:
+                        response.raise_for_status()
+                        content = await response.read()
+                        resp_headers = dict(response.headers) if response.headers else {}
+                        return content, response.status, resp_headers
 
     def _ext_from_content_disposition(self, headers: Dict[str, str]) -> Optional[str]:
         """Try to extract file extension from Content-Disposition header"""
@@ -599,7 +711,7 @@ class GlossDownloader:
         # 5) Fall back to URL ext if any, otherwise 'bin'
         return url_ext if url_ext else 'bin'
     
-    async def download_file(self, row_index: int, url: str, semaphore: asyncio.Semaphore, 
+    async def download_file(self, row_index: int, url: str, semaphore: Optional[asyncio.Semaphore], 
                            rate_limiter: RateLimiter, retry_count: int = 0,
                            filename_base: Optional[str] = None) -> Tuple[bool, str, str, str, int]:
         """
@@ -626,7 +738,7 @@ class GlossDownloader:
             url = f"https://{url}"
         
         # Get base URL for referer header
-        base_url = await self.get_base_url(url)
+        base_url = self.get_base_url(url)
         
         # Enhanced headers with common browser-like attributes to bypass 403 errors
         headers = {
@@ -659,7 +771,9 @@ class GlossDownloader:
                         if 'session-id' in value:
                             cookies[key] = f"session-id-{random.randint(100000000, 999999999)}"
         
-        async with semaphore:
+        if semaphore:
+            await semaphore.acquire()
+        try:
             # Apply rate limiting
             await rate_limiter.acquire()
             
@@ -740,7 +854,27 @@ class GlossDownloader:
                                 self.logger.debug(f"Headers: {e.headers if hasattr(e, 'headers') else 'No headers available'}")
                                 self.logger.debug(f"Request info: {e.request_info if hasattr(e, 'request_info') else 'No request info available'}")
                             
+                            # Build error with optional Retry-After info
+                            retry_after = None
+                            try:
+                                hdrs = dict(getattr(e, 'headers', {}) or {})
+                                for k, v in hdrs.items():
+                                    if k.lower() == 'retry-after':
+                                        val = str(v).strip()
+                                        if val.isdigit():
+                                            retry_after = int(val)
+                                        else:
+                                            try:
+                                                dt = parsedate_to_datetime(val)
+                                                retry_after = max(0, int((dt.timestamp() - time.time())))
+                                            except Exception:
+                                                retry_after = None
+                                        break
+                            except Exception:
+                                retry_after = None
                             error_msg = f"HTTP {status}: {str(e)}"
+                            if status in (429, 503) and retry_after is not None:
+                                error_msg += f" retry_after={retry_after}"
                             # Best-effort ext from URL if possible
                             try:
                                 url_ext = self.get_file_extension_from_url(url)
@@ -791,6 +925,12 @@ class GlossDownloader:
                 except Exception:
                     url_ext = ""
                 return False, "", url_ext, error_msg, retry_count + 1
+        finally:
+            if semaphore:
+                try:
+                    semaphore.release()
+                except Exception:
+                    pass
 
     async def _download_files_async(self, df: pd.DataFrame, semaphore: asyncio.Semaphore, 
                                    rate_limiter: RateLimiter) -> pd.DataFrame:
@@ -834,8 +974,13 @@ class GlossDownloader:
         if 'url_index' not in df.columns:
             df['url_index'] = 0
         
-        # Get total unprocessed rows (not downloaded successfully)
+        # Get total unprocessed rows (not downloaded successfully) and not duplicates
         mask = ~df['download_success']
+        if 'is_duplicate' in df.columns:
+            try:
+                mask &= ~df['is_duplicate']
+            except Exception:
+                pass
         total_unprocessed = mask.sum()
         
         # Get indices for rows that need processing
@@ -943,26 +1088,43 @@ class GlossDownloader:
         df = self._expand_and_mark_duplicates(df)
         df = self.ensure_filename_base(df)
 
+        # Compute base_domain column (scheme+host) for introspection and scheduling when needed
+        if 'base_domain' not in df.columns:
+            try:
+                df['base_domain'] = df[self.url_column].map(self._extract_base_domain)
+            except Exception:
+                df['base_domain'] = ''
+
         # Ensure downloads directory exists
         os.makedirs(self.downloads_dir, exist_ok=True)
-        
-        # Initialize semaphore for concurrency control
-        semaphore = asyncio.Semaphore(self.concurrency)
         
         # Use the already configured rate limiter if available
         rate_limiter = self.rate_limiter
         if not rate_limiter:
-            # Create a minimal rate limiter if none was configured
-            rate_limiter = RateLimiter(100, 60, 30)  # Default: 100 requests per minute, max 30s wait
-        
-        # Run async download
-        self.logger.info(f"Starting download with concurrency={self.concurrency}, rate_limit={rate_limiter.rate_limit}/{rate_limiter.time_period}s")
-        
-        # Run the async pipeline
-        loop = asyncio.get_event_loop()
-        updated_df = loop.run_until_complete(
-            self._download_files_async(df, semaphore, rate_limiter)
-        )
+            rate_limiter = RateLimiter(100, 60, 30)  # Default limiter
+
+        async def _run_async():
+            if self.scheduler_mode == 'per_domain':
+                self.logger.info(
+                    f"Starting per-domain scheduler: global_concurrency={self.concurrency}, "
+                    f"per_domain_concurrency={self.per_domain_concurrency}"
+                )
+                return await self._download_files_async_per_domain(df, rate_limiter)
+            else:
+                semaphore = asyncio.Semaphore(self.concurrency)
+                self.logger.info(
+                    f"Starting download (global) with concurrency={self.concurrency}, "
+                    f"rate_limit={rate_limiter.rate_limit}/{rate_limiter.time_period}s"
+                )
+                return await self._download_files_async(df, semaphore, rate_limiter)
+
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running and running.is_running():
+            raise RuntimeError("An event loop is already running; use the async variant `adownload_files`.")
+        updated_df = asyncio.run(_run_async())
         # Drop internal normalization column before returning
         if '__url_norm' in updated_df.columns:
             try:
@@ -976,6 +1138,670 @@ class GlossDownloader:
         self.logger.info(f"Download complete: {success_count} successful, {fail_count} failed, files downloaded to {self.downloads_dir}")
         
         return updated_df
+
+    async def _download_files_async_per_domain(self, df: pd.DataFrame, rate_limiter: RateLimiter) -> pd.DataFrame:
+        """Per-domain round-robin scheduler with dynamic concurrency and ETA tracking."""
+        df = df.copy()
+
+        # Initialize result columns if they don't exist
+        if 'download_success' not in df.columns:
+            df['download_success'] = False
+        if 'filename' not in df.columns:
+            df['filename'] = ""
+        if 'download_error' not in df.columns:
+            df['download_error'] = ""
+        if 'download_retry_count' not in df.columns:
+            df['download_retry_count'] = 0
+        if 'file_ext' not in df.columns:
+            df['file_ext'] = ""
+        if 'is_duplicate' not in df.columns:
+            df['is_duplicate'] = False
+        if 'duplicate_of' not in df.columns:
+            df['duplicate_of'] = ""
+        if 'source_row' not in df.columns:
+            try:
+                df['source_row'] = df.index.astype('int64')
+            except Exception:
+                df['source_row'] = 0
+        if 'url_index' not in df.columns:
+            df['url_index'] = 0
+
+        # Build domain queues for unprocessed, non-duplicate rows
+        mask = (~df['download_success']) & (~df['is_duplicate'])
+        row_indices = df.index[mask].tolist()
+        domains: Dict[str, GlossDownloader._DomainState] = {}
+        for idx in row_indices:
+            url = df.at[idx, self.url_column]
+            # Determine grouping key
+            if self.scheduler_group_by and self.scheduler_group_by != 'base_domain':
+                key = str(df.at[idx, self.scheduler_group_by]) if self.scheduler_group_by in df.columns else ''
+            else:
+                key = df.at[idx, 'base_domain'] if 'base_domain' in df.columns else self._extract_base_domain(url)
+            if not isinstance(key, str):
+                key = str(key) if key is not None else ''
+            if not key:
+                key = ''
+            if key not in domains:
+                # Each group starts with up to per_domain_concurrency, but not exceeding global
+                start_c = min(self.per_domain_concurrency, max(1, self.concurrency))
+                domains[key] = GlossDownloader._DomainState(base=key, concurrency=start_c)
+            domains[key].queue.append(idx)
+
+        if not domains:
+            self.logger.info("No rows to process (per-domain)")
+            return df
+
+        uniq_domains = list(domains.keys())
+
+        # Pre-ping domains to check availability (only meaningful if grouping by base_domain)
+        async def _ping_one(session: aiohttp.ClientSession, base: str) -> bool:
+            if not base:
+                return False
+            try:
+                timeout = aiohttp.ClientTimeout(total=self.ping_timeout_s)
+                headers = {'User-Agent': next(self.user_agents)}
+                if self.ping_method == 'get':
+                    async with session.get(base, headers=headers, timeout=timeout, allow_redirects=True) as r:
+                        # consider reachable for any HTTP status; connection success is the key
+                        return True
+                else:
+                    # HEAD first, fallback to GET on 405
+                    async with session.head(base, headers=headers, timeout=timeout, allow_redirects=True) as r:
+                        return True
+            except aiohttp.ClientResponseError as e:
+                if getattr(e, 'status', 0) == 405:
+                    try:
+                        async with session.get(base, headers={'User-Agent': next(self.user_agents)}, timeout=aiohttp.ClientTimeout(total=self.ping_timeout_s), allow_redirects=True) as r:
+                            return True
+                    except Exception:
+                        return False
+                return False
+            except Exception:
+                return False
+
+        async def ping_all(dom_list: List[str]) -> Dict[str, bool]:
+            results: Dict[str, bool] = {}
+            sem = asyncio.Semaphore(self.ping_concurrency)
+            async with aiohttp.ClientSession() as session:
+                async def _task(d: str):
+                    async with sem:
+                        ok = await _ping_one(session, d)
+                        results[d] = ok
+                await asyncio.gather(*[_task(d) for d in dom_list])
+            return results
+
+        # Perform initial ping if enabled
+        ping_results: Dict[str, bool] = {}
+        if self.pre_ping_domains and uniq_domains and self.scheduler_group_by == 'base_domain':
+            try:
+                self.progress_logger.info(f"[ping] Pinging {len(uniq_domains)} base domains before scheduling …")
+                ping_results = await ping_all(uniq_domains)
+                up = sum(1 for v in ping_results.values() if v)
+                down = len(ping_results) - up
+                self.progress_logger.info(f"[ping] Reachable domains: {up}, Unreachable: {down}")
+            except Exception as e:
+                self.progress_logger.warning(f"[ping] Initial domain ping failed: {e}")
+
+        # Mark domain availability
+        now_ts = time.time()
+        for d, st in domains.items():
+            if ping_results:
+                ok = bool(ping_results.get(d, True))
+                st.is_up = ok
+                st.last_ping_ts = now_ts
+            else:
+                st.is_up = True
+                st.last_ping_ts = now_ts
+
+        # Auto-compute max_active_domains if not provided: keep within global cap
+        if self.max_active_domains is None:
+            # How many domains can be active if each may take up to per_domain_concurrency
+            denom = max(1, self.per_domain_concurrency)
+            mad = max(1, self.concurrency // denom)
+            self.max_active_domains = max(1, min(mad, len(uniq_domains)))
+
+        # Active/pending domain rings (prefer 'up' domains first)
+        up_domains = [d for d in uniq_domains if domains[d].is_up]
+        down_domains = [d for d in uniq_domains if not domains[d].is_up]
+        active_order = deque(up_domains[: self.max_active_domains])
+        pending_domains = deque(up_domains[self.max_active_domains :])
+        # Keep down ones at the tail; we'll recheck periodically
+        pending_down = deque(down_domains)
+
+        # Global in-flight limit
+        global_in_flight = 0
+        max_global = max(1, self.concurrency)
+
+        # Track running tasks
+        tasks: Dict[asyncio.Task, Tuple[str, int, float]] = {}
+
+        # For warnings
+        warnings: Dict[str, Dict[str, Any]] = {}
+
+        # Progress tracking
+        total_rows = sum(len(state.queue) for state in domains.values())
+        global_completed = 0
+        last_log_t = time.time()
+        log_interval_s = 10.0
+
+        def snapshot_progress() -> Dict[str, Any]:
+            doms = []
+            for d, st in domains.items():
+                doms.append({
+                    'base_domain': d,
+                    'remaining': st.remaining(),
+                    'active': st.active,
+                    'concurrency': st.concurrency,
+                    'successes': st.successes,
+                    'failures': st.failures,
+                    'avg_duration_s': round(st.avg_duration(), 3),
+                    'eta_seconds': round(estimate_eta_s(st), 3),
+                    'is_up': st.is_up,
+                    'parked_until': st.parked_until or 0.0,
+                })
+            doms.sort(key=lambda x: (x['eta_seconds'], -x['remaining']), reverse=True)
+            return {
+                'timestamp': time.time(),
+                'total_rows': total_rows,
+                'completed': global_completed,
+                'in_flight': global_in_flight,
+                'active_domains': len([d for d in active_order if d in domains]),
+                'pending_domains': len(pending_domains),
+                'pending_down_domains': len(pending_down),
+                'domains': doms,
+            }
+
+        def _fmt_hms(seconds: float) -> str:
+            try:
+                s = int(max(0, seconds))
+                h, r = divmod(s, 3600)
+                m, s = divmod(r, 60)
+                if h:
+                    return f"{h:02d}:{m:02d}:{s:02d}"
+                return f"{m:02d}:{s:02d}"
+            except Exception:
+                return "00:00"
+
+        def maybe_log_and_write_progress(force: bool = False):
+            nonlocal last_log_t
+            now = time.time()
+            if not force and (now - last_log_t) < log_interval_s:
+                return
+            prog = snapshot_progress()
+            # Write progress JSON
+            try:
+                p = self.output_dir / 'domain_progress.json'
+                with open(p, 'w', encoding='utf-8') as f:
+                    json.dump(prog, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+            # High-level logging with percentages, progress bars, ETAs
+            total = int(prog.get('total_rows') or 0)
+            completed = int(prog.get('completed') or 0)
+            inflight = int(prog.get('in_flight') or 0)
+            # Aggregate success/fail across domains
+            succ = sum(int(d.get('successes', 0)) for d in prog.get('domains', []))
+            fail = sum(int(d.get('failures', 0)) for d in prog.get('domains', []))
+            rem = sum(int(d.get('remaining', 0)) for d in prog.get('domains', []))
+            # Global ETA approximations
+            # Sum of work durations divided by global concurrency
+            sum_work = 0.0
+            max_eta = 0.0
+            for d in prog.get('domains', []):
+                rem_i = int(d.get('remaining', 0))
+                avg_i = float(d.get('avg_duration_s') or 0.0)
+                sum_work += rem_i * max(0.0, avg_i)
+                max_eta = max(max_eta, float(d.get('eta_seconds') or 0.0))
+            est_total_eta = sum_work / max(1, max_global)
+            # Header line
+            succ_pct = (succ / max(1, succ + fail)) * 100.0
+            fail_pct = (fail / max(1, succ + fail)) * 100.0
+            # Domain status buckets for clarity
+            domains_data = list(prog.get('domains', []))
+            running = [d for d in domains_data if int(d.get('active', 0)) > 0]
+            waiting_up = [d for d in domains_data if int(d.get('active', 0)) == 0 and int(d.get('remaining', 0)) > 0 and bool(d.get('is_up', True))]
+            waiting_down = [d for d in domains_data if int(d.get('active', 0)) == 0 and int(d.get('remaining', 0)) > 0 and not bool(d.get('is_up', True))]
+            done_domains = [d for d in domains_data if int(d.get('remaining', 0)) == 0 and int(d.get('active', 0)) == 0]
+            # Snapshot delimiter with counts
+            domains_left = len(running) + len(waiting_up) + len(waiting_down)
+            self.progress_logger.info(
+                f"===== Snapshot: {completed}/{total} tasks (in_flight={inflight}, active_domains={prog.get('active_domains')}) | "
+                f"domains: running={len(running)} waiting_up={len(waiting_up)} waiting_down={len(waiting_down)} done={len(done_domains)} left={domains_left} | "
+                f"succ={succ} ({succ_pct:.1f}%) fail={fail} ({fail_pct:.1f}%) rem={rem} | total_eta≈{_fmt_hms(est_total_eta)} critical_eta≈{_fmt_hms(max_eta)}"
+            )
+
+            # Helper to render one domain line with status tag
+            def render_domain(d: Dict[str, Any], status: str) -> str:
+                name = (d.get('base_domain') or '<nohost>')
+                total_i = int(d.get('successes', 0)) + int(d.get('failures', 0)) + int(d.get('remaining', 0))
+                done_i = int(d.get('successes', 0))
+                fail_i = int(d.get('failures', 0))
+                rem_i = int(d.get('remaining', 0))
+                act_i = int(d.get('active', 0))
+                conc_i = int(d.get('concurrency', 0))
+                eta_i = float(d.get('eta_seconds') or 0.0)
+                avg_i = float(d.get('avg_duration_s') or 0.0)
+                p_done = (done_i / max(1, total_i))
+                p_fail = (fail_i / max(1, total_i))
+                bar_len = 24
+                done_chars = int(p_done * bar_len)
+                fail_chars = int(p_fail * bar_len)
+                rem_chars = max(0, bar_len - done_chars - fail_chars)
+                bar = '[' + ('=' * done_chars) + ('!' * fail_chars) + ('.' * rem_chars) + ']'
+                return (
+                    f"[{status}] {name} {bar} {done_i}/{total_i} | fail%={p_fail*100:4.1f} | act={act_i}/{conc_i} | eta={_fmt_hms(eta_i)} | avg={avg_i:.2f}s"
+                )
+
+            # Print groups: running first, then waiting (up), then a small sample of down and done
+            if running:
+                self.progress_logger.info("-- Running domains (%d) --", len(running))
+                for d in sorted(running, key=lambda x: int(x.get('remaining', 0)), reverse=True):
+                    self.progress_logger.info(render_domain(d, 'RUN'))
+            if waiting_up:
+                self.progress_logger.info("-- Waiting (up) domains (%d) --", len(waiting_up))
+                for d in sorted(waiting_up, key=lambda x: int(x.get('remaining', 0)), reverse=True)[:20]:
+                    self.progress_logger.info(render_domain(d, 'WAIT'))
+            if waiting_down:
+                self.progress_logger.info("-- Waiting (down) domains (%d) --", len(waiting_down))
+                for d in sorted(waiting_down, key=lambda x: int(x.get('remaining', 0)), reverse=True)[:10]:
+                    self.progress_logger.info(render_domain(d, 'DOWN'))
+            # Keep done section compact to avoid noise
+            if done_domains:
+                self.progress_logger.info("-- Done domains (%d) --", len(done_domains))
+                # show a small tail of done list
+                for d in sorted(done_domains, key=lambda x: int(x.get('successes', 0)) + int(x.get('failures', 0)))[:5]:
+                    self.progress_logger.info(render_domain(d, 'DONE'))
+            last_log_t = now
+
+        def estimate_eta_s(state: GlossDownloader._DomainState) -> float:
+            remaining = state.remaining()
+            if remaining <= 0:
+                return 0.0
+            avg = state.avg_duration() or 5.0  # default initial guess
+            eff_c = max(self.domain_concurrency_floor, min(state.concurrency, self.domain_concurrency_ceiling))
+            # ETA ≈ remaining * avg / eff_c (assuming steady parallelism)
+            return float(remaining) * avg / max(1, eff_c)
+
+        def should_ease(state: GlossDownloader._DomainState) -> bool:
+            # Consider easing if frequent timeouts/HTTP 429/403 or high avg latency
+            if not self.dynamic_tuning:
+                return False
+            recent = list(state.recent_errors)
+            if not recent:
+                return False
+            n = len(recent)
+            timeouts = sum(1 for e in recent if 'Timeout' in e)
+            ratelims = sum(1 for e in recent if 'HTTP 429' in e or 'HTTP 503' in e)
+            forbids = sum(1 for e in recent if 'HTTP 403' in e)
+            # Thresholds: 20% timeouts or 20% 429/503, or avg > 60s
+            if timeouts / n >= 0.2:
+                return True
+            if (ratelims + forbids) / n >= 0.2:
+                return True
+            if (state.avg_duration() or 0) > 60:
+                return True
+            return False
+
+        async def dispatch_ready():
+            nonlocal global_in_flight
+            # Fill capacity while we can
+            made_progress = False
+            if not active_order:
+                return False
+            # Iterate up to len(active_order) to attempt a full RR rotation
+            for _ in range(len(active_order)):
+                if global_in_flight >= max_global:
+                    break
+                dom = active_order[0]
+                state = domains.get(dom)
+                if state is None:
+                    active_order.popleft()
+                    continue
+                # Skip if domain is down or parked
+                now = time.time()
+                if not state.is_up:
+                    # Move out of active to free slot and try to promote a pending
+                    try:
+                        active_order.popleft()
+                    except Exception:
+                        pass
+                    if dom not in pending_down:
+                        pending_down.append(dom)
+                    if pending_domains:
+                        active_order.append(pending_domains.popleft())
+                    # Continue to next active candidate
+                    continue
+                if state.parked_until is not None and now < state.parked_until:
+                    # Temporarily move to pending to free the slot
+                    try:
+                        active_order.popleft()
+                    except Exception:
+                        pass
+                    if dom not in pending_domains:
+                        pending_domains.append(dom)
+                    if pending_domains:
+                        # bring next pending up
+                        active_order.append(pending_domains.popleft())
+                    continue
+                if state.parked_until is not None and now >= state.parked_until:
+                    # Unpark with base ping
+                    state.parked_until = None
+                    try:
+                        pres = await ping_all([dom])
+                        ok = bool(pres.get(dom, False))
+                    except Exception:
+                        ok = False
+                    if not ok:
+                        state.is_up = False
+                        if dom not in pending_down:
+                            pending_down.append(dom)
+                        try:
+                            active_order.popleft()
+                        except Exception:
+                            pass
+                        if pending_domains:
+                            active_order.append(pending_domains.popleft())
+                        continue
+                    state.concurrency = max(self.domain_concurrency_floor, 1)
+                    self.progress_logger.info(f"[park] Unparked domain: {dom}; resuming at concurrency={state.concurrency}")
+                # Attempt to launch up to (state.concurrency - state.active)
+                while (
+                    global_in_flight < max_global and
+                    state.active < state.concurrency and
+                    state.queue
+                ):
+                    row_idx = state.queue.popleft()
+                    url = df.at[row_idx, self.url_column]
+                    retry_count = int(df.at[row_idx, 'download_retry_count']) if 'download_retry_count' in df.columns else 0
+                    # Skip rows with too many failures
+                    if retry_count >= self.skip_failed_after:
+                        continue
+                    # Launch task
+                    t0 = time.time()
+                    task = asyncio.create_task(self.download_file(
+                        row_index=row_idx,
+                        url=url,
+                        semaphore=None,
+                        rate_limiter=rate_limiter,
+                        retry_count=retry_count,
+                        filename_base=(df.at[row_idx, 'filename_base'] if 'filename_base' in df.columns else None)
+                    ))
+                    tasks[task] = (dom, row_idx, t0)
+                    state.active += 1
+                    global_in_flight += 1
+                    made_progress = True
+                    if global_in_flight >= max_global:
+                        break
+                # RR rotate
+                active_order.rotate(-1)
+            return made_progress
+
+        # Initial log explaining single-thread supports 5 concurrency
+        if self.max_active_domains == 1 and self.per_domain_concurrency >= 5:
+            self.logger.info(
+                "Per-domain mode: single active domain will use up to 5 concurrent requests via asyncio."
+            )
+
+        # Main loop
+        while tasks or any(domains[d].queue or domains[d].active for d in list(active_order) + list(pending_domains)):
+            # Try to dispatch initially
+            await dispatch_ready()
+
+            if not tasks:
+                # If there are no tasks but queues remain, ensure we promote domains
+                # Remove drained domains from active and promote pending
+                drained = [d for d in list(active_order) if not domains[d].queue and domains[d].active == 0]
+                for d in drained:
+                    try:
+                        active_order.remove(d)
+                    except Exception:
+                        pass
+                    if pending_domains:
+                        active_order.append(pending_domains.popleft())
+                # Try dispatch again
+                await dispatch_ready()
+                # If nothing to do and only down domains remain, wait up to configured window
+                if not tasks and not any(domains[d].queue for d in domains if d in active_order or d in pending_domains):
+                    if pending_down:
+                        if 'down_wait_started_ts' not in locals() or down_wait_started_ts is None:
+                            down_wait_started_ts = time.time()
+                            self.progress_logger.info(
+                                f"[ping] All up domains are drained; waiting up to {int(self.down_wait_max_seconds)}s for any down domain to recover …"
+                            )
+                        else:
+                            waited = time.time() - down_wait_started_ts
+                            if waited >= self.down_wait_max_seconds:
+                                self.progress_logger.warning(
+                                    f"[ping] No domain recovered after {int(waited)}s; terminating run with {len(pending_down)} domains still down."
+                                )
+                                break
+                        # Proactively recheck a batch now
+                        try:
+                            sample = list(list(pending_down)[:min(10, len(pending_down))])
+                            res = await ping_all(sample)
+                            for d, ok in res.items():
+                                if ok:
+                                    try:
+                                        pending_down.remove(d)
+                                    except Exception:
+                                        pass
+                                    if len(active_order) < self.max_active_domains:
+                                        active_order.append(d)
+                                    else:
+                                        pending_domains.append(d)
+                                    domains[d].is_up = True
+                                    domains[d].last_ping_ts = time.time()
+                                    self.progress_logger.info(
+                                        f"[ping] Domain recovered: {d}; pending={len(pending_domains)} down={len(pending_down)}"
+                                    )
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.5)
+                        continue
+                    else:
+                        # Nothing left anywhere
+                        break
+
+            if not tasks:
+                # Nothing to wait on
+                await asyncio.sleep(0.05)
+                continue
+
+            # Optionally recheck down domains periodically
+            # Track ping cadence independently from logging cadence
+            if 'last_ping_recheck_ts' not in locals():
+                last_ping_recheck_ts = 0.0
+            if self.pre_ping_domains and pending_down and (time.time() - last_ping_recheck_ts) >= self.ping_recheck_seconds:
+                try:
+                    # Check a slice to avoid bursts
+                    sample = list(list(pending_down)[:min(10, len(pending_down))])
+                    res = await ping_all(sample)
+                    for d, ok in res.items():
+                        if ok:
+                            # promote to pending_domains
+                            try:
+                                pending_down.remove(d)
+                            except Exception:
+                                pass
+                            if d not in pending_domains and d not in active_order:
+                                # If there's room in active_order, place it directly
+                                if len(active_order) < self.max_active_domains:
+                                    active_order.append(d)
+                                else:
+                                    pending_domains.append(d)
+                                domains[d].is_up = True
+                                domains[d].last_ping_ts = time.time()
+                                self.progress_logger.info(f"[ping] Domain recovered: {d}; pending={len(pending_domains)} down={len(pending_down)}")
+                        else:
+                            domains[d].is_up = False
+                            domains[d].last_ping_ts = time.time()
+                except Exception:
+                    pass
+                last_ping_recheck_ts = time.time()
+
+            # Wait for at least one to complete
+            done, _ = await asyncio.wait(tasks.keys(), return_when=asyncio.FIRST_COMPLETED)
+
+            # Process completions
+            for task in done:
+                dom, row_idx, t0 = tasks.pop(task)
+                dt = max(0.0, time.time() - t0)
+                state = domains.get(dom)
+                if state is None:
+                    continue
+                state.active = max(0, state.active - 1)
+                global_in_flight = max(0, global_in_flight - 1)
+
+                try:
+                    success, filename, file_ext, error, retry_count = await task
+                except Exception as e:
+                    success, filename, file_ext, error, retry_count = False, "", "", str(e), int(df.at[row_idx, 'download_retry_count']) + 1
+
+                # Update DataFrame
+                df.at[row_idx, 'download_success'] = bool(success)
+                df.at[row_idx, 'filename'] = filename
+                df.at[row_idx, 'file_ext'] = file_ext
+                df.at[row_idx, 'download_error'] = error
+                df.at[row_idx, 'download_retry_count'] = retry_count
+
+                # Update metrics
+                state.durations.append(dt)
+                if success:
+                    state.successes += 1
+                    state.timeout_streak = 0
+                else:
+                    state.failures += 1
+                    e = str(error or '')
+                    state.recent_errors.append(e)
+                    if 'HTTP 429' in e or 'HTTP 503' in e:
+                        state.http_429 += 1
+                    if 'HTTP 403' in e:
+                        state.http_403 += 1
+                    if 'Timeout' in e:
+                        state.timeouts += 1
+                        state.timeout_streak = state.timeout_streak + 1
+                    else:
+                        state.timeout_streak = 0
+                global_completed += 1
+
+                # Dynamic tuning: ease if overloaded
+                if self.dynamic_tuning and should_ease(state):
+                    if state.concurrency > self.domain_concurrency_floor:
+                        state.concurrency -= 1
+                        self.logger.info(f"Easing concurrency for {dom} -> {state.concurrency}")
+
+                # Parking/backoff based on errors
+                if not success:
+                    now2 = time.time()
+                    # 429/503 -> respect Retry-After if present in error
+                    if ('HTTP 429' in e or 'HTTP 503' in e):
+                        retry_after = None
+                        try:
+                            import re
+                            m = re.search(r"retry_after=(\d+)", e)
+                            if m:
+                                retry_after = int(m.group(1))
+                        except Exception:
+                            retry_after = None
+                        if retry_after is None:
+                            retry_after = max(1, int(self.ping_recheck_seconds))
+                        state.parked_until = now2 + retry_after
+                        state.concurrency = max(self.domain_concurrency_floor, 1)
+                        self.progress_logger.info(f"[park] Rate limited: {dom}; parked for {retry_after}s")
+                    # Timeout streak -> exponential backoff
+                    elif state.timeout_streak >= int(getattr(self, 'timeout_streak_threshold', 5)):
+                        backoff = min(float(getattr(self, 'backoff_min_s', 60.0)) * (2 ** max(0, state.ping_failures)), float(getattr(self, 'backoff_max_s', 900.0)))
+                        state.ping_failures += 1
+                        state.parked_until = now2 + backoff
+                        state.concurrency = max(self.domain_concurrency_floor, 1)
+                        state.timeout_streak = 0
+                        self.progress_logger.info(f"[park] Timeout streak: {dom}; parked for {int(backoff)}s (level={state.ping_failures})")
+                    else:
+                        # 403 burst heuristic -> short park
+                        window = list(state.recent_errors)
+                        if window:
+                            c403 = sum(1 for x in window if 'HTTP 403' in x)
+                            frac403 = c403 / len(window)
+                            if frac403 >= float(getattr(self, 'error_burst_threshold', 0.5)) and len(window) >= int(getattr(self, 'error_burst_window', 20)):
+                                park_s = float(getattr(self, 'park_403_seconds', 600.0))
+                                state.parked_until = now2 + park_s
+                                state.concurrency = 1
+                                self.progress_logger.info(f"[park] 403 burst: {dom}; parked for {int(park_s)}s")
+
+                # ETA handling and promotion/rotation
+                eta_s = estimate_eta_s(state)
+                state.last_eta_seconds = eta_s
+                if eta_s >= self.eta_max_seconds:
+                    state.eta_exceeded_count += 1
+                    if state.eta_exceeded_count == 1:
+                        # Try to increase concurrency gently to improve ETA, up to ceiling
+                        if state.concurrency < self.domain_concurrency_ceiling:
+                            state.concurrency += 1
+                            self.logger.info(
+                                f"ETA high for {dom} ({int(eta_s)}s). Bumping concurrency -> {state.concurrency}"
+                            )
+                    elif state.eta_exceeded_count >= 2 and not state.warned:
+                        # Persist warning
+                        warnings[dom] = {
+                            'base_domain': dom,
+                            'eta_seconds': eta_s,
+                            'avg_duration_seconds': state.avg_duration(),
+                            'queue_remaining': len(state.queue),
+                            'active': state.active,
+                            'concurrency': state.concurrency,
+                            'successes': state.successes,
+                            'failures': state.failures,
+                            'http_429': state.http_429,
+                            'http_403': state.http_403,
+                            'timeouts': state.timeouts,
+                            'note': 'ETA threshold exceeded twice; domain may be problematic.'
+                        }
+                        state.warned = True
+                        try:
+                            with open(self.domain_warnings_path, 'w', encoding='utf-8') as f:
+                                json.dump({'domains': list(warnings.values())}, f, ensure_ascii=False, indent=2)
+                            self.logger.warning(
+                                f"Wrote domain warnings to {self.domain_warnings_path}"
+                            )
+                        except Exception as we:
+                            self.logger.error(f"Failed to write warnings JSON: {we}")
+
+                # If domain is drained, rotate it out and promote a pending domain
+                if state.active == 0 and not state.queue:
+                    # Remove if present
+                    if dom in active_order:
+                        try:
+                            active_order.remove(dom)
+                        except Exception:
+                            pass
+                    # Prefer 'up' pending domains
+                    next_dom = None
+                    while pending_domains and next_dom is None:
+                        cand = pending_domains.popleft()
+                        if domains.get(cand) and domains[cand].is_up:
+                            next_dom = cand
+                            break
+                    if next_dom:
+                        active_order.append(next_dom)
+                        try:
+                            self.progress_logger.info(
+                                f"[rr] Domain drained: {dom or '<nohost>'}; activated: {next_dom or '<nohost>'}; "
+                                f"active_domains={len(active_order)} pending={len(pending_domains)} down={len(pending_down)}"
+                            )
+                        except Exception:
+                            pass
+
+            # After processing completions, try dispatch again
+            await dispatch_ready()
+            # Periodic progress log
+            maybe_log_and_write_progress()
+
+        # Write a final progress snapshot
+        try:
+            maybe_log_and_write_progress(force=True)
+        except Exception:
+            pass
+        return df
 
     def _expand_and_mark_duplicates(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -1023,11 +1849,20 @@ class GlossDownloader:
             except Exception:
                 return []
 
-        sample_vals = df[self.url_column].dropna().head(5).tolist()
-        needs_expand = any(
-            isinstance(v, (list, tuple)) or (isinstance(v, str) and v.strip().startswith('['))
-            for v in sample_vals
-        )
+        col_vals = df[self.url_column]
+        def _looks_expand(v: Any) -> bool:
+            if v is None or (isinstance(v, float) and pd.isna(v)):
+                return False
+            if isinstance(v, (list, tuple, dict)):
+                return True
+            if isinstance(v, str):
+                s = v.strip()
+                return s.startswith('[') or s.startswith('{')
+            return False
+        try:
+            needs_expand = bool(col_vals.apply(_looks_expand).any())
+        except Exception:
+            needs_expand = False
 
         # Track original row ids for traceability when expanding
         if needs_expand:
@@ -1105,3 +1940,46 @@ class GlossDownloader:
         )
 
         return df
+
+    async def adownload_files(self, input_parquet: str, **kwargs) -> pd.DataFrame:
+        """Async variant of download_files for notebook/async contexts."""
+        self.logger.info(f"Loading parquet file: {input_parquet}")
+        df = pd.read_parquet(input_parquet)
+        if self.url_column not in df.columns:
+            available_columns = df.columns.tolist()
+            self.logger.error(f"URL column '{self.url_column}' not found in parquet file. Available columns: {available_columns}")
+            url_like_columns = [col for col in available_columns if any(keyword in col.lower() for keyword in ['url', 'link', 'uri'])]
+            if url_like_columns:
+                self.url_column = url_like_columns[0]
+                self.logger.warning(f"Using '{self.url_column}' as URL column instead")
+            else:
+                raise ValueError(f"URL column '{self.url_column}' not found in parquet file and no alternative URL columns detected")
+        df = self._expand_and_mark_duplicates(df)
+        df = self.ensure_filename_base(df)
+        if 'base_domain' not in df.columns:
+            try:
+                df['base_domain'] = df[self.url_column].map(self._extract_base_domain)
+            except Exception:
+                df['base_domain'] = ''
+        os.makedirs(self.downloads_dir, exist_ok=True)
+        rate_limiter = self.rate_limiter or RateLimiter(100, 60, 30)
+        if self.scheduler_mode == 'per_domain':
+            self.logger.info(
+                f"Starting per-domain scheduler: global_concurrency={self.concurrency}, per_domain_concurrency={self.per_domain_concurrency}"
+            )
+            updated_df = await self._download_files_async_per_domain(df, rate_limiter)
+        else:
+            semaphore = asyncio.Semaphore(self.concurrency)
+            self.logger.info(
+                f"Starting download (global) with concurrency={self.concurrency}, rate_limit={rate_limiter.rate_limit}/{rate_limiter.time_period}s"
+            )
+            updated_df = await self._download_files_async(df, semaphore, rate_limiter)
+        if '__url_norm' in updated_df.columns:
+            try:
+                updated_df = updated_df.drop(columns=['__url_norm'])
+            except Exception:
+                pass
+        success_count = updated_df['download_success'].sum()
+        fail_count = len(updated_df) - success_count
+        self.logger.info(f"Download complete: {success_count} successful, {fail_count} failed, files downloaded to {self.downloads_dir}")
+        return updated_df

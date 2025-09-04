@@ -52,11 +52,7 @@ class Corpus:
             log_level: Logging level (default: logging.INFO)
             verbose: Whether to enable verbose logging for debugging (default: False)
         """
-        # Setup logging
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
+        # Setup module logger without forcing global configuration
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
         
@@ -984,6 +980,9 @@ class Corpus:
         input_parquet: Optional[Union[str, Path]] = None,
         url_column: str = 'url',
         verbose: Optional[bool] = None,
+        *,
+        parallelize_by: Optional[str] = None,
+        links_column: Optional[str] = None,
         **kwargs
     ) -> pd.DataFrame:
         """
@@ -1013,6 +1012,7 @@ class Corpus:
             input_parquet = Path(input_parquet)
             
         # Load the input file with URLs to download
+        original_input_filename = Path(input_parquet).name
         input_df = pd.read_parquet(input_parquet)
         total_urls = len(input_df)
         self.logger.info(f"Total URLs in input file: {total_urls}")
@@ -1087,17 +1087,41 @@ class Corpus:
             self.logger.info("No existing download results found or usable")
             existing_results = pd.DataFrame()
             
-        # Initialize downloader with the existing filenames to avoid
+        # Initialize downloader configuration (kwargs take precedence)
+        dl_cfg = dict(self.downloader_config)
+        dl_cfg.update(kwargs)
+        # Allow caller to override which column holds links
+        if links_column:
+            url_column = links_column
+        # Allow caller to choose grouping for scheduler (e.g., 'collection_slug' or 'base_domain')
+        if parallelize_by:
+            dl_cfg['scheduler_group_by'] = parallelize_by
+        # Build used filename bases set to avoid collisions on resume
+        used_bases = set()
+        try:
+            used_bases |= {str(Path(fn).stem) for fn in existing_filenames if isinstance(fn, str)}
+        except Exception:
+            pass
+        try:
+            # Also include on-disk stems
+            downloads_dir = Path(self.output_dir) / 'downloads'
+            if downloads_dir.exists():
+                used_bases |= {p.stem for p in downloads_dir.glob('*') if p.is_file()}
+        except Exception:
+            pass
+
         downloader = GlossDownloader(
             url_column=url_column,
             output_dir=str(self.output_dir),
             log_level=self.logger.level,
-            verbose=verbose if verbose is not None else self.verbose
+            verbose=verbose if verbose is not None else self.verbose,
+            **{k: v for k, v in dl_cfg.items() if k not in {'input_parquet'}},
+            _used_filename_bases=used_bases
         )
         
         # Download files
         self.logger.info(f"Downloading files from URLs in {input_parquet}...")
-        new_results = downloader.download_files(input_parquet=str(input_parquet), **kwargs)
+        new_results = downloader.download_files(input_parquet=str(input_parquet))
         
         # Merge with existing results
         if not existing_results.empty:
@@ -1116,7 +1140,7 @@ class Corpus:
         os.makedirs(download_results_dir, exist_ok=True)
         
         # Save results using the input filename pattern
-        output_parquet = download_results_dir / f"download_results_{Path(input_parquet).name}"
+        output_parquet = download_results_dir / f"download_results_{original_input_filename}"
         final_results.to_parquet(output_parquet, index=False)
         self.logger.info(f"Saved download results to {output_parquet}")
         
