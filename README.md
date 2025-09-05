@@ -22,6 +22,29 @@ A library for processing texts in Greek and other languages, developed by [Open 
 pip install glossapi
 ```
 
+### Install via uv (recommended)
+
+uv is a fast, reliable Python package manager. It works with normal `requirements.txt` files and speeds up installs.
+
+- Create a venv and install dependencies from this repo:
+  - `uv venv /mnt/data/venv`
+  - `uv pip install -r requirements.txt`
+- Ensure GPU ORT only (avoid CPU ORT collisions):
+  - `uv pip uninstall -y onnxruntime`
+  - `uv pip install --no-cache --force-reinstall onnxruntime-gpu==1.18.1`
+- Optional: install Torch CUDA for layout/formula/code enrichment:
+  - `uv pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1`
+- Patch Docling so RapidOCR receives the Greek keys (one-time per venv):
+  - `uv run --python /mnt/data/venv/bin/python bash repro_rapidocr_onnx/scripts/repatch_docling.sh`
+- Verify providers include CUDA:
+  - `uv run --python /mnt/data/venv/bin/python - <<'PY'
+import onnxruntime as ort
+print(ort.get_available_providers())
+PY`
+
+Notes
+- No changes to `requirements.txt` are needed for uv; the file works unchanged. uv accepts the same syntax and constraints, and you may also use `uv pip sync requirements.txt` if you want a strictly synced environment.
+
 ## Usage
 
 The recommended way to use GlossAPI is through the `Corpus` class, which provides a complete pipeline for processing academic documents. You can use the same directory for both input and output:
@@ -36,15 +59,10 @@ logging.basicConfig(level=logging.INFO)
 # Set the directory path (use the same for input and output)
 folder = "/path/to/corpus"  # Use abstract path names
 
-# Initialize Corpus with input and output directories
+// Initialize Corpus with input and output directories
 corpus = Corpus(
     input_dir=folder,
-    output_dir=folder
-    # metadata_path="/path/to/metadata.parquet",  # Optional
-    # annotation_mapping={
-    #     'Κεφάλαιο': 'chapter',
-    #     # Add more mappings as needed
-    # }
+    output_dir=folder,
 )
 
 # The pipeline can start from any of these steps:
@@ -52,8 +70,12 @@ corpus = Corpus(
 # Step 1: Download documents (if URLs are provided)
 corpus.download(url_column='a_column_name')  # Specify column with URLs, default column name is 'url'
 
-# Step 2: Extract documents
-corpus.extract()
+# Step 2: Extract documents (GPU OCR by default)
+# Single‑GPU (default)
+corpus.extract(input_format="pdf", use_gpus="single")
+
+# Or Multi‑GPU: auto‑detect all visible GPUs and distribute work
+# corpus.extract(input_format="pdf", use_gpus="multi")
 
 # Step 3: Extract sections from filtered documents
 corpus.section()
@@ -101,7 +123,7 @@ GlossAPI will automatically create a metadata folder in downloads if starting fr
 
 This project is licensed under the [European Union Public Licence 1.2 (EUPL 1.2)](https://interoperable-europe.ec.europa.eu/collection/eupl/eupl-text-eupl-12).
 
-## GPU OCR with Docling + RapidOCR (general instructions)
+## GPU OCR with Docling + RapidOCR
 
 The project includes a GPU-first OCR pipeline using Docling for layout and RapidOCR (ONNXRuntime) for OCR. These steps are portable across machines:
 
@@ -110,7 +132,7 @@ The project includes a GPU-first OCR pipeline using Docling for layout and Rapid
   - `pip install -U pip`
   - `pip install docling==2.48.0 rapidocr rapidocr-onnxruntime onnxruntime-gpu==1.18.1`
   - Remove CPU ORT if present: `pip uninstall -y onnxruntime || true`
-  - Install Torch CUDA for GPU layout and enrichment (choose a build matching your driver):
+- Install Torch CUDA for GPU layout and enrichment (choose a build matching your driver):
     - `pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1`
 - Provide ONNX models and Greek keys
   - Package files under `glossapi/models/rapidocr/{onnx,keys}` or set `GLOSSAPI_RAPIDOCR_ONNX_DIR` to a directory containing:
@@ -121,8 +143,29 @@ The project includes a GPU-first OCR pipeline using Docling for layout and Rapid
   - Replace `"Rec.keys_path"` with `"Rec.rec_keys_path"` (or run `repro_rapidocr_onnx/scripts/repatch_docling.sh`)
 - Verify providers
   - `python -c "import onnxruntime as ort; print(ort.get_available_providers())"` → should include `CUDAExecutionProvider`
-- Run the pipeline (GPU, math/code enrichment)
-  - `python -m glossapi.docling_rapidocr_pipeline IN_DIR OUT_DIR --device cuda:0 --timeout-s 600 --normalize-output --docling-formula --formula-batch 8 --docling-code`
+- Quick system check
+  - `python scripts/check_system.py` → writes `system_check_report.md`; confirm GPUs and CUDAExecutionProvider are OK.
+- Run with Corpus API (few‑line usage)
+  - Python
+    - Single GPU: `Corpus.extract(input_format="pdf", use_gpus="single")`
+    - Multi GPU: `Corpus.extract(input_format="pdf", use_gpus="multi")` (auto‑uses all visible GPUs)
+  - CLI‑style example
+    - `python -c "from glossapi import Corpus; c=Corpus('IN_DIR','OUT_DIR'); c.extract(input_format='pdf', use_gpus='multi')"`
+
+### Defaults and tuning
+
+- Accurate table parsing: kept enabled (TableFormer ACCURATE).
+- Orientation classifier: disabled by default (`use_cls=False`) for digital PDFs; override with `use_cls=True` if needed.
+- OCR thresholds: `text_score=0.45`; image scale hint `images_scale=1.25`.
+
+### CUDA/ORT compatibility
+
+- Keep your ORT + CUDA stack compatible:
+  - Check driver/toolkit: `nvidia-smi` (look for “CUDA Version”) and optionally `nvcc --version`.
+  - Use `onnxruntime-gpu==1.18.1` for CUDA 12.x drivers (e.g., L4 instances). If you must run on CUDA 11.x drivers, select an ORT GPU build compatible with CUDA 11.x (e.g., 1.16.x).
+  - Never have `onnxruntime` CPU installed alongside `onnxruntime-gpu` (uninstall CPU ORT).
+  - Verify GPU providers: `python repro_rapidocr_onnx/scripts/check_ort.py` → must include `CUDAExecutionProvider`.
+  - Keep `numpy<2` for best wheel compatibility.
 
 Automating Torch selection
 - Use `scripts/install_torch_auto.sh` to pick a suitable Torch build automatically:

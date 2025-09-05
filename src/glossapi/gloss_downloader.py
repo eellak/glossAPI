@@ -745,7 +745,8 @@ class GlossDownloader:
             'User-Agent': user_agent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
+            # Avoid brotli to prevent dependency errors
+            'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
             'Sec-Fetch-Dest': 'document',
@@ -810,39 +811,83 @@ class GlossDownloader:
                             self.logger.debug(f"Initial base URL visit failed: {str(e)}")
                             pass
                         
-                        # Choose request method
+                        # Choose request method and perform streaming for GET
                         requester = self.request_method.lower()
-                        
+
                         try:
-                            # Verbose logging of request attempt
                             self.verbose_log(f"Attempting download request to URL: {url}")
                             self.verbose_log(f"Request method: {requester}, Timeout: {timeout.total}s")
                             self.verbose_log(f"Headers: {headers}")
-                            
-                            # Attempt the download with tenacity-powered retry logic
-                            content, status, resp_headers = await self.make_request(
-                                session, requester, url, headers, timeout
-                            )
-                            
-                            self.verbose_log(f"Request successful with status {status}")
-                            
-                            # Infer file extension using URL, response headers and content
-                            file_ext = self.infer_file_extension(url, resp_headers, content)
-                            if not self.is_supported_format(file_ext):
-                                self.logger.warning(f"Unsupported file format after inference: {file_ext}. Supported formats: {', '.join(self.supported_formats)}")
-                                return False, "", file_ext or "", f"Unsupported file format: {file_ext}", retry_count
-                            # Decide final filename using precomputed base if available
-                            if filename_base and str(filename_base).strip():
-                                filename = f"{filename_base}.{file_ext}"
+
+                            if requester == 'get':
+                                # Streaming GET with retries
+                                from tenacity import AsyncRetrying
+                                head = bytearray()
+                                resp_headers = {}
+                                async for attempt in AsyncRetrying(
+                                    stop=stop_after_attempt(max(1, int(self.max_retries))),
+                                    wait=wait_exponential(multiplier=1, min=1, max=10),
+                                    retry=(retry_if_exception_type(aiohttp.ClientError) |
+                                           retry_if_exception_type(asyncio.TimeoutError)),
+                                    before_sleep=before_sleep_log(logging.getLogger(__name__), logging.INFO),
+                                    reraise=True,
+                                ):
+                                    with attempt:
+                                        async with session.get(url, headers=headers, timeout=timeout) as response:
+                                            response.raise_for_status()
+                                            resp_headers = dict(response.headers or {})
+                                            # Write to a temp file first
+                                            tmp_path = Path(self.downloads_dir) / f".part_{row_index}"
+                                            async with aiofiles.open(tmp_path, 'wb') as f:
+                                                async for chunk in response.content.iter_chunked(1 << 16):
+                                                    if chunk:
+                                                        if len(head) < (1 << 16):
+                                                            need = (1 << 16) - len(head)
+                                                            head.extend(chunk[:need])
+                                                        await f.write(chunk)
+                                            # Infer extension using URL, headers and first bytes
+                                            file_ext = self.infer_file_extension(url, resp_headers, bytes(head))
+                                            if not self.is_supported_format(file_ext):
+                                                # Clean up temp and report
+                                                try:
+                                                    os.remove(tmp_path)
+                                                except Exception:
+                                                    pass
+                                                self.logger.warning(f"Unsupported file format after inference: {file_ext}. Supported formats: {', '.join(self.supported_formats)}")
+                                                return False, "", file_ext or "", f"Unsupported file format: {file_ext}", retry_count
+                                            # Decide final filename
+                                            if filename_base and str(filename_base).strip():
+                                                filename = f"{filename_base}.{file_ext}"
+                                            else:
+                                                filename = self.generate_filename(row_index, file_ext)
+                                            final_path = Path(self.downloads_dir) / filename
+                                            try:
+                                                os.replace(tmp_path, final_path)
+                                            except Exception:
+                                                # Fallback to copy/rename
+                                                try:
+                                                    os.rename(tmp_path, final_path)
+                                                except Exception:
+                                                    pass
+                                            self.logger.info(f"Successfully downloaded {filename} from {url}")
+                                            return True, filename, file_ext, "", retry_count
                             else:
-                                filename = self.generate_filename(row_index, file_ext)
-                            
-                            # Write to file
-                            await self.write_file(filename, content, self.downloads_dir)
-                            
-                            self.logger.info(f"Successfully downloaded {filename} from {url}")
-                            return True, filename, file_ext, "", retry_count
-                            
+                                # Fallback to non-streaming POST
+                                content, status, resp_headers = await self.make_request(
+                                    session, requester, url, headers, timeout
+                                )
+                                file_ext = self.infer_file_extension(url, resp_headers, content)
+                                if not self.is_supported_format(file_ext):
+                                    self.logger.warning(f"Unsupported file format after inference: {file_ext}. Supported formats: {', '.join(self.supported_formats)}")
+                                    return False, "", file_ext or "", f"Unsupported file format: {file_ext}", retry_count
+                                if filename_base and str(filename_base).strip():
+                                    filename = f"{filename_base}.{file_ext}"
+                                else:
+                                    filename = self.generate_filename(row_index, file_ext)
+                                await self.write_file(filename, content, self.downloads_dir)
+                                self.logger.info(f"Successfully downloaded {filename} from {url}")
+                                return True, filename, file_ext, "", retry_count
+
                         except aiohttp.ClientResponseError as e:
                             # Handle HTTP errors
                             status = e.status
@@ -1331,8 +1376,10 @@ class GlossDownloader:
             # Write progress JSON
             try:
                 p = self.output_dir / 'domain_progress.json'
-                with open(p, 'w', encoding='utf-8') as f:
+                tmp = p.with_suffix('.json.tmp')
+                with open(tmp, 'w', encoding='utf-8') as f:
                     json.dump(prog, f, ensure_ascii=False, indent=2)
+                os.replace(tmp, p)
             except Exception:
                 pass
             # High-level logging with percentages, progress bars, ETAs

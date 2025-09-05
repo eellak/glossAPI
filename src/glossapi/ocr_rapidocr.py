@@ -11,7 +11,13 @@ from typing import Optional, Dict, Any, Tuple
 _PIPELINE_CACHE: dict[str, Tuple[object, object]] = {}
 
 
-def _build_pipeline(device: Optional[str] = None):
+def _build_pipeline(
+    device: Optional[str] = None,
+    *,
+    use_cls: Optional[bool] = None,
+    text_score: Optional[float] = None,
+    images_scale: Optional[float] = None,
+):
     # Lazy imports to keep module import light
     from docling.datamodel.pipeline_options import (
         AcceleratorDevice,
@@ -35,9 +41,13 @@ def _build_pipeline(device: Optional[str] = None):
 
     # Device selection (GPU preferred)
     dev = device or "cuda:0"
-    acc = AcceleratorOptions(
-        device=AcceleratorDevice.CUDA if str(dev).lower().startswith("cuda") else AcceleratorDevice.CPU
-    )
+    # Keep string devices like "cuda:1"/"mps" so ORT honors the index/provider
+    if isinstance(dev, str) and dev.lower().startswith(("cuda", "mps", "cpu")):
+        acc = AcceleratorOptions(device=dev)
+    else:
+        acc = AcceleratorOptions(
+            device=AcceleratorDevice.CUDA if str(dev).lower().startswith("cuda") else AcceleratorDevice.CPU
+        )
 
     # Resolve packaged model paths
     r = resolve_packaged_onnx_and_keys()
@@ -54,12 +64,18 @@ def _build_pipeline(device: Optional[str] = None):
         use_det=True,
         use_cls=True,
         use_rec=True,
-        text_score=0.45,
+        text_score=(0.45 if text_score is None else float(text_score)),
         det_model_path=r.det,
         rec_model_path=r.rec,
         cls_model_path=r.cls,
         print_verbose=False,
     )
+    # Allow overrides from caller
+    if use_cls is not None:
+        try:
+            ocr_opts.use_cls = bool(use_cls)
+        except Exception:
+            pass
     if r.keys:
         ocr_opts.rec_keys_path = r.keys
 
@@ -75,6 +91,12 @@ def _build_pipeline(device: Optional[str] = None):
         table_structure_options=table_opts,
         allow_external_plugins=True,
     )
+    # Optional hint used by Docling in our repro; safe no-op if unsupported
+    if images_scale is not None:
+        try:
+            setattr(opts, "images_scale", float(images_scale))
+        except Exception:
+            pass
 
     # Prefer explicit injection path when supported; otherwise fall back to factory
     try:
@@ -101,6 +123,9 @@ def run_rapidocr_onnx(
     pdf_path: Path | str,
     *,
     device: Optional[str] = None,
+    use_cls: Optional[bool] = None,
+    text_score: Optional[float] = None,
+    images_scale: Optional[float] = None,
     max_pages: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Run Docling + RapidOCR (ONNX) OCR on a PDF and return markdown text.
@@ -121,7 +146,7 @@ def run_rapidocr_onnx(
     key = str(device or "cuda:0").lower()
     cached = _PIPELINE_CACHE.get(key)
     if cached is None:
-        pipe, r = _build_pipeline(device=device)
+        pipe, r = _build_pipeline(device=device, use_cls=use_cls, text_score=text_score, images_scale=images_scale)
         _PIPELINE_CACHE[key] = (pipe, r)
     else:
         pipe, r = cached  # type: ignore[misc]

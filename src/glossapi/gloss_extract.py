@@ -143,23 +143,32 @@ class GlossExtract:
             threads (int): Number of threads to use
             type (str): Type of acceleration ('CUDA', 'MPS', 'Auto', or 'CPU')
         """
-        if type == 'CUDA':
+        # Accept common values and keep string devices like "cuda:1" when provided
+        t = str(type or 'Auto').strip()
+        tl = t.lower()
+        if tl.startswith(('cuda', 'mps', 'cpu')):
+            dev = t if ':' in tl or tl in ('cpu', 'mps') else ('cuda' if tl.startswith('cuda') else tl)
             self.pipeline_options.accelerator_options = AcceleratorOptions(
-                num_threads=threads, device=AcceleratorDevice.CUDA
+                num_threads=threads, device=dev
             )
-        elif type == 'MPS':
-            self.pipeline_options.accelerator_options = AcceleratorOptions(
-                num_threads=threads, device=AcceleratorDevice.MPS
-            )
-        elif type == 'Auto':
+        elif t == 'Auto':
             self.pipeline_options.accelerator_options = AcceleratorOptions(
                 num_threads=threads, device=AcceleratorDevice.AUTO
             )
-        elif type == 'CPU':
+        elif t == 'CUDA':
+            self.pipeline_options.accelerator_options = AcceleratorOptions(
+                num_threads=threads, device=AcceleratorDevice.CUDA
+            )
+        elif t == 'MPS':
+            self.pipeline_options.accelerator_options = AcceleratorOptions(
+                num_threads=threads, device=AcceleratorDevice.MPS
+            )
+        elif t == 'CPU':
             self.pipeline_options.accelerator_options = AcceleratorOptions(
                 num_threads=threads, device=AcceleratorDevice.CPU
             )
-            print('Error : Wrong Acceleration type. Defaulting to Auto')
+        else:
+            print('Error: Wrong Acceleration type. Defaulting to Auto')
             self.pipeline_options.accelerator_options = AcceleratorOptions(
                 num_threads=threads, device=AcceleratorDevice.AUTO
             )
@@ -173,6 +182,7 @@ class GlossExtract:
         images_scale: float = 1.25,
         formula_enrichment: bool = True,
         code_enrichment: bool = True,
+        use_cls: bool = False,
         ocr_langs: list[str] | None = None,
     ):
         """Create a document converter with configured options and RapidOCR (ONNX).
@@ -225,7 +235,7 @@ class GlossExtract:
                 lang=langs,
                 force_full_page_ocr=bool(force_full_page_ocr),
                 use_det=True,
-                use_cls=True,
+                use_cls=bool(use_cls),
                 use_rec=True,
                 text_score=float(text_score),
                 det_model_path=r.det,

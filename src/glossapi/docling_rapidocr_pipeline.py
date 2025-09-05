@@ -87,9 +87,15 @@ def build_pipeline(
     formula_enrichment: bool = False,
     code_enrichment: bool = False,
 ) -> Tuple[object, PdfPipelineOptions]:
-    acc = AcceleratorOptions(
-        device=AcceleratorDevice.CUDA if device.lower().startswith("cuda") else AcceleratorDevice.CPU
-    )
+    # Preserve explicit device strings like "cuda:1"/"mps"/"cpu" so Docling/ORT
+    # bind to the intended device. Fallback to enum mapping if non-string.
+    dev = device or "cuda:0"
+    if isinstance(dev, str) and dev.lower().startswith(("cuda", "mps", "cpu")):
+        acc = AcceleratorOptions(device=dev)
+    else:
+        acc = AcceleratorOptions(
+            device=AcceleratorDevice.CUDA if str(dev).lower().startswith("cuda") else AcceleratorDevice.CPU
+        )
 
     r = resolve_packaged_onnx_and_keys()
     if not (r.det and r.rec and r.cls and r.keys):

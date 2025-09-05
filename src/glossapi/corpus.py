@@ -534,6 +534,9 @@ class Corpus:
         code_enrichment: bool = True,
         filenames: Optional[List[str]] = None,
         skip_existing: bool = True,
+        use_gpus: str = "single",
+        devices: Optional[List[int]] = None,
+        use_cls: bool = False,
     ) -> None:
         """
         Extract input files to markdown format.
@@ -547,60 +550,12 @@ class Corpus:
         """
         self.logger.info(f"Extracting {input_format} files to markdown...")
         
-        # Prepare extractor (lazy import + instantiate)
-        if self.extractor is None:
-            try:
-                from .gloss_extract import GlossExtract  # local import to avoid import-time heavy deps
-                self.extractor = GlossExtract(url_column=self.url_column)
-            except Exception as e:
-                self.logger.error(f"Failed to initialize GlossExtract: {e}")
-                raise
-        self.extractor.enable_accel(threads=num_threads, type=accel_type)
-        # Harmonize GPU math throughput settings and images scale across runs
-        # Read from env with sensible defaults for our GPU-only tests
+        # We will prepare the extractor later (single-GPU branch). For multi-GPU,
+        # we avoid importing heavy OCR deps in the parent.
         import os as _os
         images_scale_env = _os.getenv("GLOSSAPI_IMAGES_SCALE", "1.1")
         formula_batch_env = _os.getenv("GLOSSAPI_FORMULA_BATCH", "16")
-        try:
-            # Torch matmul precision for CodeFormula
-            if formula_enrichment:
-                try:
-                    import torch  # type: ignore
-                    if hasattr(torch, "set_float32_matmul_precision"):
-                        torch.set_float32_matmul_precision("high")
-                except Exception:
-                    pass
-                try:
-                    from docling.models.code_formula_model import CodeFormulaModel  # type: ignore
-                    fb = int(formula_batch_env) if str(formula_batch_env).isdigit() else 16
-                    CodeFormulaModel.elements_batch_size = int(fb)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-        # Log cache policy and settings
-        try:
-            self.logger.info(
-                "Caches: HF_HOME=%s XDG_CACHE_HOME=%s DOCLING_CACHE_DIR=%s",
-                _os.getenv("HF_HOME"), _os.getenv("XDG_CACHE_HOME"), _os.getenv("DOCLING_CACHE_DIR"),
-            )
-            self.logger.info(
-                "GPU math settings: formula_enrichment=%s batch=%s matmul_precision=high images_scale=%s",
-                bool(formula_enrichment), formula_batch_env, images_scale_env,
-            )
-        except Exception:
-            pass
-
-        self.extractor.create_extractor(
-            enable_ocr=True,
-            force_full_page_ocr=bool(force_ocr),
-            formula_enrichment=bool(formula_enrichment),
-            code_enrichment=bool(code_enrichment),
-            images_scale=float(images_scale_env),
-        )
-        
-        # Create output directory
+        # Create output directory for downstream stages
         os.makedirs(self.markdown_dir, exist_ok=True)
         
         # Define supported formats
@@ -689,13 +644,117 @@ class Corpus:
         
         # Process all files
         self.logger.info(f"Processing {len(input_files)} files...")
-        
+
+        # Multi-GPU orchestrator
+        if str(use_gpus).lower() == "multi":
+            # Detect devices if not provided
+            devs = devices
+            if not devs:
+                # Prefer nvidia-smi, fallback to torch
+                devs = []
+                try:
+                    import subprocess
+                    p = subprocess.run(["nvidia-smi", "-L"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+                    if p.returncode == 0 and p.stdout:
+                        for line in p.stdout.splitlines():
+                            if line.startswith("GPU "):
+                                try:
+                                    idx = int(line.split(":", 1)[0].split()[1])
+                                    devs.append(idx)
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+                if not devs:
+                    try:
+                        import torch  # type: ignore
+                        if torch.cuda.is_available():
+                            devs = list(range(torch.cuda.device_count()))
+                    except Exception:
+                        pass
+            if not devs:
+                self.logger.error("Multi-GPU requested but no GPUs detected. Falling back to single GPU.")
+            else:
+                try:
+                    self.logger.info("Multi-GPU: using %d device(s): %s", len(devs), ",".join(str(d) for d in devs))
+                except Exception:
+                    pass
+                # Partition file list and spawn workers (one per device)
+                from multiprocessing import get_context
+                ctx = get_context("spawn")
+                name_list = [p.name for p in input_files]
+                buckets: Dict[int, List[str]] = {d: [] for d in devs}
+                for i, nm in enumerate(name_list):
+                    buckets[devs[i % len(devs)]].append(nm)
+
+                procs = []
+                for dev_id, names in buckets.items():
+                    if not names:
+                        continue
+                    p = ctx.Process(target=gpu_extract_worker, args=(dev_id, str(self.input_dir), str(self.output_dir), names, bool(force_ocr), bool(formula_enrichment), bool(code_enrichment), float(images_scale_env), bool(use_cls), bool(skip_existing), str(input_format), int(num_threads), str(accel_type)))
+                    p.start()
+                    procs.append(p)
+                any_fail = False
+                for p in procs:
+                    p.join()
+                    if p.exitcode not in (0, None):
+                        any_fail = True
+                if any_fail:
+                    self.logger.warning("One or more GPU workers exited with non-zero status.")
+                self.logger.info("Multi-GPU extraction complete. Markdown files saved to %s", self.markdown_dir)
+                return
+
+        # Single GPU path
+        # Prepare extractor (lazy import + instantiate)
+        if self.extractor is None:
+            try:
+                from .gloss_extract import GlossExtract  # local import to avoid import-time heavy deps
+                self.extractor = GlossExtract(url_column=self.url_column)
+            except Exception as e:
+                self.logger.error(f"Failed to initialize GlossExtract: {e}")
+                raise
+        self.extractor.enable_accel(threads=num_threads, type=accel_type)
+        # Harmonize GPU math throughput settings and images scale across runs
+        try:
+            # Torch matmul precision for CodeFormula
+            if formula_enrichment:
+                try:
+                    import torch  # type: ignore
+                    if hasattr(torch, "set_float32_matmul_precision"):
+                        torch.set_float32_matmul_precision("high")
+                except Exception:
+                    pass
+                try:
+                    from docling.models.code_formula_model import CodeFormulaModel  # type: ignore
+                    fb = int(formula_batch_env) if str(formula_batch_env).isdigit() else 16
+                    CodeFormulaModel.elements_batch_size = int(fb)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # Log cache policy and settings
+        try:
+            self.logger.info(
+                "Caches: HF_HOME=%s XDG_CACHE_HOME=%s DOCLING_CACHE_DIR=%s",
+                _os.getenv("HF_HOME"), _os.getenv("XDG_CACHE_HOME"), _os.getenv("DOCLING_CACHE_DIR"),
+            )
+            self.logger.info(
+                "GPU math settings: formula_enrichment=%s batch=%s matmul_precision=high images_scale=%s",
+                bool(formula_enrichment), formula_batch_env, images_scale_env,
+            )
+        except Exception:
+            pass
+        self.extractor.create_extractor(
+            enable_ocr=True,
+            force_full_page_ocr=bool(force_ocr),
+            formula_enrichment=bool(formula_enrichment),
+            code_enrichment=bool(code_enrichment),
+            images_scale=float(images_scale_env),
+            use_cls=bool(use_cls),
+        )
         # Extract files to markdown
         os.makedirs(self.markdown_dir, exist_ok=True)
-        
-        # Use multiple threads for extraction
         self.extractor.extract_path(input_files, self.markdown_dir, skip_existing=skip_existing)
-        
         self.logger.info(f"Extraction complete. Markdown files saved to {self.markdown_dir}")
         
 
@@ -1178,3 +1237,46 @@ class Corpus:
         self.annotate(fully_annotate=fully_annotate, annotation_type=annotation_type)
         
         self.logger.info("Complete processing pipeline finished successfully.")
+
+# Top-level worker function for multi-GPU extraction (picklable by multiprocessing)
+def gpu_extract_worker(
+    device_id: int,
+    in_dir: str,
+    out_dir: str,
+    names: List[str],
+    force: bool,
+    fe: bool,
+    ce: bool,
+    img_scale: float,
+    use_cls_w: bool,
+    skip: bool,
+    input_fmt: str,
+    threads: int,
+    accel: str,
+) -> None:
+    import os as _os
+    _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    try:
+        from glossapi import Corpus as _Corpus  # type: ignore
+    except Exception:
+        # Attempt to import from local repo if available
+        try:
+            import sys as _sys, pathlib as _pl
+            _sys.path.insert(0, str((_pl.Path(out_dir).resolve().parents[1] / 'src').resolve()))
+            from glossapi import Corpus as _Corpus  # type: ignore
+        except Exception as _e:
+            print(f"[GPU{device_id}] Cannot import glossapi in worker: {_e}")
+            return
+    c = _Corpus(input_dir=in_dir, output_dir=out_dir)
+    c.extract(
+        input_format=input_fmt,
+        num_threads=threads,
+        accel_type=accel,
+        force_ocr=force,
+        formula_enrichment=fe,
+        code_enrichment=ce,
+        filenames=names,
+        skip_existing=skip,
+        use_gpus="single",
+        use_cls=use_cls_w,
+    )
