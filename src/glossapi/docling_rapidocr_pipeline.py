@@ -108,7 +108,7 @@ def build_pipeline(
         lang=["el", "en"],
         force_full_page_ocr=False,
         use_det=True,
-        use_cls=True,
+        use_cls=False,
         use_rec=True,
         text_score=text_score,
         det_model_path=r.det,

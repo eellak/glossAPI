@@ -130,8 +130,8 @@ The project includes a GPU-first OCR pipeline using Docling for layout and Rapid
 - Create a fresh venv and install packages
   - `python -m venv .venv && source .venv/bin/activate`
   - `pip install -U pip`
-  - `pip install docling==2.48.0 rapidocr rapidocr-onnxruntime onnxruntime-gpu==1.18.1`
-  - Remove CPU ORT if present: `pip uninstall -y onnxruntime || true`
+  - `pip install docling==2.48.0 rapidocr onnxruntime-gpu==1.18.1`
+  - Ensure only GPU ORT is present: `pip uninstall -y onnxruntime || true`
 - Install Torch CUDA for GPU layout and enrichment (choose a build matching your driver):
     - `pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1`
 - Provide ONNX models and Greek keys
@@ -172,5 +172,6 @@ Automating Torch selection
   - `bash scripts/install_torch_auto.sh` (uses CUDA 12.1 if available, falls back to 11.8, else installs CPU)
 
 Notes
+- Avoid installing the CPU `onnxruntime` wheel. Some packages (e.g., `rapidocr_onnxruntime` or `docling[rapidocr]`) declare `onnxruntime` as a dependency and can auto‑pull the CPU wheel. Prefer `rapidocr` + `onnxruntime-gpu` instead, and use `pip install -e . --no-deps` for editable installs.
 - OCR runs on ORT GPU when `onnxruntime-gpu` is installed; layout/enrichment use Torch CUDA.
 - If you encounter NCCL warnings on multi-GPU systems, set `NCCL_P2P_DISABLE=1` and `NCCL_IB_DISABLE=1`.

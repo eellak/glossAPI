@@ -37,7 +37,6 @@ wheels/
 .installed.cfg
 *.egg
 
-rust/glossapi_rs_cleaner/Cargo.lock
 
 # === Python & Rust ignores ===
 # Rust build artifacts

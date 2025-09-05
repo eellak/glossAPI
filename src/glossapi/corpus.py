@@ -1256,6 +1256,9 @@ def gpu_extract_worker(
 ) -> None:
     import os as _os
     _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    # Bind Docling/RapidOCR explicitly to the (now remapped) visible device 0
+    # so the pipeline selects the intended GPU inside this worker.
+    _os.environ["GLOSSAPI_DOCLING_DEVICE"] = "cuda:0"
     try:
         from glossapi import Corpus as _Corpus  # type: ignore
     except Exception:
@@ -1268,10 +1271,11 @@ def gpu_extract_worker(
             print(f"[GPU{device_id}] Cannot import glossapi in worker: {_e}")
             return
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
+    # Force single-GPU path within the worker and explicitly select visible cuda:0
     c.extract(
         input_format=input_fmt,
         num_threads=threads,
-        accel_type=accel,
+        accel_type="cuda:0",
         force_ocr=force,
         formula_enrichment=fe,
         code_enrichment=ce,

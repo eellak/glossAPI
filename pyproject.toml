@@ -25,8 +25,10 @@ dependencies = [
     "tenacity>=8.0.0",
     "tqdm>=4.67.0",
     # Docling + RapidOCR ONNX stack (aligned with repro)
-    "docling[rapidocr]==2.48.0",
-    "rapidocr_onnxruntime==1.4.4",
+    "docling==2.48.0",
+    # Use RapidOCR core package; avoid rapidocr_onnxruntime to prevent pip
+    # from auto-installing the CPU-only 'onnxruntime' wheel.
+    "rapidocr>=3.3.0",
     "onnxruntime-gpu==1.18.1",
     "pyyaml>=6.0",
 ]

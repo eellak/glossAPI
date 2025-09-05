@@ -62,7 +62,7 @@ def _build_pipeline(
         lang=["el", "en"],
         force_full_page_ocr=False,
         use_det=True,
-        use_cls=True,
+        use_cls=False,
         use_rec=True,
         text_score=(0.45 if text_score is None else float(text_score)),
         det_model_path=r.det,

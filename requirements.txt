@@ -14,8 +14,10 @@ tenacity>=8.0.0
 tqdm>=4.67.0
 
 # Docling + RapidOCR ONNX stack
-docling[rapidocr]==2.48.0
-rapidocr_onnxruntime==1.4.4
+docling==2.48.0
+# Prefer RapidOCR core package; it works with the GPU ORT wheel without pulling
+# the CPU-only 'onnxruntime' dependency.
+rapidocr>=3.3.0
 onnxruntime-gpu==1.18.1
 pyyaml>=6.0
 

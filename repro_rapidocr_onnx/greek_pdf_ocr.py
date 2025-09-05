@@ -94,9 +94,12 @@ def make_pipeline_options(
     formula_enrichment: bool = False,
     code_enrichment: bool = False,
     force_ocr: bool = True,
+    num_threads: int = 11,
 ) -> PdfPipelineOptions:
+    # Enforce 11 threads for reproducibility/comparison
     acc = AcceleratorOptions(
-        device=AcceleratorDevice.CUDA if device.lower().startswith("cuda") else AcceleratorDevice.CPU
+        num_threads=int(num_threads),
+        device=AcceleratorDevice.CUDA if device.lower().startswith("cuda") else AcceleratorDevice.CPU,
     )
 
     ocr_opts = RapidOcrOptions(
@@ -239,23 +242,156 @@ def export_results(
         pass
 
 
+def _compute_per_page_metrics(conv: ConversionResult) -> Dict[str, Any]:
+    """Compute per-page metrics from conv.timings and document export.
+
+    Returns dict with keys:
+      - file: str
+      - page_count: int
+      - pages: list of {page_no, ocr_sec, parse_sec, layout_sec, table_sec, formula_count, formula_chars, code_count, doc_enrich_share_sec}
+      - totals: {doc_enrich_total_sec: float}
+    """
+    res: Dict[str, Any] = {"file": str(getattr(conv.input.file, 'name', 'unknown'))}
+    doc = conv.document
+    try:
+        page_count = len(doc.pages)  # type: ignore[attr-defined]
+    except Exception:
+        page_count = 0
+    res["page_count"] = int(page_count)
+
+    # Build timings map
+    timings: Dict[str, Dict[str, Any]] = {}
+    try:
+        for key, item in conv.timings.items():
+            times = list(item.times)
+            timings[key] = {
+                "scope": str(getattr(getattr(item, 'scope', None), 'value', 'unknown')),
+                "times": times,
+                "total": float(sum(times)) if times else float(getattr(item, 'total', 0.0)),
+            }
+    except Exception:
+        pass
+
+    def _page_times(key: str) -> List[float]:
+        arr = timings.get(key, {}).get("times", []) or []
+        if page_count and len(arr) == page_count:
+            return [float(x) for x in arr]
+        # If lengths differ, pad/truncate to page_count
+        if page_count:
+            arr = (arr + [0.0] * page_count)[:page_count]
+        return [float(x) for x in arr]
+
+    ocr_times = _page_times("ocr")
+    parse_times = _page_times("page_parse")
+    layout_times = _page_times("layout")
+    table_times = _page_times("table_structure")
+
+    # Content counts per page (formulas/code), with sanitization and capping
+    formula_count = [0] * max(1, page_count)
+    formula_chars = [0] * max(1, page_count)
+    formula_trunc = [0] * max(1, page_count)
+    formula_trunc_chars = [0] * max(1, page_count)
+    code_count = [0] * max(1, page_count)
+    try:
+        as_dict = doc.export_to_dict()
+        # Sanitization helpers
+        import re as _re
+        _run_pat = _re.compile(r"\\\\\s*&(?P<ws>(?:\\quad|\\;|\\:|\\,|\\\\s|\s){200,})")
+        _ws_collapse = _re.compile(r"(?:(?:\\quad|\\;|\\:|\\,|\\\\s)|\s){2,}")
+        _CAP = 3000
+        def _sanitize(s: str) -> tuple[str, int]:
+            """Return (text, dropped_chars). Apply whitespace-run truncation and length cap, collapse runs."""
+            dropped = 0
+            m = _run_pat.search(s)
+            if m:
+                s_new = s[: m.start('ws')]
+                dropped += len(s) - len(s_new)
+                s = s_new
+            if len(s) > _CAP:
+                cut = s.rfind('\\\\', 0, _CAP)
+                if cut < 0:
+                    cut = _CAP
+                dropped += len(s) - cut
+                s = s[:cut]
+            # collapse excessive whitespace macros (optional; cheap)
+            s2 = _ws_collapse.sub(' ', s)
+            # do not count collapsed removal toward dropped (cosmetic)
+            return s2, dropped
+        def _emit(label: str, counter: List[int], charsum: List[int] | None = None):
+            for node in as_dict.get("texts", []):
+                if str(node.get("label")) != label:
+                    continue
+                txt_raw = str(node.get("text") or node.get("orig") or "")
+                txt, dropped = _sanitize(txt_raw) if label == 'formula' else (txt_raw, 0)
+                ch = len(txt)
+                for prov in node.get("prov", []) or []:
+                    pno = int(prov.get("page_no") or 0)
+                    if pno >= 1 and pno <= len(counter):
+                        counter[pno - 1] += 1
+                        if charsum is not None:
+                            charsum[pno - 1] += ch
+                        if label == 'formula' and dropped:
+                            formula_trunc[pno - 1] += 1
+                            formula_trunc_chars[pno - 1] += int(dropped)
+        _emit("formula", formula_count, formula_chars)
+        _emit("code", code_count, None)
+    except Exception:
+        pass
+
+    # Distribute document-level enrichment time across pages (estimated)
+    try:
+        doc_enrich_total = float(timings.get("doc_enrich", {}).get("total", 0.0))
+    except Exception:
+        doc_enrich_total = 0.0
+    res["totals"] = {"doc_enrich_total_sec": doc_enrich_total}
+    shares = [0.0] * max(1, page_count)
+    if doc_enrich_total and page_count:
+        s = float(sum(formula_chars)) or float(sum(formula_count)) or 0.0
+        if s > 0:
+            base = formula_chars if sum(formula_chars) > 0 else formula_count
+            shares = [doc_enrich_total * (float(x) / s) for x in base]
+        else:
+            # no formulas, keep zeros
+            shares = [0.0] * page_count
+
+    rows: List[Dict[str, Any]] = []
+    n = max(page_count, len(ocr_times), len(parse_times))
+    for i in range(n):
+        rows.append({
+            "page_no": i + 1,
+            "ocr_sec": float(ocr_times[i]) if i < len(ocr_times) else 0.0,
+            "parse_sec": float(parse_times[i]) if i < len(parse_times) else 0.0,
+            "layout_sec": float(layout_times[i]) if i < len(layout_times) else 0.0,
+            "table_sec": float(table_times[i]) if i < len(table_times) else 0.0,
+            "formula_count": int(formula_count[i]) if i < len(formula_count) else 0,
+            "formula_chars": int(formula_chars[i]) if i < len(formula_chars) else 0,
+            "formula_truncated": int(formula_trunc[i]) if i < len(formula_trunc) else 0,
+            "formula_truncated_chars": int(formula_trunc_chars[i]) if i < len(formula_trunc_chars) else 0,
+            "code_count": int(code_count[i]) if i < len(code_count) else 0,
+            "doc_enrich_share_sec": float(shares[i]) if i < len(shares) else 0.0,
+        })
+    res["pages"] = rows
+    return res
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Batch Greek OCR with Docling + RapidOCR")
     ap.add_argument("input_dir", type=Path)
     ap.add_argument("output_dir", type=Path)
-    ap.add_argument("--backend", default="paddle", choices=["paddle", "onnxruntime"])
+    # Enforce ONNXRuntime backend for GPU OCR; disallow Paddle in these tests
+    ap.add_argument("--backend", default="onnxruntime", choices=["onnxruntime"], help="OCR backend (GPU-only ONNXRuntime)")
     ap.add_argument("--device", default="cuda:0", help="Docling accelerator device, e.g., cuda:0 or cpu")
     ap.add_argument("--text-score", type=float, default=0.50)
     ap.add_argument("--hf-cache-dir", type=str, default=None)
-    ap.add_argument("--onnx-det", type=str, default=None, help="Path to detection ONNX (inference.onnx)")
-    ap.add_argument("--onnx-rec", type=str, default=None, help="Path to recognition ONNX (inference.onnx)")
-    ap.add_argument("--onnx-cls", type=str, default=None, help="Path to classifier ONNX (inference.onnx)")
+    ap.add_argument("--onnx-det", type=str, required=True, help="Path to detection ONNX (inference.onnx)")
+    ap.add_argument("--onnx-rec", type=str, required=True, help="Path to recognition ONNX (inference.onnx)")
+    ap.add_argument("--onnx-cls", type=str, required=True, help="Path to classifier ONNX (inference.onnx)")
     ap.add_argument("--images-scale", type=float, default=1.25, help="Raster scale factor before OCR (e.g., 1.25–1.5)")
-    ap.add_argument("--rec-keys", type=str, default=None, help="Path to recognition keys dict (ppocr keys)")
+    ap.add_argument("--rec-keys", type=str, required=True, help="Path to recognition keys dict (ppocr keys)")
     ap.add_argument("--force-ocr", dest="force_ocr", action="store_true", help="Force full-page OCR (ignore embedded text)")
     ap.add_argument("--no-force-ocr", dest="force_ocr", action="store_false", help="Let Docling decide when to OCR (use embedded text when available)")
     ap.set_defaults(force_ocr=True)
-    ap.add_argument("--docling-formula", dest="docling_formula", action="store_true", help="Enable Docling formula enrichment (CodeFormula)")
+    ap.add_argument("--docling-formula", dest="docling_formula", action="store_true", help="Enable Docling formula enrichment (CodeFormula, runs on GPU)")
     ap.add_argument("--no-docling-formula", dest="docling_formula", action="store_false")
     ap.set_defaults(docling_formula=False)
     ap.add_argument("--formula-batch", type=int, default=5, help="Docling CodeFormula batch size (default 5)")
@@ -279,26 +415,41 @@ def main() -> None:
     except Exception:
         pass
 
-    # Optional: tune CodeFormula batch size and torch matmul precision
+    # GPU-only preflight & formula tuning
+    # 1) ORT GPU providers
+    try:
+        import onnxruntime as ort  # type: ignore
+        providers = ort.get_available_providers()
+        if "CUDAExecutionProvider" not in providers:
+            raise SystemExit(f"GPU-only policy: onnxruntime does not report CUDAExecutionProvider (providers={providers}). Install onnxruntime-gpu and NVIDIA drivers.")
+    except Exception as e:
+        raise SystemExit(f"GPU-only policy: onnxruntime-gpu not available: {e}")
+    # 2) Torch CUDA for formula enrichment
     if args.docling_formula:
         try:
             import torch  # type: ignore
-            if torch.cuda.is_available():
-                try:
-                    torch.set_float32_matmul_precision('high')
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        try:
-            from docling.models.code_formula_model import CodeFormulaModel  # type: ignore
-            if isinstance(args.formula_batch, int) and args.formula_batch > 0:
-                CodeFormulaModel.elements_batch_size = int(args.formula_batch)  # type: ignore[attr-defined]
-        except Exception:
-            pass
+            if not torch.cuda.is_available():
+                raise SystemExit("GPU-only policy: Torch CUDA not available but formula enrichment requested. Install CUDA-enabled PyTorch.")
+            try:
+                torch.set_float32_matmul_precision('high')
+            except Exception:
+                pass
+            try:
+                from docling.models.code_formula_model import CodeFormulaModel  # type: ignore
+                if isinstance(args.formula_batch, int) and args.formula_batch > 0:
+                    CodeFormulaModel.elements_batch_size = int(args.formula_batch)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        except Exception as e:
+            raise SystemExit(f"GPU-only policy: Torch CUDA preflight failed: {e}")
+    # 3) Model paths exist
+    import os as _os
+    for pth, name in ((args.onnx_det, 'det'), (args.onnx_rec, 'rec'), (args.onnx_cls, 'cls'), (args.rec_keys, 'keys')):
+        if not pth or not _os.path.isfile(pth):
+            raise SystemExit(f"GPU-only policy: Missing or unreadable {name} path: {pth}")
 
     opts = make_pipeline_options(
-        backend=args.backend,
+        backend="onnxruntime",
         device=args.device,
         text_score=args.text_score,
         hf_cache_dir=args.hf_cache_dir,
@@ -348,7 +499,8 @@ def main() -> None:
                 # Ensure Greek keys are respected in the explicit injection path
                 ocr_opts.rec_keys_path = args.rec_keys
             acc = opts.accelerator_options
-            ocr_model = RapidOcrModel(ocr_opts, acc)  # type: ignore[arg-type]
+            # Docling 2.48.0 RapidOcrModel signature: (enabled, artifacts_path, options, accelerator_options)
+            ocr_model = RapidOcrModel(True, None, ocr_opts, acc)  # type: ignore[arg-type]
             pipeline = StandardPdfPipeline(opts, ocr_model=ocr_model)  # type: ignore
 
             found = False
@@ -371,7 +523,7 @@ def main() -> None:
         except Exception as e:
             print(f"[WARN] Explicit RapidOCR injection failed, falling back to factory: {e}")
 
-    # Factory path (works for Paddle and for ONNX when registration is OK)
+    # Factory path (ONNX only; Paddle path disabled for GPU-only policy)
     converter = DocumentConverter(
         format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
     )
@@ -386,6 +538,18 @@ def main() -> None:
                 pdf,
                 normalize_output=args.normalize_output,
             )
+            # Emit per-page metrics file and per-page logs
+            try:
+                from pathlib import Path as _Path
+                per_page = _compute_per_page_metrics(conv)
+                (_Path(args.output_dir) / f"{pdf.stem}.per_page.metrics.json").write_text(
+                    json.dumps(per_page, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                # Console summary per page
+                for row in per_page.get("pages", []):
+                    print(f"[PAGE] {pdf.name} p{row['page_no']}: parse={row['parse_sec']:.3f}s ocr={row['ocr_sec']:.3f}s formulas={row['formula_count']} code={row['code_count']}")
+            except Exception as e:
+                print(f"[WARN] per-page metrics failed for {pdf}: {e}")
             print(f"[OK] {pdf}")
         except Exception as e:
             print(f"[FAIL] {pdf}: {e}")
