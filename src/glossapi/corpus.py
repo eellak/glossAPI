@@ -524,9 +524,9 @@ class Corpus:
             skip_existing=False,
         )
     def extract(
-        self, 
-        input_format: str = "all", 
-        num_threads: int = 4, 
+        self,
+        input_format: str = "all",
+        num_threads: Optional[int] = None,
         accel_type: str = "CUDA",
         *,
         force_ocr: bool = False,
@@ -537,6 +537,7 @@ class Corpus:
         use_gpus: str = "single",
         devices: Optional[List[int]] = None,
         use_cls: bool = False,
+        benchmark_mode: bool = False,
     ) -> None:
         """
         Extract input files to markdown format.
@@ -679,19 +680,39 @@ class Corpus:
                     self.logger.info("Multi-GPU: using %d device(s): %s", len(devs), ",".join(str(d) for d in devs))
                 except Exception:
                     pass
-                # Partition file list and spawn workers (one per device)
+                # Compute effective threads if auto
+                try:
+                    threads_effective = int(num_threads) if num_threads is not None else max(1, (os.cpu_count() or 4) // max(1, len(devs)))
+                except Exception:
+                    threads_effective = int(num_threads) if isinstance(num_threads, int) else (os.cpu_count() or 4)
+                # Dynamic work queue across GPUs
                 from multiprocessing import get_context
                 ctx = get_context("spawn")
+                task_q = ctx.Queue()
                 name_list = [p.name for p in input_files]
-                buckets: Dict[int, List[str]] = {d: [] for d in devs}
-                for i, nm in enumerate(name_list):
-                    buckets[devs[i % len(devs)]].append(nm)
-
+                for nm in name_list:
+                    task_q.put(nm)
                 procs = []
-                for dev_id, names in buckets.items():
-                    if not names:
-                        continue
-                    p = ctx.Process(target=gpu_extract_worker, args=(dev_id, str(self.input_dir), str(self.output_dir), names, bool(force_ocr), bool(formula_enrichment), bool(code_enrichment), float(images_scale_env), bool(use_cls), bool(skip_existing), str(input_format), int(num_threads), str(accel_type)))
+                for dev_id in devs:
+                    p = ctx.Process(
+                        target=gpu_extract_worker_queue,
+                        args=(
+                            dev_id,
+                            str(self.input_dir),
+                            str(self.output_dir),
+                            task_q,
+                            bool(force_ocr),
+                            bool(formula_enrichment),
+                            bool(code_enrichment),
+                            float(images_scale_env),
+                            bool(use_cls),
+                            bool(skip_existing),
+                            str(input_format),
+                            int(threads_effective),
+                            str(accel_type),
+                            bool(benchmark_mode),
+                        ),
+                    )
                     p.start()
                     procs.append(p)
                 any_fail = False
@@ -713,7 +734,12 @@ class Corpus:
             except Exception as e:
                 self.logger.error(f"Failed to initialize GlossExtract: {e}")
                 raise
-        self.extractor.enable_accel(threads=num_threads, type=accel_type)
+        # Determine effective thread count (auto when None)
+        try:
+            threads_effective = int(num_threads) if num_threads is not None else (os.cpu_count() or 4)
+        except Exception:
+            threads_effective = (os.cpu_count() or 4)
+        self.extractor.enable_accel(threads=threads_effective, type=accel_type)
         # Harmonize GPU math throughput settings and images scale across runs
         try:
             # Torch matmul precision for CodeFormula
@@ -752,7 +778,13 @@ class Corpus:
             code_enrichment=bool(code_enrichment),
             images_scale=float(images_scale_env),
             use_cls=bool(use_cls),
+            profile_timings=not bool(benchmark_mode),
         )
+        # Propagate benchmark mode to extractor to trim auxiliary I/O
+        try:
+            setattr(self.extractor, "benchmark_mode", bool(benchmark_mode))
+        except Exception:
+            pass
         # Extract files to markdown
         os.makedirs(self.markdown_dir, exist_ok=True)
         self.extractor.extract_path(input_files, self.markdown_dir, skip_existing=skip_existing)
@@ -1355,3 +1387,98 @@ def gpu_extract_worker(
         use_gpus="single",
         use_cls=use_cls_w,
     )
+
+def gpu_extract_worker_queue(
+    device_id: int,
+    in_dir: str,
+    out_dir: str,
+    work_q,  # multiprocessing Queue of filename strings
+    force: bool,
+    fe: bool,
+    ce: bool,
+    img_scale: float,
+    use_cls_w: bool,
+    skip: bool,
+    input_fmt: str,
+    threads: int,
+    accel: str,
+    benchmark: bool,
+) -> None:
+    import os as _os
+    import time as _time
+    from pathlib import Path as _Path
+    # Bind this worker to a single GPU id
+    _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    _os.environ["GLOSSAPI_DOCLING_DEVICE"] = "cuda:0"
+    # Light import of Corpus (prefer installed package; fallback to repo src)
+    try:
+        from glossapi import Corpus as _Corpus  # type: ignore
+    except Exception:
+        try:
+            import sys as _sys, pathlib as _pl
+            _sys.path.insert(0, str((_pl.Path(out_dir).resolve().parents[1] / 'src').resolve()))
+            from glossapi import Corpus as _Corpus  # type: ignore
+        except Exception as _e:
+            print(f"[GPU{device_id}] Cannot import glossapi in worker: {_e}")
+            return
+    c = _Corpus(input_dir=in_dir, output_dir=out_dir)
+    # Prepare persistent extractor in this worker on first call
+    # Process queue items in small batches to reduce function-call overhead
+    batch: list[str] = []
+    BATCH_SIZE = 8
+    import queue as _queue
+    last_progress = _time.time()
+    processed = 0
+    while True:
+        try:
+            nm = work_q.get_nowait()
+        except Exception as e:
+            # queue.Empty or other -> flush any pending batch then exit
+            if batch:
+                try:
+                    c.extract(
+                        input_format=input_fmt,
+                        num_threads=threads,
+                        accel_type="cuda:0",
+                        force_ocr=force,
+                        formula_enrichment=fe,
+                        code_enrichment=ce,
+                        filenames=list(batch),
+                        skip_existing=skip,
+                        use_gpus="single",
+                        use_cls=use_cls_w,
+                        benchmark_mode=benchmark,
+                    )
+                    processed += len(batch)
+                except Exception as _e:
+                    print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
+                batch.clear()
+            break
+        if isinstance(nm, str) and nm.strip():
+            batch.append(nm)
+        if len(batch) >= BATCH_SIZE:
+            try:
+                c.extract(
+                    input_format=input_fmt,
+                    num_threads=threads,
+                    accel_type="cuda:0",
+                    force_ocr=force,
+                    formula_enrichment=fe,
+                    code_enrichment=ce,
+                    filenames=list(batch),
+                    skip_existing=skip,
+                    use_gpus="single",
+                    use_cls=use_cls_w,
+                    benchmark_mode=benchmark,
+                )
+                processed += len(batch)
+            except Exception as _e:
+                print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
+            batch.clear()
+        # Occasional heartbeat
+        if _time.time() - last_progress > 30:
+            try:
+                print(f"[GPU{device_id}] processed ~{processed} files…")
+            except Exception:
+                pass
+            last_progress = _time.time()

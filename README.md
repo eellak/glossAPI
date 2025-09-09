@@ -195,9 +195,15 @@ The project includes a GPU-capable OCR pipeline using Docling for layout and Rap
   - Package files under `glossapi/models/rapidocr/{onnx,keys}` or set `GLOSSAPI_RAPIDOCR_ONNX_DIR` to a directory containing:
     - `det/inference.onnx`, `rec/inference.onnx`, `cls/ch_ppocr_mobile_v2.0_cls_infer.onnx`, and `greek_ppocrv5_keys.txt`
   - Generate keys from Paddle `inference.yml` using `repro_rapidocr_onnx/scripts/extract_keys.py`
-- Patch Docling to pass the keys path to RapidOCR
-  - File: `<venv>/lib/python3.10/site-packages/docling/models/rapid_ocr_model.py`
-  - Replace `"Rec.keys_path"` with `"Rec.rec_keys_path"` (or run `repro_rapidocr_onnx/scripts/repatch_docling.sh`)
+  - Patch Docling to pass the keys path to RapidOCR
+    - File: `<venv>/lib/python3.10/site-packages/docling/models/rapid_ocr_model.py`
+    - Replace `"Rec.keys_path"` with `"Rec.rec_keys_path"` (or run `repro_rapidocr_onnx/scripts/repatch_docling.sh`)
+
+## Multi‑GPU Tips and Benchmarking
+
+- Dynamic scheduling: `Corpus.extract(..., use_gpus="multi")` now uses a shared work queue so faster GPUs pull more files and the tail finishes sooner.
+- Auto threads: pass `num_threads=None` to auto‑set threads based on CPU count and number of GPUs (roughly CPU/NGPUs). You can also set `OMP_NUM_THREADS`/`MKL_NUM_THREADS` externally.
+- Benchmark mode: add `benchmark_mode=True` to `Corpus.extract(...)` to skip per‑document/per‑page metrics JSON and Docling timing collection, reducing I/O and profiling overhead during scaling tests. Defaults remain unchanged when omitted.
 - Verify providers
   - `python -c "import onnxruntime as ort; print(ort.get_available_providers())"` → should include `CUDAExecutionProvider`
 - Quick system check

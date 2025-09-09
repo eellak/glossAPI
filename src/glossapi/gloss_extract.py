@@ -100,6 +100,8 @@ class GlossExtract:
         )
         # Per-instance logger
         self._log = logging.getLogger(__name__)
+        # Trim auxiliary I/O and profiling when running benchmarks
+        self.benchmark_mode: bool = False
 
     def _supports_native_timeout(self) -> str | None:
         """Return the timeout kwarg name if supported by Docling, else None."""
@@ -186,6 +188,7 @@ class GlossExtract:
         code_enrichment: bool = True,
         use_cls: bool = False,
         ocr_langs: list[str] | None = None,
+        profile_timings: bool = True,
     ):
         """Create a document converter with configured options and RapidOCR (ONNX).
 
@@ -208,6 +211,13 @@ class GlossExtract:
                     raise RuntimeError("GPU-only policy: Torch CUDA not available but formula enrichment requested.")
             except Exception as e:
                 raise RuntimeError(f"GPU-only policy: Torch CUDA preflight failed: {e}")
+
+        # Enable/disable Docling pipeline timings collection (for benchmarks)
+        try:
+            from docling.datamodel.settings import settings as _settings  # type: ignore
+            _settings.debug.profile_pipeline_timings = bool(profile_timings)  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
         # Record the PDF backend that will be used so we can write it to parquet metadata
         # Currently we use Docling v2 backend which corresponds to the "vl_parse_2" engine.
@@ -250,11 +260,7 @@ class GlossExtract:
             ocr_opts.rec_keys_path = r.keys
             self.pipeline_options.ocr_options = ocr_opts
 
-            # Enable pipeline timing profile (Docling) for richer metrics
-            try:
-                settings.debug.profile_pipeline_timings = True  # type: ignore[attr-defined]
-            except Exception:
-                pass
+            # Timing profile is controlled by profile_timings flag above
 
             # Log OCR configuration (fine-grained visibility)
             try:
@@ -1139,47 +1145,48 @@ class GlossExtract:
                     )
                 except Exception as e:
                     self._log.warning(f"Failed to update extraction metadata for {Path(conv_res.input.file).name}: {e}")
-            # Write per-document metrics JSON (Docling timings) and per-page metrics
-            try:
-                import json as _json
-                # Per-document timings (same structure as module runner)
-                metrics = {"file": str(getattr(conv_res.input.file, 'name', 'unknown')), "timings": {}}
-                for key, item in conv_res.timings.items():
-                    times = list(item.times)
-                    cnt = int(item.count)
-                    tot = float(sum(times)) if times else 0.0
-                    avg = float(tot / cnt) if cnt else 0.0
-                    metrics["timings"][key] = {
-                        "scope": str(item.scope.value) if hasattr(item, "scope") else "unknown",
-                        "count": cnt,
-                        "total_sec": tot,
-                        "avg_sec": avg,
-                        "p50_sec": float(times[int(round((len(times)-1)*0.50))]) if times else 0.0,
-                        "p90_sec": float(times[int(round((len(times)-1)*0.90))]) if times else 0.0,
-                        "times_sec": times,
-                    }
-                mpath = output_dir / f"{doc_filename}.metrics.json"
-                with mpath.open("w", encoding="utf-8") as fp:
-                    fp.write(_json.dumps(metrics, ensure_ascii=False, indent=2))
-                # Per-page metrics
+            # Write per-document metrics JSON (Docling timings) and per-page metrics (skipped in benchmark mode)
+            if not getattr(self, "benchmark_mode", False):
                 try:
-                    per_page = self._compute_per_page_metrics(conv_res)
-                    pppath = output_dir / f"{doc_filename}.per_page.metrics.json"
-                    with pppath.open("w", encoding="utf-8") as fp:
-                        fp.write(_json.dumps(per_page, ensure_ascii=False, indent=2))
-                    # Emit concise per-page log line
-                    for row in per_page.get("pages", []):
-                        self._log.info("[PAGE] %s p%d: parse=%.3fs ocr=%.3fs formulas=%d code=%d",
-                                       getattr(conv_res.input.file, 'name', doc_filename),
-                                       int(row.get("page_no", 0)),
-                                       float(row.get("parse_sec", 0.0)),
-                                       float(row.get("ocr_sec", 0.0)),
-                                       int(row.get("formula_count", 0)),
-                                       int(row.get("code_count", 0)))
+                    import json as _json
+                    # Per-document timings (same structure as module runner)
+                    metrics = {"file": str(getattr(conv_res.input.file, 'name', 'unknown')), "timings": {}}
+                    for key, item in conv_res.timings.items():
+                        times = list(item.times)
+                        cnt = int(item.count)
+                        tot = float(sum(times)) if times else 0.0
+                        avg = float(tot / cnt) if cnt else 0.0
+                        metrics["timings"][key] = {
+                            "scope": str(item.scope.value) if hasattr(item, "scope") else "unknown",
+                            "count": cnt,
+                            "total_sec": tot,
+                            "avg_sec": avg,
+                            "p50_sec": float(times[int(round((len(times)-1)*0.50))]) if times else 0.0,
+                            "p90_sec": float(times[int(round((len(times)-1)*0.90))]) if times else 0.0,
+                            "times_sec": times,
+                        }
+                    mpath = output_dir / f"{doc_filename}.metrics.json"
+                    with mpath.open("w", encoding="utf-8") as fp:
+                        fp.write(_json.dumps(metrics, ensure_ascii=False, indent=2))
+                    # Per-page metrics
+                    try:
+                        per_page = self._compute_per_page_metrics(conv_res)
+                        pppath = output_dir / f"{doc_filename}.per_page.metrics.json"
+                        with pppath.open("w", encoding="utf-8") as fp:
+                            fp.write(_json.dumps(per_page, ensure_ascii=False, indent=2))
+                        # Emit concise per-page log line
+                        for row in per_page.get("pages", []):
+                            self._log.info("[PAGE] %s p%d: parse=%.3fs ocr=%.3fs formulas=%d code=%d",
+                                           getattr(conv_res.input.file, 'name', doc_filename),
+                                           int(row.get("page_no", 0)),
+                                           float(row.get("parse_sec", 0.0)),
+                                           float(row.get("ocr_sec", 0.0)),
+                                           int(row.get("formula_count", 0)),
+                                           int(row.get("code_count", 0)))
+                    except Exception as _e:
+                        self._log.warning("Failed to compute per-page metrics for %s: %s", doc_filename, _e)
                 except Exception as _e:
-                    self._log.warning("Failed to compute per-page metrics for %s: %s", doc_filename, _e)
-            except Exception as _e:
-                self._log.debug("Metrics export failed for %s: %s", doc_filename, _e)
+                    self._log.debug("Metrics export failed for %s: %s", doc_filename, _e)
 
         return success_count, partial_success_count, failure_count
 
