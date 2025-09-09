@@ -167,6 +167,10 @@ The project includes a GPU-first OCR pipeline using Docling for layout and Rapid
   - Verify GPU providers: `python repro_rapidocr_onnx/scripts/check_ort.py` → must include `CUDAExecutionProvider`.
   - Keep `numpy<2` for best wheel compatibility.
 
+Further docs
+- GPU setup on this host: see `docs/gpu_ocr_setup_report.md` for a concise, host‑specific checklist and validation steps.
+- Multi‑GPU on remote servers (generalized): see `docs/remote_server_setup_report.md` for a portable runbook validated on a 2×L40 machine.
+
 Automating Torch selection
 - Use `scripts/install_torch_auto.sh` to pick a suitable Torch build automatically:
   - `bash scripts/install_torch_auto.sh` (uses CUDA 12.1 if available, falls back to 11.8, else installs CPU)

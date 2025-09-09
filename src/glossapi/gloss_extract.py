@@ -26,6 +26,8 @@ from docling.document_converter import (
     CsvFormatOption,
 )
 from docling.pipeline.simple_pipeline import SimplePipeline
+# Ensure RapidOCR plugin is registered for factory-based OCR construction
+import docling.models.rapid_ocr_model  # noqa: F401
 from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
 from ._rapidocr_paths import resolve_packaged_onnx_and_keys
 import inspect
