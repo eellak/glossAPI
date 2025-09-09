@@ -224,6 +224,13 @@ The project includes a GPU-capable OCR pipeline using Docling for layout and Rap
   - Verify GPU providers: `python repro_rapidocr_onnx/scripts/check_ort.py` → must include `CUDAExecutionProvider`.
   - Keep `numpy<2` for best wheel compatibility.
 
+### Downloader checkpoints and resume
+
+- The downloader writes periodic checkpoints to `output_dir/download_results/download_results_<input>.partial.parquet` while running (default every ~1000 completions or 60s).
+- If a run is interrupted, rerunning the same script resumes by loading the partial results and skipping already successful URLs.
+- When a run finishes, `Corpus.download()` writes the final results parquet to `output_dir/download_results/download_results_<input>.parquet`.
+- In per-domain mode, if all active domains are drained and only parked/down domains remain, the run terminates after `down_wait_max_seconds` (default 300s). Tune via `c.download(..., down_wait_max_seconds=120)`.
+
 ### Alternate: Minimal repro runner
 
 If you prefer a self‑contained repro with explicit model paths, follow `repro_rapidocr_onnx/RUN.md` or:

@@ -36,6 +36,7 @@ import mimetypes
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, stop_after_delay, wait_exponential, retry_if_exception_type, before_sleep_log
 import functools
+from email.utils import parsedate_to_datetime
 
 
 class RateLimiter:
@@ -117,6 +118,9 @@ class GlossDownloader:
         progress_log_file: Optional[Union[str, Path]] = None,
         request_log_file: Optional[Union[str, Path]] = None,
         progress_log_level: int = logging.INFO,
+        # Checkpointing
+        checkpoint_every: Optional[int] = 500,  # write checkpoint parquet every N completed tasks
+        checkpoint_seconds: Optional[float] = 60.0,  # or every N seconds (whichever triggers first)
         # Domain availability probing
         pre_ping_domains: bool = True,
         ping_timeout_s: float = 5.0,
@@ -225,6 +229,9 @@ class GlossDownloader:
             if domain_concurrency_ceiling is not None
             else max(1, int(per_domain_concurrency))
         )
+        # Checkpoint cadence
+        self.checkpoint_every = int(checkpoint_every) if checkpoint_every else None
+        self.checkpoint_seconds = float(checkpoint_seconds) if checkpoint_seconds else None
         # Warnings JSON path
         self.domain_warnings_path = self.output_dir / 'domain_scheduler_warnings.json'
 
@@ -978,7 +985,8 @@ class GlossDownloader:
                     pass
 
     async def _download_files_async(self, df: pd.DataFrame, semaphore: asyncio.Semaphore, 
-                                   rate_limiter: RateLimiter) -> pd.DataFrame:
+                                   rate_limiter: RateLimiter,
+                                   *, checkpoint_path: Optional[Path] = None) -> pd.DataFrame:
         """
         Core async function to download files from URLs in a DataFrame
         
@@ -1035,7 +1043,25 @@ class GlossDownloader:
         
         # Variables to track progress
         successful_downloads = 0
-        output_parquet = None
+        completed_since_ckpt = 0
+        last_ckpt_ts = time.time()
+
+        def _write_checkpoint() -> None:
+            if not checkpoint_path:
+                return
+            try:
+                df_out = df.copy()
+                if '__url_norm' in df_out.columns:
+                    try:
+                        df_out = df_out.drop(columns=['__url_norm'])
+                    except Exception:
+                        pass
+                tmp = checkpoint_path.with_suffix(checkpoint_path.suffix + '.tmp')
+                df_out.to_parquet(tmp, index=False)
+                os.replace(tmp, checkpoint_path)
+                self.logger.info(f"Checkpoint written: {checkpoint_path}")
+            except Exception as e:
+                self.logger.warning(f"Failed to write checkpoint {checkpoint_path}: {e}")
         
         # Process in internal batches for memory efficiency
         for batch_start in range(0, total_unprocessed, self.internal_batch_size):
@@ -1090,16 +1116,42 @@ class GlossDownloader:
                     
                     if success:
                         successful_downloads += 1
-                        
-                        # Periodically save progress
-                        if successful_downloads % self.save_every == 0:
-                            self.logger.info(f"Periodic save: Completed {successful_downloads} downloads.")
+                    # Count completion for checkpoint cadence
+                    completed_since_ckpt += 1
+
+                    # Periodically save progress
+                    if successful_downloads % self.save_every == 0 and successful_downloads > 0:
+                        self.logger.info(f"Periodic save: Completed {successful_downloads} downloads.")
+                    # Checkpoint by count or time
+                    now = time.time()
+                    if self.checkpoint_every and completed_since_ckpt >= self.checkpoint_every:
+                        _write_checkpoint()
+                        completed_since_ckpt = 0
+                        last_ckpt_ts = now
+                    elif self.checkpoint_seconds and (now - last_ckpt_ts) >= self.checkpoint_seconds:
+                        _write_checkpoint()
+                        completed_since_ckpt = 0
+                        last_ckpt_ts = now
                     
                 except Exception as e:
                     self.logger.error(f"Error processing task for row {row_idx}: {e}")
                     df.loc[row_idx, 'download_error'] = str(e)
                     df.loc[row_idx, 'download_retry_count'] += 1
-        
+                    completed_since_ckpt += 1
+                    now = time.time()
+                    if self.checkpoint_every and completed_since_ckpt >= self.checkpoint_every:
+                        _write_checkpoint()
+                        completed_since_ckpt = 0
+                        last_ckpt_ts = now
+                    elif self.checkpoint_seconds and (now - last_ckpt_ts) >= self.checkpoint_seconds:
+                        _write_checkpoint()
+                        completed_since_ckpt = 0
+                        last_ckpt_ts = now
+        # Final checkpoint
+        try:
+            _write_checkpoint()
+        except Exception:
+            pass
         return df
     
     def download_files(self, input_parquet: str, **kwargs) -> pd.DataFrame:
@@ -1148,20 +1200,28 @@ class GlossDownloader:
         if not rate_limiter:
             rate_limiter = RateLimiter(100, 60, 30)  # Default limiter
 
+        # Prepare checkpoint path (under output_dir/download_results)
+        checkpoint_dir = self.output_dir / 'download_results'
+        try:
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        checkpoint_path = checkpoint_dir / f"download_results_{Path(input_parquet).name}.partial.parquet"
+
         async def _run_async():
             if self.scheduler_mode == 'per_domain':
                 self.logger.info(
                     f"Starting per-domain scheduler: global_concurrency={self.concurrency}, "
                     f"per_domain_concurrency={self.per_domain_concurrency}"
                 )
-                return await self._download_files_async_per_domain(df, rate_limiter)
+                return await self._download_files_async_per_domain(df, rate_limiter, checkpoint_path=checkpoint_path)
             else:
                 semaphore = asyncio.Semaphore(self.concurrency)
                 self.logger.info(
                     f"Starting download (global) with concurrency={self.concurrency}, "
                     f"rate_limit={rate_limiter.rate_limit}/{rate_limiter.time_period}s"
                 )
-                return await self._download_files_async(df, semaphore, rate_limiter)
+                return await self._download_files_async(df, semaphore, rate_limiter, checkpoint_path=checkpoint_path)
 
         try:
             running = asyncio.get_running_loop()
@@ -1184,9 +1244,28 @@ class GlossDownloader:
         
         return updated_df
 
-    async def _download_files_async_per_domain(self, df: pd.DataFrame, rate_limiter: RateLimiter) -> pd.DataFrame:
+    async def _download_files_async_per_domain(self, df: pd.DataFrame, rate_limiter: RateLimiter, *, checkpoint_path: Optional[Path] = None) -> pd.DataFrame:
         """Per-domain round-robin scheduler with dynamic concurrency and ETA tracking."""
         df = df.copy()
+        completed_since_ckpt = 0
+        last_ckpt_ts = time.time()
+
+        def _write_checkpoint() -> None:
+            if not checkpoint_path:
+                return
+            try:
+                df_out = df.copy()
+                if '__url_norm' in df_out.columns:
+                    try:
+                        df_out = df_out.drop(columns=['__url_norm'])
+                    except Exception:
+                        pass
+                tmp = checkpoint_path.with_suffix(checkpoint_path.suffix + '.tmp')
+                df_out.to_parquet(tmp, index=False)
+                os.replace(tmp, checkpoint_path)
+                self.logger.info(f"Checkpoint written: {checkpoint_path}")
+            except Exception as e:
+                self.logger.warning(f"Failed to write checkpoint {checkpoint_path}: {e}")
 
         # Initialize result columns if they don't exist
         if 'download_success' not in df.columns:
@@ -1730,6 +1809,7 @@ class GlossDownloader:
                     else:
                         state.timeout_streak = 0
                 global_completed += 1
+                completed_since_ckpt += 1
 
                 # Dynamic tuning: ease if overloaded
                 if self.dynamic_tuning and should_ease(state):
@@ -1838,13 +1918,28 @@ class GlossDownloader:
                         except Exception:
                             pass
 
+            # Periodic checkpoint by cadence
+            try:
+                now_ck = time.time()
+                if self.checkpoint_every and completed_since_ckpt >= self.checkpoint_every:
+                    _write_checkpoint()
+                    completed_since_ckpt = 0
+                    last_ckpt_ts = now_ck
+                elif self.checkpoint_seconds and (now_ck - last_ckpt_ts) >= self.checkpoint_seconds:
+                    _write_checkpoint()
+                    completed_since_ckpt = 0
+                    last_ckpt_ts = now_ck
+            except Exception:
+                pass
+
             # After processing completions, try dispatch again
             await dispatch_ready()
             # Periodic progress log
             maybe_log_and_write_progress()
 
-        # Write a final progress snapshot
+        # Final checkpoint and progress snapshot
         try:
+            _write_checkpoint()
             maybe_log_and_write_progress(force=True)
         except Exception:
             pass
@@ -2010,17 +2105,24 @@ class GlossDownloader:
                 df['base_domain'] = ''
         os.makedirs(self.downloads_dir, exist_ok=True)
         rate_limiter = self.rate_limiter or RateLimiter(100, 60, 30)
+        # Prepare checkpoint path
+        checkpoint_dir = self.output_dir / 'download_results'
+        try:
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        checkpoint_path = checkpoint_dir / f"download_results_{Path(input_parquet).name}.partial.parquet"
         if self.scheduler_mode == 'per_domain':
             self.logger.info(
                 f"Starting per-domain scheduler: global_concurrency={self.concurrency}, per_domain_concurrency={self.per_domain_concurrency}"
             )
-            updated_df = await self._download_files_async_per_domain(df, rate_limiter)
+            updated_df = await self._download_files_async_per_domain(df, rate_limiter, checkpoint_path=checkpoint_path)
         else:
             semaphore = asyncio.Semaphore(self.concurrency)
             self.logger.info(
                 f"Starting download (global) with concurrency={self.concurrency}, rate_limit={rate_limiter.rate_limit}/{rate_limiter.time_period}s"
             )
-            updated_df = await self._download_files_async(df, semaphore, rate_limiter)
+            updated_df = await self._download_files_async(df, semaphore, rate_limiter, checkpoint_path=checkpoint_path)
         if '__url_norm' in updated_df.columns:
             try:
                 updated_df = updated_df.drop(columns=['__url_norm'])

@@ -1077,10 +1077,15 @@ class Corpus:
         total_urls = len(input_df)
         self.logger.info(f"Total URLs in input file: {total_urls}")
         
+        # Respect links_column override early so resume filter uses correct column name
+        if links_column:
+            url_column = links_column
+
         # Look for existing download results file by the specific input filename first
         input_filename = Path(input_parquet).name
         download_results_dir = Path(self.output_dir) / "download_results"
         specific_results_path = download_results_dir / f"download_results_{input_filename}"
+        partial_results_path = download_results_dir / f"download_results_{input_filename}.partial.parquet"
         
         existing_results = None
         existing_results_path = None
@@ -1095,6 +1100,14 @@ class Corpus:
                 found_existing = True
             except Exception as e:
                 self.logger.warning(f"Failed to read specific download results: {e}")
+        elif os.path.exists(partial_results_path):
+            self.logger.info(f"Found partial download checkpoint: {partial_results_path}")
+            try:
+                existing_results = pd.read_parquet(partial_results_path)
+                existing_results_path = partial_results_path
+                found_existing = True
+            except Exception as e:
+                self.logger.warning(f"Failed to read partial results: {e}")
                 
         # If specific results not found, look in the directory for any download results
         if not found_existing and os.path.exists(download_results_dir):
@@ -1119,30 +1132,87 @@ class Corpus:
             if 'filename' in existing_results.columns:
                 existing_filenames = existing_results['filename'].dropna().tolist()
                 self.logger.info(f"Found {len(existing_filenames)} existing filenames to avoid")
-                
-            # Filter out successfully downloaded URLs
+
+            # Build the set of successful URLs from checkpoint/results
             successful_urls = []
             if 'download_success' in existing_results.columns:
                 successful_urls = existing_results[
                     existing_results['download_success'] == True
-                ][url_column].tolist()
-                
-                if successful_urls:
-                    self.logger.info(f"Found {len(successful_urls)} previously successful downloads")
-                    # Filter out URLs that were successfully downloaded
-                    remaining_df = input_df[~input_df[url_column].isin(successful_urls)]
-                    
-                    # If all URLs already downloaded, return existing results
-                    if len(remaining_df) == 0:
-                        self.logger.info("All files already successfully downloaded")
-                        return existing_results
-                    
-                    self.logger.info(f"Processing {len(remaining_df)} remaining URLs out of {total_urls} total")
-                    
-                    # Save filtered input to a temporary file for the downloader
-                    temp_input = self.output_dir / "temp_download_input.parquet"
-                    remaining_df.to_parquet(temp_input, index=False)
-                    input_parquet = temp_input
+                ][url_column].dropna().astype(str).tolist()
+
+            if successful_urls:
+                self.logger.info(f"Found {len(successful_urls)} previously successful downloads")
+
+                # If input uses list/JSON URLs, expand to one-URL-per-row before filtering
+                def _looks_like_list(s: str) -> bool:
+                    try:
+                        t = str(s).strip()
+                        return t.startswith('[') or t.startswith('{')
+                    except Exception:
+                        return False
+
+                need_expand = False
+                try:
+                    sample = input_df[url_column].dropna().astype(str).head(50).tolist()
+                    need_expand = any(_looks_like_list(x) for x in sample)
+                except Exception:
+                    need_expand = False
+
+                if need_expand:
+                    try:
+                        # Reuse downloader's expansion to mirror runtime behavior
+                        dl_tmp = GlossDownloader(url_column=url_column, output_dir=str(self.output_dir))
+                        expanded_df = dl_tmp._expand_and_mark_duplicates(input_df.copy())  # type: ignore[attr-defined]
+                        # Keep URL and provenance columns if present
+                        keep_cols = [url_column] + [c for c in ("source_row", "url_index", "collection_slug") if c in expanded_df.columns]
+                        remaining_df = expanded_df[~expanded_df[url_column].isin(successful_urls)][keep_cols]
+                        self.logger.info(
+                            f"Expanded list/JSON URLs to {len(expanded_df)} rows; pending {len(remaining_df)}"
+                        )
+                    except Exception:
+                        # Fallback: basic JSON parse expansion
+                        import json as _json
+                        rows = []
+                        for _, row in input_df.iterrows():
+                            val = row.get(url_column)
+                            if isinstance(val, str) and _looks_like_list(val):
+                                try:
+                                    arr = _json.loads(val)
+                                    if isinstance(arr, list):
+                                        rows.extend([str(u) for u in arr if isinstance(u, (str,))])
+                                    elif isinstance(arr, dict):
+                                        u = arr.get('url') or arr.get('href') or arr.get('link')
+                                        if u:
+                                            rows.append(str(u))
+                                except Exception:
+                                    pass
+                            elif isinstance(val, str) and val.strip():
+                                rows.append(val.strip())
+                        import pandas as _pd
+                        expanded_df = _pd.DataFrame({url_column: rows})
+                        keep_cols = [url_column]
+                        remaining_df = expanded_df[~expanded_df[url_column].isin(successful_urls)][keep_cols]
+                        self.logger.info(
+                            f"Expanded (fallback) to {len(expanded_df)} rows; pending {len(remaining_df)}"
+                        )
+                else:
+                    # Simple string URLs: filter directly and keep provenance if present
+                    keep_cols = [url_column] + [c for c in ("source_row", "url_index", "collection_slug") if c in input_df.columns]
+                    remaining_df = input_df[~input_df[url_column].isin(successful_urls)][keep_cols]
+
+                # If all URLs already downloaded, return existing results
+                if len(remaining_df) == 0:
+                    self.logger.info("All files already successfully downloaded")
+                    return existing_results
+
+                self.logger.info(
+                    f"Processing {len(remaining_df)} remaining URLs after skipping successes"
+                )
+
+                # Save filtered per-URL input to a temporary file for the downloader
+                temp_input = self.output_dir / "temp_download_input.parquet"
+                remaining_df.to_parquet(temp_input, index=False)
+                input_parquet = temp_input
         else:
             self.logger.info("No existing download results found or usable")
             existing_results = pd.DataFrame()
