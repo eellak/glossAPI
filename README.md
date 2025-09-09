@@ -22,28 +22,71 @@ A library for processing texts in Greek and other languages, developed by [Open 
 pip install glossapi
 ```
 
-### Install via uv (recommended)
+### Local Environment Setup (from repo, recommended)
 
-uv is a fast, reliable Python package manager. It works with normal `requirements.txt` files and speeds up installs.
+The steps below set up a clean venv, install GlossAPI from source, and ensure GPU OCR works.
 
-- Create a venv and install dependencies from this repo:
-  - `uv venv /mnt/data/venv`
-  - `uv pip install -r requirements.txt`
-- Ensure GPU ORT only (avoid CPU ORT collisions):
-  - `uv pip uninstall -y onnxruntime`
-  - `uv pip install --no-cache --force-reinstall onnxruntime-gpu==1.18.1`
-- Optional: install Torch CUDA for layout/formula/code enrichment:
-  - `uv pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1`
-- Patch Docling so RapidOCR receives the Greek keys (one-time per venv):
-  - `uv run --python /mnt/data/venv/bin/python bash repro_rapidocr_onnx/scripts/repatch_docling.sh`
-- Verify providers include CUDA:
-  - `uv run --python /mnt/data/venv/bin/python - <<'PY'
+Prerequisites
+- Python 3.8+
+- NVIDIA driver with CUDA 12.x recommended (check with `nvidia-smi`)
+- (Optional) Rust toolchain for accelerated cleaners: `rustup` + `maturin`
+
+1) Create venv with uv and install GlossAPI (editable)
+
+```bash
+cd /path/to/glossAPI
+uv venv .venv
+. .venv/bin/activate
+
+# Fast path: install project with dependencies (builds Rust noise extension via maturin)
+uv pip install -e .
+
+# Alternative (stricter sync):
+# uv pip sync requirements.txt
+# uv pip install -e . --no-deps
+```
+
+2) Ensure ONNXRuntime GPU only and verify CUDA provider
+
+```bash
+pip uninstall -y onnxruntime || true
+python - <<'PY'
 import onnxruntime as ort
-print(ort.get_available_providers())
-PY`
+p = ort.get_available_providers()
+print(p)
+assert 'CUDAExecutionProvider' in p, f'CUDAExecutionProvider missing: {p}'
+PY
+```
 
-Notes
-- No changes to `requirements.txt` are needed for uv; the file works unchanged. uv accepts the same syntax and constraints, and you may also use `uv pip sync requirements.txt` if you want a strictly synced environment.
+3) Optional: install Torch CUDA (GPU layout + formula/code enrichment)
+
+```bash
+pip install --index-url https://download.pytorch.org/whl/cu121 \
+  torch==2.5.1 torchvision==0.20.1
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
+4) Patch Docling keys mapping (once per venv)
+
+```bash
+bash repro_rapidocr_onnx/scripts/repatch_docling.sh
+```
+
+5) Quick smoke test (uses packaged ONNX models and keys)
+
+```bash
+python -m glossapi.docling_rapidocr_pipeline /path/to/pdfs /path/to/out --device cuda:0
+# Outputs *.md, *.json, and metrics in the out folder
+```
+
+Rust extensions (optional but recommended for speed)
+- Install Rust toolchain: `curl https://sh.rustup.rs -sSf | sh -s -- -y && . "$HOME/.cargo/env"`
+- Install maturin: `pip install maturin>=1.5,<2.0`
+- Build dev extensions:
+  - Noise metrics (packaged by pyproject):
+    - `maturin develop --release --manifest-path rust/glossapi_rs_noise/Cargo.toml`
+  - Cleaner (used by `Corpus.clean()`; built on demand otherwise):
+    - `maturin develop --release --manifest-path rust/glossapi_rs_cleaner/Cargo.toml`
 
 ## Usage
 
@@ -166,6 +209,22 @@ The project includes a GPU-first OCR pipeline using Docling for layout and Rapid
   - Never have `onnxruntime` CPU installed alongside `onnxruntime-gpu` (uninstall CPU ORT).
   - Verify GPU providers: `python repro_rapidocr_onnx/scripts/check_ort.py` → must include `CUDAExecutionProvider`.
   - Keep `numpy<2` for best wheel compatibility.
+
+### Alternate: Minimal repro runner
+
+If you prefer a self‑contained repro with explicit model paths, follow `repro_rapidocr_onnx/RUN.md` or:
+
+```bash
+python3 -m venv .venv_docling
+source .venv_docling/bin/activate
+pip install -U pip
+pip install -r repro_rapidocr_onnx/requirements.txt
+pip uninstall -y onnxruntime || true
+bash repro_rapidocr_onnx/scripts/repatch_docling.sh
+python repro_rapidocr_onnx/scripts/check_ort.py  # verify CUDAExecutionProvider
+bash repro_rapidocr_onnx/scripts/run_onnx.sh --det DET.onnx --rec REC.onnx \
+  --keys greek_keys.txt --in INPUT_PDFS --out OUTPUT_DIR --device cuda:0
+```
 
 Further docs
 - GPU setup on this host: see `docs/gpu_ocr_setup_report.md` for a concise, host‑specific checklist and validation steps.
