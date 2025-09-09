@@ -744,8 +744,9 @@ class Corpus:
             )
         except Exception:
             pass
+        # Default behavior: disable OCR unless force_ocr is requested
         self.extractor.create_extractor(
-            enable_ocr=True,
+            enable_ocr=bool(force_ocr),
             force_full_page_ocr=bool(force_ocr),
             formula_enrichment=bool(formula_enrichment),
             code_enrichment=bool(code_enrichment),

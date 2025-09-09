@@ -178,7 +178,7 @@ class GlossExtract:
     def create_extractor(
         self,
         *,
-        enable_ocr: bool = True,
+        enable_ocr: bool = False,
         force_full_page_ocr: bool = False,
         text_score: float = 0.45,
         images_scale: float = 1.25,
@@ -192,14 +192,15 @@ class GlossExtract:
         Parameters control OCR and enrichment. Models and keys are resolved from
         packaged assets (or via env override) using resolve_packaged_onnx_and_keys().
         """
-        # GPU-only preflight (enforce ORT CUDA provider; Torch CUDA when formula enrichment is enabled)
-        try:
-            import onnxruntime as _ort  # type: ignore
-            _providers = _ort.get_available_providers()
-            if "CUDAExecutionProvider" not in _providers:
-                raise RuntimeError(f"GPU-only policy: CUDAExecutionProvider not available in onnxruntime providers={_providers}")
-        except Exception as e:
-            raise RuntimeError(f"GPU-only policy: onnxruntime-gpu not available or misconfigured: {e}")
+        # GPU-only preflight (enforce ORT CUDA provider when OCR is enabled; Torch CUDA when formula enrichment is enabled)
+        if enable_ocr:
+            try:
+                import onnxruntime as _ort  # type: ignore
+                _providers = _ort.get_available_providers()
+                if "CUDAExecutionProvider" not in _providers:
+                    raise RuntimeError(f"GPU-only policy: CUDAExecutionProvider not available in onnxruntime providers={_providers}")
+            except Exception as e:
+                raise RuntimeError(f"GPU-only policy: onnxruntime-gpu not available or misconfigured: {e}")
         if formula_enrichment:
             try:
                 import torch  # type: ignore
@@ -213,6 +214,7 @@ class GlossExtract:
         self.pdf_backend_name = "vl_parse_2"
         # Attach OCR and enrichment settings
         try:
+            # Default behavior: no OCR unless explicitly enabled by caller
             self.pipeline_options.do_ocr = bool(enable_ocr)
             self.pipeline_options.do_formula_enrichment = bool(formula_enrichment)
             self.pipeline_options.do_code_enrichment = bool(code_enrichment)

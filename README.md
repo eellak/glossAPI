@@ -29,7 +29,19 @@ The steps below set up a clean venv, install GlossAPI from source, and ensure GP
 Prerequisites
 - Python 3.8+
 - NVIDIA driver with CUDA 12.x recommended (check with `nvidia-smi`)
-- (Optional) Rust toolchain for accelerated cleaners: `rustup` + `maturin`
+- Rust toolchain (required for Rust extensions: noise + cleaner) and maturin
+
+Install Rust + maturin (once per machine):
+```bash
+# Rust toolchain
+curl https://sh.rustup.rs -sSf | sh -s -- -y
+. "$HOME/.cargo/env"
+# Build tools (Linux; optional if already present)
+sudo apt-get update -y && sudo apt-get install -y build-essential pkg-config || true
+# Maturin for building Python/Rust extensions
+pip install -U pip
+pip install "maturin>=1.5,<2.0"
+```
 
 1) Create venv with uv and install GlossAPI (editable)
 
@@ -38,7 +50,7 @@ cd /path/to/glossAPI
 uv venv .venv
 . .venv/bin/activate
 
-# Fast path: install project with dependencies (builds Rust noise extension via maturin)
+# Fast path: install project with dependencies (builds Rust extensions via maturin)
 uv pip install -e .
 
 # Alternative (stricter sync):
@@ -79,9 +91,7 @@ python -m glossapi.docling_rapidocr_pipeline /path/to/pdfs /path/to/out --device
 # Outputs *.md, *.json, and metrics in the out folder
 ```
 
-Rust extensions (optional but recommended for speed)
-- Install Rust toolchain: `curl https://sh.rustup.rs -sSf | sh -s -- -y && . "$HOME/.cargo/env"`
-- Install maturin: `pip install maturin>=1.5,<2.0`
+Rust extensions (verify/build manually if needed)
 - Build dev extensions:
   - Noise metrics (packaged by pyproject):
     - `maturin develop --release --manifest-path rust/glossapi_rs_noise/Cargo.toml`
@@ -90,7 +100,7 @@ Rust extensions (optional but recommended for speed)
 
 ## Usage
 
-The recommended way to use GlossAPI is through the `Corpus` class, which provides a complete pipeline for processing academic documents. You can use the same directory for both input and output:
+The recommended way to use GlossAPI is through the `Corpus` class, which provides a complete pipeline for processing academic documents. You can use the same directory for both input and output. By default, extraction runs without OCR; you can optionally force GPU OCR only for files detected as badly extracted by the Rust cleaner.
 
 ```python
 from glossapi import Corpus
@@ -113,12 +123,16 @@ corpus = Corpus(
 # Step 1: Download documents (if URLs are provided)
 corpus.download(url_column='a_column_name')  # Specify column with URLs, default column name is 'url'
 
-# Step 2: Extract documents (GPU OCR by default)
+# Step 2: Extract documents (no OCR by default)
 # Single‑GPU (default)
 corpus.extract(input_format="pdf", use_gpus="single")
 
 # Or Multi‑GPU: auto‑detect all visible GPUs and distribute work
 # corpus.extract(input_format="pdf", use_gpus="multi")
+
+# Optional: Clean and OCR only on badly extracted files
+corpus.clean()      # computes quality metrics and produces cleaned markdown
+corpus.ocr()        # re-extracts only the flagged bad files with GPU OCR
 
 # Step 3: Extract sections from filtered documents
 corpus.section()
@@ -168,7 +182,7 @@ This project is licensed under the [European Union Public Licence 1.2 (EUPL 1.2)
 
 ## GPU OCR with Docling + RapidOCR
 
-The project includes a GPU-first OCR pipeline using Docling for layout and RapidOCR (ONNXRuntime) for OCR. These steps are portable across machines:
+The project includes a GPU-capable OCR pipeline using Docling for layout and RapidOCR (ONNXRuntime) for OCR. By default, Corpus.extract runs without OCR; use `Corpus.clean()` then `Corpus.ocr()` to re-extract only the pages/files that the Rust cleaner flags as badly extracted. These steps are portable across machines:
 
 - Create a fresh venv and install packages
   - `python -m venv .venv && source .venv/bin/activate`
