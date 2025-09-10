@@ -102,6 +102,9 @@ class GlossExtract:
         self._log = logging.getLogger(__name__)
         # Trim auxiliary I/O and profiling when running benchmarks
         self.benchmark_mode: bool = False
+        # Phase-1 helpers: toggle JSON export and formula index emission
+        self.export_doc_json: bool = False
+        self.emit_formula_index: bool = False
 
     def _supports_native_timeout(self) -> str | None:
         """Return the timeout kwarg name if supported by Docling, else None."""
@@ -151,7 +154,13 @@ class GlossExtract:
         t = str(type or 'Auto').strip()
         tl = t.lower()
         if tl.startswith(('cuda', 'mps', 'cpu')):
-            dev = t if ':' in tl or tl in ('cpu', 'mps') else ('cuda' if tl.startswith('cuda') else tl)
+            # Always pass a lowercase device string to AcceleratorOptions
+            if ':' in tl:
+                dev = tl  # e.g., 'cuda:0'
+            elif tl in ('cpu', 'mps'):
+                dev = tl
+            else:
+                dev = 'cuda'
             self.pipeline_options.accelerator_options = AcceleratorOptions(
                 num_threads=threads, device=dev
             )
@@ -1071,6 +1080,14 @@ class GlossExtract:
                     )
                 except Exception as e:
                     self._log.warning(f"Failed to update extraction metadata for {doc_filename}: {e}")
+                # Optional Phase-1 artifacts for later enrichment/scheduling
+                try:
+                    if getattr(self, "export_doc_json", False):
+                        self._export_docling_json_with_meta(conv_res, output_dir, doc_filename)
+                    if getattr(self, "emit_formula_index", False):
+                        self._emit_formula_index(conv_res, output_dir, doc_filename)
+                except Exception as e:
+                    self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
 
                 # Optionally can also export to other formats like JSON
                 # with (output_dir / f"{doc_filename}.json").open("w", encoding='utf-8') as fp:
@@ -1107,6 +1124,14 @@ class GlossExtract:
                     )
                 except Exception as e:
                     self._log.warning(f"Failed to update extraction metadata for {doc_filename}: {e}")
+                # Optional Phase-1 artifacts for later enrichment/scheduling
+                try:
+                    if getattr(self, "export_doc_json", False):
+                        self._export_docling_json_with_meta(conv_res, output_dir, doc_filename)
+                    if getattr(self, "emit_formula_index", False):
+                        self._emit_formula_index(conv_res, output_dir, doc_filename)
+                except Exception as e:
+                    self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
             else:
                 # Attempt best-effort export even on failure if a document exists
                 self._log.info(f"Document {conv_res.input.file} failed to extract.")
@@ -1145,6 +1170,14 @@ class GlossExtract:
                     )
                 except Exception as e:
                     self._log.warning(f"Failed to update extraction metadata for {Path(conv_res.input.file).name}: {e}")
+                # Optional Phase-1 artifacts even on fail->partial
+                try:
+                    if doc_filename and getattr(self, "export_doc_json", False):
+                        self._export_docling_json_with_meta(conv_res, output_dir, doc_filename)
+                    if doc_filename and getattr(self, "emit_formula_index", False):
+                        self._emit_formula_index(conv_res, output_dir, doc_filename)
+                except Exception as e:
+                    self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
             # Write per-document metrics JSON (Docling timings) and per-page metrics (skipped in benchmark mode)
             if not getattr(self, "benchmark_mode", False):
                 try:
@@ -1189,6 +1222,89 @@ class GlossExtract:
                     self._log.debug("Metrics export failed for %s: %s", doc_filename, _e)
 
         return success_count, partial_success_count, failure_count
+
+    def _export_docling_json_with_meta(self, conv_res: ConversionResult, output_dir: Path, stem: str) -> None:
+        """Export DoclingDocument JSON (compressed) with metadata stamping for Phase-1."""
+        try:
+            from .json_io import export_docling_json, _sha256_file  # type: ignore
+        except Exception:
+            self._log.warning("glossapi.json_io not available; skipping JSON export")
+            return
+        try:
+            # Attempt to resolve the original file path for hashing
+            pdf_path = None
+            try:
+                pdf_path = Path(getattr(conv_res.input.file, 'path', None) or conv_res.input.file)  # type: ignore
+            except Exception:
+                pass
+            doc_id = _sha256_file(pdf_path) if (pdf_path and pdf_path.exists()) else ""
+            meta = {
+                "schema_version": 1,
+                "sha256_pdf": doc_id,
+                "page_count": len(getattr(conv_res.document, 'pages', []) or []),
+                "source_pdf_relpath": str(pdf_path) if pdf_path else "",
+            }
+            json_dir = output_dir.parent / "json"
+            json_dir.mkdir(parents=True, exist_ok=True)
+            out_json = json_dir / f"{stem}.docling.json"
+            export_docling_json(conv_res.document, out_json, compress="zstd", meta=meta)  # type: ignore
+        except Exception as e:
+            self._log.warning(f"JSON export failed for {stem}: {e}")
+
+    def _emit_formula_index(self, conv_res: ConversionResult, output_dir: Path, stem: str) -> int:
+        """Emit formula/code index JSONL from typed DoclingDocument for Phase-1 scheduling.
+
+        Returns the number of items written.
+        """
+        try:
+            doc = conv_res.document
+            # Protect against missing iterate_items
+            it = getattr(doc, 'iterate_items', None)
+            if not callable(it):
+                return 0
+            per_page_ix: dict[int, int] = {}
+            out_lines: list[str] = []
+            for element, _level in it():
+                try:
+                    label = getattr(element, 'label', '')
+                except Exception:
+                    continue
+                lab = str(label).lower()
+                if lab not in {"formula", "code"}:
+                    continue
+                prov = getattr(element, 'prov', []) or []
+                for p in prov:
+                    try:
+                        page_no = int(getattr(p, 'page_no', 0))
+                        bbox = getattr(p, 'bbox', None)
+                    except Exception:
+                        continue
+                    if not page_no or bbox is None:
+                        continue
+                    per_page_ix[page_no] = per_page_ix.get(page_no, 0) + 1
+                    row = {
+                        "page_no": page_no,
+                        "label": lab,
+                        "item_index": per_page_ix[page_no],
+                        "bbox_pdf_pt": {
+                            "l": float(getattr(bbox, 'l', 0.0)),
+                            "t": float(getattr(bbox, 't', 0.0)),
+                            "r": float(getattr(bbox, 'r', 0.0)),
+                            "b": float(getattr(bbox, 'b', 0.0)),
+                            "origin": str(getattr(getattr(bbox, 'coord_origin', ''), 'value', getattr(bbox, 'coord_origin', ''))),
+                        },
+                    }
+                    out_lines.append(json.dumps(row, ensure_ascii=False))
+            if out_lines:
+                json_dir = output_dir.parent / "json"
+                json_dir.mkdir(parents=True, exist_ok=True)
+                idx_path = json_dir / f"{stem}.formula_index.jsonl"
+                with idx_path.open("w", encoding="utf-8") as fp:
+                    fp.write("\n".join(out_lines) + "\n")
+                return len(out_lines)
+        except Exception as e:
+            self._log.warning(f"Formula index emit failed for {stem}: {e}")
+            return 0
 
     def _compute_per_page_metrics(self, conv_res: ConversionResult):
         try:

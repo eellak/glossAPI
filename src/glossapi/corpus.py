@@ -538,6 +538,8 @@ class Corpus:
         devices: Optional[List[int]] = None,
         use_cls: bool = False,
         benchmark_mode: bool = False,
+        export_doc_json: bool = False,
+        emit_formula_index: bool = False,
     ) -> None:
         """
         Extract input files to markdown format.
@@ -711,6 +713,8 @@ class Corpus:
                             int(threads_effective),
                             str(accel_type),
                             bool(benchmark_mode),
+                            bool(export_doc_json),
+                            bool(emit_formula_index),
                         ),
                     )
                     p.start()
@@ -734,6 +738,12 @@ class Corpus:
             except Exception as e:
                 self.logger.error(f"Failed to initialize GlossExtract: {e}")
                 raise
+        # Configure Phase-1 helpers on extractor
+        try:
+            setattr(self.extractor, "export_doc_json", bool(export_doc_json))
+            setattr(self.extractor, "emit_formula_index", bool(emit_formula_index))
+        except Exception:
+            pass
         # Determine effective thread count (auto when None)
         try:
             threads_effective = int(num_threads) if num_threads is not None else (os.cpu_count() or 4)
@@ -1341,6 +1351,143 @@ class Corpus:
         
         self.logger.info("Complete processing pipeline finished successfully.")
 
+    def triage_math(self) -> None:
+        """Summarize per-page formula density and update routing recommendation in parquet.
+
+        Scans `markdown_dir` for `{stem}.per_page.metrics.json`, computes summary metrics, and
+        writes `formula_total`, `formula_avg_pp`, `formula_p90_pp`, `pages_with_formula`,
+        `pages_total`, and `phase_recommended` into the consolidated download_results parquet
+        if present.
+        """
+        try:
+            from .triage import summarize_math_density_from_metrics, recommend_phase, update_download_results_parquet
+        except Exception as e:
+            self.logger.warning(f"Triage utilities unavailable: {e}")
+            return
+        md = Path(self.markdown_dir)
+        if not md.exists():
+            self.logger.warning("markdown_dir %s not found for triage", md)
+            return
+        metrics_files = list(md.glob("*.per_page.metrics.json"))
+        if not metrics_files:
+            self.logger.info("No per-page metrics JSON found under %s", md)
+            return
+        for mpath in metrics_files:
+            stem = mpath.name.replace(".per_page.metrics.json", "")
+            try:
+                summary = summarize_math_density_from_metrics(mpath)
+                # Add max as helper
+                summary["formula_max_pp"] = float(summary.get("formula_p90_pp", 0.0))
+                rec = recommend_phase(summary)
+                update_download_results_parquet(self.output_dir, stem, summary, rec, url_column=self.url_column)
+                self.logger.info("Triage: %s -> %s", stem, rec)
+            except Exception as e:
+                self.logger.warning("Triage failed for %s: %s", stem, e)
+
+    def formula_enrich_from_json(
+        self,
+        files: Optional[List[str]] = None,
+        *,
+        device: str = "cuda",
+        batch_size: int = 8,
+        dpi_base: int = 220,
+    ) -> None:
+        """Phase‑2: Enrich math/code from Docling JSON without re‑running layout.
+
+        Args:
+            files: list of stems (without extension) to process; if None, auto‑discover.
+            device: 'cuda'|'cpu'
+            batch_size: batch size for recognizer
+            dpi_base: base DPI for crops; actual DPI adapts per ROI size
+        """
+        from .math_enrich import enrich_from_docling_json  # type: ignore
+        json_dir = self.output_dir / "json"
+        md_dir = self.markdown_dir
+        dl_dir = self.output_dir / "downloads"
+        stems: List[str] = []
+        if files:
+            stems = list(files)
+        else:
+            # Discover stems exclusively from json/
+            candidates = []
+            if json_dir.exists():
+                candidates += list(json_dir.glob("*.docling.json")) + list(json_dir.glob("*.docling.json.zst"))
+            stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in candidates]
+        if not stems:
+            self.logger.info("No Docling JSON files found for Phase‑2 enrichment")
+            return
+        self.logger.info("Phase‑2: enriching %d document(s) from JSON", len(stems))
+        # Parquet route: prefer stems marked for math in parquet if available
+        try:
+            from glossapi.parquet_schema import ParquetSchema
+            ps = ParquetSchema({'url_column': self.url_column})
+            pq = ps.find_metadata_parquet(self.output_dir)
+        except Exception:
+            pq = None
+        if pq and Path(pq).exists():
+            try:
+                import pandas as _pd
+                _df = _pd.read_parquet(pq)
+                # derive stems from filename without extension
+                _df['stem'] = _df['filename'].astype(str).str.replace(r"\.pdf$", "", regex=True)
+                mask = (_df.get('phase_recommended', '').astype(str) == '2A') | (_df.get('formula_total', 0).fillna(0).astype('float') > 0)
+                parq_stems = _df.loc[mask, 'stem'].dropna().astype(str).tolist()
+                if parq_stems:
+                    stems = [s for s in stems if s in set(parq_stems)]
+            except Exception:
+                pass
+        for stem in stems:
+            try:
+                # Resolve JSON path under json/
+                jp = None
+                if (json_dir / f"{stem}.docling.json.zst").exists():
+                    jp = json_dir / f"{stem}.docling.json.zst"
+                elif (json_dir / f"{stem}.docling.json").exists():
+                    jp = json_dir / f"{stem}.docling.json"
+                if jp is None:
+                    self.logger.warning("JSON not found for %s", stem)
+                    continue
+                # Resolve PDF path
+                pdfp = None
+                if (dl_dir / f"{stem}.pdf").exists():
+                    pdfp = dl_dir / f"{stem}.pdf"
+                else:
+                    # Attempt from alongside JSON meta if present
+                    try:
+                        from .json_io import load_docling_json  # type: ignore
+                        doc = load_docling_json(jp)
+                        meta = getattr(doc, 'meta', {}) or {}
+                        rp = meta.get('source_pdf_relpath') or ''
+                        if rp:
+                            pp = Path(rp)
+                            if not pp.is_absolute():
+                                pp = (self.output_dir / rp)
+                            if pp.exists():
+                                pdfp = pp
+                    except Exception:
+                        pass
+                if pdfp is None:
+                    self.logger.warning("PDF not found for %s; skipping", stem)
+                    continue
+                # Output paths
+                out_md = md_dir / f"{stem}.md"
+                out_map = json_dir / f"{stem}.latex_map.jsonl"
+                out_md.parent.mkdir(parents=True, exist_ok=True)
+                json_dir.mkdir(parents=True, exist_ok=True)
+                stats = enrich_from_docling_json(
+                    jp, pdfp, out_md, out_map, device=device, batch_size=int(batch_size), dpi_base=int(dpi_base)
+                )
+                self.logger.info("Phase‑2: %s -> items=%s accepted=%s time=%.2fs", stem, stats.get('items'), stats.get('accepted'), stats.get('time_sec'))
+                # Update parquet with enrichment results
+                try:
+                    from .triage import update_math_enrich_results  # type: ignore
+                    pq_path = self.output_dir / 'download_results' / 'download_results.parquet'
+                    update_math_enrich_results(pq_path, stem, items=int(stats.get('items', 0)), accepted=int(stats.get('accepted', 0)), time_sec=float(stats.get('time_sec', 0.0)))
+                except Exception as _e:
+                    self.logger.warning("Parquet math-enrich update failed for %s: %s", stem, _e)
+            except Exception as e:
+                self.logger.warning("Phase‑2 failed for %s: %s", stem, e)
+
 # Top-level worker function for multi-GPU extraction (picklable by multiprocessing)
 def gpu_extract_worker(
     device_id: int,
@@ -1403,6 +1550,8 @@ def gpu_extract_worker_queue(
     threads: int,
     accel: str,
     benchmark: bool,
+    export_json: bool,
+    emit_index: bool,
 ) -> None:
     import os as _os
     import time as _time
@@ -1448,6 +1597,8 @@ def gpu_extract_worker_queue(
                         use_gpus="single",
                         use_cls=use_cls_w,
                         benchmark_mode=benchmark,
+                        export_doc_json=bool(export_json),
+                        emit_formula_index=bool(emit_index),
                     )
                     processed += len(batch)
                 except Exception as _e:
@@ -1470,6 +1621,8 @@ def gpu_extract_worker_queue(
                     use_gpus="single",
                     use_cls=use_cls_w,
                     benchmark_mode=benchmark,
+                    export_doc_json=bool(export_json),
+                    emit_formula_index=bool(emit_index),
                 )
                 processed += len(batch)
             except Exception as _e:
