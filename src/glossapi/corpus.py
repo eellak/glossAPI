@@ -4,7 +4,7 @@ import os
 import pandas as pd
 import random
 import numpy as np
-from typing import Dict, Optional, Union, List, Any
+from typing import Dict, Optional, Union, List, Any, Tuple
 import shutil
 
 from .gloss_section import GlossSection
@@ -493,6 +493,13 @@ class Corpus:
         limit: Optional[int] = None,
         dpi: Optional[int] = None,        # reserved for future use
         precision: Optional[str] = None,  # reserved for future use ("fp16","bf16")
+        # Integrated math enrichment controls
+        math_enhance: bool = False,
+        math_targets: Optional[Dict[str, List[Tuple[int, int]]]] = None,
+        math_batch_size: int = 8,
+        math_dpi_base: int = 220,
+        use_gpus: str = "single",
+        devices: Optional[List[int]] = None,
     ) -> None:
         """Compatibility shim: rerun extract with forced OCR.
 
@@ -518,11 +525,87 @@ class Corpus:
             num_threads=os.cpu_count() or 4,
             accel_type="CUDA",
             force_ocr=True,
-            formula_enrichment=True,
-            code_enrichment=True,
+            formula_enrichment=False,
+            code_enrichment=False,
             filenames=filenames,
             skip_existing=False,
+            # When math enrichment is requested, ensure Phase‑1 JSON and index are emitted
+            export_doc_json=bool(math_enhance),
+            emit_formula_index=bool(math_enhance),
         )
+        # Optional Phase‑2 enrichment from JSON immediately after OCR
+        if math_enhance:
+            try:
+                stems: List[str] = []
+                if filenames:
+                    stems = [Path(f).stem for f in filenames]
+                else:
+                    json_dir = self.output_dir / "json"
+                    if json_dir.exists():
+                        stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
+                if not stems:
+                    self.logger.info("No Docling JSON found for math enrichment.")
+                    return
+                if str(use_gpus).lower() == "multi":
+                    # Detect GPU devices
+                    devs = devices
+                    if not devs:
+                        devs = []
+                        try:
+                            import subprocess
+                            p = subprocess.run(["nvidia-smi", "-L"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+                            if p.returncode == 0 and p.stdout:
+                                for line in p.stdout.splitlines():
+                                    if line.startswith("GPU "):
+                                        try:
+                                            idx = int(line.split(":", 1)[0].split()[1])
+                                            devs.append(idx)
+                                        except Exception:
+                                            pass
+                        except Exception:
+                            pass
+                        if not devs:
+                            try:
+                                import torch  # type: ignore
+                                if torch.cuda.is_available():
+                                    devs = list(range(torch.cuda.device_count()))
+                            except Exception:
+                                pass
+                    if not devs:
+                        self.logger.warning("Multi-GPU math requested but no GPUs detected; falling back to single GPU")
+                    else:
+                        from multiprocessing import get_context
+                        ctx = get_context("spawn")
+                        work_q = ctx.Queue()
+                        for s in stems:
+                            work_q.put(s)
+                        procs = []
+                        for dev_id in devs:
+                            p = ctx.Process(target=_gpu_math_worker, args=(
+                                dev_id,
+                                str(self.input_dir),
+                                str(self.output_dir),
+                                work_q,
+                                int(math_batch_size),
+                                int(math_dpi_base),
+                                device or "cuda",
+                                math_targets or {},
+                            ))
+                            p.start()
+                            procs.append(p)
+                        for p in procs:
+                            p.join()
+                        return
+                # Single-GPU
+                self.formula_enrich_from_json(
+                    files=stems,
+                    device=(device or "cuda"),
+                    batch_size=int(math_batch_size),
+                    dpi_base=int(math_dpi_base),
+                    targets_by_stem=math_targets,
+                )
+            except Exception as _e:
+                self.logger.warning("Phase‑2 enrichment after OCR failed: %s", _e)
     def extract(
         self,
         input_format: str = "all",
@@ -530,8 +613,8 @@ class Corpus:
         accel_type: str = "CUDA",
         *,
         force_ocr: bool = False,
-        formula_enrichment: bool = True,
-        code_enrichment: bool = True,
+        formula_enrichment: bool = False,
+        code_enrichment: bool = False,
         filenames: Optional[List[str]] = None,
         skip_existing: bool = True,
         use_gpus: str = "single",
@@ -556,7 +639,7 @@ class Corpus:
         # We will prepare the extractor later (single-GPU branch). For multi-GPU,
         # we avoid importing heavy OCR deps in the parent.
         import os as _os
-        images_scale_env = _os.getenv("GLOSSAPI_IMAGES_SCALE", "1.1")
+        images_scale_env = _os.getenv("GLOSSAPI_IMAGES_SCALE", "1.25")
         formula_batch_env = _os.getenv("GLOSSAPI_FORMULA_BATCH", "16")
         # Create output directory for downstream stages
         os.makedirs(self.markdown_dir, exist_ok=True)
@@ -706,12 +789,10 @@ class Corpus:
                             bool(force_ocr),
                             bool(formula_enrichment),
                             bool(code_enrichment),
-                            float(images_scale_env),
                             bool(use_cls),
                             bool(skip_existing),
                             str(input_format),
                             int(threads_effective),
-                            str(accel_type),
                             bool(benchmark_mode),
                             bool(export_doc_json),
                             bool(emit_formula_index),
@@ -1391,6 +1472,7 @@ class Corpus:
         device: str = "cuda",
         batch_size: int = 8,
         dpi_base: int = 220,
+        targets_by_stem: Optional[Dict[str, List[Tuple[int, int]]]] = None,
     ) -> None:
         """Phase‑2: Enrich math/code from Docling JSON without re‑running layout.
 
@@ -1469,13 +1551,20 @@ class Corpus:
                 if pdfp is None:
                     self.logger.warning("PDF not found for %s; skipping", stem)
                     continue
-                # Output paths
-                out_md = md_dir / f"{stem}.md"
+                # Output paths: enriched Markdown lives alongside JSON artifacts
+                out_md = json_dir / f"{stem}.md"
                 out_map = json_dir / f"{stem}.latex_map.jsonl"
                 out_md.parent.mkdir(parents=True, exist_ok=True)
                 json_dir.mkdir(parents=True, exist_ok=True)
+                # Optional targeted picks for this stem
+                picks = None
+                try:
+                    if targets_by_stem and stem in targets_by_stem:
+                        picks = [(int(p), int(ix)) for (p, ix) in targets_by_stem.get(stem, [])]
+                except Exception:
+                    picks = None
                 stats = enrich_from_docling_json(
-                    jp, pdfp, out_md, out_map, device=device, batch_size=int(batch_size), dpi_base=int(dpi_base)
+                    jp, pdfp, out_md, out_map, device=device, batch_size=int(batch_size), dpi_base=int(dpi_base), targets=picks
                 )
                 self.logger.info("Phase‑2: %s -> items=%s accepted=%s time=%.2fs", stem, stats.get('items'), stats.get('accepted'), stats.get('time_sec'))
                 # Update parquet with enrichment results
@@ -1488,53 +1577,44 @@ class Corpus:
             except Exception as e:
                 self.logger.warning("Phase‑2 failed for %s: %s", stem, e)
 
-# Top-level worker function for multi-GPU extraction (picklable by multiprocessing)
-def gpu_extract_worker(
-    device_id: int,
-    in_dir: str,
-    out_dir: str,
-    names: List[str],
-    force: bool,
-    fe: bool,
-    ce: bool,
-    img_scale: float,
-    use_cls_w: bool,
-    skip: bool,
-    input_fmt: str,
-    threads: int,
-    accel: str,
-) -> None:
+def _gpu_math_worker(device_id: int, in_dir: str, out_dir: str, work_q, batch_size: int, dpi_base: int, device: str, targets_map: Dict[str, List[Tuple[int, int]]]) -> None:
     import os as _os
     _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
-    # Bind Docling/RapidOCR explicitly to the (now remapped) visible device 0
-    # so the pipeline selects the intended GPU inside this worker.
-    _os.environ["GLOSSAPI_DOCLING_DEVICE"] = "cuda:0"
     try:
         from glossapi import Corpus as _Corpus  # type: ignore
     except Exception:
-        # Attempt to import from local repo if available
         try:
             import sys as _sys, pathlib as _pl
             _sys.path.insert(0, str((_pl.Path(out_dir).resolve().parents[1] / 'src').resolve()))
             from glossapi import Corpus as _Corpus  # type: ignore
         except Exception as _e:
-            print(f"[GPU{device_id}] Cannot import glossapi in worker: {_e}")
+            print(f"[MATH GPU{device_id}] Cannot import glossapi in worker: {_e}")
             return
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
-    # Force single-GPU path within the worker and explicitly select visible cuda:0
-    c.extract(
-        input_format=input_fmt,
-        num_threads=threads,
-        accel_type="cuda:0",
-        force_ocr=force,
-        formula_enrichment=fe,
-        code_enrichment=ce,
-        filenames=names,
-        skip_existing=skip,
-        use_gpus="single",
-        use_cls=use_cls_w,
-    )
+    batch: list[str] = []
+    B = max(1, int(batch_size))
+    while True:
+        try:
+            nm = work_q.get_nowait()
+        except Exception:
+            if batch:
+                _targets = {s: targets_map.get(s) for s in batch if s in targets_map} if targets_map else None
+                try:
+                    c.formula_enrich_from_json(files=list(batch), device=(device or "cuda"), batch_size=B, dpi_base=int(dpi_base), targets_by_stem=_targets)
+                except Exception as _e:
+                    print(f"[MATH GPU{device_id}] Batch failed ({len(batch)}): {_e}")
+            break
+        if isinstance(nm, str) and nm.strip():
+            batch.append(nm)
+        if len(batch) >= B:
+            _targets = {s: targets_map.get(s) for s in batch if s in targets_map} if targets_map else None
+            try:
+                c.formula_enrich_from_json(files=list(batch), device=(device or "cuda"), batch_size=B, dpi_base=int(dpi_base), targets_by_stem=_targets)
+            except Exception as _e:
+                print(f"[MATH GPU{device_id}] Batch failed ({len(batch)}): {_e}")
+            batch.clear()
 
+# Top-level worker function for multi-GPU extraction (picklable by multiprocessing)
 def gpu_extract_worker_queue(
     device_id: int,
     in_dir: str,
@@ -1543,12 +1623,10 @@ def gpu_extract_worker_queue(
     force: bool,
     fe: bool,
     ce: bool,
-    img_scale: float,
     use_cls_w: bool,
     skip: bool,
     input_fmt: str,
     threads: int,
-    accel: str,
     benchmark: bool,
     export_json: bool,
     emit_index: bool,

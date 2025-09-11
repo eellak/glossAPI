@@ -31,6 +31,9 @@ dependencies = [
     "rapidocr>=3.3.0",
     "onnxruntime-gpu==1.18.1",
     "pyyaml>=6.0",
+    # Math/JSON enrichment helpers
+    "pypdfium2>=4.0.0",
+    "zstandard>=0.22.0",
 ]
 license = "EUPL-1.2"
 classifiers = [
@@ -45,6 +48,10 @@ classifiers = [
 cuda = [
     "torch==2.5.1",
     "torchvision==0.20.1",
+]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.5",
 ]
 
 [tool.maturin]

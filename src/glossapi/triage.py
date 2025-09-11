@@ -40,15 +40,26 @@ def recommend_phase(summary: dict[str, Any], *, short_doc_total_min: int = 10) -
 
 
 def update_download_results_parquet(root_dir: Path, filename_stem: str, summary: dict[str, Any], recommendation: str, url_column: str = "url") -> Optional[Path]:
-    """Update the consolidated download_results parquet in root_dir with math summary.
+    """Record math summary for a document.
 
-    Returns the path to the parquet if updated.
+    By default, writes a sidecar JSON under sidecars/triage/{stem}.json to avoid
+    concurrent writes to the consolidated parquet. If env GLOSSAPI_PARQUET_COMPACTOR=0,
+    falls back to in-place parquet update (legacy behavior).
     """
     root_dir = Path(root_dir)
-    # Try common locations
-    candidates = [
-        root_dir / "download_results" / "download_results.parquet",
-    ]
+    use_sidecars = (str(Path.cwd()) is not None)  # dummy always-true construct for mypy
+    import os as _os
+    use_sidecars = _os.getenv("GLOSSAPI_PARQUET_COMPACTOR", "1").strip() not in {"0", "false", "no"}
+    if use_sidecars:
+        sc_dir = root_dir / "sidecars" / "triage"
+        sc_dir.mkdir(parents=True, exist_ok=True)
+        path = sc_dir / f"{filename_stem}.json"
+        data = dict(summary)
+        data["phase_recommended"] = recommendation
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return None
+    # Legacy path: mutate parquet in-place
+    candidates = [root_dir / "download_results" / "download_results.parquet"]
     parquet_path = next((p for p in candidates if p.exists()), None)
     if parquet_path is None:
         return None
@@ -72,10 +83,25 @@ __all__ = [
 ]
 
 def update_math_enrich_results(parquet_path: Path, stem: str, *, items: int, accepted: int, time_sec: float) -> None:
-    """Append math enrichment results into download_results parquet for a given stem.
+    """Record math enrichment results for a document.
 
-    Adds/updates columns: enriched_math (bool), math_items, math_accept_rate, math_time_sec.
+    Default: write sidecar under sidecars/math/{stem}.json. If GLOSSAPI_PARQUET_COMPACTOR=0,
+    update consolidated parquet in place (legacy behavior).
     """
+    import os as _os
+    use_sidecars = _os.getenv("GLOSSAPI_PARQUET_COMPACTOR", "1").strip() not in {"0", "false", "no"}
+    root = Path(parquet_path).parent.parent if parquet_path else Path.cwd()
+    if use_sidecars:
+        sc_dir = root / "sidecars" / "math"
+        sc_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "items": int(items),
+            "accepted": int(accepted),
+            "time_sec": float(time_sec),
+        }
+        (sc_dir / f"{stem}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return
+    # Legacy path
     if not Path(parquet_path).exists():
         return
     df = pd.read_parquet(parquet_path)
@@ -89,4 +115,3 @@ def update_math_enrich_results(parquet_path: Path, stem: str, *, items: int, acc
     df.loc[mask, "math_accept_rate"] = (float(accepted) / float(items)) if items else 0.0
     df.loc[mask, "math_time_sec"] = float(time_sec)
     df.to_parquet(parquet_path, index=False)
-

@@ -74,10 +74,10 @@ class GlossExtract:
             self.pipeline_options.table_structure_options.do_cell_matching = True
         except Exception:
             pass
-        # Default enrichment on
+        # Default enrichment off (enable only when requested)
         try:
-            self.pipeline_options.do_formula_enrichment = True
-            self.pipeline_options.do_code_enrichment = True
+            self.pipeline_options.do_formula_enrichment = False
+            self.pipeline_options.do_code_enrichment = False
             self.pipeline_options.layout_options = LayoutOptions()
         except Exception:
             pass
@@ -193,8 +193,8 @@ class GlossExtract:
         force_full_page_ocr: bool = False,
         text_score: float = 0.45,
         images_scale: float = 1.25,
-        formula_enrichment: bool = True,
-        code_enrichment: bool = True,
+        formula_enrichment: bool = False,
+        code_enrichment: bool = False,
         use_cls: bool = False,
         ocr_langs: list[str] | None = None,
         profile_timings: bool = True,
@@ -204,22 +204,34 @@ class GlossExtract:
         Parameters control OCR and enrichment. Models and keys are resolved from
         packaged assets (or via env override) using resolve_packaged_onnx_and_keys().
         """
-        # GPU-only preflight (enforce ORT CUDA provider when OCR is enabled; Torch CUDA when formula enrichment is enabled)
-        if enable_ocr:
+        # Device-aware preflight: only enforce CUDA providers when the chosen device is CUDA
+        want_cuda = False
+        try:
+            dev = getattr(self.pipeline_options, "accelerator_options", None)
+            dv = getattr(dev, "device", None)
+            if isinstance(dv, str):
+                want_cuda = dv.lower().startswith("cuda")
+            else:
+                from docling.datamodel.pipeline_options import AcceleratorDevice  # type: ignore
+                want_cuda = dv == AcceleratorDevice.CUDA
+        except Exception:
+            want_cuda = False
+
+        if enable_ocr and want_cuda:
             try:
                 import onnxruntime as _ort  # type: ignore
                 _providers = _ort.get_available_providers()
                 if "CUDAExecutionProvider" not in _providers:
-                    raise RuntimeError(f"GPU-only policy: CUDAExecutionProvider not available in onnxruntime providers={_providers}")
+                    raise RuntimeError(f"CUDAExecutionProvider not available in onnxruntime providers={_providers}")
             except Exception as e:
-                raise RuntimeError(f"GPU-only policy: onnxruntime-gpu not available or misconfigured: {e}")
-        if formula_enrichment:
+                raise RuntimeError(f"onnxruntime-gpu not available or misconfigured: {e}")
+        if formula_enrichment and want_cuda:
             try:
                 import torch  # type: ignore
                 if not torch.cuda.is_available():
-                    raise RuntimeError("GPU-only policy: Torch CUDA not available but formula enrichment requested.")
+                    raise RuntimeError("Torch CUDA not available but formula enrichment requested.")
             except Exception as e:
-                raise RuntimeError(f"GPU-only policy: Torch CUDA preflight failed: {e}")
+                raise RuntimeError(f"Torch CUDA preflight failed: {e}")
 
         # Enable/disable Docling pipeline timings collection (for benchmarks)
         try:
@@ -652,37 +664,25 @@ class GlossExtract:
         return created
 
     def _mark_is_chunked(self, output_dir: Path, src_file: Path) -> None:
-        """Mark a file as chunked in the existing metadata parquet by setting column 'extraction_mode' to 'chunked'.
-
-        - Only updates if a metadata parquet already exists.
-        - Does not create a parquet or add a new row if the filename does not exist in the parquet.
-        """
+        """Record chunked extraction via sidecar (no direct parquet writes)."""
         try:
-            parquet_path = self._find_metadata_parquet(Path(output_dir))
-            if parquet_path is None or not Path(parquet_path).exists():
-                return
-
-            df = pd.read_parquet(parquet_path)
-            if 'filename' not in df.columns:
-                return
-
-            filename = Path(src_file).name
-            mask = df['filename'] == filename
-            if not mask.any():
-                # Do not add new rows; minimal footprint
-                return
-
-            # Ensure column exists and set to 'chunked' for this file
-            if 'extraction_mode' not in df.columns:
-                df['extraction_mode'] = 'standard'
-            df.loc[mask, 'extraction_mode'] = 'chunked'
-
-            try:
-                df.to_parquet(parquet_path, index=False, compression='zstd')
-            except Exception:
-                df.to_parquet(parquet_path, index=False)
+            root = Path(output_dir).parent
+            sc_dir = root / "sidecars" / "extract"
+            sc_dir.mkdir(parents=True, exist_ok=True)
+            stem = Path(src_file).stem
+            p = sc_dir / f"{stem}.json"
+            data = {}
+            if p.exists():
+                try:
+                    import json as _json
+                    data = _json.loads(p.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    data = {}
+            data["extraction_mode"] = "chunked"
+            import json as _json
+            p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
-            self._log.warning(f"Failed to mark is_chunked for {src_file}: {e}")
+            self._log.warning(f"Failed to write extract sidecar for {src_file}: {e}")
 
     def _update_extraction_metadata(
         self,
@@ -696,96 +696,42 @@ class GlossExtract:
         chunk_count: Optional[int] = None,
         chunk_manifest_path: Optional[Path] = None,
     ) -> None:
-        """Update or create metadata parquet row with minimal extraction details for a source file.
-
-        Writes only:
-        - extraction_backend: records Docling engine used (e.g., 'vl_parse_2'); OCR is performed inside extract
-        - extraction_mode: 'standard' or 'chunked'
-        - failure_mode: '', 'timeout', 'error', etc.
-        - ocr_success: boolean flag for OCR outcome (left unset here; updated in Corpus.ocr())
-        Also appends 'extract' to processing_stage.
-        """
+        """Write extraction metadata to sidecar (eliminate in-worker parquet writes)."""
         try:
-            parquet_path = self._ensure_metadata_parquet(Path(output_dir))
-            filename = Path(src_file).name
-
-            if parquet_path is not None and Path(parquet_path).exists():
-                df = pd.read_parquet(parquet_path)
-            else:
-                # Create a minimal DataFrame with this single filename
-                pipeline_root = Path(output_dir).parent
-                download_results_dir = pipeline_root / "download_results"
-                download_results_dir.mkdir(parents=True, exist_ok=True)
-                parquet_path = download_results_dir / "download_results.parquet"
-                df = pd.DataFrame([{ 'filename': filename, getattr(self, 'url_column', 'url'): '' }])
-
-            # Ensure required columns exist
-            for col in [
-                'filename',
-                'processing_stage',
-                'extraction_backend',
-                'extraction_mode',
-                'failure_mode',
-                'ocr_success',
-                'page_count',
-                'is_chunked',
-                'chunk_threshold',
-                'chunk_size',
-                'chunk_count',
-                'chunk_manifest_path',
-            ]:
-                if col not in df.columns:
-                    # Initialize appropriate defaults
-                    if col == 'extraction_mode':
-                        df[col] = 'standard'
-                    elif col == 'ocr_success':
-                        df[col] = pd.NA
-                    else:
-                        df[col] = pd.NA
-
-            mask = df['filename'] == filename
-            if not mask.any():
-                df = pd.concat([df, pd.DataFrame([{'filename': filename}] )], ignore_index=True)
-                mask = df['filename'] == filename
-
-            # Minimal extraction fields
-            df.loc[mask, 'extraction_mode'] = extraction_mode
-            df.loc[mask, 'page_count'] = page_count if page_count is not None else pd.NA
-            df.loc[mask, 'is_chunked'] = (extraction_mode == 'chunked')
-            if extraction_mode == 'chunked':
-                df.loc[mask, 'chunk_threshold'] = chunk_threshold if chunk_threshold is not None else pd.NA
-                df.loc[mask, 'chunk_size'] = chunk_size if chunk_size is not None else pd.NA
-                df.loc[mask, 'chunk_count'] = chunk_count if chunk_count is not None else pd.NA
-                df.loc[mask, 'chunk_manifest_path'] = str(chunk_manifest_path) if chunk_manifest_path else pd.NA
-
-            # Record the Docling extraction backend used (OCR updates later)
-            backend_name = getattr(self, 'pdf_backend_name', None)
-            if not backend_name:
-                # Fallback mapping if attribute is missing
-                backend_name = 'vl_parse_2' if getattr(self, 'USE_V2', True) else 'docling_parse'
-            df.loc[mask, 'extraction_backend'] = backend_name
-
-            # Derive failure_mode from status
-            failure = ''
-            if status in ('timeout', 'error', 'failure'):
-                failure = status
-            df.loc[mask, 'failure_mode'] = (failure if failure else pd.NA)
-
-            # processing_stage logic: append 'extract'
-            def _append_stage(val: Any) -> str:
-                s = '' if pd.isna(val) else str(val)
-                return 'extract' if not s else (s if 'extract' in s.split(',') else f"{s},extract")
-
-            df.loc[mask, 'processing_stage'] = df.loc[mask, 'processing_stage'].apply(_append_stage)
-
-            # Persist with compression (zstd)
-            try:
-                df.to_parquet(parquet_path, index=False, compression='zstd')
-            except Exception:
-                # Fallback without explicit compression
-                df.to_parquet(parquet_path, index=False)
+            root = Path(output_dir).parent
+            sc_dir = root / "sidecars" / "extract"
+            sc_dir.mkdir(parents=True, exist_ok=True)
+            stem = Path(src_file).stem
+            p = sc_dir / f"{stem}.json"
+            data = {}
+            if p.exists():
+                try:
+                    import json as _json
+                    data = _json.loads(p.read_text(encoding="utf-8")) or {}
+                except Exception:
+                    data = {}
+            # Update fields
+            data["extraction_mode"] = str(extraction_mode)
+            if page_count is not None:
+                data["page_count"] = int(page_count)
+            if extraction_mode == "chunked":
+                if chunk_threshold is not None:
+                    data["chunk_threshold"] = int(chunk_threshold)
+                if chunk_size is not None:
+                    data["chunk_size"] = int(chunk_size)
+                if chunk_count is not None:
+                    data["chunk_count"] = int(chunk_count)
+                if chunk_manifest_path is not None:
+                    data["chunk_manifest_path"] = str(chunk_manifest_path)
+            # Backend and failure
+            backend_name = getattr(self, 'pdf_backend_name', None) or ('vl_parse_2' if getattr(self, 'USE_V2', True) else 'docling_parse')
+            data["extraction_backend"] = backend_name
+            if status in ("timeout", "error", "failure"):
+                data["failure_mode"] = status
+            import json as _json
+            p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
-            self._log.warning(f"Failed to update extraction metadata for {src_file}: {e}")
+            self._log.warning(f"Failed to write extraction sidecar for {src_file}: {e}")
 
     
     # Removed legacy SIGALRM timeout; rely on Docling native timeout when available
@@ -1262,6 +1208,20 @@ class GlossExtract:
             it = getattr(doc, 'iterate_items', None)
             if not callable(it):
                 return 0
+            # Best-effort page dimensions for normalized bbox
+            pages = []
+            try:
+                pages = list(getattr(doc, 'pages', []) or [])
+            except Exception:
+                pages = []
+            # Compute sha256 of source PDF if available
+            try:
+                from .json_io import _sha256_file  # type: ignore
+                from pathlib import Path as _Path
+                pdf_path = _Path(getattr(getattr(conv_res, 'input', None), 'file', ''))
+                sha256_pdf = _sha256_file(pdf_path) if (pdf_path and pdf_path.exists()) else ""
+            except Exception:
+                sha256_pdf = ""
             per_page_ix: dict[int, int] = {}
             out_lines: list[str] = []
             for element, _level in it():
@@ -1293,7 +1253,40 @@ class GlossExtract:
                             "b": float(getattr(bbox, 'b', 0.0)),
                             "origin": str(getattr(getattr(bbox, 'coord_origin', ''), 'value', getattr(bbox, 'coord_origin', ''))),
                         },
+                        "doc_sha256": sha256_pdf,
+                        "placeholder_id": f"p:{page_no}-i:{per_page_ix[page_no]}",
                     }
+                    # Add normalized bbox if page dimensions available
+                    try:
+                        W = H = 0.0
+                        if pages and 1 <= page_no <= len(pages):
+                            pg = pages[page_no - 1]
+                            W = float(getattr(pg, 'width', 0.0) or getattr(getattr(pg, 'bbox', None), 'r', 0.0))
+                            H = float(getattr(pg, 'height', 0.0) or getattr(getattr(pg, 'bbox', None), 'b', 0.0))
+                        if W and H:
+                            l = float(getattr(bbox, 'l', 0.0)); t = float(getattr(bbox, 't', 0.0)); r = float(getattr(bbox, 'r', 0.0)); b = float(getattr(bbox, 'b', 0.0))
+                            row["bbox_norm"] = {"l": l / W, "t": t / H, "r": r / W, "b": b / H}
+                    except Exception:
+                        pass
+                    # Rotation, display guess, optional context
+                    try:
+                        row["rotation_deg"] = int(getattr(p, 'rotation', 0) or 0)
+                    except Exception:
+                        row["rotation_deg"] = 0
+                    try:
+                        disp = "inline" if bool(getattr(element, 'is_inline', False)) else "block"
+                    except Exception:
+                        disp = "block"
+                    row["display"] = disp
+                    try:
+                        ctx = str(getattr(element, 'text', '') or getattr(element, 'orig', '') or '')
+                        if ctx:
+                            ctx = ctx.strip()
+                            if len(ctx) > 80:
+                                ctx = ctx[:77] + "…"
+                        row["context"] = ctx
+                    except Exception:
+                        pass
                     out_lines.append(json.dumps(row, ensure_ascii=False))
             if out_lines:
                 json_dir = output_dir.parent / "json"

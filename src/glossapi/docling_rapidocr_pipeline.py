@@ -176,21 +176,23 @@ def convert_dir(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # GPU-only preflight: require ORT CUDA provider and Torch CUDA if formula enrichment is enabled
-    try:
-        import onnxruntime as _ort  # type: ignore
-        _providers = _ort.get_available_providers()
-        if "CUDAExecutionProvider" not in _providers:
-            raise RuntimeError(f"GPU-only policy: CUDAExecutionProvider not available in onnxruntime providers={_providers}")
-    except Exception as e:
-        raise RuntimeError(f"GPU-only policy: onnxruntime-gpu not available or misconfigured: {e}")
-    if formula_enrichment:
+    # Device-aware preflight: only enforce CUDA provider when device requests CUDA
+    want_cuda = isinstance(device, str) and device.lower().startswith("cuda")
+    if want_cuda:
+        try:
+            import onnxruntime as _ort  # type: ignore
+            _providers = _ort.get_available_providers()
+            if "CUDAExecutionProvider" not in _providers:
+                raise RuntimeError(f"CUDAExecutionProvider not available in onnxruntime providers={_providers}")
+        except Exception as e:
+            raise RuntimeError(f"onnxruntime-gpu not available or misconfigured: {e}")
+    if formula_enrichment and want_cuda:
         try:
             import torch  # type: ignore
             if not torch.cuda.is_available():
-                raise RuntimeError("GPU-only policy: Torch CUDA not available but formula enrichment requested.")
+                raise RuntimeError("Torch CUDA not available but formula enrichment requested.")
         except Exception as e:
-            raise RuntimeError(f"GPU-only policy: Torch CUDA preflight failed: {e}")
+            raise RuntimeError(f"Torch CUDA preflight failed: {e}")
 
     # Optional: tune CodeFormula batch size and math precision when enrichment is requested
     if formula_enrichment:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
+import os
 import re
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Tuple
@@ -84,6 +85,7 @@ def enrich_from_docling_json(
     dpi_base: int = 220,
     dpi_lo: int = 180,
     dpi_hi: int = 320,
+    targets: Optional[List[Tuple[int, int]]] = None,
 ) -> dict:
     """Load a DoclingDocument JSON and enrich FORMULA/CODE items using Docling CodeFormula.
 
@@ -97,12 +99,13 @@ def enrich_from_docling_json(
     doc = load_docling_json(json_path)
     rc = PageRasterCache(pdf_path)
 
-    # Collect ROIs
+    # Collect ROIs (optionally filter by explicit (page_no, per_page_ix) targets)
     rois: list[RoiEntry] = []
     per_page_ix: dict[int, int] = {}
     it = getattr(doc, 'iterate_items', None)
     if not callable(it):
         raise RuntimeError("DoclingDocument missing iterate_items()")
+    targets_set = set((int(p), int(ix)) for (p, ix) in (targets or []))
     for element, _level in it():
         lab = str(getattr(element, 'label', '')).lower()
         if lab not in {"formula", "code"}:
@@ -116,7 +119,10 @@ def enrich_from_docling_json(
         if not page_no or bbox is None:
             continue
         per_page_ix[page_no] = per_page_ix.get(page_no, 0) + 1
-        rois.append(RoiEntry(page_no=page_no, bbox=bbox, label=lab, per_page_ix=per_page_ix[page_no]))
+        cur_ix = per_page_ix[page_no]
+        if targets_set and (page_no, cur_ix) not in targets_set:
+            continue
+        rois.append(RoiEntry(page_no=page_no, bbox=bbox, label=lab, per_page_ix=cur_ix))
 
     if not rois:
         # Nothing to enrich; just export existing MD
@@ -127,6 +133,12 @@ def enrich_from_docling_json(
     acc = AcceleratorOptions(device=device if device else AcceleratorDevice.AUTO)
     opts = CodeFormulaModelOptions(do_code_enrichment=True, do_formula_enrichment=True)
     model = CodeFormulaModel(enabled=True, artifacts_path=None, options=opts, accelerator_options=acc)
+    # Optional: attach efficient early-stop guards to generation if supported
+    try:
+        from ._formula_earlystop import attach_early_stop  # type: ignore
+        attach_early_stop(model)
+    except Exception:
+        pass
     # Optional batch size tuning
     try:
         setattr(model, 'elements_batch_size', int(batch_size))
@@ -143,7 +155,28 @@ def enrich_from_docling_json(
         fp.write("")
 
     batch: list[ItemAndImageEnrichmentElement] = []
-    binfo: list[Tuple[int, int]] = []  # (page_no, per_page_ix)
+    binfo: list[Tuple[int, int, int]] = []  # (page_no, per_page_ix, dpi)
+
+    def _accept_score(latex: str) -> float:
+        try:
+            if len(latex) > 600:
+                return 0.0
+            bal = 0
+            for ch in latex:
+                if ch == '{':
+                    bal += 1
+                elif ch == '}':
+                    bal -= 1
+                if bal < 0:
+                    return 0.0
+            if bal != 0:
+                return 0.0
+            bad_toks = ["\\includegraphics", "\\write18"]
+            if any(tok in latex for tok in bad_toks):
+                return 0.0
+            return 1.0
+        except Exception:
+            return 0.0
 
     def _sanitize_latex(text: str, *, max_len: int = 3000, max_tail_repeats: int = 50) -> tuple[str, dict]:
         """Apply lightweight, efficient guards to latex text.
@@ -190,25 +223,69 @@ def enrich_from_docling_json(
 
         return s, info
 
+    def _env_int(name: str, default: int) -> int:
+        try:
+            v = os.getenv(name)
+            return int(v) if v is not None and str(v).strip() != "" else default
+        except Exception:
+            return default
+
+    # Post-processing policy: apply only on failed cases by default
+    POST_ONLY_FAILED = os.getenv("GLOSSAPI_LATEX_POST_ONLY_FAILED", "1").strip() not in {"0", "false", "no"}
+    POST_REPEAT_GATE = _env_int("GLOSSAPI_LATEX_POST_REPEAT_GATE", 50)
+    POST_WINDDOWN = _env_int("GLOSSAPI_LATEX_POST_WINDDOWN", 12)
+    POST_MAX_CHARS = _env_int("GLOSSAPI_LATEX_POST_MAX_CHARS", 3000)
+
+    def _tail_run(s: str) -> int:
+        toks = s.split()
+        if not toks:
+            return 0
+        last = toks[-1]
+        run = 1
+        i = len(toks) - 2
+        while i >= 0 and toks[i] == last:
+            run += 1
+            i -= 1
+        return run
+
     def flush_batch():
         nonlocal accepted, batch, binfo, written
         if not batch:
             return
+        t_call = time.time()
         for out_item in model(doc, batch):  # yields NodeItem with .text set
             pass  # items are mutated in-place
+        dt_ms = int((time.time() - t_call) * 1000.0)
+        per_ms = int(dt_ms / max(1, len(batch)))
         # Write map entries with naive acceptance (present & non-empty)
         out_lines: list[str] = []
-        for (page_no, ix), el in zip(binfo, batch):
+        # engine info (best-effort)
+        _engine = "code_formula"
+        try:
+            import docling as _dl  # type: ignore
+            _engine_ver = getattr(_dl, "__version__", "") or ""
+        except Exception:
+            _engine_ver = ""
+        for (page_no, ix, dpi_used), el in zip(binfo, batch):
             latex = getattr(el.item, 'text', '') or ''
-            # Apply efficient sanitization: tail repeat gate + 3000-char cap
-            sanitized, sinfo = _sanitize_latex(latex, max_len=3000, max_tail_repeats=50)
-            if sanitized != latex:
+            # Determine if post-processing should be applied (only on failed cases)
+            sinfo = {"orig_len": len(latex), "truncated_by_repeat": False, "truncated_by_len": False, "tail_token": "", "tail_run": 0}
+            do_post = True
+            if POST_ONLY_FAILED:
                 try:
-                    setattr(el.item, 'text', sanitized)
+                    tr = _tail_run(latex)
                 except Exception:
-                    pass
-            latex = sanitized
-            ok = bool(latex.strip())
+                    tr = 0
+                do_post = (tr > POST_REPEAT_GATE) or (len(latex) > POST_MAX_CHARS)
+            if do_post:
+                sanitized, sinfo = _sanitize_latex(latex, max_len=int(POST_MAX_CHARS), max_tail_repeats=int(POST_WINDDOWN))
+                if sanitized != latex:
+                    try:
+                        setattr(el.item, 'text', sanitized)
+                    except Exception:
+                        pass
+                latex = sanitized
+            ok = (_accept_score(latex) >= 1.0)
             if ok:
                 accepted += 1
             row = {
@@ -217,13 +294,17 @@ def enrich_from_docling_json(
                 "latex": latex,
                 "accept_score": 1.0 if ok else 0.0,
                 "compile_ok": False,
-                "dpi": int(0),
+                "dpi": int(dpi_used),
                 # Minimal metrics for observability (non-breaking additions)
                 "orig_len": int(sinfo.get("orig_len", len(latex))),
                 "truncated_by_repeat": bool(sinfo.get("truncated_by_repeat", False)),
                 "truncated_by_len": bool(sinfo.get("truncated_by_len", False)),
                 "tail_token": str(sinfo.get("tail_token", "")),
                 "tail_run": int(sinfo.get("tail_run", 0)),
+                "post_applied": bool(do_post),
+                "engine": _engine,
+                "engine_version": _engine_ver,
+                "time_ms": int(per_ms),
             }
             out_lines.append(json.dumps(row, ensure_ascii=False))
         # Append to file to expose progress
@@ -256,7 +337,7 @@ def enrich_from_docling_json(
         r = min(im.width, r + int(pad_px)); b = min(im.height, b + int(pad_px))
         crop = im.crop((l, t, r, b))
         batch.append(ItemAndImageEnrichmentElement(item=getattr(entry, 'item', None) or _find_item(doc, entry), image=crop))
-        binfo.append((entry.page_no, entry.per_page_ix))
+        binfo.append((entry.page_no, entry.per_page_ix, int(dpi)))
         if len(batch) >= int(batch_size):
             flush_batch()
     flush_batch()

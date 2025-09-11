@@ -66,8 +66,8 @@ ocr_models/
 # Noise analysis reports
 glossapi_noise_analysis_report.md
 
-# reports
-docs/
+# private plans & reviews (not published)
+plans_reviews/
 \n# Local virtual environments
 glossapi_venv/
 .venv_docling/

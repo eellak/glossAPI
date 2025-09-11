@@ -75,16 +75,22 @@ PY
 ```bash
 pip install --index-url https://download.pytorch.org/whl/cu121 \
   torch==2.5.1 torchvision==0.20.1
-python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+ python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
 ```
 
-4) Patch Docling keys mapping (once per venv)
+4) Install enrichment helpers (for JSON + math/code enrichment)
+
+```bash
+pip install pypdfium2 zstandard
+```
+
+5) Patch Docling keys mapping (once per venv)
 
 ```bash
 bash repro_rapidocr_onnx/scripts/repatch_docling.sh
 ```
 
-5) Quick smoke test (uses packaged ONNX models and keys)
+6) Quick smoke test (uses packaged ONNX models and keys)
 
 ```bash
 python -m glossapi.docling_rapidocr_pipeline /path/to/pdfs /path/to/out --device cuda:0
@@ -221,6 +227,23 @@ The project includes a GPU-capable OCR pipeline using Docling for layout and Rap
 - Orientation classifier: disabled by default (`use_cls=False`) for digital PDFs; override with `use_cls=True` if needed.
 - OCR thresholds: `text_score=0.45`; image scale hint `images_scale=1.25`.
 
+### Environment variables (tuning & placement)
+
+- `CUDA_VISIBLE_DEVICES`: restrict/assign visible GPUs, e.g. `export CUDA_VISIBLE_DEVICES=0,1,2,3`.
+- `GLOSSAPI_DOCLING_DEVICE`: preferred device for Docling inside a worker/CLI, e.g. `export GLOSSAPI_DOCLING_DEVICE=cuda:0`.
+- `GLOSSAPI_IMAGES_SCALE`: image scale hint for parsing/OCR (default ~`1.1`–`1.25`).
+- `GLOSSAPI_FORMULA_BATCH`: batch size for CodeFormula math enrichment (default `16`).
+- `GLOSSAPI_RAPIDOCR_ONNX_DIR`: override path containing RapidOCR ONNX models and Greek keys.
+- Math early-stop (optional; default enabled when supported):
+  - `GLOSSAPI_LATEX_EARLYSTOP`=`1|0` enable/disable early-stop wrapper.
+  - `GLOSSAPI_LATEX_MAX_CHARS` (default `3000`) cap generated LaTeX length.
+  - `GLOSSAPI_LATEX_MAX_REPEAT` (default `50`) stop on last-token repeat run.
+  - `GLOSSAPI_LATEX_MAX_NEW_TOKENS` (default unset) cap new tokens at the decoder.
+  - `GLOSSAPI_LATEX_LEN_STRIDE` (default `16`) decode stride for char-length checks.
+- `OMP_NUM_THREADS` / `MKL_NUM_THREADS`: cap CPU threads to avoid oversubscription on mixed CPU/GPU nodes.
+- Caches: set `HF_HOME`, `XDG_CACHE_HOME`, `DOCLING_CACHE_DIR` to fast storage (e.g., NVMe) for best throughput.
+- Multi‑GPU networking (if needed): `NCCL_P2P_DISABLE=1` and `NCCL_IB_DISABLE=1` can quiet warnings on some hosts.
+
 ### CUDA/ORT compatibility
 
 - Keep your ORT + CUDA stack compatible:
@@ -254,8 +277,7 @@ bash repro_rapidocr_onnx/scripts/run_onnx.sh --det DET.onnx --rec REC.onnx \
 ```
 
 Further docs
-- GPU setup on this host: see `docs/gpu_ocr_setup_report.md` for a concise, host‑specific checklist and validation steps.
-- Multi‑GPU on remote servers (generalized): see `docs/remote_server_setup_report.md` for a portable runbook validated on a 2×L40 machine.
+- Math enrichment runtime (early‑stop + post‑processing + targeted runs): see `docs/math_enrichment_runtime.md`.
 
 Automating Torch selection
 - Use `scripts/install_torch_auto.sh` to pick a suitable Torch build automatically:
@@ -265,3 +287,35 @@ Notes
 - Avoid installing the CPU `onnxruntime` wheel. Some packages (e.g., `rapidocr_onnxruntime` or `docling[rapidocr]`) declare `onnxruntime` as a dependency and can auto‑pull the CPU wheel. Prefer `rapidocr` + `onnxruntime-gpu` instead, and use `pip install -e . --no-deps` for editable installs.
 - OCR runs on ORT GPU when `onnxruntime-gpu` is installed; layout/enrichment use Torch CUDA.
 - If you encounter NCCL warnings on multi-GPU systems, set `NCCL_P2P_DISABLE=1` and `NCCL_IB_DISABLE=1`.
+
+## Math Enrichment & JSON Intermediates
+
+JSON is an intermediate only when enhancements are in use. Keep extraction as PDF → MD for standard runs; enable JSON when you plan to enrich math/code.
+
+- Phase‑1 (layout, no OCR) — emit JSON only if enriching later:
+
+```python
+from glossapi import Corpus
+c = Corpus('IN','OUT')
+c.extract(
+    input_format='pdf',
+    use_gpus='multi',           # or 'single'
+    export_doc_json=True,       # emit json/{stem}.docling.json(.zst)
+    emit_formula_index=True,    # emit json/{stem}.formula_index.jsonl
+)
+```
+
+- Triage math density and route candidates:
+
+```python
+c.triage_math()  # writes per-doc summary + recommendation into parquet
+```
+
+- Phase‑2 (GPU) — enrich from JSON and re‑export Markdown:
+
+```python
+# Requires pypdfium2 (rasterization) and zstandard (compressed JSON)
+c.formula_enrich_from_json(device='cuda', batch_size=12)
+```
+
+Multi‑GPU: `extract(..., use_gpus='multi')` uses a shared queue across all visible GPUs. OCR and math enrichment run on GPU; OCR currently binds a single GPU per process. Roadmap: multi‑GPU OCR scheduling.
