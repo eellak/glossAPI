@@ -118,6 +118,12 @@ class GlossDownloader:
         progress_log_file: Optional[Union[str, Path]] = None,
         request_log_file: Optional[Union[str, Path]] = None,
         progress_log_level: int = logging.INFO,
+        # TLS/SSL controls
+        ssl_verify: bool = True,
+        ssl_cafile: Optional[str] = None,
+        # Per-row referer support: name of a column in the input parquet that
+        # contains the page URL where the file link was found
+        referer_column: Optional[str] = None,
         # Checkpointing
         checkpoint_every: Optional[int] = 500,  # write checkpoint parquet every N completed tasks
         checkpoint_seconds: Optional[float] = 60.0,  # or every N seconds (whichever triggers first)
@@ -278,6 +284,47 @@ class GlossDownloader:
         self.error_burst_window = int(error_burst_window)
         self.error_burst_threshold = float(error_burst_threshold)
         self.park_403_seconds = float(park_403_seconds)
+        # TLS/SSL
+        self.ssl_verify = bool(ssl_verify)
+        self.ssl_cafile = ssl_cafile
+        self.referer_column = str(referer_column) if referer_column else None
+        # Per-domain SSL insecure override discovered via ping fallback
+        self._domains_ssl_insecure: set[str] = set()
+
+    def _mark_domain_ssl_insecure(self, domain: str) -> None:
+        try:
+            d = str(domain or '').strip()
+            if not d:
+                return
+            if d not in self._domains_ssl_insecure:
+                self._domains_ssl_insecure.add(d)
+                self.progress_logger.info(f"[tls] Broken chain detected on {d}; enabling insecure SSL for this domain")
+                # Persist into warnings JSON
+                try:
+                    import json
+                    data = {'domains': []}
+                    p = self.domain_warnings_path
+                    if p.exists():
+                        data = json.loads(p.read_text(encoding='utf-8') or '{}') or {'domains': []}
+                    if 'domains' not in data or not isinstance(data['domains'], list):
+                        data['domains'] = []
+                    # Update or add entry
+                    found = False
+                    for rec in data['domains']:
+                        if str(rec.get('base_domain') or '') == d:
+                            rec['ssl_chain_broken'] = True
+                            found = True
+                            break
+                    if not found:
+                        data['domains'].append({'base_domain': d, 'ssl_chain_broken': True, 'note': 'SSL verify failed; insecure ping succeeded'})
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = p.with_suffix('.json.tmp')
+                    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+                    os.replace(tmp, p)
+                except Exception:
+                    pass
+        except Exception:
+            pass
     
     def generate_filename(self, index: int, file_ext: str = None) -> str:
         """
@@ -720,7 +767,8 @@ class GlossDownloader:
     
     async def download_file(self, row_index: int, url: str, semaphore: Optional[asyncio.Semaphore], 
                            rate_limiter: RateLimiter, retry_count: int = 0,
-                           filename_base: Optional[str] = None) -> Tuple[bool, str, str, str, int]:
+                           filename_base: Optional[str] = None,
+                           referer: Optional[str] = None) -> Tuple[bool, str, str, str, int]:
         """
         Download a file from a URL
         
@@ -748,6 +796,8 @@ class GlossDownloader:
         base_url = self.get_base_url(url)
         
         # Enhanced headers with common browser-like attributes to bypass 403 errors
+        # Prefer caller-provided referer (e.g., the external_link page)
+        _referer = (referer or '').strip()
         headers = {
             'User-Agent': user_agent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -762,7 +812,7 @@ class GlossDownloader:
             'Pragma': 'no-cache',
             'Cache-Control': 'no-cache',
             'TE': 'trailers',
-            'Referer': f"https://www.google.com/search?q={domain}",
+            'Referer': _referer if _referer else f"https://www.google.com/search?q={domain}",
             'Origin': base_url,
             'DNT': '1'
         }
@@ -798,8 +848,19 @@ class GlossDownloader:
             )
             
             try:
+                # Prepare optional SSL connector
+                connector = None
+                # Domain-specific insecure override (discovered via ping)
+                url_base = self._extract_base_domain(url)
+                _force_insecure = url_base in getattr(self, '_domains_ssl_insecure', set())
+                if (not self.ssl_verify) or _force_insecure:
+                    connector = aiohttp.TCPConnector(ssl=False)
+                elif self.ssl_cafile:
+                    import ssl as _ssl
+                    ctx = _ssl.create_default_context(cafile=self.ssl_cafile)
+                    connector = aiohttp.TCPConnector(ssl=ctx)
                 # Create a new session for each download to avoid cookie contamination
-                async with aiohttp.ClientSession(cookies=cookies) as session:
+                async with aiohttp.ClientSession(cookies=cookies, connector=connector) as session:
                     try:
                         # Try to access the base domain first to establish cookies
                         headers = await self.setup_session(session, url, headers)
@@ -1075,6 +1136,14 @@ class GlossDownloader:
             for i, row_idx in enumerate(batch_indices):
                 url = df.loc[row_idx, self.url_column]
                 retry_count = df.loc[row_idx, 'download_retry_count']
+                # Optional per-row referer (e.g., external_link page)
+                ref_val = None
+                if self.referer_column and self.referer_column in df.columns:
+                    try:
+                        val = df.loc[row_idx, self.referer_column]
+                        ref_val = str(val) if isinstance(val, str) and val.strip() else None
+                    except Exception:
+                        ref_val = None
 
                 # Skip duplicates identified during preprocessing
                 if 'is_duplicate' in df.columns:
@@ -1097,7 +1166,8 @@ class GlossDownloader:
                         semaphore=semaphore,
                         rate_limiter=rate_limiter,
                         retry_count=retry_count,
-                        filename_base=(df.loc[row_idx, 'filename_base'] if 'filename_base' in df.columns else None)
+                        filename_base=(df.loc[row_idx, 'filename_base'] if 'filename_base' in df.columns else None),
+                        referer=ref_val
                     )
                 )
                 tasks.append((row_idx, task))
@@ -1350,6 +1420,29 @@ class GlossDownloader:
                 async def _task(d: str):
                     async with sem:
                         ok = await _ping_one(session, d)
+                        # If strict ping failed, try insecure ping once to detect broken chain
+                        if not ok and d:
+                            try:
+                                import aiohttp as _aio
+                                conn = _aio.TCPConnector(ssl=False)
+                                to = _aio.ClientTimeout(total=self.ping_timeout_s)
+                                async with _aio.ClientSession(connector=conn) as s2:
+                                    try:
+                                        # HEAD then GET fallback
+                                        try:
+                                            async with s2.head(d, headers={'User-Agent': next(self.user_agents)}, timeout=to, allow_redirects=True):
+                                                ok2 = True
+                                        except Exception:
+                                            async with s2.get(d, headers={'User-Agent': next(self.user_agents)}, timeout=to, allow_redirects=True):
+                                                ok2 = True
+                                    except Exception:
+                                        ok2 = False
+                                if ok2:
+                                    # mark domain as ssl-broken and usable in insecure mode
+                                    self._mark_domain_ssl_insecure(d)
+                                    ok = True
+                            except Exception:
+                                pass
                         results[d] = ok
                 await asyncio.gather(*[_task(d) for d in dom_list])
             return results
@@ -1644,13 +1737,22 @@ class GlossDownloader:
                         continue
                     # Launch task
                     t0 = time.time()
+                    # Optional per-row referer
+                    ref_val = None
+                    if self.referer_column and self.referer_column in df.columns:
+                        try:
+                            val = df.at[row_idx, self.referer_column]
+                            ref_val = str(val) if isinstance(val, str) and val.strip() else None
+                        except Exception:
+                            ref_val = None
                     task = asyncio.create_task(self.download_file(
                         row_index=row_idx,
                         url=url,
                         semaphore=None,
                         rate_limiter=rate_limiter,
                         retry_count=retry_count,
-                        filename_base=(df.at[row_idx, 'filename_base'] if 'filename_base' in df.columns else None)
+                        filename_base=(df.at[row_idx, 'filename_base'] if 'filename_base' in df.columns else None),
+                        referer=ref_val
                     ))
                     tasks[task] = (dom, row_idx, t0)
                     state.active += 1
@@ -1704,7 +1806,7 @@ class GlossDownloader:
                         # Proactively recheck a batch now
                         try:
                             sample = list(list(pending_down)[:min(10, len(pending_down))])
-                            res = await ping_all(sample)
+                            res = await _ping_all_aligned(sample)
                             for d, ok in res.items():
                                 if ok:
                                     try:
@@ -1741,7 +1843,7 @@ class GlossDownloader:
                 try:
                     # Check a slice to avoid bursts
                     sample = list(list(pending_down)[:min(10, len(pending_down))])
-                    res = await ping_all(sample)
+                    res = await _ping_all_aligned(sample)
                     for d, ok in res.items():
                         if ok:
                             # promote to pending_domains

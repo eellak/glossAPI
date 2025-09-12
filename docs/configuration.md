@@ -20,6 +20,15 @@ This page lists the main knobs you can use to tune GlossAPI.
 - `GLOSSAPI_LATEX_MAX_NEW_TOKENS` (optional): cap decoder new tokens.
 - `GLOSSAPI_LATEX_LEN_STRIDE` (default `16`): stride for length checks.
 
+### Centralized LaTeX Policy (Post‑processing)
+
+- `GLOSSAPI_LATEX_POST_ONLY_FAILED` = `1|0` (default `1`): only sanitize when output looks problematic.
+- `GLOSSAPI_LATEX_POST_REPEAT_GATE` (default `50`): consider output failed if tail token repeats more than this.
+- `GLOSSAPI_LATEX_POST_WINDDOWN` (default `12`): clamp repeated tail token to this run length.
+- `GLOSSAPI_LATEX_POST_MAX_CHARS` (default `3000`): cap text length (prefers whitespace/`\` boundary).
+
+All LaTeX policy knobs are loaded via `glossapi.text_sanitize.load_latex_policy()` and used consistently in early‑stop, Phase‑2 post‑processing, and metrics.
+
 ## Performance & Caches
 
 - `OMP_NUM_THREADS` / `MKL_NUM_THREADS`: cap CPU threads to avoid oversubscription.
@@ -29,6 +38,10 @@ This page lists the main knobs you can use to tune GlossAPI.
 
 - `GLOSSAPI_RAPIDOCR_ONNX_DIR`: directory containing `det/rec/cls` ONNX models and keys.
 
-## Parquet Sidecars
+## Triage & Parquet
 
-- `GLOSSAPI_PARQUET_COMPACTOR` = `1|0` (default 1): sidecars for triage/math; legacy mode mutates parquet in place.
+- Triage always writes both:
+  - Sidecar summaries: `sidecars/triage/{stem}.json` (per document)
+  - Parquet updates: `download_results/download_results.parquet` (adds/updates rows)
+- Default recommendation policy: enrich if `formula_total > 0` (skip only no‑math docs).
+- Legacy heuristic (p90/pages thresholds) can be enabled with `GLOSSAPI_TRIAGE_HEURISTIC=1`.
