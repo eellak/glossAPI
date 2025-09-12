@@ -606,6 +606,60 @@ class Corpus:
                 )
             except Exception as _e:
                 self.logger.warning("Phase‑2 enrichment after OCR failed: %s", _e)
+
+    def prime_extractor(
+        self,
+        input_format: str = "all",
+        num_threads: Optional[int] = None,
+        accel_type: str = "CUDA",
+        *,
+        force_ocr: bool = False,
+        formula_enrichment: bool = False,
+        code_enrichment: bool = False,
+        use_cls: bool = False,
+        benchmark_mode: bool = False,
+        export_doc_json: bool = False,
+        emit_formula_index: bool = False,
+    ) -> None:
+        """Prepare and initialize the underlying extractor once per configuration.
+
+        Builds the Docling converter only if the effective configuration changed.
+        """
+        # Lazy import + instantiate GlossExtract
+        if self.extractor is None:
+            from .gloss_extract import GlossExtract
+            self.extractor = GlossExtract(url_column=self.url_column)
+
+        # Propagate toggles used by Phase‑1 helpers
+        try:
+            setattr(self.extractor, "export_doc_json", bool(export_doc_json))
+            setattr(self.extractor, "emit_formula_index", bool(emit_formula_index))
+        except Exception:
+            pass
+        # Threads
+        try:
+            threads_effective = int(num_threads) if num_threads is not None else (os.cpu_count() or 4)
+        except Exception:
+            threads_effective = (os.cpu_count() or 4)
+        self.extractor.enable_accel(threads=threads_effective, type=accel_type)
+
+        # Images scale env default
+        try:
+            import os as _os
+            images_scale_env = _os.getenv("GLOSSAPI_IMAGES_SCALE", "1.25")
+        except Exception:
+            images_scale_env = "1.25"
+
+        # Ensure converter exists (reuse when unchanged)
+        self.extractor.ensure_extractor(
+            enable_ocr=bool(force_ocr),
+            force_full_page_ocr=bool(force_ocr),
+            formula_enrichment=bool(formula_enrichment),
+            code_enrichment=bool(code_enrichment),
+            images_scale=float(images_scale_env),
+            use_cls=bool(use_cls),
+            profile_timings=not bool(benchmark_mode),
+        )
     def extract(
         self,
         input_format: str = "all",
@@ -623,6 +677,7 @@ class Corpus:
         benchmark_mode: bool = False,
         export_doc_json: bool = False,
         emit_formula_index: bool = False,
+        _prepared: bool = False,
     ) -> None:
         """
         Extract input files to markdown format.
@@ -861,16 +916,20 @@ class Corpus:
             )
         except Exception:
             pass
-        # Default behavior: disable OCR unless force_ocr is requested
-        self.extractor.create_extractor(
-            enable_ocr=bool(force_ocr),
-            force_full_page_ocr=bool(force_ocr),
-            formula_enrichment=bool(formula_enrichment),
-            code_enrichment=bool(code_enrichment),
-            images_scale=float(images_scale_env),
-            use_cls=bool(use_cls),
-            profile_timings=not bool(benchmark_mode),
-        )
+        # Prepare converter when not already primed by caller (internal fast path)
+        if not bool(_prepared):
+            self.prime_extractor(
+                input_format=input_format,
+                num_threads=num_threads,
+                accel_type=accel_type,
+                force_ocr=bool(force_ocr),
+                formula_enrichment=bool(formula_enrichment),
+                code_enrichment=bool(code_enrichment),
+                use_cls=bool(use_cls),
+                benchmark_mode=bool(benchmark_mode),
+                export_doc_json=bool(export_doc_json),
+                emit_formula_index=bool(emit_formula_index),
+            )
         # Propagate benchmark mode to extractor to trim auxiliary I/O
         try:
             setattr(self.extractor, "benchmark_mode", bool(benchmark_mode))
@@ -1449,7 +1508,14 @@ class Corpus:
         if not md.exists():
             self.logger.warning("markdown_dir %s not found for triage", md)
             return
-        metrics_files = list(md.glob("*.per_page.metrics.json"))
+        # Support metrics stored under json/metrics (preferred) or markdown tree (legacy)
+        metrics_files_set = set()
+        json_metrics = self.output_dir / 'json' / 'metrics'
+        if json_metrics.exists():
+            metrics_files_set |= set(json_metrics.glob("*.per_page.metrics.json"))
+        # Also scan markdown recursively for backward compatibility
+        metrics_files_set |= set(md.rglob("*.per_page.metrics.json"))
+        metrics_files = sorted(metrics_files_set)
         if not metrics_files:
             self.logger.info("No per-page metrics JSON found under %s", md)
             return
@@ -1512,7 +1578,11 @@ class Corpus:
                 _df = _pd.read_parquet(pq)
                 # derive stems from filename without extension
                 _df['stem'] = _df['filename'].astype(str).str.replace(r"\.pdf$", "", regex=True)
-                mask = (_df.get('phase_recommended', '').astype(str) == '2A') | (_df.get('formula_total', 0).fillna(0).astype('float') > 0)
+                # prefer explicit phase or any formula signal (formula_total or math_equations_detected)
+                _phase = _df['phase_recommended'].astype(str) == '2A' if 'phase_recommended' in _df.columns else ((_df['filename'] == _df['filename']) & False)
+                _ft = (_df['formula_total'].fillna(0).astype('float') > 0) if 'formula_total' in _df.columns else ((_df['filename'] == _df['filename']) & False)
+                _med = (_df['math_equations_detected'].fillna(0).astype('float') > 0) if 'math_equations_detected' in _df.columns else ((_df['filename'] == _df['filename']) & False)
+                mask = _phase | _ft | _med
                 parq_stems = _df.loc[mask, 'stem'].dropna().astype(str).tolist()
                 if parq_stems:
                     stems = [s for s in stems if s in set(parq_stems)]
@@ -1551,8 +1621,8 @@ class Corpus:
                 if pdfp is None:
                     self.logger.warning("PDF not found for %s; skipping", stem)
                     continue
-                # Output paths: enriched Markdown lives alongside JSON artifacts
-                out_md = json_dir / f"{stem}.md"
+                # Output paths: write enriched Markdown into the canonical markdown directory
+                out_md = self.markdown_dir / f"{stem}.md"
                 out_map = json_dir / f"{stem}.latex_map.jsonl"
                 out_md.parent.mkdir(parents=True, exist_ok=True)
                 json_dir.mkdir(parents=True, exist_ok=True)
@@ -1649,6 +1719,22 @@ def gpu_extract_worker_queue(
             print(f"[GPU{device_id}] Cannot import glossapi in worker: {_e}")
             return
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
+    # Prime once per worker (persistent converter)
+    try:
+        c.prime_extractor(
+            input_format=input_fmt,
+            num_threads=threads,
+            accel_type="cuda:0",
+            force_ocr=force,
+            formula_enrichment=fe,
+            code_enrichment=ce,
+            use_cls=use_cls_w,
+            benchmark_mode=benchmark,
+            export_doc_json=bool(export_json),
+            emit_formula_index=bool(emit_index),
+        )
+    except Exception as _e:
+        print(f"[GPU{device_id}] Prime failed: {_e}")
     # Prepare persistent extractor in this worker on first call
     # Process queue items in small batches to reduce function-call overhead
     batch: list[str] = []
@@ -1677,6 +1763,7 @@ def gpu_extract_worker_queue(
                         benchmark_mode=benchmark,
                         export_doc_json=bool(export_json),
                         emit_formula_index=bool(emit_index),
+                        _prepared=True,
                     )
                     processed += len(batch)
                 except Exception as _e:
@@ -1701,6 +1788,7 @@ def gpu_extract_worker_queue(
                     benchmark_mode=benchmark,
                     export_doc_json=bool(export_json),
                     emit_formula_index=bool(emit_index),
+                    _prepared=True,
                 )
                 processed += len(batch)
             except Exception as _e:

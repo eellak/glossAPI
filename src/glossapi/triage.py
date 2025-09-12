@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Optional
 import pandas as pd
@@ -27,53 +28,85 @@ def summarize_math_density_from_metrics(per_page_path: Path) -> dict[str, Any]:
 
 
 def recommend_phase(summary: dict[str, Any], *, short_doc_total_min: int = 10) -> str:
+    """Return '2A' to run Phase‑2 or 'stop' to skip.
+
+    Default policy: run Phase‑2 on any document with at least one formula
+    (i.e., only skip true no‑math docs). To enable the older heuristic
+    thresholds, set env GLOSSAPI_TRIAGE_HEURISTIC=1.
+    """
+    total = int(summary.get("formula_total", 0))
+    if os.getenv("GLOSSAPI_TRIAGE_HEURISTIC", "0").strip().lower() not in {"1", "true", "yes"}:
+        return "2A" if total > 0 else "stop"
+    # Legacy heuristic mode
     pages = max(1, int(summary.get("pages_total", 0)))
     pwf = int(summary.get("pages_with_formula", 0))
     frac = pwf / pages if pages else 0.0
     p90 = float(summary.get("formula_p90_pp", 0.0))
     maxp = float(summary.get("formula_max_pp", summary.get("formula_p90_pp", 0.0)))
-    total = int(summary.get("formula_total", 0))
-    # Heuristics per plan
     if frac >= 0.15 or p90 >= 2 or maxp >= 4 or total >= short_doc_total_min:
         return "2A"
     return "stop"
 
 
 def update_download_results_parquet(root_dir: Path, filename_stem: str, summary: dict[str, Any], recommendation: str, url_column: str = "url") -> Optional[Path]:
-    """Record math summary for a document.
+    """Record math summary for a document into sidecar and parquet.
 
-    By default, writes a sidecar JSON under sidecars/triage/{stem}.json to avoid
-    concurrent writes to the consolidated parquet. If env GLOSSAPI_PARQUET_COMPACTOR=0,
-    falls back to in-place parquet update (legacy behavior).
+    Always writes sidecar JSON under sidecars/triage/{stem}.json. Additionally,
+    updates or creates download_results/download_results.parquet and ensures a row
+    exists for {stem}. Updates the following fields at minimum:
+      - formula_total (int)
+      - pages_total, pages_with_formula, formula_avg_pp, formula_p90_pp (if present)
+      - phase_recommended ("2A"|"stop")
     """
     root_dir = Path(root_dir)
-    use_sidecars = (str(Path.cwd()) is not None)  # dummy always-true construct for mypy
-    import os as _os
-    use_sidecars = _os.getenv("GLOSSAPI_PARQUET_COMPACTOR", "1").strip() not in {"0", "false", "no"}
-    if use_sidecars:
+    # 1) Sidecar write (best-effort, never raises)
+    try:
         sc_dir = root_dir / "sidecars" / "triage"
         sc_dir.mkdir(parents=True, exist_ok=True)
         path = sc_dir / f"{filename_stem}.json"
         data = dict(summary)
         data["phase_recommended"] = recommendation
         path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        return None
-    # Legacy path: mutate parquet in-place
-    candidates = [root_dir / "download_results" / "download_results.parquet"]
-    parquet_path = next((p for p in candidates if p.exists()), None)
-    if parquet_path is None:
-        return None
-    df = pd.read_parquet(parquet_path)
-    if "filename" not in df.columns:
+    except Exception:
+        pass
+
+    # 2) Parquet update (create if missing)
+    try:
+        dl_dir = root_dir / "download_results"
+        dl_dir.mkdir(parents=True, exist_ok=True)
+        parquet_path = dl_dir / "download_results.parquet"
+        if parquet_path.exists():
+            df = pd.read_parquet(parquet_path)
+        else:
+            df = pd.DataFrame()
+        # Ensure filename column and find/create row
+        if "filename" not in df.columns:
+            df["filename"] = pd.Series(dtype=str)
+        mask = df["filename"].astype(str).str.replace(r"\.pdf$", "", regex=True) == filename_stem
+        if not mask.any():
+            # append new row
+            df.loc[len(df)] = {"filename": f"{filename_stem}.pdf"}
+            mask = df["filename"].astype(str).str.replace(r"\.pdf$", "", regex=True) == filename_stem
+        # Rounded numeric fields for readability/consistency
+        ints = ["formula_total", "pages_total", "pages_with_formula"]
+        floats = ["formula_avg_pp", "formula_p90_pp"]
+        for col in ints:
+            if col in summary and summary.get(col) is not None:
+                try:
+                    df.loc[mask, col] = int(summary.get(col))
+                except Exception:
+                    df.loc[mask, col] = summary.get(col)
+        for col in floats:
+            if col in summary and summary.get(col) is not None:
+                try:
+                    df.loc[mask, col] = round(float(summary.get(col)), 3)
+                except Exception:
+                    df.loc[mask, col] = summary.get(col)
+        df.loc[mask, "phase_recommended"] = recommendation
+        df.to_parquet(parquet_path, index=False)
         return parquet_path
-    mask = df["filename"].astype(str).str.replace(r"\.pdf$", "", regex=True) == filename_stem
-    if not mask.any():
-        return parquet_path
-    for k, v in summary.items():
-        df.loc[mask, k] = v
-    df.loc[mask, "phase_recommended"] = recommendation
-    df.to_parquet(parquet_path, index=False)
-    return parquet_path
+    except Exception:
+        return None
 
 
 __all__ = [

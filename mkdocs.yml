@@ -1,0 +1,20 @@
+site_name: GlossAPI
+site_description: Academic document processing pipeline (Docling + RapidOCR + Rust)
+repo_url: https://github.com/eellak/glossAPI
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - content.code.copy
+nav:
+  - Home: index.md
+  - Math Enrichment: math_enrichment_runtime.md
+docs_dir: docs
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - tables
+plugins:
+  - search

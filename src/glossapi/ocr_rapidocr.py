@@ -18,105 +18,23 @@ def _build_pipeline(
     text_score: Optional[float] = None,
     images_scale: Optional[float] = None,
 ):
-    # Lazy imports to keep module import light
-    from docling.datamodel.pipeline_options import (
-        AcceleratorDevice,
-        AcceleratorOptions,
-        LayoutOptions,
-        PdfPipelineOptions,
-        RapidOcrOptions,
-        TableFormerMode,
-        TableStructureOptions,
-    )
-    try:
-        from docling.models.rapid_ocr_model import RapidOcrModel  # type: ignore
-        try:
-            from docling.pipelines.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
-        except Exception:
-            from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
-    except Exception as e:
-        raise RuntimeError("Docling RapidOCR modules not available; install docling[rapidocr].") from e
+    # Delegate to canonical builder to avoid duplication
+    from ._pipeline import build_rapidocr_pipeline
 
-    from ._rapidocr_paths import resolve_packaged_onnx_and_keys
-
-    # Device selection (GPU preferred)
-    dev = device or "cuda:0"
-    # Keep string devices like "cuda:1"/"mps" so ORT honors the index/provider
-    if isinstance(dev, str) and dev.lower().startswith(("cuda", "mps", "cpu")):
-        acc = AcceleratorOptions(device=dev)
-    else:
-        acc = AcceleratorOptions(
-            device=AcceleratorDevice.CUDA if str(dev).lower().startswith("cuda") else AcceleratorDevice.CPU
-        )
-
-    # Resolve packaged model paths
-    r = resolve_packaged_onnx_and_keys()
-    if not (r.det and r.rec and r.cls):
-        raise FileNotFoundError(
-            "Packaged RapidOCR ONNX models not found in glossapi.models. "
-            "Add det/rec/cls under models/rapidocr/onnx and keys under models/rapidocr/keys."
-        )
-
-    ocr_opts = RapidOcrOptions(
-        backend="onnxruntime",
-        lang=["el", "en"],
-        force_full_page_ocr=False,
-        use_det=True,
-        use_cls=False,
-        use_rec=True,
+    engine, opts = build_rapidocr_pipeline(
+        device=(device or "cuda:0"),
         text_score=(0.45 if text_score is None else float(text_score)),
-        det_model_path=r.det,
-        rec_model_path=r.rec,
-        cls_model_path=r.cls,
-        print_verbose=False,
+        images_scale=(1.25 if images_scale is None else float(images_scale)),
+        formula_enrichment=False,
+        code_enrichment=False,
     )
-    # Allow overrides from caller
-    if use_cls is not None:
-        try:
-            ocr_opts.use_cls = bool(use_cls)
-        except Exception:
-            pass
-    if r.keys:
-        ocr_opts.rec_keys_path = r.keys
-
-    table_opts = TableStructureOptions(mode=TableFormerMode.ACCURATE)
-    opts = PdfPipelineOptions(
-        accelerator_options=acc,
-        ocr_options=ocr_opts,
-        layout_options=LayoutOptions(),
-        do_ocr=True,
-        do_table_structure=True,
-        force_backend_text=False,
-        generate_parsed_pages=False,
-        table_structure_options=table_opts,
-        allow_external_plugins=True,
-    )
-    # Optional hint used by Docling in our repro; safe no-op if unsupported
-    if images_scale is not None:
-        try:
-            setattr(opts, "images_scale", float(images_scale))
-        except Exception:
-            pass
-
-    # Prefer explicit injection path when supported; otherwise fall back to factory
+    # Apply use_cls override if requested
     try:
-        import inspect as _inspect
-        sig = _inspect.signature(StandardPdfPipeline.__init__)
-        if "ocr_model" in sig.parameters:
-            # Docling 2.48.0 RapidOcrModel signature: (enabled, artifacts_path, options, accelerator_options)
-            ocr_model = RapidOcrModel(True, None, ocr_opts, acc)  # type: ignore[arg-type]
-            pipeline = StandardPdfPipeline(opts, ocr_model=ocr_model)  # type: ignore
-            return pipeline, r
+        if use_cls is not None and hasattr(opts, "ocr_options"):
+            setattr(opts.ocr_options, "use_cls", bool(use_cls))  # type: ignore[attr-defined]
     except Exception:
         pass
-
-    # Fallback: construct a DocumentConverter using the factory path
-    from docling.datamodel.base_models import InputFormat
-    from docling.document_converter import DocumentConverter, PdfFormatOption
-    converter = DocumentConverter(
-        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
-    )
-    return converter, r
+    return engine, opts
 
 
 def run_rapidocr_onnx(

@@ -33,6 +33,7 @@ from docling.document_converter import (
 from docling.datamodel.settings import settings
 
 from ._rapidocr_paths import resolve_packaged_onnx_and_keys
+from .metrics import compute_per_page_metrics
 # Ensure RapidOCR factory is registered (avoids masked errors in older paths)
 import docling.models.rapid_ocr_model  # noqa: F401
 
@@ -87,77 +88,51 @@ def build_pipeline(
     formula_enrichment: bool = False,
     code_enrichment: bool = False,
 ) -> Tuple[object, PdfPipelineOptions]:
-    # Preserve explicit device strings like "cuda:1"/"mps"/"cpu" so Docling/ORT
-    # bind to the intended device. Fallback to enum mapping if non-string.
-    dev = device or "cuda:0"
-    if isinstance(dev, str) and dev.lower().startswith(("cuda", "mps", "cpu")):
+    # Delegate to canonical pipeline builder to avoid duplication
+    try:
+        from ._pipeline import build_rapidocr_pipeline  # type: ignore
+    except Exception as _e:  # pragma: no cover
+        # Backward-compat fallback: inline builder (kept minimal to satisfy tests)
+        from docling.datamodel.pipeline_options import AcceleratorOptions, TableStructureOptions, TableFormerMode, LayoutOptions, PdfPipelineOptions, RapidOcrOptions  # type: ignore
+        dev = device or "cuda:0"
         acc = AcceleratorOptions(device=dev)
-    else:
-        acc = AcceleratorOptions(
-            device=AcceleratorDevice.CUDA if str(dev).lower().startswith("cuda") else AcceleratorDevice.CPU
+        r = resolve_packaged_onnx_and_keys()
+        if not (r.det and r.rec and r.cls and r.keys):
+            raise FileNotFoundError("Packaged RapidOCR ONNX models/keys not found under glossapi.models.")
+        ocr_opts = RapidOcrOptions(
+            backend="onnxruntime", lang=["el", "en"], force_full_page_ocr=False,
+            use_det=True, use_cls=False, use_rec=True, text_score=text_score,
+            det_model_path=r.det, rec_model_path=r.rec, cls_model_path=r.cls, print_verbose=False,
         )
-
-    r = resolve_packaged_onnx_and_keys()
-    if not (r.det and r.rec and r.cls and r.keys):
-        raise FileNotFoundError(
-            "Packaged RapidOCR ONNX models/keys not found under glossapi.models."
+        ocr_opts.rec_keys_path = r.keys
+        table_opts = TableStructureOptions(mode=TableFormerMode.ACCURATE)
+        opts = PdfPipelineOptions(
+            accelerator_options=acc,
+            ocr_options=ocr_opts,
+            layout_options=LayoutOptions(),
+            do_ocr=True,
+            do_table_structure=True,
+            do_formula_enrichment=bool(formula_enrichment),
+            do_code_enrichment=bool(code_enrichment),
+            force_backend_text=False,
+            generate_parsed_pages=False,
+            table_structure_options=table_opts,
+            allow_external_plugins=True,
         )
-
-    ocr_opts = RapidOcrOptions(
-        backend="onnxruntime",
-        lang=["el", "en"],
-        force_full_page_ocr=False,
-        use_det=True,
-        use_cls=False,
-        use_rec=True,
-        text_score=text_score,
-        det_model_path=r.det,
-        rec_model_path=r.rec,
-        cls_model_path=r.cls,
-        print_verbose=False,
-    )
-    ocr_opts.rec_keys_path = r.keys
-
-    table_opts = TableStructureOptions(mode=TableFormerMode.ACCURATE)
-
-    opts = PdfPipelineOptions(
-        accelerator_options=acc,
-        ocr_options=ocr_opts,
-        layout_options=LayoutOptions(),
-        do_ocr=True,
-        do_table_structure=True,
-        do_formula_enrichment=bool(formula_enrichment),
-        do_code_enrichment=bool(code_enrichment),
-        force_backend_text=False,
-        generate_parsed_pages=False,
-        table_structure_options=table_opts,
-        allow_external_plugins=True,
-    )
-
-    # images_scale attribute (best-effort attachment)
-    try:
-        setattr(opts, "images_scale", images_scale)
-    except Exception:
-        pass
-
-    # Prefer explicit injection of RapidOCR to avoid Rec.keys_path mapping issues
-    try:
-        from docling.models.rapid_ocr_model import RapidOcrModel  # type: ignore
         try:
-            from docling.pipelines.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
+            setattr(opts, "images_scale", images_scale)
         except Exception:
-            from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
-        # Docling 2.48.0 RapidOcrModel signature: (enabled, artifacts_path, options, accelerator_options)
-        ocr_model = RapidOcrModel(True, None, ocr_opts, acc)  # type: ignore[arg-type]
-        pipeline = StandardPdfPipeline(opts, ocr_model=ocr_model)  # type: ignore
-        return pipeline, opts
-    except Exception as e:
-        # Fallback: use DocumentConverter factory (keys mapping may require patched docling)
-        log.warning("Explicit RapidOCR injection failed; using factory path: %s", e)
-        converter = DocumentConverter(
-            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
-        )
-        return converter, opts
+            pass
+        from docling.document_converter import DocumentConverter, PdfFormatOption  # type: ignore
+        from docling.datamodel.base_models import InputFormat  # type: ignore
+        return DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}), opts
+    return build_rapidocr_pipeline(
+        device=device,
+        text_score=text_score,
+        images_scale=images_scale,
+        formula_enrichment=formula_enrichment,
+        code_enrichment=code_enrichment,
+    )
 
 
 def convert_dir(
@@ -267,8 +242,11 @@ def convert_dir(
             _export(conv, output_dir, normalize_output=normalize_output)
             # Per-page metrics and per-page console logs
             try:
-                per_page = _compute_per_page_metrics(conv)
-                pp = output_dir / f"{Path(src).stem}.per_page.metrics.json"
+                per_page = compute_per_page_metrics(conv)
+                # Harmonize with GlossExtract: write to sibling json/metrics/
+                metrics_dir = output_dir.parent / "json" / "metrics"
+                metrics_dir.mkdir(parents=True, exist_ok=True)
+                pp = metrics_dir / f"{Path(src).stem}.per_page.metrics.json"
                 import json as _json
                 pp.write_text(_json.dumps(per_page, ensure_ascii=False, indent=2), encoding="utf-8")
                 for row in per_page.get("pages", []):
@@ -308,17 +286,35 @@ def _export(conv: ConversionResult, out_dir: Path, *, normalize_output: bool) ->
     doc = conv.document
     p = Path(conv.input.file)
     md_path = out_dir / f"{p.stem}.md"
-    json_path = out_dir / f"{p.stem}.json"
-    metrics_path = out_dir / f"{p.stem}.metrics.json"
+    # Write Docling JSON under sibling json/ directory (no JSON in markdown dir)
+    json_dir = out_dir.parent / "json"
+    json_dir.mkdir(parents=True, exist_ok=True)
+    json_path = json_dir / f"{p.stem}.docling.json"
+    # Harmonize metrics location with GlossExtract: sibling json/metrics/
+    metrics_dir = out_dir.parent / "json" / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = metrics_dir / f"{p.stem}.metrics.json"
 
     md = doc.export_to_markdown()
-    dd = doc.export_to_dict()
     if normalize_output:
         md = _normalize_text(md)
-        dd = _normalize_obj(dd)
     md_path.write_text(md, encoding="utf-8")
-    import json as _json
-    json_path.write_text(_json.dumps(dd, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Export DoclingDocument JSON via helper (compressed by default)
+    try:
+        from .json_io import export_docling_json  # type: ignore
+        # Attach minimal meta for provenance
+        meta = {"source_pdf_relpath": str(p)}
+        export_docling_json(doc, json_path, compress="zstd", meta=meta)  # type: ignore[arg-type]
+    except Exception:
+        # Fallback: write plain JSON under json/ without compression
+        try:
+            import json as _json
+            dd = doc.export_to_dict()
+            if normalize_output:
+                dd = _normalize_obj(dd)
+            json_path.write_text(_json.dumps(dd, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     # Timings if present
     try:

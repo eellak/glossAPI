@@ -105,6 +105,8 @@ class GlossExtract:
         # Phase-1 helpers: toggle JSON export and formula index emission
         self.export_doc_json: bool = False
         self.emit_formula_index: bool = False
+        # Track last extractor configuration for reuse decisions
+        self._last_extractor_cfg = None
 
     def _supports_native_timeout(self) -> str | None:
         """Return the timeout kwarg name if supported by Docling, else None."""
@@ -186,6 +188,77 @@ class GlossExtract:
                 num_threads=threads, device=AcceleratorDevice.AUTO
             )
 
+    def _current_device_str(self) -> str:
+        try:
+            dev = getattr(self.pipeline_options, "accelerator_options", None)
+            dv = getattr(dev, "device", None)
+            return str(dv)
+        except Exception:
+            return ""
+
+    def _cfg_signature(
+        self,
+        *,
+        enable_ocr: bool,
+        force_full_page_ocr: bool,
+        text_score: float,
+        images_scale: float,
+        formula_enrichment: bool,
+        code_enrichment: bool,
+        use_cls: bool,
+        ocr_langs: list[str] | None,
+        profile_timings: bool,
+    ) -> tuple:
+        langs = tuple((ocr_langs or ["el", "en"]))
+        return (
+            self._current_device_str(),
+            bool(enable_ocr), bool(force_full_page_ocr), float(text_score), float(images_scale),
+            bool(formula_enrichment), bool(code_enrichment), bool(use_cls), bool(profile_timings), langs,
+        )
+
+    def ensure_extractor(
+        self,
+        *,
+        enable_ocr: bool = False,
+        force_full_page_ocr: bool = False,
+        text_score: float = 0.45,
+        images_scale: float = 1.25,
+        formula_enrichment: bool = False,
+        code_enrichment: bool = False,
+        use_cls: bool = False,
+        ocr_langs: list[str] | None = None,
+        profile_timings: bool = True,
+    ):
+        """Ensure a converter exists; rebuild only when configuration changes."""
+        sig = self._cfg_signature(
+            enable_ocr=enable_ocr,
+            force_full_page_ocr=force_full_page_ocr,
+            text_score=text_score,
+            images_scale=images_scale,
+            formula_enrichment=formula_enrichment,
+            code_enrichment=code_enrichment,
+            use_cls=use_cls,
+            ocr_langs=ocr_langs,
+            profile_timings=profile_timings,
+        )
+        if getattr(self, "converter", None) is not None and self._last_extractor_cfg == sig:
+            try:
+                self._log.info("Reusing existing Docling converter (config unchanged)")
+            except Exception:
+                pass
+            return
+        return self.create_extractor(
+            enable_ocr=enable_ocr,
+            force_full_page_ocr=force_full_page_ocr,
+            text_score=text_score,
+            images_scale=images_scale,
+            formula_enrichment=formula_enrichment,
+            code_enrichment=code_enrichment,
+            use_cls=use_cls,
+            ocr_langs=ocr_langs,
+            profile_timings=profile_timings,
+        )
+
     def create_extractor(
         self,
         *,
@@ -199,40 +272,12 @@ class GlossExtract:
         ocr_langs: list[str] | None = None,
         profile_timings: bool = True,
     ):
-        """Create a document converter with configured options and RapidOCR (ONNX).
+        """Create a document converter with configured options using the canonical builder.
 
-        Parameters control OCR and enrichment. Models and keys are resolved from
-        packaged assets (or via env override) using resolve_packaged_onnx_and_keys().
+        Delegates PDF pipeline construction to `glossapi._pipeline.build_rapidocr_pipeline`
+        to avoid duplicated provider checks and option wiring. Falls back to the legacy
+        inline path if the canonical builder is unavailable.
         """
-        # Device-aware preflight: only enforce CUDA providers when the chosen device is CUDA
-        want_cuda = False
-        try:
-            dev = getattr(self.pipeline_options, "accelerator_options", None)
-            dv = getattr(dev, "device", None)
-            if isinstance(dv, str):
-                want_cuda = dv.lower().startswith("cuda")
-            else:
-                from docling.datamodel.pipeline_options import AcceleratorDevice  # type: ignore
-                want_cuda = dv == AcceleratorDevice.CUDA
-        except Exception:
-            want_cuda = False
-
-        if enable_ocr and want_cuda:
-            try:
-                import onnxruntime as _ort  # type: ignore
-                _providers = _ort.get_available_providers()
-                if "CUDAExecutionProvider" not in _providers:
-                    raise RuntimeError(f"CUDAExecutionProvider not available in onnxruntime providers={_providers}")
-            except Exception as e:
-                raise RuntimeError(f"onnxruntime-gpu not available or misconfigured: {e}")
-        if formula_enrichment and want_cuda:
-            try:
-                import torch  # type: ignore
-                if not torch.cuda.is_available():
-                    raise RuntimeError("Torch CUDA not available but formula enrichment requested.")
-            except Exception as e:
-                raise RuntimeError(f"Torch CUDA preflight failed: {e}")
-
         # Enable/disable Docling pipeline timings collection (for benchmarks)
         try:
             from docling.datamodel.settings import settings as _settings  # type: ignore
@@ -240,92 +285,151 @@ class GlossExtract:
         except Exception:
             pass
 
-        # Record the PDF backend that will be used so we can write it to parquet metadata
-        # Currently we use Docling v2 backend which corresponds to the "vl_parse_2" engine.
+        # Record the PDF backend name for provenance
         self.pdf_backend_name = "vl_parse_2"
-        # Attach OCR and enrichment settings
+
+        # Best-effort Torch preflight only if Phase‑1 is asked to do enrichment
         try:
-            # Default behavior: no OCR unless explicitly enabled by caller
-            self.pipeline_options.do_ocr = bool(enable_ocr)
-            self.pipeline_options.do_formula_enrichment = bool(formula_enrichment)
-            self.pipeline_options.do_code_enrichment = bool(code_enrichment)
-            # Best-effort image scaling for better detection on thin glyphs
-            try:
-                setattr(self.pipeline_options, "images_scale", images_scale)
-            except Exception:
-                pass
-        except Exception:
-            pass
+            if formula_enrichment:
+                import torch  # type: ignore
+                if hasattr(torch, "cuda") and isinstance(getattr(self, "pipeline_options", None), PdfPipelineOptions):
+                    # If device is CUDA but torch isn’t available on CUDA, surface a clear error
+                    dev = getattr(self.pipeline_options, "accelerator_options", None)
+                    dv = getattr(dev, "device", None)
+                    if (isinstance(dv, str) and dv.lower().startswith("cuda")) and not torch.cuda.is_available():
+                        raise RuntimeError("Torch CUDA not available but formula enrichment requested.")
+        except Exception as e:
+            raise RuntimeError(f"Torch CUDA preflight failed: {e}")
 
-        # Resolve ONNX and keys and configure RapidOCR options
-        if enable_ocr:
-            r = resolve_packaged_onnx_and_keys()
-            if not (r.det and r.rec and r.cls and r.keys):
-                raise FileNotFoundError(
-                    "RapidOCR ONNX models/keys not found. Ensure models exist under glossapi.models/rapidocr or set GLOSSAPI_RAPIDOCR_ONNX_DIR."
-                )
-            langs = ocr_langs or ["el", "en"]
-            ocr_opts = RapidOcrOptions(
-                backend="onnxruntime",
-                lang=langs,
-                force_full_page_ocr=bool(force_full_page_ocr),
-                use_det=True,
-                use_cls=bool(use_cls),
-                use_rec=True,
+        # Build PDF pipeline via the canonical builder (preferred)
+        opts = None
+        try:
+            from ._pipeline import build_rapidocr_pipeline  # type: ignore
+            device_str = self._current_device_str() or "cuda:0"
+            engine, opts = build_rapidocr_pipeline(
+                device=device_str,
                 text_score=float(text_score),
-                det_model_path=r.det,
-                rec_model_path=r.rec,
-                cls_model_path=r.cls,
-                print_verbose=False,
+                images_scale=float(images_scale),
+                formula_enrichment=bool(formula_enrichment),
+                code_enrichment=bool(code_enrichment),
             )
-            ocr_opts.rec_keys_path = r.keys
-            self.pipeline_options.ocr_options = ocr_opts
-
-            # Timing profile is controlled by profile_timings flag above
-
-            # Log OCR configuration (fine-grained visibility)
+            # Apply OCR toggles on the returned options
             try:
-                import os as _os
-                self._log.info(
-                    "OCR enabled: backend=%s forced=%s langs=%s text_score=%.2f det=%s rec=%s cls=%s keys=%s",
-                    ocr_opts.backend,
-                    ocr_opts.force_full_page_ocr,
-                    ",".join(ocr_opts.lang),
-                    float(ocr_opts.text_score or 0.0),
-                    _os.path.basename(r.det) if r.det else None,
-                    _os.path.basename(r.rec) if r.rec else None,
-                    _os.path.basename(r.cls) if r.cls else None,
-                    _os.path.basename(r.keys) if r.keys else None,
-                )
+                if hasattr(opts, "ocr_options") and getattr(opts, "ocr_options", None) is not None:
+                    if use_cls is not None:
+                        setattr(opts.ocr_options, "use_cls", bool(use_cls))  # type: ignore[attr-defined]
+                    if ocr_langs:
+                        setattr(opts.ocr_options, "lang", list(ocr_langs))  # type: ignore[attr-defined]
+                    if force_full_page_ocr is not None:
+                        setattr(opts.ocr_options, "force_full_page_ocr", bool(force_full_page_ocr))  # type: ignore[attr-defined]
             except Exception:
                 pass
-        self.converter = DocumentConverter(
-            allowed_formats=[
-                InputFormat.PDF,
-                InputFormat.DOCX,  # .docx (Office Open XML)
-                # Note: Old .doc format (pre-2007) is not supported by Docling
-                InputFormat.XML_JATS,
-                InputFormat.HTML,
-                InputFormat.PPTX,
-                InputFormat.CSV,
-                InputFormat.MD,
-            ],  # whitelist formats, non-matching files are ignored
-            format_options={
-                InputFormat.PDF: PdfFormatOption(
-                    pipeline_options=self.pipeline_options,
-                    pipeline_cls=StandardPdfPipeline,
-                    backend=DoclingParseV2DocumentBackend
-                ),
-                InputFormat.DOCX: WordFormatOption(
-                    pipeline_cls=SimplePipeline
-                ),
-                InputFormat.XML_JATS: XMLJatsFormatOption(),
-                InputFormat.HTML: HTMLFormatOption(),
-                InputFormat.PPTX: PowerpointFormatOption(),
-                InputFormat.CSV: CsvFormatOption(),
-                InputFormat.MD: MarkdownFormatOption(),
-            }
-        )
+            # Ensure images_scale on the options (builder already attempts this)
+            try:
+                setattr(opts, "images_scale", float(images_scale))
+            except Exception:
+                pass
+
+            # Create a multi-format DocumentConverter using the built PDF options
+            self.converter = DocumentConverter(
+                allowed_formats=[
+                    InputFormat.PDF,
+                    InputFormat.DOCX,
+                    InputFormat.XML_JATS,
+                    InputFormat.HTML,
+                    InputFormat.PPTX,
+                    InputFormat.CSV,
+                    InputFormat.MD,
+                ],
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(
+                        pipeline_options=opts,
+                        pipeline_cls=StandardPdfPipeline,
+                        backend=DoclingParseV2DocumentBackend,
+                    ),
+                    InputFormat.DOCX: WordFormatOption(pipeline_cls=SimplePipeline),
+                    InputFormat.XML_JATS: XMLJatsFormatOption(),
+                    InputFormat.HTML: HTMLFormatOption(),
+                    InputFormat.PPTX: PowerpointFormatOption(),
+                    InputFormat.CSV: CsvFormatOption(),
+                    InputFormat.MD: MarkdownFormatOption(),
+                },
+            )
+        except Exception:
+            # Fallback to legacy inline configuration path
+            if enable_ocr:
+                r = resolve_packaged_onnx_and_keys()
+                if not (r.det and r.rec and r.cls and r.keys):
+                    raise FileNotFoundError(
+                        "RapidOCR ONNX models/keys not found. Ensure models exist under glossapi.models/rapidocr or set GLOSSAPI_RAPIDOCR_ONNX_DIR."
+                    )
+                langs = ocr_langs or ["el", "en"]
+                ocr_opts = RapidOcrOptions(
+                    backend="onnxruntime",
+                    lang=langs,
+                    force_full_page_ocr=bool(force_full_page_ocr),
+                    use_det=True,
+                    use_cls=bool(use_cls),
+                    use_rec=True,
+                    text_score=float(text_score),
+                    det_model_path=r.det,
+                    rec_model_path=r.rec,
+                    cls_model_path=r.cls,
+                    print_verbose=False,
+                )
+                ocr_opts.rec_keys_path = r.keys
+                self.pipeline_options.ocr_options = ocr_opts
+            # Attach core toggles to existing pipeline_options
+            try:
+                self.pipeline_options.do_ocr = bool(enable_ocr)
+                self.pipeline_options.do_formula_enrichment = bool(formula_enrichment)
+                self.pipeline_options.do_code_enrichment = bool(code_enrichment)
+                try:
+                    setattr(self.pipeline_options, "images_scale", float(images_scale))
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            self.converter = DocumentConverter(
+                allowed_formats=[
+                    InputFormat.PDF,
+                    InputFormat.DOCX,
+                    InputFormat.XML_JATS,
+                    InputFormat.HTML,
+                    InputFormat.PPTX,
+                    InputFormat.CSV,
+                    InputFormat.MD,
+                ],
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(
+                        pipeline_options=self.pipeline_options,
+                        pipeline_cls=StandardPdfPipeline,
+                        backend=DoclingParseV2DocumentBackend,
+                    ),
+                    InputFormat.DOCX: WordFormatOption(pipeline_cls=SimplePipeline),
+                    InputFormat.XML_JATS: XMLJatsFormatOption(),
+                    InputFormat.HTML: HTMLFormatOption(),
+                    InputFormat.PPTX: PowerpointFormatOption(),
+                    InputFormat.CSV: CsvFormatOption(),
+                    InputFormat.MD: MarkdownFormatOption(),
+                },
+            )
+
+        # Record last configuration for reuse
+        try:
+            self._last_extractor_cfg = self._cfg_signature(
+                enable_ocr=enable_ocr,
+                force_full_page_ocr=force_full_page_ocr,
+                text_score=text_score,
+                images_scale=images_scale,
+                formula_enrichment=formula_enrichment,
+                code_enrichment=code_enrichment,
+                use_cls=use_cls,
+                ocr_langs=ocr_langs,
+                profile_timings=profile_timings,
+            )
+        except Exception:
+            self._last_extractor_cfg = None
     
     def _load_processing_state(self, state_file: Path) -> Dict[str, Set[str]]:
         """
@@ -1144,13 +1248,17 @@ class GlossExtract:
                             "p90_sec": float(times[int(round((len(times)-1)*0.90))]) if times else 0.0,
                             "times_sec": times,
                         }
-                    mpath = output_dir / f"{doc_filename}.metrics.json"
+                    # Write metrics under the JSON artifacts tree for better separation
+                    json_dir = output_dir.parent / "json"
+                    metrics_dir = json_dir / "metrics"
+                    metrics_dir.mkdir(parents=True, exist_ok=True)
+                    mpath = metrics_dir / f"{doc_filename}.metrics.json"
                     with mpath.open("w", encoding="utf-8") as fp:
                         fp.write(_json.dumps(metrics, ensure_ascii=False, indent=2))
                     # Per-page metrics
                     try:
                         per_page = self._compute_per_page_metrics(conv_res)
-                        pppath = output_dir / f"{doc_filename}.per_page.metrics.json"
+                        pppath = metrics_dir / f"{doc_filename}.per_page.metrics.json"
                         with pppath.open("w", encoding="utf-8") as fp:
                             fp.write(_json.dumps(per_page, ensure_ascii=False, indent=2))
                         # Emit concise per-page log line
@@ -1300,98 +1408,9 @@ class GlossExtract:
             return 0
 
     def _compute_per_page_metrics(self, conv_res: ConversionResult):
+        # Delegate to the shared helper
         try:
-            doc = conv_res.document
+            from .metrics import compute_per_page_metrics  # type: ignore
+            return compute_per_page_metrics(conv_res)
         except Exception:
             return {"pages": []}
-        try:
-            page_count = len(doc.pages)  # type: ignore[attr-defined]
-        except Exception:
-            page_count = 0
-        timings = {}
-        try:
-            for key, item in conv_res.timings.items():
-                times = list(item.times)
-                timings[key] = {
-                    "scope": str(getattr(getattr(item, 'scope', None), 'value', 'unknown')),
-                    "times": times,
-                    "total": float(sum(times)) if times else float(getattr(item, 'total', 0.0)),
-                }
-        except Exception:
-            pass
-        def _pt(k):
-            arr = timings.get(k, {}).get("times", []) or []
-            if page_count and len(arr) == page_count:
-                return [float(x) for x in arr]
-            return [float(x) for x in (arr + [0.0] * page_count)[:page_count]]
-        ocr = _pt("ocr")
-        parse = _pt("page_parse")
-        layout = _pt("layout")
-        table = _pt("table_structure")
-        fcnt = [0] * max(1, page_count)
-        fch = [0] * max(1, page_count)
-        ftr = [0] * max(1, page_count)
-        ftrc = [0] * max(1, page_count)
-        ccnt = [0] * max(1, page_count)
-        try:
-            as_dict = doc.export_to_dict()
-            import re as _re
-            _run_pat = _re.compile(r"\\\\\s*&(?P<ws>(?:\\quad|\\;|\\:|\\,|\\\\s|\s){200,})")
-            _ws_collapse = _re.compile(r"(?:(?:\\quad|\\;|\\:|\\,|\\\\s)|\s){2,}")
-            _CAP = 3000
-            def _sanitize(s: str):
-                dropped=0
-                m=_run_pat.search(s)
-                if m:
-                    s_new=s[:m.start('ws')]; dropped+=len(s)-len(s_new); s=s_new
-                if len(s)>_CAP:
-                    cut=s.rfind('\\\\',0,_CAP); cut = cut if cut>=0 else _CAP; dropped+=len(s)-cut; s=s[:cut]
-                s2=_ws_collapse.sub(' ', s)
-                return s2, dropped
-            def _walk(label, cnt, chars=False):
-                for node in as_dict.get("texts", []):
-                    if str(node.get("label")) != label:
-                        continue
-                    raw = str(node.get("text") or node.get("orig") or "")
-                    txt, dropped = _sanitize(raw) if label=='formula' else (raw,0)
-                    ch = len(txt)
-                    for prov in node.get("prov", []) or []:
-                        pno = int(prov.get("page_no") or 0)
-                        if 1 <= pno <= len(cnt):
-                            cnt[pno - 1] += 1
-                            if chars:
-                                fch[pno - 1] += ch
-                            if label=='formula' and dropped:
-                                ftr[pno - 1] += 1
-                                ftrc[pno - 1] += int(dropped)
-            _walk("formula", fcnt, True)
-            _walk("code", ccnt, False)
-        except Exception:
-            pass
-        try:
-            den_total = float(timings.get("doc_enrich", {}).get("total", 0.0))
-        except Exception:
-            den_total = 0.0
-        shares = [0.0] * max(1, page_count)
-        if den_total and page_count:
-            s = float(sum(fch)) or float(sum(fcnt)) or 0.0
-            if s > 0:
-                base = fch if sum(fch) > 0 else fcnt
-                shares = [den_total * (float(x) / s) for x in base]
-        rows = []
-        n = max(page_count, len(ocr), len(parse))
-        for i in range(n):
-            rows.append({
-                "page_no": i + 1,
-                "ocr_sec": float(ocr[i]) if i < len(ocr) else 0.0,
-                "parse_sec": float(parse[i]) if i < len(parse) else 0.0,
-                "layout_sec": float(layout[i]) if i < len(layout) else 0.0,
-                "table_sec": float(table[i]) if i < len(table) else 0.0,
-                "formula_count": int(fcnt[i]) if i < len(fcnt) else 0,
-                "formula_chars": int(fch[i]) if i < len(fch) else 0,
-                "formula_truncated": int(ftr[i]) if i < len(ftr) else 0,
-                "formula_truncated_chars": int(ftrc[i]) if i < len(ftrc) else 0,
-                "code_count": int(ccnt[i]) if i < len(ccnt) else 0,
-                "doc_enrich_share_sec": float(shares[i]) if i < len(shares) else 0.0,
-            })
-        return {"file": str(getattr(conv_res.input.file, 'name', 'unknown')), "page_count": int(page_count), "totals": {"doc_enrich_total_sec": den_total}, "pages": rows}

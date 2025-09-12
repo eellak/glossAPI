@@ -98,8 +98,21 @@ def attach_early_stop(code_formula_model: Any) -> bool:
     Controlled via env `GLOSSAPI_LATEX_EARLYSTOP` (default: enabled/1).
     Optional env: `GLOSSAPI_LATEX_MAX_NEW_TOKENS` to cap tokens.
     """
-    # Feature gate (default ON)
-    enabled = os.getenv("GLOSSAPI_LATEX_EARLYSTOP", "1").strip() not in {"0", "false", "no"}
+    # Feature gate (default ON) via centralized policy if available
+    try:
+        from .text_sanitize import load_latex_policy  # type: ignore
+        _policy = load_latex_policy()
+        enabled = bool(_policy.earlystop_enabled)
+        _repeat_gate = int(_policy.repeat_gate)
+        _max_chars = int(_policy.max_chars)
+        _stride = int(_policy.len_stride)
+        _max_new_tokens = int(_policy.max_new_tokens)
+    except Exception:
+        enabled = os.getenv("GLOSSAPI_LATEX_EARLYSTOP", "1").strip() not in {"0", "false", "no"}
+        _repeat_gate = _get_env_int("GLOSSAPI_LATEX_MAX_REPEAT", 50)
+        _max_chars = _get_env_int("GLOSSAPI_LATEX_MAX_CHARS", 3000)
+        _stride = _get_env_int("GLOSSAPI_LATEX_LEN_STRIDE", 16)
+        _max_new_tokens = _get_env_int("GLOSSAPI_LATEX_MAX_NEW_TOKENS", 0)
     if not enabled:
         return False
 
@@ -133,8 +146,43 @@ def attach_early_stop(code_formula_model: Any) -> bool:
     if target is None or not hasattr(target, "generate"):
         return False
 
-    stops = _build_stopping_criteria(tokenizer)
-    max_new_tokens = _get_env_int("GLOSSAPI_LATEX_MAX_NEW_TOKENS", 0)
+    # Build criteria using central values
+    def _build_from_values(tokenizer):
+        try:
+            from transformers import StoppingCriteria, StoppingCriteriaList  # type: ignore
+        except Exception:
+            return None
+        class StopOnRepeat(StoppingCriteria):  # type: ignore
+            def __init__(self, max_run: int = 50) -> None:
+                super().__init__(); self.max_run = int(max_run); self._last=None; self._run=0
+            def __call__(self, input_ids, scores, **kwargs):
+                try:
+                    tid = int(input_ids[0, -1]);
+                    if self._last is None or tid != self._last: self._run = 1
+                    else: self._run += 1
+                    self._last = tid
+                    return self._run > _repeat_gate
+                except Exception:
+                    return False
+        class StopOnLength(StoppingCriteria):  # type: ignore
+            def __init__(self, max_chars: int = 3000, stride: int = 16, tokenizer: Optional[Any] = None) -> None:
+                super().__init__(); self.max_chars=int(max_chars); self.stride=max(1,int(stride)); self.tokenizer=tokenizer
+            def __call__(self, input_ids, scores, **kwargs):
+                try:
+                    step = int(input_ids.shape[1])
+                    if (step % self.stride) != 0: return False
+                    if self.tokenizer is None: return False
+                    text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
+                    return len(text) >= _max_chars
+                except Exception:
+                    return False
+        try:
+            from transformers import StoppingCriteriaList  # type: ignore
+            return StoppingCriteriaList([StopOnRepeat(_repeat_gate), StopOnLength(_max_chars, _stride, tokenizer)])
+        except Exception:
+            return None
+
+    stops = _build_from_values(tokenizer)
 
     try:
         original_generate = target.generate  # type: ignore[attr-defined]
@@ -143,8 +191,8 @@ def attach_early_stop(code_formula_model: Any) -> bool:
             # Inject stopping criteria only if caller didn’t supply one
             if stops is not None and "stopping_criteria" not in kwargs:
                 kwargs["stopping_criteria"] = stops
-            if max_new_tokens and "max_new_tokens" not in kwargs:
-                kwargs["max_new_tokens"] = int(max_new_tokens)
+            if _max_new_tokens and "max_new_tokens" not in kwargs:
+                kwargs["max_new_tokens"] = int(_max_new_tokens)
             return original_generate(*args, **kwargs)
 
         setattr(target, "generate", wrapped_generate)
@@ -152,4 +200,3 @@ def attach_early_stop(code_formula_model: Any) -> bool:
         return True
     except Exception:
         return False
-

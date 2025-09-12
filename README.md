@@ -147,20 +147,39 @@ corpus.section()
 corpus.annotate()  # or corpus.annotate(annotation_type="chapter") For texts without TOC or bibliography
 ```
 
+## Documentation
+
+- Getting started, quickstart, and API reference live under `docs/`.
+  - Start here: docs/index.md
+  - Quickstart: docs/quickstart.md
+  - OCR + Math enrichment: docs/ocr_and_math_enhancement.md
+  - Corpus API: docs/api/corpus.md
+
 ## Folder Structure
 
 After running the pipeline, the following folder structure will be created:
 
 ```
 corpus/  # Your specified folder
-├── download_results # stores metadata file with annotation from previous processing steps
-├── downloads/  # Downloaded documents (if download() is used)
-├── markdown/    # Extracted text files in markdown format 
-├── sections/    # Contains the processed sections in parquet format
-│   ├── sections_for_annotation.parquet
+├── downloads/                     # Downloaded source files
+├── download_results/              # Parquet(s) with URL + processing metadata
+├── markdown/                      # Canonical Markdown outputs
+│   └── <stem>.md                  # Enriched Markdown (overwrites plain MD if Phase‑2 ran)
+├── json/                          # Docling + scheduling artifacts
+│   ├── <stem>.docling.json(.zst)  # DoclingDocument payload for Phase‑2
+│   ├── <stem>.formula_index.jsonl # FORMULA/CODE index for scheduling
+│   ├── <stem>.latex_map.jsonl     # Phase‑2 LaTeX/code recognition results
+│   └── metrics/                   # Timing & page metrics
+│       ├── <stem>.metrics.json
+│       └── <stem>.per_page.metrics.json
+├── sections/
+│   └── sections_for_annotation.parquet
 ├── classified_sections.parquet    # Intermediate processing form
-├── fully_annotated_sections.parquet  # Final processing form with section predictions
+└── fully_annotated_sections.parquet  # Final processing form with section predictions
 ```
+
+- Markdown is the canonical output and, when Phase‑2 is used, the enriched MD replaces the plain MD.
+- JSON artifacts (Docling payload, indices, and LaTeX maps) live under `json/`. Metrics are under `json/metrics/` to keep Markdown clean.
 
 The `fully_annotated_sections.parquet` file contains the final processing form. The `predicted_sections` column shows the type of section: 'π' (table of contents), 'β' (bibliography), 'ε.σ.' (introductory note), 'κ' (main text), or 'a' (appendix). For files without table of contents or bibliography, the annotation will be "άλλο" (other).
 

@@ -157,26 +157,8 @@ def enrich_from_docling_json(
     batch: list[ItemAndImageEnrichmentElement] = []
     binfo: list[Tuple[int, int, int]] = []  # (page_no, per_page_ix, dpi)
 
-    def _accept_score(latex: str) -> float:
-        try:
-            if len(latex) > 600:
-                return 0.0
-            bal = 0
-            for ch in latex:
-                if ch == '{':
-                    bal += 1
-                elif ch == '}':
-                    bal -= 1
-                if bal < 0:
-                    return 0.0
-            if bal != 0:
-                return 0.0
-            bad_toks = ["\\includegraphics", "\\write18"]
-            if any(tok in latex for tok in bad_toks):
-                return 0.0
-            return 1.0
-        except Exception:
-            return 0.0
+    # Centralized accept heuristic
+    from .text_sanitize import accept_latex, load_latex_policy, sanitize_latex, tail_run  # type: ignore
 
     def _sanitize_latex(text: str, *, max_len: int = 3000, max_tail_repeats: int = 50) -> tuple[str, dict]:
         """Apply lightweight, efficient guards to latex text.
@@ -231,10 +213,7 @@ def enrich_from_docling_json(
             return default
 
     # Post-processing policy: apply only on failed cases by default
-    POST_ONLY_FAILED = os.getenv("GLOSSAPI_LATEX_POST_ONLY_FAILED", "1").strip() not in {"0", "false", "no"}
-    POST_REPEAT_GATE = _env_int("GLOSSAPI_LATEX_POST_REPEAT_GATE", 50)
-    POST_WINDDOWN = _env_int("GLOSSAPI_LATEX_POST_WINDDOWN", 12)
-    POST_MAX_CHARS = _env_int("GLOSSAPI_LATEX_POST_MAX_CHARS", 3000)
+    policy = load_latex_policy()
 
     def _tail_run(s: str) -> int:
         toks = s.split()
@@ -268,24 +247,25 @@ def enrich_from_docling_json(
             _engine_ver = ""
         for (page_no, ix, dpi_used), el in zip(binfo, batch):
             latex = getattr(el.item, 'text', '') or ''
-            # Determine if post-processing should be applied (only on failed cases)
-            sinfo = {"orig_len": len(latex), "truncated_by_repeat": False, "truncated_by_len": False, "tail_token": "", "tail_run": 0}
+            # Centralized post-processing policy
             do_post = True
-            if POST_ONLY_FAILED:
+            if policy.post_only_failed:
+                tr = 0
                 try:
-                    tr = _tail_run(latex)
+                    tr = tail_run(latex)
                 except Exception:
                     tr = 0
-                do_post = (tr > POST_REPEAT_GATE) or (len(latex) > POST_MAX_CHARS)
+                do_post = (tr > policy.post_repeat_gate) or (len(latex) > policy.post_max_chars)
+            sinfo = {"orig_len": len(latex), "truncated_by_repeat": False, "truncated_by_len": False, "tail_token": "", "tail_run": 0}
             if do_post:
-                sanitized, sinfo = _sanitize_latex(latex, max_len=int(POST_MAX_CHARS), max_tail_repeats=int(POST_WINDDOWN))
+                sanitized, sinfo = sanitize_latex(latex, policy)
                 if sanitized != latex:
                     try:
                         setattr(el.item, 'text', sanitized)
                     except Exception:
                         pass
                 latex = sanitized
-            ok = (_accept_score(latex) >= 1.0)
+            ok = (accept_latex(latex) >= 1.0)
             if ok:
                 accepted += 1
             row = {
