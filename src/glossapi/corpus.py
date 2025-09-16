@@ -6,6 +6,10 @@ import random
 import numpy as np
 from typing import Dict, Optional, Union, List, Any, Tuple
 import shutil
+import math
+import re
+import subprocess
+import sys
 
 from .gloss_section import GlossSection
 from .gloss_section_classifier import GlossSectionClassifier
@@ -55,6 +59,14 @@ class Corpus:
         # Setup module logger without forcing global configuration
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
+        try:
+            if not self.logger.handlers:
+                _handler = logging.StreamHandler()
+                _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s:%(name)s: %(message)s", "%H:%M:%S"))
+                self.logger.addHandler(_handler)
+            self.logger.propagate = False
+        except Exception:
+            pass
         
         # Verbose flag for detailed logging
         self.verbose = verbose
@@ -221,7 +233,6 @@ class Corpus:
             self.logger.info("Using compiled glossapi_rs_cleaner extension for fast cleaning")
         except ModuleNotFoundError:
             self.logger.warning("Rust extension glossapi_rs_cleaner missing; attempting in-place build via maturin …")
-            import subprocess, sys
             build_success = False
             try:
                 root_dir = Path(__file__).resolve().parents[3]  # project root containing `rust/`
@@ -258,21 +269,112 @@ class Corpus:
         scripts_to_keep = ["greek", "latin"]  # keep common alphabetic scripts; numbers/punctuation are added internally
         report_parquet_path = self.cleaned_markdown_dir.parent / "cleaning_report.parquet"
 
+        md_files = sorted(input_dir.glob("*.md"))
+        total_files = len(md_files)
+
         self.logger.info(
             "Invoking glossapi_rs_cleaner.run_complete_pipeline on %d markdown files…",
-            len(list(input_dir.glob("*.md"))),
+            total_files,
+        )
+
+        class _CleanerProgress:
+            def __init__(self, logger: logging.Logger, total: int) -> None:
+                self.logger = logger
+                self.total = total
+                self.processed: set[str] = set()
+                self.buffer = ""
+                if total > 0:
+                    step = max(1, math.ceil(total * 0.02))
+                else:
+                    step = 1
+                self.step = step
+                self.next_target = step
+                self.logged_full = False
+                self.last_message: Optional[str] = None
+
+            def write(self, text: str) -> int:
+                if not text:
+                    return 0
+                self.buffer += text
+                while "\n" in self.buffer:
+                    line, self.buffer = self.buffer.split("\n", 1)
+                    self._handle_line(line.strip())
+                return len(text)
+
+            def flush(self) -> None:  # pragma: no cover - required by IO interface
+                return
+
+            def handle_line(self, line: str) -> None:
+                self._handle_line(line.strip())
+
+            def _handle_line(self, line: str) -> None:
+                if not line:
+                    return
+                match = re.search(r"Processing file:\s*(.+)", line)
+                if match:
+                    path = match.group(1).strip()
+                    stem = Path(path).stem if path else None
+                    if stem and stem not in self.processed:
+                        self.processed.add(stem)
+                        self._log_progress()
+                    return
+                if "complete pipeline finished successfully" in line or "Parquet report written successfully" in line:
+                    self.last_message = line
+
+            def _log_progress(self) -> None:
+                if self.total <= 0:
+                    return
+                processed = len(self.processed)
+                while self.next_target <= self.total and processed >= self.next_target:
+                    percent = min(100, int(round(self.next_target * 100 / self.total)))
+                    self.logger.info(
+                        "Rust cleaning progress: %d%% (%d/%d)", percent, processed, self.total
+                    )
+                    if percent >= 100:
+                        self.logged_full = True
+                    self.next_target += self.step
+
+            def finalize(self) -> None:
+                if self.total == 0:
+                    self.logger.info("Rust cleaning progress: 100%% (0/0)")
+                elif not self.logged_full:
+                    processed = len(self.processed)
+                    self.logger.info(
+                        "Rust cleaning progress: 100%% (%d/%d)", processed, self.total
+                    )
+                if self.last_message:
+                    self.logger.debug(self.last_message)
+
+        progress = _CleanerProgress(self.logger, total_files)
+        cmd = (
+            "import glossapi_rs_cleaner\n"
+            f"glossapi_rs_cleaner.run_complete_pipeline({repr(str(input_dir))}, "
+            f"{repr(str(self.cleaned_markdown_dir))}, {repr(str(report_parquet_path))}, "
+            f"{repr(scripts_to_keep)}, {int(num_threads or os.cpu_count() or 4)})\n"
+        )
+
+        process = subprocess.Popen(
+            [sys.executable, "-c", cmd],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
         )
         try:
-            cleaner_mod.run_complete_pipeline(
-                str(input_dir),
-                str(self.cleaned_markdown_dir),
-                str(report_parquet_path),
-                scripts_to_keep,
-                int(num_threads or os.cpu_count() or 4),
-            )
-        except Exception as e:
-            self.logger.error("Rust cleaning pipeline failed: %s", e)
+            assert process.stdout is not None
+            for line in process.stdout:
+                progress.handle_line(line)
+            return_code = process.wait()
+        except Exception:
+            process.kill()
             raise
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
+            progress.finalize()
+
+        if return_code != 0:
+            raise RuntimeError("Rust cleaning pipeline failed")
 
         # ----- Parse metrics Parquet produced by Rust -----
         if report_parquet_path.exists():
@@ -347,7 +449,6 @@ class Corpus:
             except ModuleNotFoundError:
                 # Attempt in-place build like with cleaner
                 self.logger.warning("Rust extension glossapi_rs_noise missing; attempting in-place build via maturin …")
-                import subprocess, sys
                 try:
                     root_dir = Path(__file__).resolve().parents[3]
                     manifest = root_dir / "rust" / "glossapi_rs_noise" / "Cargo.toml"
@@ -659,6 +760,46 @@ class Corpus:
                 export_doc_json=bool(mode_norm == "ocr_bad_then_math"),
                 emit_formula_index=bool(mode_norm == "ocr_bad_then_math"),
             )
+            # Update metadata to reflect successful OCR reruns
+            try:
+                from glossapi.parquet_schema import ParquetSchema as _ParquetSchema
+
+                success_files: List[str] = []
+                for _fname in bad_files:
+                    stem = Path(_fname).stem
+                    if (self.markdown_dir / f"{stem}.md").exists():
+                        success_files.append(_fname)
+
+                if success_files:
+                    parquet_schema = _ParquetSchema({"url_column": self.url_column})
+                    parquet_path = parquet_schema.find_metadata_parquet(self.output_dir)
+                    if parquet_path and Path(parquet_path).exists():
+                        import pandas as _pd
+
+                        df_meta = _pd.read_parquet(parquet_path)
+                        if "filename" in df_meta.columns:
+                            if "filter" not in df_meta.columns:
+                                df_meta["filter"] = "ok"
+                            if "ocr_success" not in df_meta.columns:
+                                df_meta["ocr_success"] = False
+                            for _fname in success_files:
+                                mask = df_meta["filename"].astype(str) == str(_fname)
+                                if mask.any():
+                                    df_meta.loc[mask, "filter"] = "ok"
+                                    df_meta.loc[mask, "ocr_success"] = True
+                            df_meta.to_parquet(parquet_path, index=False)
+                    # Keep sectioner in sync with newly recovered files
+                    try:
+                        stems = [Path(_f).stem for _f in success_files]
+                        if hasattr(self, "good_files"):
+                            for _stem in stems:
+                                if _stem not in getattr(self, "good_files", []):
+                                    self.good_files.append(_stem)
+                    except Exception:
+                        pass
+            except Exception as _e:
+                self.logger.warning("Failed to update OCR success metadata: %s", _e)
+
         if mode_norm == "ocr_bad_then_math":
             try:
                 stems = [Path(f).stem for f in bad_files]

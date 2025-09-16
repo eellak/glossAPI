@@ -34,6 +34,7 @@ import inspect
 
 import ftfy
 import logging
+from contextlib import redirect_stdout
 import os
 import pickle
 import signal
@@ -100,6 +101,33 @@ class GlossExtract:
         )
         # Per-instance logger
         self._log = logging.getLogger(__name__)
+        try:
+            if not self._log.handlers:
+                _handler = logging.StreamHandler()
+                _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s:%(name)s: %(message)s", "%H:%M:%S"))
+                self._log.addHandler(_handler)
+            self._log.propagate = False
+        except Exception:
+            pass
+        try:
+            logging.getLogger("docling").setLevel(logging.WARNING)
+            logging.getLogger("docling.document_converter").setLevel(logging.WARNING)
+            logging.getLogger("docling.utils").setLevel(logging.WARNING)
+            class _DoclingFilter(logging.Filter):
+                def filter(self, record: logging.LogRecord) -> bool:
+                    msg = record.getMessage()
+                    if record.name == "root" and (
+                        "Using engine_name" in msg or
+                        "Accelerator device" in msg or
+                        msg.startswith("Using /")
+                    ):
+                        return False
+                    return True
+            root_logger = logging.getLogger()
+            if not any(isinstance(f, _DoclingFilter) for f in root_logger.filters):
+                root_logger.addFilter(_DoclingFilter())
+        except Exception:
+            pass
         # Trim auxiliary I/O and profiling when running benchmarks
         self.benchmark_mode: bool = False
         # Phase-1 helpers: toggle JSON export and formula index emission
@@ -1270,15 +1298,18 @@ class GlossExtract:
                         pppath = metrics_dir / f"{doc_filename}.per_page.metrics.json"
                         with pppath.open("w", encoding="utf-8") as fp:
                             fp.write(_json.dumps(per_page, ensure_ascii=False, indent=2))
-                        # Emit concise per-page log line
+                        # Emit concise per-page log line (debug only)
                         for row in per_page.get("pages", []):
-                            self._log.info("[PAGE] %s p%d: parse=%.3fs ocr=%.3fs formulas=%d code=%d",
-                                           getattr(conv_res.input.file, 'name', doc_filename),
-                                           int(row.get("page_no", 0)),
-                                           float(row.get("parse_sec", 0.0)),
-                                           float(row.get("ocr_sec", 0.0)),
-                                           int(row.get("formula_count", 0)),
-                                           int(row.get("code_count", 0)))
+                            if self._log.isEnabledFor(logging.DEBUG):
+                                self._log.debug(
+                                    "[PAGE] %s p%d: parse=%.3fs ocr=%.3fs formulas=%d code=%d",
+                                    getattr(conv_res.input.file, 'name', doc_filename),
+                                    int(row.get("page_no", 0)),
+                                    float(row.get("parse_sec", 0.0)),
+                                    float(row.get("ocr_sec", 0.0)),
+                                    int(row.get("formula_count", 0)),
+                                    int(row.get("code_count", 0)),
+                                )
                     except Exception as _e:
                         self._log.warning("Failed to compute per-page metrics for %s: %s", doc_filename, _e)
                 except Exception as _e:

@@ -260,18 +260,49 @@ class ParquetSchema:
         
         # If any download_results parquets exist, check them first
         search_order = download_files + [f for f in parquet_files if f not in download_files]
-        # Examine files in this preferred order
+        metrics_signature = {"filter", "mojibake_badness_score", "greek_badness_score"}
+        downloader_signature = {"download_success", "download_error", "filename_base"}
+
+        # First pass: prefer metrics parquet if present anywhere in the tree
         for file_path in search_order:
             try:
                 df = pd.read_parquet(file_path)
                 columns = df.columns.tolist()
-                
+                if 'section' in columns:
+                    continue
+                if metrics_signature.issubset(set(columns)):
+                    logger.info(f"Found metrics parquet with cleaner columns: {file_path}")
+                    return file_path
+            except Exception as e:
+                logger.debug(f"Error reading parquet {file_path}: {e}")
+                continue
+
+        # Second pass: look for downloader metadata parquet
+        for file_path in search_order:
+            try:
+                df = pd.read_parquet(file_path)
+                columns = df.columns.tolist()
+
                 # Skip section-level parquets – identified by a 'section' column
                 if 'section' in columns:
                     logger.debug(f"Skipping section-level parquet: {file_path}")
                     continue
-                    
-                # For metadata parquets - they don't have title/header but have filename
+
+                col_set = set(columns)
+
+                if downloader_signature.issubset(col_set):
+                    if require_url_column and self.url_column not in col_set:
+                        logger.warning(
+                            "Downloader parquet missing required %s column: %s",
+                            self.url_column,
+                            file_path,
+                        )
+                        logger.debug(f"Available columns: {columns}")
+                        continue
+                    logger.info(f"Found downloader metadata parquet: {file_path}")
+                    return file_path
+
+                # For other metadata parquets - they don't have title/header but have filename
                 if 'filename' in columns:
                     if require_url_column:
                         # Check if required URL column exists
