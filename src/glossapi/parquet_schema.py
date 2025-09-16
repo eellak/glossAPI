@@ -245,7 +245,10 @@ class ParquetSchema:
             return None
             
         # Get all parquet files in the directory
-        parquet_files = list(directory.glob('**/*.parquet'))
+        parquet_files = [
+            f for f in directory.glob('**/*.parquet')
+            if '.partial.' not in f.name and not f.name.endswith('.partial.parquet')
+        ]
         if not parquet_files:
             logger.debug(f"No parquet files found in {directory}")
             return None

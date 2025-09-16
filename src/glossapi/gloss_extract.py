@@ -313,6 +313,11 @@ class GlossExtract:
                 formula_enrichment=bool(formula_enrichment),
                 code_enrichment=bool(code_enrichment),
             )
+            # Ensure Phase‑1 OCR toggle obeys enable_ocr
+            try:
+                setattr(opts, "do_ocr", bool(enable_ocr))
+            except Exception:
+                pass
             # Apply OCR toggles on the returned options
             try:
                 if hasattr(opts, "ocr_options") and getattr(opts, "ocr_options", None) is not None:
@@ -799,6 +804,8 @@ class GlossExtract:
         chunk_size: Optional[int] = None,
         chunk_count: Optional[int] = None,
         chunk_manifest_path: Optional[Path] = None,
+        *,
+        no_partial_output: bool = False,
     ) -> None:
         """Write extraction metadata to sidecar (eliminate in-worker parquet writes)."""
         try:
@@ -832,6 +839,8 @@ class GlossExtract:
             data["extraction_backend"] = backend_name
             if status in ("timeout", "error", "failure"):
                 data["failure_mode"] = status
+            if no_partial_output:
+                data["no_partial_output"] = True
             import json as _json
             p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
@@ -1154,14 +1163,13 @@ class GlossExtract:
                 doc_filename = conv_res.input.file.stem
                 markdown_content = conv_res.document.export_to_markdown()
                 fixed_content = self._fix_greek_text(markdown_content)
-                
-                with (output_dir / f"{doc_filename}_partial.md").open("w", encoding='utf-8') as fp:
-                    fp.write(fixed_content)
+
+                note = "markdown suppressed" if fixed_content.strip() else "empty markdown"
                 try:
-                    self._log.info("[PARTIAL] %s", Path(conv_res.input.file).name)
+                    self._log.info("[PARTIAL] %s (%s)", Path(conv_res.input.file).name, note)
                 except Exception:
                     pass
-                    
+
                 partial_success_count += 1
                 # Update parquet metadata for partial standard extraction
                 try:
@@ -1171,6 +1179,7 @@ class GlossExtract:
                         status="partial",
                         extraction_mode="standard",
                         page_count=self._get_pdf_page_count(Path(conv_res.input.file)),
+                        no_partial_output=True,
                     )
                 except Exception as e:
                     self._log.warning(f"Failed to update extraction metadata for {doc_filename}: {e}")
@@ -1196,11 +1205,10 @@ class GlossExtract:
                         if doc_filename:
                             markdown_content = conv_res.document.export_to_markdown()
                             fixed_content = self._fix_greek_text(markdown_content)
-                            with (output_dir / f"{doc_filename}_partial.md").open("w", encoding='utf-8') as fp:
-                                fp.write(fixed_content)
+                            note = "markdown suppressed" if fixed_content.strip() else "empty markdown"
                             partial_success_count += 1
                             try:
-                                self._log.info("[FAIL->PARTIAL] %s", Path(conv_res.input.file).name)
+                                self._log.info("[FAIL->PARTIAL] %s (%s)", Path(conv_res.input.file).name, note)
                             except Exception:
                                 pass
                         else:
@@ -1217,6 +1225,7 @@ class GlossExtract:
                         status="failure",
                         extraction_mode="standard",
                         page_count=self._get_pdf_page_count(Path(conv_res.input.file)),
+                        no_partial_output=True,
                     )
                 except Exception as e:
                     self._log.warning(f"Failed to update extraction metadata for {Path(conv_res.input.file).name}: {e}")

@@ -3,8 +3,48 @@
 ## Installation
 
 ```bash
+export PYTHONNOUSERSITE=1  # prevent ~/.local packages from interfering
 pip install glossapi
 ```
+
+### Using conda on AWS SageMaker / Amazon Linux
+
+If you are on a SageMaker instance where `conda` is the primary environment
+manager, clone the repo and run the helper script to create a dedicated conda
+env:
+
+```bash
+git clone https://github.com/your-org/glossAPI.git
+cd glossAPI
+chmod +x scripts/setup_conda.sh
+./scripts/setup_conda.sh
+
+# Activate when needed
+conda activate glossapi
+```
+
+The script provisions Python 3.10, installs Rust/maturin, and installs GlossAPI
+in editable mode via `pip install -e .`, then builds the required Rust
+extensions. Continue with the GPU prerequisites below inside the activated
+environment.
+
+### Build Rust extensions (required)
+
+Whether you use a virtualenv or conda, run these commands once per environment
+after installing dependencies:
+
+```bash
+python -m pip install "maturin>=1.5,<2.0"
+python -m maturin develop --release --manifest-path rust/glossapi_rs_cleaner/Cargo.toml
+python -m maturin develop --release --manifest-path rust/glossapi_rs_noise/Cargo.toml
+```
+
+Without these extensions `Corpus.clean()` and noise metrics will not work.
+
+> **Note:** Remove any previously installed `glossapi_rs_cleaner`/
+> `glossapi_rs_noise` wheels from your user site (e.g. `pip uninstall -y
+> glossapi_rs_cleaner glossapi_rs_noise`) so the interpreter always imports the
+> versions built inside your environment.
 
 ### GPU prerequisites
 

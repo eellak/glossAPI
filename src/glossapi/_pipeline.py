@@ -15,6 +15,7 @@ from docling.datamodel.pipeline_options import (
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from ._rapidocr_paths import resolve_packaged_onnx_and_keys
+from .rapidocr_safe import SafeRapidOcrModel
 
 
 def build_rapidocr_pipeline(
@@ -94,7 +95,11 @@ def build_rapidocr_pipeline(
             from docling.pipelines.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
         except Exception:  # pragma: no cover
             from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
-        ocr_model = RapidOcrModel(True, None, ocr_opts, acc)  # type: ignore[arg-type]
+        try:
+            ocr_model = SafeRapidOcrModel(True, None, ocr_opts, acc)  # type: ignore[arg-type]
+        except Exception:  # pragma: no cover
+            # Fall back to the stock implementation if our wrapper misbehaves.
+            ocr_model = RapidOcrModel(True, None, ocr_opts, acc)  # type: ignore[arg-type]
         pipeline = StandardPdfPipeline(opts, ocr_model=ocr_model)  # type: ignore
         return pipeline, opts
     except Exception:
@@ -106,4 +111,3 @@ def build_rapidocr_pipeline(
 
 
 __all__ = ["build_rapidocr_pipeline"]
-

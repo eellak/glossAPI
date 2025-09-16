@@ -19,6 +19,8 @@ A library for processing texts in Greek and other languages, developed by [Open 
 ## Installation
 
 ```bash
+# Optional: block ~/.local packages from leaking into the environment
+export PYTHONNOUSERSITE=1
 pip install glossapi
 ```
 
@@ -97,12 +99,37 @@ python -m glossapi.docling_rapidocr_pipeline /path/to/pdfs /path/to/out --device
 # Outputs *.md, *.json, and metrics in the out folder
 ```
 
-Rust extensions (verify/build manually if needed)
-- Build dev extensions:
-  - Noise metrics (packaged by pyproject):
-    - `maturin develop --release --manifest-path rust/glossapi_rs_noise/Cargo.toml`
-  - Cleaner (used by `Corpus.clean()`; built on demand otherwise):
-    - `maturin develop --release --manifest-path rust/glossapi_rs_cleaner/Cargo.toml`
+### AWS SageMaker / Amazon Linux (conda-based)
+
+On SageMaker Notebook Instances or Amazon Linux environments where `conda` is
+the primary environment manager, you can bootstrap GlossAPI with the helper
+script:
+
+```bash
+cd /path/to/glossAPI
+chmod +x scripts/setup_conda.sh
+./scripts/setup_conda.sh
+
+# Later, when you need the environment:
+conda activate glossapi
+```
+
+The script creates a Python 3.10 conda environment named `glossapi`, installs
+Rust via `rustup`, ensures `maturin` is present, runs `pip install -e .`, and
+builds the required Rust extensions (`glossapi_rs_cleaner` and
+`glossapi_rs_noise`). Run the optional GPU OCR / Torch steps from above inside
+the activated conda environment as usual.
+
+Rust extensions (required for `Corpus.clean()` and noise metrics)
+- Build them once per environment right after installing dependencies:
+  - `python -m pip install "maturin>=1.5,<2.0"` (already done above)
+  - `python -m maturin develop --release --manifest-path rust/glossapi_rs_cleaner/Cargo.toml`
+  - `python -m maturin develop --release --manifest-path rust/glossapi_rs_noise/Cargo.toml`
+
+> **Tip:** If you previously installed the Rust wheels globally (e.g. via
+> `pip install --user glossapi_rs_cleaner`), uninstall them to avoid stale
+> modules taking precedence on `sys.path`:
+> `pip uninstall -y glossapi_rs_cleaner glossapi_rs_noise`
 
 ## Usage
 

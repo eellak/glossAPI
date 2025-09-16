@@ -486,6 +486,7 @@ class Corpus:
         self,
         *,
         force: bool = True,
+        mode: Optional[str] = None,
         device: Optional[str] = None,
         model_dir: Optional[Union[str, Path]] = None,
         max_pages: Optional[int] = None,
@@ -501,13 +502,40 @@ class Corpus:
         use_gpus: str = "single",
         devices: Optional[List[int]] = None,
     ) -> None:
-        """Compatibility shim: rerun extract with forced OCR.
+        """OCR and/or math enrichment with explicit mode control.
 
-        This method now delegates to extract() with force_ocr=True and skips
-        existing outputs (reprocess) to produce OCR-enforced markdown.
+        Parameters
+        - mode: one of
+          - 'ocr_bad': re‑OCR only documents flagged as bad by Rust cleaner (parquet 'filter' != 'ok').
+          - 'math_only': run math enrichment from Docling JSON (generate JSON without OCR when missing).
+          - 'ocr_bad_then_math': re‑OCR bad documents, then run math enrichment on those.
+          If not provided, falls back to legacy flags (force, math_enhance):
+            force and math_enhance -> 'ocr_bad_then_math';
+            force only -> 'ocr_bad';
+            math_enhance only -> 'math_only';
+            neither -> no‑op.
+        - math_enhance: kept for backward compatibility; prefer 'mode'.
         """
-        # Try to narrow to bad files if parquet is present; otherwise process PDFs
-        filenames: Optional[List[str]] = None
+        # Normalize mode from explicit value or legacy flags
+        mode_norm = None
+        if mode:
+            m = str(mode).strip().lower()
+            if m in {"ocr_bad", "math_only", "ocr_bad_then_math"}:
+                mode_norm = m
+            else:
+                self.logger.warning("Unknown mode '%s'; falling back to legacy flags", mode)
+        if mode_norm is None:
+            if force and math_enhance:
+                mode_norm = "ocr_bad_then_math"
+            elif force:
+                mode_norm = "ocr_bad"
+            elif math_enhance:
+                mode_norm = "math_only"
+            else:
+                self.logger.info("OCR: no operation requested (set mode='ocr_bad'|'math_only'|'ocr_bad_then_math')")
+                return
+        # Identify bad documents from parquet (Rust cleaner output)
+        bad_files: List[str] = []
         try:
             from glossapi.parquet_schema import ParquetSchema
             parquet_schema = ParquetSchema({"url_column": self.url_column})
@@ -516,94 +544,129 @@ class Corpus:
                 import pandas as _pd
                 df = _pd.read_parquet(parquet_path)
                 if "filename" in df.columns and "filter" in df.columns:
-                    filenames = df.loc[df["filter"] != "ok", "filename"].dropna().astype(str).tolist() or None
+                    bad_files = df.loc[df["filter"] != "ok", "filename"].dropna().astype(str).tolist()
         except Exception:
             pass
 
-        self.extract(
-            input_format="pdf",
-            num_threads=os.cpu_count() or 4,
-            accel_type="CUDA",
-            force_ocr=True,
-            formula_enrichment=False,
-            code_enrichment=False,
-            filenames=filenames,
-            skip_existing=False,
-            # When math enrichment is requested, ensure Phase‑1 JSON and index are emitted
-            export_doc_json=bool(math_enhance),
-            emit_formula_index=bool(math_enhance),
-        )
-        # Optional Phase‑2 enrichment from JSON immediately after OCR
-        if math_enhance:
-            try:
-                stems: List[str] = []
-                if filenames:
-                    stems = [Path(f).stem for f in filenames]
+        # Helper to run Phase‑2 enrichment over stems
+        def _run_math(stems: List[str]) -> None:
+            if not stems:
+                self.logger.info("No Docling JSON found for math enrichment.")
+                return
+            if str(use_gpus).lower() == "multi":
+                # Detect GPU devices
+                devs = devices or []
+                if not devs:
+                    try:
+                        import subprocess
+                        p = subprocess.run(["nvidia-smi", "-L"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+                        if p.returncode == 0 and p.stdout:
+                            for line in p.stdout.splitlines():
+                                if line.startswith("GPU "):
+                                    try:
+                                        idx = int(line.split(":", 1)[0].split()[1])
+                                        devs.append(idx)
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
+                    if not devs:
+                        try:
+                            import torch  # type: ignore
+                            if torch.cuda.is_available():
+                                devs = list(range(torch.cuda.device_count()))
+                        except Exception:
+                            pass
+                if not devs:
+                    self.logger.warning("Multi-GPU math requested but no GPUs detected; falling back to single GPU")
+                    self.formula_enrich_from_json(files=stems, device=(device or "cuda"), batch_size=int(math_batch_size), dpi_base=int(math_dpi_base), targets_by_stem=math_targets)
                 else:
+                    from multiprocessing import get_context
+                    ctx = get_context("spawn")
+                    work_q = ctx.Queue()
+                    for s in stems:
+                        work_q.put(s)
+                    procs = []
+                    for dev_id in devs:
+                        p = ctx.Process(target=_gpu_math_worker, args=(
+                            dev_id,
+                            str(self.input_dir),
+                            str(self.output_dir),
+                            work_q,
+                            int(math_batch_size),
+                            int(math_dpi_base),
+                            device or "cuda",
+                            math_targets or {},
+                        ))
+                        p.start()
+                        procs.append(p)
+                    for p in procs:
+                        p.join()
+                    return
+            # Single-GPU path
+            self.formula_enrich_from_json(files=stems, device=(device or "cuda"), batch_size=int(math_batch_size), dpi_base=int(math_dpi_base), targets_by_stem=math_targets)
+
+        # Branches
+        if mode_norm == "math_only":
+            if not math_enhance:
+                self.logger.info("OCR: force=False and math_enhance=False → nothing to do")
+                return
+            # Math-only: ensure JSON exists; if not, generate without OCR
+            json_dir = self.output_dir / "json"
+            stems: List[str] = []
+            if json_dir.exists():
+                stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
+            if not stems:
+                self.extract(
+                    input_format="pdf",
+                    num_threads=os.cpu_count() or 4,
+                    accel_type="CUDA",
+                    force_ocr=False,
+                    formula_enrichment=False,
+                    code_enrichment=False,
+                    filenames=None,
+                    skip_existing=False,
+                    export_doc_json=True,
+                    emit_formula_index=True,
+                )
+                if json_dir.exists():
+                    stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
+            _run_math(stems)
+            return
+
+        # 'ocr_bad' and 'ocr_bad_then_math' paths: OCR bad files first
+        if mode_norm in {"ocr_bad", "ocr_bad_then_math"} and not bad_files:
+            self.logger.info("OCR: no bad documents flagged by cleaner; skipping forced OCR")
+            if mode_norm == "ocr_bad_then_math":
+                json_dir = self.output_dir / "json"
+                stems = []
+                if json_dir.exists():
+                    stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
+                _run_math(stems)
+            return
+
+        if mode_norm in {"ocr_bad", "ocr_bad_then_math"}:
+            self.extract(
+                input_format="pdf",
+                num_threads=os.cpu_count() or 4,
+                accel_type="CUDA",
+                force_ocr=True,
+                formula_enrichment=False,
+                code_enrichment=False,
+                filenames=bad_files,
+                skip_existing=False,
+                # When math follows we need JSON; otherwise it's optional
+                export_doc_json=bool(mode_norm == "ocr_bad_then_math"),
+                emit_formula_index=bool(mode_norm == "ocr_bad_then_math"),
+            )
+        if mode_norm == "ocr_bad_then_math":
+            try:
+                stems = [Path(f).stem for f in bad_files]
+                if not stems:
                     json_dir = self.output_dir / "json"
                     if json_dir.exists():
                         stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
-                if not stems:
-                    self.logger.info("No Docling JSON found for math enrichment.")
-                    return
-                if str(use_gpus).lower() == "multi":
-                    # Detect GPU devices
-                    devs = devices
-                    if not devs:
-                        devs = []
-                        try:
-                            import subprocess
-                            p = subprocess.run(["nvidia-smi", "-L"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
-                            if p.returncode == 0 and p.stdout:
-                                for line in p.stdout.splitlines():
-                                    if line.startswith("GPU "):
-                                        try:
-                                            idx = int(line.split(":", 1)[0].split()[1])
-                                            devs.append(idx)
-                                        except Exception:
-                                            pass
-                        except Exception:
-                            pass
-                        if not devs:
-                            try:
-                                import torch  # type: ignore
-                                if torch.cuda.is_available():
-                                    devs = list(range(torch.cuda.device_count()))
-                            except Exception:
-                                pass
-                    if not devs:
-                        self.logger.warning("Multi-GPU math requested but no GPUs detected; falling back to single GPU")
-                    else:
-                        from multiprocessing import get_context
-                        ctx = get_context("spawn")
-                        work_q = ctx.Queue()
-                        for s in stems:
-                            work_q.put(s)
-                        procs = []
-                        for dev_id in devs:
-                            p = ctx.Process(target=_gpu_math_worker, args=(
-                                dev_id,
-                                str(self.input_dir),
-                                str(self.output_dir),
-                                work_q,
-                                int(math_batch_size),
-                                int(math_dpi_base),
-                                device or "cuda",
-                                math_targets or {},
-                            ))
-                            p.start()
-                            procs.append(p)
-                        for p in procs:
-                            p.join()
-                        return
-                # Single-GPU
-                self.formula_enrich_from_json(
-                    files=stems,
-                    device=(device or "cuda"),
-                    batch_size=int(math_batch_size),
-                    dpi_base=int(math_dpi_base),
-                    targets_by_stem=math_targets,
-                )
+                _run_math(stems)
             except Exception as _e:
                 self.logger.warning("Phase‑2 enrichment after OCR failed: %s", _e)
 
@@ -1650,6 +1713,34 @@ class Corpus:
 def _gpu_math_worker(device_id: int, in_dir: str, out_dir: str, work_q, batch_size: int, dpi_base: int, device: str, targets_map: Dict[str, List[Tuple[int, int]]]) -> None:
     import os as _os
     _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    # Worker GPU binding banner (prints by default; disable with GLOSSAPI_WORKER_LOG_VERBOSE=0)
+    try:
+        _verbose = str(_os.environ.get("GLOSSAPI_WORKER_LOG_VERBOSE", "1")).strip().lower()
+        if _verbose not in ("0", "false", "no", "off", ""):  # default on
+            try:
+                import torch as _torch  # type: ignore
+                _torch_name = _torch.cuda.get_device_name(0) if _torch.cuda.is_available() else "no-cuda"
+            except Exception:
+                _torch_name = "unknown"
+            try:
+                import onnxruntime as _ort  # type: ignore
+                _ort_prov = _ort.get_available_providers()
+            except Exception:
+                _ort_prov = []
+            try:
+                import subprocess as _sp
+                _nvsmi = _sp.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=2)
+                _phys = _nvsmi.stdout.splitlines()[0].strip() if _nvsmi.returncode == 0 and _nvsmi.stdout else ""
+            except Exception:
+                _phys = ""
+            try:
+                print(f"[MATH GPU{device_id}] bound: CUDA_VISIBLE_DEVICES={_os.environ.get('CUDA_VISIBLE_DEVICES','')} pid={_os.getpid()} torch={_torch_name} ORT={_ort_prov}")
+                if _phys:
+                    print(f"[MATH GPU{device_id}] physical: {_phys}")
+            except Exception:
+                pass
+    except Exception:
+        pass
     try:
         from glossapi import Corpus as _Corpus  # type: ignore
     except Exception:
@@ -1707,6 +1798,34 @@ def gpu_extract_worker_queue(
     # Bind this worker to a single GPU id
     _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
     _os.environ["GLOSSAPI_DOCLING_DEVICE"] = "cuda:0"
+    # Worker GPU binding banner (prints by default; disable with GLOSSAPI_WORKER_LOG_VERBOSE=0)
+    try:
+        _verbose = str(_os.environ.get("GLOSSAPI_WORKER_LOG_VERBOSE", "1")).strip().lower()
+        if _verbose not in ("0", "false", "no", "off", ""):  # default on
+            try:
+                import torch as _torch  # type: ignore
+                _torch_name = _torch.cuda.get_device_name(0) if _torch.cuda.is_available() else "no-cuda"
+            except Exception:
+                _torch_name = "unknown"
+            try:
+                import onnxruntime as _ort  # type: ignore
+                _ort_prov = _ort.get_available_providers()
+            except Exception:
+                _ort_prov = []
+            try:
+                import subprocess as _sp
+                _nvsmi = _sp.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=2)
+                _phys = _nvsmi.stdout.splitlines()[0].strip() if _nvsmi.returncode == 0 and _nvsmi.stdout else ""
+            except Exception:
+                _phys = ""
+            try:
+                print(f"[GPU{device_id}] bound: CUDA_VISIBLE_DEVICES={_os.environ.get('CUDA_VISIBLE_DEVICES','')} pid={_os.getpid()} torch={_torch_name} ORT={_ort_prov}")
+                if _phys:
+                    print(f"[GPU{device_id}] physical: {_phys}")
+            except Exception:
+                pass
+    except Exception:
+        pass
     # Light import of Corpus (prefer installed package; fallback to repo src)
     try:
         from glossapi import Corpus as _Corpus  # type: ignore
