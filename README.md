@@ -117,8 +117,9 @@ conda activate glossapi
 The script creates a Python 3.10 conda environment named `glossapi`, installs
 Rust via `rustup`, ensures `maturin` is present, runs `pip install -e .`, and
 builds the required Rust extensions (`glossapi_rs_cleaner` and
-`glossapi_rs_noise`). Run the optional GPU OCR / Torch steps from above inside
-the activated conda environment as usual.
+`glossapi_rs_noise`), then reapplies the Docling RapidOCR patch so the packaged
+ONNX keys are wired correctly. Run the optional GPU OCR / Torch steps from above
+inside the activated conda environment as usual.
 
 Rust extensions (required for `Corpus.clean()` and noise metrics)
 - Build them once per environment right after installing dependencies:
@@ -336,7 +337,7 @@ Notes
 
 ## Math Enrichment & JSON Intermediates
 
-JSON is an intermediate only when enhancements are in use. Keep extraction as PDF → MD for standard runs; enable JSON when you plan to enrich math/code.
+JSON is emitted by default during extraction (written to `json/<stem>.docling.json(.zst)`). Keep it if you plan to enrich math/code; set `export_doc_json=False` if you truly want to skip it.
 
 - Phase‑1 (layout, no OCR) — emit JSON only if enriching later:
 
@@ -346,8 +347,7 @@ c = Corpus('IN','OUT')
 c.extract(
     input_format='pdf',
     use_gpus='multi',           # or 'single'
-    export_doc_json=True,       # emit json/{stem}.docling.json(.zst)
-    emit_formula_index=True,    # emit json/{stem}.formula_index.jsonl
+    emit_formula_index=True,    # request json/{stem}.formula_index.jsonl alongside the default JSON
 )
 ```
 

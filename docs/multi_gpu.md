@@ -18,7 +18,7 @@ c.extract(input_format='pdf', use_gpus='multi', force_ocr=True)
 ```python
 from glossapi import Corpus
 c = Corpus('OUT', 'OUT')
-c.ocr(force=True, use_gpus='multi', math_enhance=True, math_batch_size=12)
+c.ocr(use_gpus='multi', math_batch_size=12)
 ```
 
 - Spawns math workers that bind to their GPU via `CUDA_VISIBLE_DEVICES`. Formula decoding runs on `cuda:0` relative to each worker.

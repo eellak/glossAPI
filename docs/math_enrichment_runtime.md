@@ -30,13 +30,13 @@ Notes
 
 ## Integrated Pipeline
 
-Emit JSON only when enhancements are used
+Docling JSON now writes during extraction (disable with `export_doc_json=False` if you want to skip it)
 
 ```python
 from glossapi import Corpus
 c = Corpus('IN','OUT')
-# Phase‑1 (layout only); enable JSON export when you plan to enrich later
-c.extract(input_format='pdf', use_gpus='multi', export_doc_json=True, emit_formula_index=True)
+# Phase‑1 (layout only); request the index when you plan to enrich later
+c.extract(input_format='pdf', use_gpus='multi', emit_formula_index=True)
 ```
 
 OCR + math enrichment in one call (JSON ensured automatically)
@@ -45,7 +45,7 @@ OCR + math enrichment in one call (JSON ensured automatically)
 from glossapi import Corpus
 c = Corpus('OUT','OUT')
 # Re‑extract with OCR on GPU and immediately enrich from JSON
-c.ocr(math_enhance=True)
+c.ocr()
 ```
 
 Targeted math (only specific items)
@@ -55,7 +55,7 @@ from glossapi import Corpus
 c = Corpus('OUT','OUT')
 # Only page/index pairs you want (page_no is 1‑based; item_index is per‑page occurrence)
 targets = { 'JSM_564': [(14,1), (23,2)] }
-c.ocr(math_enhance=True, math_targets=targets, math_batch_size=4)
+c.ocr(math_targets=targets, math_batch_size=4)
 ```
 
 ## Targeted Phase‑2 From CLI
@@ -82,4 +82,3 @@ c.ocr(math_enhance=True, math_targets=targets, math_batch_size=4)
 
 - If outputs still look repetitive: tighten early‑stop (`MAX_REPEAT`, `MAX_CHARS`) and rerun targeted Phase‑2.
 - To observe cleanup: enable post‑processing flags and inspect `*.latex_map.jsonl` (`post_applied`, `truncated_by_*`, `tail_run`).
-

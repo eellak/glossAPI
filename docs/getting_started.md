@@ -82,8 +82,8 @@ c.extract(input_format='pdf')
 # Clean and compute quality metrics
 c.clean()
 
-# Re‑extract only bad files with GPU OCR
-c.ocr(force=True)
+# Re‑extract only bad files with GPU OCR (runs math enrichment by default)
+c.ocr()
 
 # Section and annotate
 c.section()

@@ -39,13 +39,13 @@ extract(
   devices: list[int] | None = None,
   use_cls: bool = False,
   benchmark_mode: bool = False,
-  export_doc_json: bool = False,
+  export_doc_json: bool = True,
   emit_formula_index: bool = False,
 ) -> None
 ```
 
 - Phase‑1 extraction; set `force_ocr=True` for OCR.
-- `export_doc_json`/`emit_formula_index` emit JSON + index for Phase‑2.
+- Docling layout JSON now writes by default (`json/<stem>.docling.json(.zst)`); set `emit_formula_index=True` to also produce `json/<stem>.formula_index.jsonl`.
 - Set `use_gpus='multi'` to use all visible GPUs (shared queue).
 
 ## clean()
@@ -66,7 +66,8 @@ clean(
 ```python
 ocr(
   *,
-  force: bool = True,
+  fix_bad: bool = True,
+  mode: str | None = None,
   device: str | None = None,
   model_dir: str | Path | None = None,
   max_pages: int | None = None,
@@ -74,16 +75,17 @@ ocr(
   limit: int | None = None,
   dpi: int | None = None,
   precision: str | None = None,
-  math_enhance: bool = False,
+  math_enhance: bool = True,
   math_targets: dict[str, list[tuple[int,int]]] | None = None,
   math_batch_size: int = 8,
   math_dpi_base: int = 220,
   use_gpus: str = 'single',
   devices: list[int] | None = None,
+  force: bool | None = None,
 ) -> None
 ```
 
-- Convenience shim that re‑runs `extract(force_ocr=True)`; when `math_enhance=True`, runs Phase‑2 enrichment right after OCR.
+- Convenience shim that re‑runs `extract(force_ocr=True)` on cleaner-flagged documents and, by default, performs math/code enrichment unless `math_enhance=False`.
 
 ## formula_enrich_from_json()
 

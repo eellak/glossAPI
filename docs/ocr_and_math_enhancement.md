@@ -31,8 +31,7 @@ c.extract(
     input_format='pdf',
     accel_type='CUDA',           # or use_gpus='multi' for multi‑GPU
     force_ocr=True,              # OCR always on for PDFs
-    export_doc_json=True,        # json/<stem>.docling.json(.zst)
-    emit_formula_index=True,     # json/<stem>.formula_index.jsonl
+    emit_formula_index=True,     # request json/<stem>.formula_index.jsonl alongside the default JSON
 )
 ```
 
@@ -68,7 +67,7 @@ Workers set `CUDA_VISIBLE_DEVICES` per process; Docling runs on `cuda:0` relativ
 
 Phase‑2 (enrich):
 ```python
-c.ocr(force=True, use_gpus='multi', math_enhance=True, math_batch_size=12)
+c.ocr(use_gpus='multi', math_batch_size=12)
 ```
 Spawns math workers; each binds to its GPU using `CUDA_VISIBLE_DEVICES` and runs CodeFormula on `cuda:0` relative to that worker.
 

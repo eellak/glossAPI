@@ -24,8 +24,8 @@ c.extract(input_format='pdf', use_gpus='multi', force_ocr=True)
 from glossapi import Corpus
 c = Corpus('OUT', 'OUT')  # same folder for input/output is fine
 
-# Emit JSON/indices first (if you didn’t already)
-c.extract(input_format='pdf', accel_type='CUDA', export_doc_json=True, emit_formula_index=True)
+# Emit JSON/indices first (JSON now defaults on; request the index explicitly)
+c.extract(input_format='pdf', accel_type='CUDA', emit_formula_index=True)
 
 # Enrich math/code on GPU and write enriched Markdown into markdown/<stem>.md
 c.formula_enrich_from_json(device='cuda', batch_size=12)
@@ -39,7 +39,7 @@ c = Corpus('IN', 'OUT')
 c.download(url_column='url')         # optional, if you have URLs parquet
 c.extract(input_format='pdf')        # Phase‑1 (no OCR by default)
 c.clean()                            # compute quality; filter badness
-c.ocr(force=True)                    # re‑extract only bad ones with GPU OCR
+c.ocr()                              # re‑extract bad ones and enrich math/code
 c.section()                          # to parquet
 c.annotate()                         # classify/annotate sections
 ```

@@ -1066,7 +1066,7 @@ class GlossExtract:
                     pass
                 self._log.info("Batch OCR mode: %s", "forced" if forced else "auto")
                 for idx, _p in enumerate(batch, 1):
-                    self._log.info("Queueing [%d/%d]: %s", idx, len(batch), Path(_p).name)
+                    self._log.debug("Queueing [%d/%d]: %s", idx, len(batch), Path(_p).name)
             except Exception:
                 pass
             

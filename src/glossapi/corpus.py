@@ -210,7 +210,7 @@ class Corpus:
             num_threads: Rayon thread-count to pass to Rust.
             drop_bad: If True, files with badness_score > threshold are removed from downstream processing. Set to False to keep all files and only record the score.
             ocr_model_dir: [DEPRECATED – no effect] Use Corpus.ocr(model_dir=...) instead.
-            force_ocr_fallback: [DEPRECATED – no effect] Use Corpus.ocr(force=True) instead.
+            force_ocr_fallback: [DEPRECATED – no effect] Use Corpus.ocr(fix_bad=True) instead.
         """
         import importlib
         from pathlib import Path
@@ -586,7 +586,7 @@ class Corpus:
     def ocr(
         self,
         *,
-        force: bool = True,
+        fix_bad: bool = True,
         mode: Optional[str] = None,
         device: Optional[str] = None,
         model_dir: Optional[Union[str, Path]] = None,
@@ -596,12 +596,13 @@ class Corpus:
         dpi: Optional[int] = None,        # reserved for future use
         precision: Optional[str] = None,  # reserved for future use ("fp16","bf16")
         # Integrated math enrichment controls
-        math_enhance: bool = False,
+        math_enhance: bool = True,
         math_targets: Optional[Dict[str, List[Tuple[int, int]]]] = None,
         math_batch_size: int = 8,
         math_dpi_base: int = 220,
         use_gpus: str = "single",
         devices: Optional[List[int]] = None,
+        force: Optional[bool] = None,
     ) -> None:
         """OCR and/or math enrichment with explicit mode control.
 
@@ -610,15 +611,24 @@ class Corpus:
           - 'ocr_bad': re‑OCR only documents flagged as bad by Rust cleaner (parquet 'filter' != 'ok').
           - 'math_only': run math enrichment from Docling JSON (generate JSON without OCR when missing).
           - 'ocr_bad_then_math': re‑OCR bad documents, then run math enrichment on those.
-          If not provided, falls back to legacy flags (force, math_enhance):
-            force and math_enhance -> 'ocr_bad_then_math';
-            force only -> 'ocr_bad';
+          If not provided, falls back to legacy flags (fix_bad, math_enhance):
+            fix_bad and math_enhance -> 'ocr_bad_then_math';
+            fix_bad only -> 'ocr_bad';
             math_enhance only -> 'math_only';
             neither -> no‑op.
-        - math_enhance: kept for backward compatibility; prefer 'mode'.
+        - fix_bad: re-run OCR on documents marked bad by the cleaner (default True).
+        - math_enhance: run math/code enrichment after OCR (default True).
+        - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
         """
         # Normalize mode from explicit value or legacy flags
         mode_norm = None
+        fix_bad_effective = bool(fix_bad)
+        if force is not None:
+            try:
+                self.logger.warning("Corpus.ocr(force=...) is deprecated; use fix_bad=... instead")
+            except Exception:
+                pass
+            fix_bad_effective = bool(force)
         if mode:
             m = str(mode).strip().lower()
             if m in {"ocr_bad", "math_only", "ocr_bad_then_math"}:
@@ -626,14 +636,16 @@ class Corpus:
             else:
                 self.logger.warning("Unknown mode '%s'; falling back to legacy flags", mode)
         if mode_norm is None:
-            if force and math_enhance:
+            if fix_bad_effective and math_enhance:
                 mode_norm = "ocr_bad_then_math"
-            elif force:
+            elif fix_bad_effective:
                 mode_norm = "ocr_bad"
             elif math_enhance:
                 mode_norm = "math_only"
             else:
-                self.logger.info("OCR: no operation requested (set mode='ocr_bad'|'math_only'|'ocr_bad_then_math')")
+                self.logger.info(
+                    "OCR: no operation requested (enable fix_bad and/or math_enhance or set mode='ocr_bad'|'math_only'|'ocr_bad_then_math')"
+                )
                 return
         # Identify bad documents from parquet (Rust cleaner output)
         bad_files: List[str] = []
@@ -710,7 +722,7 @@ class Corpus:
         # Branches
         if mode_norm == "math_only":
             if not math_enhance:
-                self.logger.info("OCR: force=False and math_enhance=False → nothing to do")
+                self.logger.info("OCR: fix_bad=False and math_enhance=False → nothing to do")
                 return
             # Math-only: ensure JSON exists; if not, generate without OCR
             json_dir = self.output_dir / "json"
@@ -737,7 +749,7 @@ class Corpus:
 
         # 'ocr_bad' and 'ocr_bad_then_math' paths: OCR bad files first
         if mode_norm in {"ocr_bad", "ocr_bad_then_math"} and not bad_files:
-            self.logger.info("OCR: no bad documents flagged by cleaner; skipping forced OCR")
+            self.logger.info("OCR: no bad documents flagged by cleaner; skipping OCR fix")
             if mode_norm == "ocr_bad_then_math":
                 json_dir = self.output_dir / "json"
                 stems = []
@@ -822,7 +834,7 @@ class Corpus:
         code_enrichment: bool = False,
         use_cls: bool = False,
         benchmark_mode: bool = False,
-        export_doc_json: bool = False,
+        export_doc_json: bool = True,
         emit_formula_index: bool = False,
     ) -> None:
         """Prepare and initialize the underlying extractor once per configuration.
@@ -879,7 +891,7 @@ class Corpus:
         devices: Optional[List[int]] = None,
         use_cls: bool = False,
         benchmark_mode: bool = False,
-        export_doc_json: bool = False,
+        export_doc_json: bool = True,
         emit_formula_index: bool = False,
         _prepared: bool = False,
     ) -> None:
@@ -891,6 +903,8 @@ class Corpus:
                           Note: Old .doc format (pre-2007) is not supported
             num_threads: Number of threads for processing (default: 4)
             accel_type: Acceleration type ("Auto", "CPU", "CUDA", "MPS") (default: "Auto")
+            export_doc_json: When True (default), writes Docling layout JSON to `json/<stem>.docling.json(.zst)`
+            emit_formula_index: Also emit `json/<stem>.formula_index.jsonl` (default: False)
 
         """
         self.logger.info(f"Extracting {input_format} files to markdown...")
@@ -1998,7 +2012,11 @@ def gpu_extract_worker_queue(
     # Prepare persistent extractor in this worker on first call
     # Process queue items in small batches to reduce function-call overhead
     batch: list[str] = []
-    BATCH_SIZE = 8
+    try:
+        _batch_env = int(str(_os.environ.get("GLOSSAPI_GPU_BATCH_SIZE", "")).strip() or 0)
+    except Exception:
+        _batch_env = 0
+    BATCH_SIZE = max(1, _batch_env) if _batch_env else 1
     import queue as _queue
     last_progress = _time.time()
     processed = 0
