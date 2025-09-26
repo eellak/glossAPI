@@ -1,4 +1,4 @@
-from typing import Dict, Set, List, Optional, Iterable, Tuple, Any, Union
+from typing import Dict, Set, List, Optional, Iterable, Tuple, Any, Union, Callable
 
 from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
 from docling.backend.docling_parse_v2_backend import DoclingParseV2DocumentBackend
@@ -137,6 +137,8 @@ class GlossExtract:
         self._last_extractor_cfg = None
         self._active_pdf_options: Optional[PdfPipelineOptions] = None
         self._current_ocr_enabled: bool = False
+        self.batch_result_callback: Optional[Callable[[List[str], List[str]], None]] = None
+        self.external_state_updates: bool = False
 
     def _supports_native_timeout(self) -> str | None:
         """Return the timeout kwarg name if supported by Docling, else None."""
@@ -1021,13 +1023,16 @@ class GlossExtract:
         
         # State file for tracking progress
         state_file = output_dir / ".processing_state.pkl"
-        
-        # Load the current processing state
-        state = self._load_processing_state(state_file)
-        if not skip_existing:
-            state = {'processed': set(), 'problematic': set()}
-        processed_files = state.get('processed', set())
-        problematic_files = state.get('problematic', set())
+
+        if self.external_state_updates:
+            processed_files = set()
+            problematic_files = set()
+        else:
+            state = self._load_processing_state(state_file)
+            if not skip_existing:
+                state = {'processed': set(), 'problematic': set()}
+            processed_files = state.get('processed', set())
+            problematic_files = state.get('problematic', set())
         
         self._log.info(f"Found {len(processed_files)} already processed files")
         self._log.info(f"Found {len(problematic_files)} problematic files")
@@ -1099,6 +1104,12 @@ class GlossExtract:
             # Update processed and problematic files
             processed_files.update(successful)
             problematic_files.update(problematic)
+
+            if self.external_state_updates and self.batch_result_callback:
+                try:
+                    self.batch_result_callback(successful, problematic)
+                except Exception as exc:
+                    self._log.warning("Batch result callback failed: %s", exc)
             
             # Move problematic files to the problematic directory
             for filename in problematic:
@@ -1112,11 +1123,12 @@ class GlossExtract:
                         except Exception as e:
                             self._log.error(f"Failed to copy problematic file {filename}: {e}")
             
-            # Save the current state after each batch
-            self._save_processing_state({
-                'processed': processed_files,
-                'problematic': problematic_files
-            }, state_file)
+            if not self.external_state_updates:
+                # Save the current state after each batch
+                self._save_processing_state({
+                    'processed': processed_files,
+                    'problematic': problematic_files
+                }, state_file)
             
             batch_duration = time.time() - batch_start_time
             self._log.info(f"Batch processed in {batch_duration:.2f} seconds")
@@ -1125,9 +1137,9 @@ class GlossExtract:
         # Check if all files have been processed
         if len(processed_files) + len(problematic_files) >= total_files:
             self._log.info("All files have been processed")
-            
-            # Keep the state file for resumption capabilities
-            self._log.info("Preserving processing state file for resumption functionality")
+            if not self.external_state_updates:
+                # Keep the state file for resumption capabilities
+                self._log.info("Preserving processing state file for resumption functionality")
         
         end_time = time.time() - start_time
         self._log.info(f"Document extraction complete in {end_time:.2f} seconds.")

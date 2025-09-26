@@ -4,16 +4,45 @@ import os
 import pandas as pd
 import random
 import numpy as np
-from typing import Dict, Optional, Union, List, Any, Tuple
+from typing import Dict, Optional, Union, List, Any, Tuple, Set
 import shutil
 import math
 import re
 import subprocess
 import sys
+import pickle
+import queue
 
 from .gloss_section import GlossSection
 from .gloss_section_classifier import GlossSectionClassifier
 from .gloss_downloader import GlossDownloader
+
+
+class _ProcessingStateManager:
+    def __init__(self, state_file: Path) -> None:
+        self.state_file = state_file
+        self.logger = logging.getLogger(__name__)
+
+    def load(self) -> Tuple[Set[str], Set[str]]:
+        if self.state_file.exists():
+            try:
+                with open(self.state_file, "rb") as handle:
+                    state = pickle.load(handle)
+                processed = set(state.get("processed", set()))
+                problematic = set(state.get("problematic", set()))
+                return processed, problematic
+            except Exception as exc:
+                self.logger.warning("Failed to load processing state %s: %s", self.state_file, exc)
+        return set(), set()
+
+    def save(self, processed: Set[str], problematic: Set[str]) -> None:
+        try:
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.state_file, "wb") as handle:
+                pickle.dump({"processed": set(processed), "problematic": set(problematic)}, handle)
+        except Exception as exc:
+            self.logger.warning("Failed to persist processing state %s: %s", self.state_file, exc)
+
 
 class Corpus:
     """
@@ -1061,11 +1090,29 @@ class Corpus:
                         threads_effective = min(cpu_total, desired)
                 except Exception:
                     threads_effective = int(num_threads) if isinstance(num_threads, int) else max(2, 2 * max(1, len(devs)))
+
+                state_mgr = _ProcessingStateManager(self.markdown_dir / ".processing_state.pkl")
+                processed_files, problematic_files = state_mgr.load()
+                if skip_existing and processed_files:
+                    self.logger.info(
+                        "State resume: %d processed, %d problematic", len(processed_files), len(problematic_files)
+                    )
+
+                pending_files = input_files
+                if skip_existing and processed_files:
+                    processed_names = {Path(name).name for name in processed_files}
+                    pending_files = [p for p in input_files if p.name not in processed_names]
+
+                if not pending_files:
+                    self.logger.info("No pending files left after state filtering; skipping extraction.")
+                    return
+
                 # Dynamic work queue across GPUs
                 from multiprocessing import get_context
                 ctx = get_context("spawn")
                 task_q = ctx.Queue()
-                path_list = [str(p.resolve()) for p in input_files]
+                result_q = ctx.Queue()
+                path_list = [str(p.resolve()) for p in pending_files]
                 for full_path in path_list:
                     task_q.put(full_path)
                 procs = []
@@ -1087,18 +1134,60 @@ class Corpus:
                             bool(benchmark_mode),
                             bool(export_doc_json),
                             bool(emit_formula_index),
+                            result_q,
                         ),
                     )
                     p.start()
                     procs.append(p)
+                active = list(procs)
                 any_fail = False
-                for p in procs:
-                    p.join()
-                    if p.exitcode not in (0, None):
-                        any_fail = True
+                try:
+                    while active or not result_q.empty():
+                        for p in list(active):
+                            p.join(timeout=0.1)
+                            if p.is_alive():
+                                continue
+                            active.remove(p)
+                            if p.exitcode not in (0, None):
+                                any_fail = True
+                                self.logger.warning("GPU worker pid=%s exited with code %s", p.pid, p.exitcode)
+                        try:
+                            result = result_q.get(timeout=0.5)
+                        except queue.Empty:
+                            continue
+                        if result.get("event") == "batch":
+                            ok = result.get("processed", []) or []
+                            bad = result.get("problematic", []) or []
+                            processed_files.update(ok)
+                            problematic_files.update(bad)
+                            state_mgr.save(processed_files, problematic_files)
+                            self.logger.info(
+                                "GPU%s batch complete: +%d processed, +%d problematic (totals: %d processed, %d problematic)",
+                                result.get("worker"),
+                                len(ok),
+                                len(bad),
+                                len(processed_files),
+                                len(problematic_files),
+                            )
+                        elif result.get("event") == "exit":
+                            if result.get("exitcode", 0) not in (0, None):
+                                any_fail = True
+                                self.logger.warning(
+                                    "GPU%s reported non-zero exit: %s", result.get("worker"), result.get("exitcode")
+                                )
+                finally:
+                    for p in procs:
+                        if p.is_alive():
+                            p.join()
+
                 if any_fail:
                     self.logger.warning("One or more GPU workers exited with non-zero status.")
-                self.logger.info("Multi-GPU extraction complete. Markdown files saved to %s", self.markdown_dir)
+                else:
+                    self.logger.info(
+                        "Multi-GPU extraction complete. Processed %d files (%d problematic)",
+                        len(processed_files),
+                        len(problematic_files),
+                    )
                 return
 
         # Single GPU path
@@ -1964,6 +2053,7 @@ def gpu_extract_worker_queue(
     benchmark: bool,
     export_json: bool,
     emit_index: bool,
+    result_q=None,
 ) -> None:
     import os as _os
     import time as _time
@@ -2027,6 +2117,28 @@ def gpu_extract_worker_queue(
         )
     except Exception as _e:
         print(f"[GPU{device_id}] Prime failed: {_e}")
+    try:
+        if c.extractor is not None:
+            c.extractor.external_state_updates = result_q is not None
+
+            if result_q is not None:
+
+                def _report_batch(ok_list, bad_list):
+                    try:
+                        result_q.put(
+                            {
+                                "event": "batch",
+                                "worker": device_id,
+                                "processed": [str(x) for x in ok_list],
+                                "problematic": [str(x) for x in bad_list],
+                            }
+                        )
+                    except Exception as exc:
+                        print(f"[GPU{device_id}] Failed to report batch: {exc}")
+
+                c.extractor.batch_result_callback = _report_batch
+    except Exception as _e:
+        print(f"[GPU{device_id}] Unable to set batch callback: {_e}")
     # Prepare persistent extractor in this worker on first call
     # Process queue items in small batches to reduce function-call overhead
     batch: list[str] = []
@@ -2039,12 +2151,40 @@ def gpu_extract_worker_queue(
     import queue as _queue
     last_progress = _time.time()
     processed = 0
-    while True:
-        try:
-            nm = work_q.get_nowait()
-        except Exception as e:
-            # queue.Empty or other -> flush any pending batch then exit
-            if batch:
+    exit_code = 0
+    try:
+        while True:
+            try:
+                nm = work_q.get_nowait()
+            except Exception:
+                # queue.Empty or other -> flush any pending batch then exit
+                if batch:
+                    try:
+                        c.extract(
+                            input_format=input_fmt,
+                            num_threads=threads,
+                            accel_type="cuda:0",
+                            force_ocr=force,
+                            formula_enrichment=fe,
+                            code_enrichment=ce,
+                            file_paths=list(batch),
+                            skip_existing=skip,
+                            use_gpus="single",
+                            use_cls=use_cls_w,
+                            benchmark_mode=benchmark,
+                            export_doc_json=bool(export_json),
+                            emit_formula_index=bool(emit_index),
+                            _prepared=True,
+                        )
+                        processed += len(batch)
+                    except Exception as _e:
+                        exit_code = 1
+                        print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
+                    batch.clear()
+                break
+            if isinstance(nm, str) and nm.strip():
+                batch.append(nm)
+            if len(batch) >= BATCH_SIZE:
                 try:
                     c.extract(
                         input_format=input_fmt,
@@ -2064,37 +2204,22 @@ def gpu_extract_worker_queue(
                     )
                     processed += len(batch)
                 except Exception as _e:
+                    exit_code = 1
                     print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
                 batch.clear()
-            break
-        if isinstance(nm, str) and nm.strip():
-            batch.append(nm)
-        if len(batch) >= BATCH_SIZE:
-            try:
-                c.extract(
-                    input_format=input_fmt,
-                    num_threads=threads,
-                    accel_type="cuda:0",
-                    force_ocr=force,
-                    formula_enrichment=fe,
-                    code_enrichment=ce,
-                    file_paths=list(batch),
-                    skip_existing=skip,
-                    use_gpus="single",
-                    use_cls=use_cls_w,
-                    benchmark_mode=benchmark,
-                    export_doc_json=bool(export_json),
-                    emit_formula_index=bool(emit_index),
-                    _prepared=True,
-                )
-                processed += len(batch)
-            except Exception as _e:
-                print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
-            batch.clear()
-        # Occasional heartbeat
-        if _time.time() - last_progress > 30:
-            try:
-                print(f"[GPU{device_id}] processed ~{processed} files…")
-            except Exception:
-                pass
-            last_progress = _time.time()
+            # Occasional heartbeat
+            if _time.time() - last_progress > 30:
+                try:
+                    print(f"[GPU{device_id}] processed ~{processed} files…")
+                except Exception:
+                    pass
+                last_progress = _time.time()
+    except Exception as exc:
+        exit_code = 1
+        print(f"[GPU{device_id}] Fatal worker error: {exc}")
+
+    if result_q is not None:
+        try:
+            result_q.put({"event": "exit", "worker": device_id, "exitcode": exit_code})
+        except Exception as exc:
+            print(f"[GPU{device_id}] Failed to report exit: {exc}")
