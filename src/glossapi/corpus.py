@@ -768,6 +768,8 @@ class Corpus:
                 code_enrichment=False,
                 filenames=bad_files,
                 skip_existing=False,
+                use_gpus=use_gpus,
+                devices=devices,
                 # When math follows we need JSON; otherwise it's optional
                 export_doc_json=bool(mode_norm == "ocr_bad_then_math"),
                 emit_formula_index=bool(mode_norm == "ocr_bad_then_math"),
