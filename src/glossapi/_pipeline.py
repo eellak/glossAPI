@@ -16,6 +16,7 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from ._rapidocr_paths import resolve_packaged_onnx_and_keys
 from .rapidocr_safe import SafeRapidOcrModel
+from .ocr_pool import GLOBAL_RAPID_OCR_POOL
 
 
 def _resolve_accelerator(device: str | None) -> Tuple[AcceleratorOptions, bool]:
@@ -149,12 +150,21 @@ def build_rapidocr_pipeline(
             from docling.pipelines.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
         except Exception:  # pragma: no cover
             from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
-        try:
-            ocr_model = SafeRapidOcrModel(True, None, ocr_opts, acc)  # type: ignore[arg-type]
-        except Exception:  # pragma: no cover
-            # Fall back to the stock implementation if our wrapper misbehaves.
-            ocr_model = RapidOcrModel(True, None, ocr_opts, acc)  # type: ignore[arg-type]
-        pipeline = StandardPdfPipeline(opts, ocr_model=ocr_model)  # type: ignore
+
+        def _factory():
+            try:
+                return SafeRapidOcrModel(True, None, ocr_opts, acc)  # type: ignore[arg-type]
+            except Exception:  # pragma: no cover
+                # Fall back to the stock implementation if our wrapper misbehaves.
+                return RapidOcrModel(True, None, ocr_opts, acc)  # type: ignore[arg-type]
+
+        pooled_model = GLOBAL_RAPID_OCR_POOL.get(
+            str(acc.device),
+            ocr_opts,
+            _factory,
+            expected_type=SafeRapidOcrModel,
+        )
+        pipeline = StandardPdfPipeline(opts, ocr_model=pooled_model)  # type: ignore
         return pipeline, opts
     except Exception:
         pass

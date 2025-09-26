@@ -262,6 +262,10 @@ class GlossExtract:
         profile_timings: bool = True,
     ):
         """Ensure a converter exists; rebuild only when configuration changes."""
+        # Mark extractor as supporting external state updates when pooling is active
+        if enable_ocr:
+            self.external_state_updates = True
+
         sig = self._cfg_signature(
             enable_ocr=enable_ocr,
             force_full_page_ocr=force_full_page_ocr,
