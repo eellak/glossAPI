@@ -12,6 +12,7 @@ import subprocess
 import sys
 import pickle
 import queue
+import time
 
 from .gloss_section import GlossSection
 from .gloss_section_classifier import GlossSectionClassifier
@@ -1091,6 +1092,14 @@ class Corpus:
                 except Exception:
                     threads_effective = int(num_threads) if isinstance(num_threads, int) else max(2, 2 * max(1, len(devs)))
 
+                self.logger.info(
+                    "Phase-1 config: batch_size=%s threads=%s skip_existing=%s benchmark=%s",
+                    5 if not force_ocr else 1,
+                    threads_effective,
+                    bool(skip_existing),
+                    bool(benchmark_mode),
+                )
+
                 state_mgr = _ProcessingStateManager(self.markdown_dir / ".processing_state.pkl")
                 processed_files, problematic_files = state_mgr.load()
                 if skip_existing and processed_files:
@@ -1141,6 +1150,9 @@ class Corpus:
                     procs.append(p)
                 active = list(procs)
                 any_fail = False
+                last_summary = time.time()
+                last_activity = time.time()
+                heartbeat: Dict[int, float] = {p.pid or idx: time.time() for idx, p in enumerate(procs)}
                 try:
                     while active or not result_q.empty():
                         for p in list(active):
@@ -1151,10 +1163,12 @@ class Corpus:
                             if p.exitcode not in (0, None):
                                 any_fail = True
                                 self.logger.warning("GPU worker pid=%s exited with code %s", p.pid, p.exitcode)
+                            heartbeat[p.pid or -1] = time.time()
                         try:
                             result = result_q.get(timeout=0.5)
                         except queue.Empty:
                             continue
+                        last_activity = time.time()
                         if result.get("event") == "batch":
                             ok = result.get("processed", []) or []
                             bad = result.get("problematic", []) or []
@@ -1169,12 +1183,37 @@ class Corpus:
                                 len(processed_files),
                                 len(problematic_files),
                             )
+                            worker_pid = result.get("pid")
+                            if worker_pid is not None:
+                                heartbeat[worker_pid] = time.time()
                         elif result.get("event") == "exit":
                             if result.get("exitcode", 0) not in (0, None):
                                 any_fail = True
                                 self.logger.warning(
                                     "GPU%s reported non-zero exit: %s", result.get("worker"), result.get("exitcode")
                                 )
+                            worker_pid = result.get("pid")
+                            if worker_pid is not None:
+                                heartbeat[worker_pid] = time.time()
+
+                        now = time.time()
+                        if now - last_summary > 30:
+                            self.logger.info(
+                                "Progress summary: processed=%d problematic=%d queue=%d active_workers=%d",
+                                len(processed_files),
+                                len(problematic_files),
+                                result_q.qsize(),
+                                len(active),
+                            )
+                            last_summary = now
+
+                        if now - last_activity > 120:
+                            self.logger.warning(
+                                "No batch completions reported for %.0fs (active workers: %d). Waiting...",
+                                now - last_activity,
+                                len(active),
+                            )
+                            last_activity = now
                 finally:
                     for p in procs:
                         if p.is_alive():
