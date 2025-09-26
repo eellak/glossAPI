@@ -945,7 +945,8 @@ class Corpus:
             emit_formula_index: Also emit `json/<stem>.formula_index.jsonl` (default: False)
 
         """
-        self.logger.info(f"Extracting {input_format} files to markdown...")
+        if not file_paths:
+            self.logger.info(f"Extracting {input_format} files to markdown...")
         
         # We will prepare the extractor later (single-GPU branch). For multi-GPU,
         # we avoid importing heavy OCR deps in the parent.
@@ -1153,10 +1154,11 @@ class Corpus:
                 last_summary = time.time()
                 last_activity = time.time()
                 heartbeat: Dict[int, float] = {p.pid or idx: time.time() for idx, p in enumerate(procs)}
+                exit_count = 0
                 try:
-                    while active or not result_q.empty():
+                    while active or exit_count < len(devs):
                         for p in list(active):
-                            p.join(timeout=0.1)
+                            p.join(timeout=0.05)
                             if p.is_alive():
                                 continue
                             active.remove(p)
@@ -1164,48 +1166,60 @@ class Corpus:
                                 any_fail = True
                                 self.logger.warning("GPU worker pid=%s exited with code %s", p.pid, p.exitcode)
                             heartbeat[p.pid or -1] = time.time()
-                        try:
-                            result = result_q.get(timeout=0.5)
-                        except queue.Empty:
-                            continue
-                        last_activity = time.time()
-                        if result.get("event") == "batch":
-                            ok = result.get("processed", []) or []
-                            bad = result.get("problematic", []) or []
-                            processed_files.update(ok)
-                            problematic_files.update(bad)
-                            state_mgr.save(processed_files, problematic_files)
-                            self.logger.info(
-                                "GPU%s batch complete: +%d processed, +%d problematic (totals: %d processed, %d problematic)",
-                                result.get("worker"),
-                                len(ok),
-                                len(bad),
-                                len(processed_files),
-                                len(problematic_files),
-                            )
-                            worker_pid = result.get("pid")
-                            if worker_pid is not None:
-                                heartbeat[worker_pid] = time.time()
-                        elif result.get("event") == "exit":
-                            if result.get("exitcode", 0) not in (0, None):
-                                any_fail = True
-                                self.logger.warning(
-                                    "GPU%s reported non-zero exit: %s", result.get("worker"), result.get("exitcode")
+                        drained = False
+                        while True:
+                            try:
+                                result = result_q.get_nowait()
+                            except queue.Empty:
+                                break
+                            drained = True
+                            last_activity = time.time()
+                            if result.get("event") == "batch":
+                                ok = result.get("processed", []) or []
+                                bad = result.get("problematic", []) or []
+                                processed_files.update(ok)
+                                problematic_files.update(bad)
+                                state_mgr.save(processed_files, problematic_files)
+                                self.logger.info(
+                                    "GPU%s batch complete: +%d processed, +%d problematic (totals: %d processed, %d problematic)",
+                                    result.get("worker"),
+                                    len(ok),
+                                    len(bad),
+                                    len(processed_files),
+                                    len(problematic_files),
                                 )
-                            worker_pid = result.get("pid")
-                            if worker_pid is not None:
-                                heartbeat[worker_pid] = time.time()
+                                worker_pid = result.get("pid")
+                                if worker_pid is not None:
+                                    heartbeat[worker_pid] = time.time()
+                            elif result.get("event") == "exit":
+                                exit_count += 1
+                                if result.get("exitcode", 0) not in (0, None):
+                                    any_fail = True
+                                    self.logger.warning(
+                                        "GPU%s reported non-zero exit: %s", result.get("worker"), result.get("exitcode")
+                                    )
+                                worker_pid = result.get("pid")
+                                if worker_pid is not None:
+                                    heartbeat[worker_pid] = time.time()
 
                         now = time.time()
                         if now - last_summary > 30:
+                            pending = 0
+                            try:
+                                pending = result_q.qsize()
+                            except NotImplementedError:
+                                pending = -1
                             self.logger.info(
                                 "Progress summary: processed=%d problematic=%d queue=%d active_workers=%d",
                                 len(processed_files),
                                 len(problematic_files),
-                                result_q.qsize(),
+                                pending,
                                 len(active),
                             )
                             last_summary = now
+
+                        if not drained:
+                            time.sleep(0.05)
 
                         if now - last_activity > 120:
                             self.logger.warning(
@@ -2055,16 +2069,23 @@ def _gpu_math_worker(device_id: int, in_dir: str, out_dir: str, work_q, batch_si
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
     batch: list[str] = []
     B = max(1, int(batch_size))
+    import queue as _queue
     while True:
         try:
             nm = work_q.get_nowait()
-        except Exception:
+        except _queue.Empty:
             if batch:
                 _targets = {s: targets_map.get(s) for s in batch if s in targets_map} if targets_map else None
                 try:
                     c.formula_enrich_from_json(files=list(batch), device=(device or "cuda"), batch_size=B, dpi_base=int(dpi_base), targets_by_stem=_targets)
                 except Exception as _e:
                     print(f"[MATH GPU{device_id}] Batch failed ({len(batch)}): {_e}")
+                    for s in batch:
+                        try:
+                            work_q.put(s)
+                        except Exception:
+                            pass
+                batch.clear()
             break
         if isinstance(nm, str) and nm.strip():
             batch.append(nm)
@@ -2074,6 +2095,13 @@ def _gpu_math_worker(device_id: int, in_dir: str, out_dir: str, work_q, batch_si
                 c.formula_enrich_from_json(files=list(batch), device=(device or "cuda"), batch_size=B, dpi_base=int(dpi_base), targets_by_stem=_targets)
             except Exception as _e:
                 print(f"[MATH GPU{device_id}] Batch failed ({len(batch)}): {_e}")
+                for s in batch:
+                    try:
+                        work_q.put(s)
+                    except Exception:
+                        pass
+                batch.clear()
+                continue
             batch.clear()
 
 # Top-level worker function for multi-GPU extraction (picklable by multiprocessing)
@@ -2170,6 +2198,7 @@ def gpu_extract_worker_queue(
                                 "worker": device_id,
                                 "processed": [str(x) for x in ok_list],
                                 "problematic": [str(x) for x in bad_list],
+                                "pid": os.getpid(),
                             }
                         )
                     except Exception as exc:
@@ -2195,7 +2224,7 @@ def gpu_extract_worker_queue(
         while True:
             try:
                 nm = work_q.get_nowait()
-            except Exception:
+            except _queue.Empty:
                 # queue.Empty or other -> flush any pending batch then exit
                 if batch:
                     try:
@@ -2219,7 +2248,36 @@ def gpu_extract_worker_queue(
                     except Exception as _e:
                         exit_code = 1
                         print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
+                        if result_q is not None:
+                            try:
+                                result_q.put(
+                                    {
+                                        "event": "batch",
+                                        "worker": device_id,
+                                        "processed": [],
+                                        "problematic": list(batch),
+                                        "pid": os.getpid(),
+                                        "error": str(_e),
+                                    }
+                                )
+                            except Exception:
+                                pass
+                        for _path in batch:
+                            try:
+                                work_q.put(_path)
+                            except Exception:
+                                pass
                     batch.clear()
+                break
+            except Exception as exc:
+                exit_code = 1
+                print(f"[GPU{device_id}] Queue receive error: {exc}")
+                if batch:
+                    for _path in batch:
+                        try:
+                            work_q.put(_path)
+                        except Exception:
+                            pass
                 break
             if isinstance(nm, str) and nm.strip():
                 batch.append(nm)
@@ -2245,6 +2303,25 @@ def gpu_extract_worker_queue(
                 except Exception as _e:
                     exit_code = 1
                     print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
+                    if result_q is not None:
+                        try:
+                            result_q.put(
+                                {
+                                    "event": "batch",
+                                    "worker": device_id,
+                                    "processed": [],
+                                    "problematic": list(batch),
+                                    "pid": os.getpid(),
+                                    "error": str(_e),
+                                }
+                            )
+                        except Exception:
+                            pass
+                    for _path in batch:
+                        try:
+                            work_q.put(_path)
+                        except Exception:
+                            pass
                 batch.clear()
             # Occasional heartbeat
             if _time.time() - last_progress > 30:
@@ -2259,6 +2336,11 @@ def gpu_extract_worker_queue(
 
     if result_q is not None:
         try:
-            result_q.put({"event": "exit", "worker": device_id, "exitcode": exit_code})
+            result_q.put({
+                "event": "exit",
+                "worker": device_id,
+                "exitcode": exit_code,
+                "pid": os.getpid(),
+            })
         except Exception as exc:
             print(f"[GPU{device_id}] Failed to report exit: {exc}")
