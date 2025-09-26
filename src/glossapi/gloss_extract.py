@@ -65,9 +65,9 @@ class GlossExtract:
         """
         # Default timeout for processing files (10 minutes in seconds)
         self.processing_timeout = 600
-        # Default to GPU-first OCR with auto/full-page control passed in create_extractor
+        # Default to layout-only extraction; OCR is enabled explicitly by callers
         self.pipeline_options = PdfPipelineOptions()
-        self.pipeline_options.do_ocr = True
+        self.pipeline_options.do_ocr = False
         self.pipeline_options.do_table_structure = True
         # Enable accurate table structure by default
         try:
@@ -135,6 +135,8 @@ class GlossExtract:
         self.emit_formula_index: bool = False
         # Track last extractor configuration for reuse decisions
         self._last_extractor_cfg = None
+        self._active_pdf_options: Optional[PdfPipelineOptions] = None
+        self._current_ocr_enabled: bool = False
 
     def _supports_native_timeout(self) -> str | None:
         """Return the timeout kwarg name if supported by Docling, else None."""
@@ -332,36 +334,32 @@ class GlossExtract:
         # Build PDF pipeline via the canonical builder (preferred)
         opts = None
         try:
-            from ._pipeline import build_rapidocr_pipeline  # type: ignore
+            from ._pipeline import build_layout_pipeline, build_rapidocr_pipeline  # type: ignore
             device_str = self._current_device_str() or "cuda:0"
-            engine, opts = build_rapidocr_pipeline(
+            builder = build_rapidocr_pipeline if enable_ocr else build_layout_pipeline
+            engine, opts = builder(
                 device=device_str,
-                text_score=float(text_score),
                 images_scale=float(images_scale),
                 formula_enrichment=bool(formula_enrichment),
                 code_enrichment=bool(code_enrichment),
+                **({"text_score": float(text_score)} if enable_ocr else {}),
             )
-            # Ensure Phase‑1 OCR toggle obeys enable_ocr
-            try:
-                setattr(opts, "do_ocr", bool(enable_ocr))
-            except Exception:
-                pass
-            # Apply OCR toggles on the returned options
-            try:
-                if hasattr(opts, "ocr_options") and getattr(opts, "ocr_options", None) is not None:
-                    if use_cls is not None:
-                        setattr(opts.ocr_options, "use_cls", bool(use_cls))  # type: ignore[attr-defined]
-                    if ocr_langs:
-                        setattr(opts.ocr_options, "lang", list(ocr_langs))  # type: ignore[attr-defined]
-                    if force_full_page_ocr is not None:
-                        setattr(opts.ocr_options, "force_full_page_ocr", bool(force_full_page_ocr))  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            # Ensure images_scale on the options (builder already attempts this)
+
+            if enable_ocr and hasattr(opts, "ocr_options") and getattr(opts, "ocr_options", None) is not None:
+                if use_cls is not None:
+                    setattr(opts.ocr_options, "use_cls", bool(use_cls))  # type: ignore[attr-defined]
+                if ocr_langs:
+                    setattr(opts.ocr_options, "lang", list(ocr_langs))  # type: ignore[attr-defined]
+                if force_full_page_ocr is not None:
+                    setattr(opts.ocr_options, "force_full_page_ocr", bool(force_full_page_ocr))  # type: ignore[attr-defined]
+
             try:
                 setattr(opts, "images_scale", float(images_scale))
             except Exception:
                 pass
+
+            self._active_pdf_options = opts
+            self._current_ocr_enabled = bool(enable_ocr)
 
             # Create a multi-format DocumentConverter using the built PDF options
             self.converter = DocumentConverter(
@@ -423,6 +421,11 @@ class GlossExtract:
                     pass
             except Exception:
                 pass
+            if not enable_ocr:
+                try:
+                    setattr(self.pipeline_options, "ocr_options", None)
+                except Exception:
+                    pass
             self.converter = DocumentConverter(
                 allowed_formats=[
                     InputFormat.PDF,
@@ -447,6 +450,9 @@ class GlossExtract:
                     InputFormat.MD: MarkdownFormatOption(),
                 },
             )
+
+            self._active_pdf_options = self.pipeline_options
+            self._current_ocr_enabled = bool(enable_ocr)
 
         # Record last configuration for reuse
         try:
@@ -1059,12 +1065,25 @@ class GlossExtract:
             self._log.info(f"Processing batch {i//batch_size + 1}/{batch_count} ({len(batch)} files)")
             try:
                 # Surface intended OCR mode for this batch
-                forced = False
+                batch_mode = "disabled"
                 try:
-                    forced = bool(getattr(self.pipeline_options.ocr_options, "force_full_page_ocr", False))  # type: ignore[attr-defined]
+                    if getattr(self, "_current_ocr_enabled", False):
+                        ocr_opts = None
+                        opts = getattr(self, "_active_pdf_options", None)
+                        if opts is not None:
+                            ocr_opts = getattr(opts, "ocr_options", None)
+                        if ocr_opts is None:
+                            ocr_opts = getattr(self.pipeline_options, "ocr_options", None)
+                        forced = False
+                        if ocr_opts is not None:
+                            try:
+                                forced = bool(getattr(ocr_opts, "force_full_page_ocr", False))
+                            except Exception:
+                                forced = False
+                        batch_mode = "forced" if forced else "auto"
                 except Exception:
                     pass
-                self._log.info("Batch OCR mode: %s", "forced" if forced else "auto")
+                self._log.info("Batch OCR mode: %s", batch_mode)
                 for idx, _p in enumerate(batch, 1):
                     self._log.debug("Queueing [%d/%d]: %s", idx, len(batch), Path(_p).name)
             except Exception:

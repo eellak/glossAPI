@@ -856,9 +856,14 @@ class Corpus:
             pass
         # Threads
         try:
-            threads_effective = int(num_threads) if num_threads is not None else (os.cpu_count() or 4)
+            if num_threads is not None:
+                threads_effective = int(num_threads)
+            else:
+                cpu_total = max(1, os.cpu_count() or 0)
+                threads_effective = min(cpu_total, 2)
+                threads_effective = max(2, threads_effective)
         except Exception:
-            threads_effective = (os.cpu_count() or 4)
+            threads_effective = int(num_threads) if isinstance(num_threads, int) else 2
         self.extractor.enable_accel(threads=threads_effective, type=accel_type)
 
         # Images scale env default
@@ -888,6 +893,7 @@ class Corpus:
         formula_enrichment: bool = False,
         code_enrichment: bool = False,
         filenames: Optional[List[str]] = None,
+        file_paths: Optional[List[Union[str, Path]]] = None,
         skip_existing: bool = True,
         use_gpus: str = "single",
         devices: Optional[List[int]] = None,
@@ -949,53 +955,58 @@ class Corpus:
             
             self.logger.info(f"Moved {len(input_files_to_move)} files to downloads directory")
         
-        # Get input files from downloads directory
-        if input_format.lower() == "all":
-            # Include all supported formats
+        # Get input files from downloads directory unless explicit paths were provided
+        input_files: List[Path] = []
+        if file_paths:
+            try:
+                input_files = [Path(p) for p in file_paths]
+            except Exception as exc:
+                raise ValueError(f"Invalid file path supplied to extract(): {exc}")
+            self.logger.info(f"[Worker Batch] Processing {len(input_files)} direct file paths")
+        elif input_format.lower() == "all":
             input_files = []
             for ext in supported_formats:
                 found_files = list(downloads_dir.glob(f"*.{ext}"))
                 input_files.extend(found_files)
                 if found_files:
                     self.logger.info(f"Found {len(found_files)} .{ext} files in downloads directory")
-            
-            # Log a warning about doc files
+
             doc_files = list(downloads_dir.glob("*.doc"))
             if doc_files:
-                self.logger.warning(f"Found {len(doc_files)} .doc files which are not supported by Docling (pre-2007 Word format)")
+                self.logger.warning(
+                    f"Found {len(doc_files)} .doc files which are not supported by Docling (pre-2007 Word format)"
+                )
         elif "," in input_format.lower():
-            # Handle comma-separated format list
             input_files = []
             formats = [fmt.strip().lower() for fmt in input_format.split(",")]
             for ext in formats:
-                # Handle special case for XML formats
                 if ext == "xml_jats":
-                    ext = "xml"  # Use the file extension .xml
-                    
+                    ext = "xml"
+
                 if ext == "doc":
-                    self.logger.warning(f"The .doc format (pre-2007 Word) is not supported by Docling. Please convert to .docx first.")
+                    self.logger.warning(
+                        "The .doc format (pre-2007 Word) is not supported by Docling. Please convert to .docx first."
+                    )
                     continue
-                    
+
                 current_files = list(downloads_dir.glob(f"*.{ext}"))
                 self.logger.info(f"Found {len(current_files)} files with extension .{ext}")
                 input_files.extend(current_files)
         else:
-            # Handle special case for XML formats
-            if input_format.lower() == "xml":
-                ext = "xml"  # Still use the file extension .xml
-            else:
-                ext = input_format.lower()
-                
+            ext = "xml" if input_format.lower() == "xml_jats" else input_format.lower()
+
             if ext == "doc":
-                self.logger.error(f"The .doc format (pre-2007 Word) is not supported by Docling. Please convert to .docx first.")
+                self.logger.error(
+                    "The .doc format (pre-2007 Word) is not supported by Docling. Please convert to .docx first."
+                )
                 return
-                
+
             input_files = list(downloads_dir.glob(f"*.{ext}"))
-        
-        # Optional whitelist filtering by filenames list
-        if filenames:
-            names = set(str(n) for n in filenames)
+
+        if filenames and not file_paths:
+            names = {str(n) for n in filenames}
             input_files = [p for p in input_files if p.name in names]
+            self.logger.info(f"Filtered to {len(input_files)} files from provided filename list")
 
         if not input_files:
             self.logger.warning(f"No {input_format} files found in {downloads_dir}")
@@ -1042,16 +1053,21 @@ class Corpus:
                     pass
                 # Compute effective threads if auto
                 try:
-                    threads_effective = int(num_threads) if num_threads is not None else max(1, (os.cpu_count() or 4) // max(1, len(devs)))
+                    if num_threads is not None:
+                        threads_effective = int(num_threads)
+                    else:
+                        cpu_total = max(1, os.cpu_count() or 0)
+                        desired = max(2, 2 * max(1, len(devs)))
+                        threads_effective = min(cpu_total, desired)
                 except Exception:
-                    threads_effective = int(num_threads) if isinstance(num_threads, int) else (os.cpu_count() or 4)
+                    threads_effective = int(num_threads) if isinstance(num_threads, int) else max(2, 2 * max(1, len(devs)))
                 # Dynamic work queue across GPUs
                 from multiprocessing import get_context
                 ctx = get_context("spawn")
                 task_q = ctx.Queue()
-                name_list = [p.name for p in input_files]
-                for nm in name_list:
-                    task_q.put(nm)
+                path_list = [str(p.resolve()) for p in input_files]
+                for full_path in path_list:
+                    task_q.put(full_path)
                 procs = []
                 for dev_id in devs:
                     p = ctx.Process(
@@ -2018,7 +2034,8 @@ def gpu_extract_worker_queue(
         _batch_env = int(str(_os.environ.get("GLOSSAPI_GPU_BATCH_SIZE", "")).strip() or 0)
     except Exception:
         _batch_env = 0
-    BATCH_SIZE = max(1, _batch_env) if _batch_env else 1
+    default_batch = 5 if not force else 1
+    BATCH_SIZE = max(1, _batch_env) if _batch_env else default_batch
     import queue as _queue
     last_progress = _time.time()
     processed = 0
@@ -2036,7 +2053,7 @@ def gpu_extract_worker_queue(
                         force_ocr=force,
                         formula_enrichment=fe,
                         code_enrichment=ce,
-                        filenames=list(batch),
+                        file_paths=list(batch),
                         skip_existing=skip,
                         use_gpus="single",
                         use_cls=use_cls_w,
@@ -2061,7 +2078,7 @@ def gpu_extract_worker_queue(
                     force_ocr=force,
                     formula_enrichment=fe,
                     code_enrichment=ce,
-                    filenames=list(batch),
+                    file_paths=list(batch),
                     skip_existing=skip,
                     use_gpus="single",
                     use_cls=use_cls_w,
