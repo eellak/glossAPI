@@ -19,6 +19,22 @@ from .gloss_section_classifier import GlossSectionClassifier
 from .gloss_downloader import GlossDownloader
 
 
+def _maybe_import_torch(*, force: bool = False):
+    """Return torch module if already loaded or explicitly requested via env."""
+    torch_mod = sys.modules.get("torch")
+    if torch_mod is not None:
+        return torch_mod
+    flag = str(os.environ.get("GLOSSAPI_IMPORT_TORCH", "0")).strip().lower()
+    if force or flag in {"1", "true", "yes"}:
+        try:
+            import importlib
+
+            return importlib.import_module("torch")  # type: ignore
+        except Exception:
+            return None
+    return None
+
+
 class _ProcessingStateManager:
     def __init__(self, state_file: Path) -> None:
         self.state_file = state_file
@@ -714,10 +730,10 @@ class Corpus:
                     except Exception:
                         pass
                     if not devs:
+                        torch_mod = _maybe_import_torch()
                         try:
-                            import torch  # type: ignore
-                            if torch.cuda.is_available():
-                                devs = list(range(torch.cuda.device_count()))
+                            if torch_mod is not None and getattr(torch_mod, "cuda", None) and torch_mod.cuda.is_available():
+                                devs = list(range(torch_mod.cuda.device_count()))
                         except Exception:
                             pass
                 if not devs:
@@ -1069,10 +1085,10 @@ class Corpus:
                 except Exception:
                     pass
                 if not devs:
+                    torch_mod = _maybe_import_torch()
                     try:
-                        import torch  # type: ignore
-                        if torch.cuda.is_available():
-                            devs = list(range(torch.cuda.device_count()))
+                        if torch_mod is not None and getattr(torch_mod, "cuda", None) and torch_mod.cuda.is_available():
+                            devs = list(range(torch_mod.cuda.device_count()))
                     except Exception:
                         pass
             if not devs:
@@ -1268,10 +1284,10 @@ class Corpus:
         try:
             # Torch matmul precision for CodeFormula
             if formula_enrichment:
+                torch_mod = _maybe_import_torch(force=True)
                 try:
-                    import torch  # type: ignore
-                    if hasattr(torch, "set_float32_matmul_precision"):
-                        torch.set_float32_matmul_precision("high")
+                    if torch_mod is not None and hasattr(torch_mod, "set_float32_matmul_precision"):
+                        torch_mod.set_float32_matmul_precision("high")
                 except Exception:
                     pass
                 try:
@@ -2027,14 +2043,46 @@ class Corpus:
 
 def _gpu_math_worker(device_id: int, in_dir: str, out_dir: str, work_q, batch_size: int, dpi_base: int, device: str, targets_map: Dict[str, List[Tuple[int, int]]]) -> None:
     import os as _os
+
+    def _ensure_thread_caps():
+        caps = {
+            "OMP_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+            "NUMEXPR_NUM_THREADS": "1",
+            "VECLIB_MAXIMUM_THREADS": "1",
+        }
+        for k, v in caps.items():
+            _os.environ.setdefault(k, v)
+        try:
+            import sys as _sys, importlib
+
+            _torch = _sys.modules.get("torch")
+            if _torch is None:
+                flag = str(_os.environ.get("GLOSSAPI_IMPORT_TORCH", "0")).strip().lower()
+                if flag in {"1", "true", "yes"}:
+                    _torch = importlib.import_module("torch")  # type: ignore
+            if _torch is not None and hasattr(_torch, "set_num_threads"):
+                _torch.set_num_threads(1)
+        except Exception:
+            pass
+
+    _ensure_thread_caps()
     _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
     # Worker GPU binding banner (prints by default; disable with GLOSSAPI_WORKER_LOG_VERBOSE=0)
     try:
         _verbose = str(_os.environ.get("GLOSSAPI_WORKER_LOG_VERBOSE", "1")).strip().lower()
         if _verbose not in ("0", "false", "no", "off", ""):  # default on
             try:
-                import torch as _torch  # type: ignore
-                _torch_name = _torch.cuda.get_device_name(0) if _torch.cuda.is_available() else "no-cuda"
+                import sys as _sys, importlib
+
+                _torch = _sys.modules.get("torch")
+                if _torch is None and str(_os.environ.get("GLOSSAPI_IMPORT_TORCH", "0")).strip().lower() in {"1", "true", "yes"}:
+                    _torch = importlib.import_module("torch")  # type: ignore
+                if _torch is not None:
+                    _torch_name = _torch.cuda.get_device_name(0) if getattr(_torch, "cuda", None) and _torch.cuda.is_available() else "no-cuda"
+                else:
+                    _torch_name = "unloaded"
             except Exception:
                 _torch_name = "unknown"
             try:
@@ -2125,6 +2173,25 @@ def gpu_extract_worker_queue(
     import os as _os
     import time as _time
     from pathlib import Path as _Path
+
+    def _ensure_thread_caps():
+        caps = {
+            "OMP_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+            "NUMEXPR_NUM_THREADS": "1",
+            "VECLIB_MAXIMUM_THREADS": "1",
+        }
+        for k, v in caps.items():
+            _os.environ.setdefault(k, v)
+        try:
+            _torch = _maybe_import_torch()
+            if _torch is not None and hasattr(_torch, "set_num_threads"):
+                _torch.set_num_threads(1)
+        except Exception:
+            pass
+
+    _ensure_thread_caps()
     # Bind this worker to a single GPU id
     _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
     _os.environ["GLOSSAPI_DOCLING_DEVICE"] = "cuda:0"
@@ -2133,8 +2200,13 @@ def gpu_extract_worker_queue(
         _verbose = str(_os.environ.get("GLOSSAPI_WORKER_LOG_VERBOSE", "1")).strip().lower()
         if _verbose not in ("0", "false", "no", "off", ""):  # default on
             try:
-                import torch as _torch  # type: ignore
-                _torch_name = _torch.cuda.get_device_name(0) if _torch.cuda.is_available() else "no-cuda"
+                _torch = _maybe_import_torch()
+                if _torch is not None and getattr(_torch, "cuda", None) and _torch.cuda.is_available():
+                    _torch_name = _torch.cuda.get_device_name(0)
+                elif _torch is not None:
+                    _torch_name = "no-cuda"
+                else:
+                    _torch_name = "unloaded"
             except Exception:
                 _torch_name = "unknown"
             try:
@@ -2163,6 +2235,7 @@ def gpu_extract_worker_queue(
         try:
             import sys as _sys, pathlib as _pl
             _sys.path.insert(0, str((_pl.Path(out_dir).resolve().parents[1] / 'src').resolve()))
+            _ensure_thread_caps()
             from glossapi import Corpus as _Corpus  # type: ignore
         except Exception as _e:
             print(f"[GPU{device_id}] Cannot import glossapi in worker: {_e}")

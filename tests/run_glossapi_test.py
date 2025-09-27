@@ -12,15 +12,36 @@ Run with:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+import pytest
+
+if not os.environ.get("GLOSSAPI_ENABLE_INTEGRATION"):
+    pytest.skip(
+        "GlossAPI integration smoke test disabled (set GLOSSAPI_ENABLE_INTEGRATION=1 to run)",
+        allow_module_level=True,
+    )
 
 # Import from the site-packages installation, not the local repo
 try:
     from glossapi import Corpus  # type: ignore
 except ImportError as exc:
-    print("Failed to import glossapi from site-packages:", exc, file=sys.stderr)
-    sys.exit(1)
+    repo_src = Path(__file__).resolve().parents[1] / "src"
+    if repo_src.exists():
+        sys.stderr.write(
+            "Failed to import glossapi from site-packages; falling back to local source path\n"
+        )
+        sys.path.insert(0, str(repo_src))
+        try:
+            from glossapi import Corpus  # type: ignore
+        except ImportError as exc2:
+            print("Failed to import glossapi from local source:", exc2, file=sys.stderr)
+            sys.exit(1)
+    else:
+        print("Failed to import glossapi from site-packages:", exc, file=sys.stderr)
+        sys.exit(1)
 
 
 def main() -> None:

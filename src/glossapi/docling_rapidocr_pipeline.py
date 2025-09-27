@@ -12,6 +12,7 @@ import os
 import sys
 import time
 import inspect
+import importlib
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
@@ -39,6 +40,19 @@ import docling.models.rapid_ocr_model  # noqa: F401
 
 
 log = logging.getLogger(__name__)
+
+
+def _maybe_import_torch(*, force: bool = False):
+    torch_mod = sys.modules.get("torch")
+    if torch_mod is not None:
+        return torch_mod
+    flag = str(os.environ.get("GLOSSAPI_IMPORT_TORCH", "0")).strip().lower()
+    if force or flag in {"1", "true", "yes"}:
+        try:
+            return importlib.import_module("torch")  # type: ignore
+        except Exception:
+            return None
+    return None
 
 
 def _available_ort_providers() -> str:
@@ -163,8 +177,8 @@ def convert_dir(
             raise RuntimeError(f"onnxruntime-gpu not available or misconfigured: {e}")
     if formula_enrichment and want_cuda:
         try:
-            import torch  # type: ignore
-            if not torch.cuda.is_available():
+            torch_mod = _maybe_import_torch(force=True)
+            if torch_mod is None or not torch_mod.cuda.is_available():
                 raise RuntimeError("Torch CUDA not available but formula enrichment requested.")
         except Exception as e:
             raise RuntimeError(f"Torch CUDA preflight failed: {e}")
@@ -172,10 +186,10 @@ def convert_dir(
     # Optional: tune CodeFormula batch size and math precision when enrichment is requested
     if formula_enrichment:
         try:
-            import torch  # type: ignore
-            if hasattr(torch, "cuda") and torch.cuda.is_available():
+            torch_mod = _maybe_import_torch()
+            if torch_mod is not None and getattr(torch_mod, "cuda", None) and torch_mod.cuda.is_available():
                 try:
-                    torch.set_float32_matmul_precision("high")
+                    torch_mod.set_float32_matmul_precision("high")
                 except Exception:
                     pass
         except Exception:
