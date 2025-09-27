@@ -14,7 +14,7 @@ A library for processing texts in Greek and other languages, developed by [Open 
 - **Greek Language Support**: Specialized processing for Greek academic texts
 - **Metadata Handling**: Process academic texts with accompanying metadata
 - **Customizable Annotation**: Map section titles to standardized categories
-- **Flexible Pipeline**: Start the processing from any stage in the pipeline
+- **Flexible Pipeline**: Start the processing from any stage in the pipeline, now with selectable extraction profiles (PyPDFium for safety, Docling for throughput)
 
 ## Installation
 
@@ -174,6 +174,28 @@ corpus.section()
 # Step 4: Classify and annotate sections
 corpus.annotate()  # or corpus.annotate(annotation_type="chapter") For texts without TOC or bibliography
 ```
+
+### Controlling Phase‑1 extraction
+
+GlossAPI offers two extraction profiles:
+
+- **Safe (default)** — PyPDFium backend with size‑1 batching. Recommended when you prioritise stability.
+- **Docling/native** — batches documents through `docling_parse` for maximum throughput. Use only when you are comfortable trading some stability for speed.
+
+Pick one via environment variables (or programmatically through `GlossExtract.configure_batch_policy(...)`):
+
+```bash
+# Safe mode
+export GLOSSAPI_BATCH_POLICY=safe
+export GLOSSAPI_BATCH_MAX=1
+
+# Higher throughput (use with caution)
+export GLOSSAPI_BATCH_POLICY=docling
+export GLOSSAPI_BATCH_MAX=5
+```
+
+Regardless of policy, the extractor now clamps OMP/OpenBLAS/MKL pools to a
+single thread per worker so multi‑GPU runs stay well behaved.
 
 ## Documentation
 

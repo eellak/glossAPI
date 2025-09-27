@@ -2,15 +2,41 @@
 
 This page shows the most common tasks in a few lines each.
 
-## Phase‑1 extraction (layout only, single GPU)
+## Phase‑1 extraction profiles
+
+### Stable (PyPDFium, size‑1)
 
 ```python
 from glossapi import Corpus
+import os
+
+os.environ['GLOSSAPI_BATCH_POLICY'] = 'safe'  # default, shown for clarity
+os.environ['GLOSSAPI_BATCH_MAX'] = '1'
+
 c = Corpus('IN', 'OUT')
 c.extract(input_format='pdf', accel_type='CUDA')  # OCR is off by default
 ```
 
-## Phase‑1 extraction (layout only, multi‑GPU)
+This keeps Docling’s native parser out of the hot path and is the recommended
+mode when you prioritise stability.
+
+### Throughput (Docling, batched)
+
+```python
+from glossapi import Corpus
+import os
+
+os.environ['GLOSSAPI_BATCH_POLICY'] = 'docling'  # opt into native backend
+os.environ['GLOSSAPI_BATCH_MAX'] = '5'
+
+c = Corpus('IN', 'OUT')
+c.extract(input_format='pdf', accel_type='CUDA')
+```
+
+Raise `GLOSSAPI_BATCH_MAX` to stream multiple PDFs through `convert_all`.
+Use this only when you are comfortable trading stability for speed.
+
+### Multi‑GPU
 
 ```python
 from glossapi import Corpus
@@ -18,7 +44,7 @@ c = Corpus('IN', 'OUT')
 c.extract(input_format='pdf', use_gpus='multi')  # workers share a queued file list
 ```
 
-Workers now report per-batch summaries and the controller persists a single
+Workers report per-batch summaries and the controller persists a single
 `.processing_state.pkl`, so you can restart multi-GPU runs without losing
 progress.
 

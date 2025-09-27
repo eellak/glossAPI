@@ -11,6 +11,26 @@ This page lists the main knobs you can use to tune GlossAPI.
 
 - `GLOSSAPI_IMAGES_SCALE`: image scale hint for OCR/layout (default ~1.1–1.25).
 - `GLOSSAPI_FORMULA_BATCH`: inline CodeFormula batch size (default `16`).
+- `GLOSSAPI_IMPORT_TORCH`: when set to `1|true|yes`, force on-demand Torch import inside workers (useful when Torch is optional in the environment).
+
+### Batch Policy & PDF Backend
+
+GlossAPI now ships with two Phase‑1 extraction profiles:
+
+- **Safe (default)** — size‑1 batching with the PyPDFium backend. This keeps Docling’s native parser out of the hot path and is the recommended mode when stability matters most.
+- **Docling/native** — larger batches using `docling_parse`. Faster on clean corpora, but reintroduces the concurrency risk highlighted in the core dump analysis.
+
+Control the profile with these knobs:
+
+- `GLOSSAPI_BATCH_POLICY`
+  - `safe` *(default)* → PyPDFium backend, forces `max_batch_files=1` unless overridden programmatically
+  - `pypdfium` → explicit PyPDFium request even if you raise the batch size
+  - `docling` (or any other value) → keep the native Docling backend
+- `GLOSSAPI_BATCH_MAX` (default `3`)
+  - Maximum number of documents passed to `convert_all` when the policy allows batching.
+- `configure_batch_policy(policy, max_batch_files=None, prefer_safe_backend=None)` — programmatic override on `GlossExtract`/`Corpus.extractor`.
+
+Regardless of policy, the extractor clamps OMP/OpenBLAS/MKL pools to one thread per worker so multi‑GPU runs do not explode thread counts.
 
 ## Math Enrichment (Phase‑2)
 
