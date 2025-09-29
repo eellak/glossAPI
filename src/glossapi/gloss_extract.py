@@ -6,6 +6,7 @@ from docling.datamodel.base_models import InputFormat, ConversionStatus
 from docling.datamodel.pipeline_options import (
     AcceleratorDevice,
     AcceleratorOptions,
+    PictureDescriptionApiOptions,
     PdfPipelineOptions,
     RapidOcrOptions,
     LayoutOptions,
@@ -145,9 +146,8 @@ class GlossExtract:
         try:
             if hasattr(self.pipeline_options, "do_picture_description"):
                 self.pipeline_options.do_picture_description = False
-            picture_opts = getattr(self.pipeline_options, "picture_description_options", None)
-            if picture_opts is not None and hasattr(picture_opts, "kind"):
-                picture_opts.kind = "placeholder"
+            if getattr(self.pipeline_options, "picture_description_options", None) is None:
+                self.pipeline_options.picture_description_options = PictureDescriptionApiOptions()
             if hasattr(self.pipeline_options, "enable_remote_services"):
                 self.pipeline_options.enable_remote_services = False
         except Exception:

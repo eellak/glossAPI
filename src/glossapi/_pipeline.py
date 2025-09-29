@@ -7,6 +7,7 @@ from docling.datamodel.pipeline_options import (
     AcceleratorDevice,
     AcceleratorOptions,
     LayoutOptions,
+    PictureDescriptionApiOptions,
     PdfPipelineOptions,
     RapidOcrOptions,
     TableFormerMode,
@@ -61,11 +62,10 @@ def _apply_common_pdf_options(
     )
     # Prefer lightweight placeholder picture descriptions to avoid heavy VLM backends.
     try:
-        picture_opts = getattr(opts, "picture_description_options", None)
         if hasattr(opts, "do_picture_description"):
             opts.do_picture_description = False
-        if picture_opts is not None and hasattr(picture_opts, "kind"):
-            picture_opts.kind = "placeholder"
+        if getattr(opts, "picture_description_options", None) is None:
+            opts.picture_description_options = PictureDescriptionApiOptions()
         if hasattr(opts, "enable_remote_services"):
             opts.enable_remote_services = False
     except Exception:
