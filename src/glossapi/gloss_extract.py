@@ -144,7 +144,7 @@ class GlossExtract:
         # table enhancer on its most accurate setting when available.
         try:
             if hasattr(self.pipeline_options, "do_picture_description"):
-                self.pipeline_options.do_picture_description = True
+                self.pipeline_options.do_picture_description = False
             picture_opts = getattr(self.pipeline_options, "picture_description_options", None)
             if picture_opts is not None and hasattr(picture_opts, "kind"):
                 picture_opts.kind = "placeholder"

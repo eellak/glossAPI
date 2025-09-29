@@ -61,9 +61,9 @@ def _apply_common_pdf_options(
     )
     # Prefer lightweight placeholder picture descriptions to avoid heavy VLM backends.
     try:
-        if hasattr(opts, "do_picture_description"):
-            opts.do_picture_description = True
         picture_opts = getattr(opts, "picture_description_options", None)
+        if hasattr(opts, "do_picture_description"):
+            opts.do_picture_description = False
         if picture_opts is not None and hasattr(picture_opts, "kind"):
             picture_opts.kind = "placeholder"
         if hasattr(opts, "enable_remote_services"):
