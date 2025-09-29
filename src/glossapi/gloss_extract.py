@@ -100,6 +100,27 @@ class GlossExtract:
         self.pipeline_options = PdfPipelineOptions()
         self.pipeline_options.do_ocr = False
         self.pipeline_options.do_table_structure = True
+        # Prefer lightweight placeholder picture descriptions while keeping the
+        # table enhancer on its most accurate setting when available.
+        try:
+            if hasattr(self.pipeline_options, "do_picture_description"):
+                self.pipeline_options.do_picture_description = True
+            picture_opts = getattr(self.pipeline_options, "picture_description_options", None)
+            if picture_opts is not None and hasattr(picture_opts, "kind"):
+                picture_opts.kind = "placeholder"
+            if hasattr(self.pipeline_options, "enable_remote_services"):
+                self.pipeline_options.enable_remote_services = False
+        except Exception:
+            pass
+        try:
+            if self.pipeline_options.table_structure_options is not None:
+                tso = self.pipeline_options.table_structure_options
+                if hasattr(tso, "mode"):
+                    tso.mode = TableFormerMode.ACCURATE
+                if hasattr(tso, "do_cell_matching"):
+                    tso.do_cell_matching = True
+        except Exception:
+            pass
         self.converter = None
         # Enable accurate table structure by default
         try:

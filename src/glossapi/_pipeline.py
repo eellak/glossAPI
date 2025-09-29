@@ -41,6 +41,12 @@ def _apply_common_pdf_options(
     code_enrichment: bool,
 ) -> PdfPipelineOptions:
     table_opts = TableStructureOptions(mode=TableFormerMode.ACCURATE)
+    try:
+        if hasattr(table_opts, "do_cell_matching"):
+            table_opts.do_cell_matching = True
+    except Exception:
+        pass
+
     opts = PdfPipelineOptions(
         accelerator_options=acc,
         layout_options=LayoutOptions(),
@@ -53,6 +59,17 @@ def _apply_common_pdf_options(
         table_structure_options=table_opts,
         allow_external_plugins=True,
     )
+    # Prefer lightweight placeholder picture descriptions to avoid heavy VLM backends.
+    try:
+        if hasattr(opts, "do_picture_description"):
+            opts.do_picture_description = True
+        picture_opts = getattr(opts, "picture_description_options", None)
+        if picture_opts is not None and hasattr(picture_opts, "kind"):
+            picture_opts.kind = "placeholder"
+        if hasattr(opts, "enable_remote_services"):
+            opts.enable_remote_services = False
+    except Exception:
+        pass
     try:
         setattr(opts, "images_scale", images_scale)
     except Exception:
