@@ -919,16 +919,26 @@ class Corpus:
         except Exception:
             images_scale_env = "1.25"
 
-        # Ensure converter exists (reuse when unchanged)
-        self.extractor.ensure_extractor(
-            enable_ocr=bool(force_ocr),
-            force_full_page_ocr=bool(force_ocr),
-            formula_enrichment=bool(formula_enrichment),
-            code_enrichment=bool(code_enrichment),
-            images_scale=float(images_scale_env),
-            use_cls=bool(use_cls),
-            profile_timings=not bool(benchmark_mode),
-        )
+        if getattr(self.extractor, "use_pypdfium_backend", False) and not any(
+            (force_ocr, formula_enrichment, code_enrichment)
+        ):
+            try:
+                self.extractor.converter = None
+                self.extractor._active_pdf_backend = None
+                self.logger.info("Prime extractor: using PyPDFium safe path (no Docling converter)")
+            except Exception:
+                pass
+        else:
+            # Ensure converter exists (reuse when unchanged)
+            self.extractor.ensure_extractor(
+                enable_ocr=bool(force_ocr),
+                force_full_page_ocr=bool(force_ocr),
+                formula_enrichment=bool(formula_enrichment),
+                code_enrichment=bool(code_enrichment),
+                images_scale=float(images_scale_env),
+                use_cls=bool(use_cls),
+                profile_timings=not bool(benchmark_mode),
+            )
     def extract(
         self,
         input_format: str = "all",
@@ -2288,7 +2298,17 @@ def gpu_extract_worker_queue(
     except Exception:
         _batch_env = 0
     default_batch = 5 if not force else 1
-    BATCH_SIZE = max(1, _batch_env) if _batch_env else default_batch
+    try:
+        extractor = getattr(c, "extractor", None)
+        if extractor is not None:
+            configured = int(getattr(extractor, "max_batch_files", default_batch))
+            if force:
+                default_batch = 1
+            else:
+                default_batch = max(1, configured)
+    except Exception:
+        pass
+    BATCH_SIZE = max(1, _batch_env) if _batch_env else max(1, default_batch)
     import queue as _queue
     last_progress = _time.time()
     processed = 0

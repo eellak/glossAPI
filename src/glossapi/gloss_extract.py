@@ -2,9 +2,6 @@ from typing import Dict, Set, List, Optional, Iterable, Tuple, Any, Union, Calla
 import importlib
 import sys
 
-from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
-from docling.backend.docling_parse_v2_backend import DoclingParseV2DocumentBackend
-from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 from docling.datamodel.base_models import InputFormat, ConversionStatus
 from docling.datamodel.pipeline_options import (
     AcceleratorDevice,
@@ -17,29 +14,6 @@ from docling.datamodel.pipeline_options import (
 )
 from docling.datamodel.document import ConversionResult
 from docling.datamodel.settings import settings
-# Some lightweight testing environments stub out docling.document_converter
-# without defining every format option helper. Import lazily and fall back to
-# no-op placeholders so unit tests that install minimal stubs can still import
-# glossapi.gloss_extract without docling fully installed.
-try:  # pragma: no cover - exercised in lightweight test stubs
-    from docling.document_converter import (
-        DocumentConverter,
-        PdfFormatOption,
-        WordFormatOption,
-        HTMLFormatOption,
-        XMLJatsFormatOption,
-        PowerpointFormatOption,
-        MarkdownFormatOption,
-        CsvFormatOption,
-    )
-except ImportError:  # pragma: no cover - testing shims
-    from docling.document_converter import DocumentConverter, PdfFormatOption  # type: ignore
-
-    class _NoOpOption:  # minimal stand-ins for optional helpers
-        def __init__(self, *args, **kwargs):
-            pass
-
-    WordFormatOption = HTMLFormatOption = XMLJatsFormatOption = PowerpointFormatOption = MarkdownFormatOption = CsvFormatOption = _NoOpOption  # type: ignore
 
 
 def _maybe_import_torch(*, force: bool = False):
@@ -54,10 +28,76 @@ def _maybe_import_torch(*, force: bool = False):
         except Exception:
             return None
     return None
+DocumentConverter = None
+PdfFormatOption = None
+WordFormatOption = None
+HTMLFormatOption = None
+XMLJatsFormatOption = None
+PowerpointFormatOption = None
+MarkdownFormatOption = None
+CsvFormatOption = None
+StandardPdfPipeline = None
+DoclingParseV2DocumentBackend = None
+DoclingParseDocumentBackend = None
+PyPdfiumDocumentBackend = None
+
+
+class _NoOpOption:  # minimal stand-ins for optional helpers
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+_DOC_CONVERTER_LOADED = False
+_DOC_PIPELINE_LOADED = False
+
+
+def _ensure_docling_converter_loaded() -> None:
+    global _DOC_CONVERTER_LOADED, DocumentConverter, PdfFormatOption
+    global WordFormatOption, HTMLFormatOption, XMLJatsFormatOption
+    global PowerpointFormatOption, MarkdownFormatOption, CsvFormatOption
+    if _DOC_CONVERTER_LOADED:
+        return
+    try:
+        module = importlib.import_module("docling.document_converter")
+        DocumentConverter = getattr(module, "DocumentConverter")
+        PdfFormatOption = getattr(module, "PdfFormatOption")
+        WordFormatOption = getattr(module, "WordFormatOption", _NoOpOption)
+        HTMLFormatOption = getattr(module, "HTMLFormatOption", _NoOpOption)
+        XMLJatsFormatOption = getattr(module, "XMLJatsFormatOption", _NoOpOption)
+        PowerpointFormatOption = getattr(module, "PowerpointFormatOption", _NoOpOption)
+        MarkdownFormatOption = getattr(module, "MarkdownFormatOption", _NoOpOption)
+        CsvFormatOption = getattr(module, "CsvFormatOption", _NoOpOption)
+        _DOC_CONVERTER_LOADED = True
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load docling document converter components: {exc}")
+
+
+def _ensure_docling_pipeline_loaded() -> None:
+    global _DOC_PIPELINE_LOADED, StandardPdfPipeline
+    global DoclingParseV2DocumentBackend, DoclingParseDocumentBackend, PyPdfiumDocumentBackend
+    if _DOC_PIPELINE_LOADED:
+        return
+    try:
+        StandardPdfPipeline = importlib.import_module(
+            "docling.pipeline.standard_pdf_pipeline"
+        ).StandardPdfPipeline
+        DoclingParseV2DocumentBackend = importlib.import_module(
+            "docling.backend.docling_parse_v2_backend"
+        ).DoclingParseV2DocumentBackend
+        DoclingParseDocumentBackend = importlib.import_module(
+            "docling.backend.docling_parse_backend"
+        ).DoclingParseDocumentBackend
+        PyPdfiumDocumentBackend = importlib.import_module(
+            "docling.backend.pypdfium2_backend"
+        ).PyPdfiumDocumentBackend
+        _DOC_PIPELINE_LOADED = True
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load docling PDF pipeline components: {exc}")
+
+
 from docling.pipeline.simple_pipeline import SimplePipeline
 # Ensure RapidOCR plugin is registered for factory-based OCR construction
 import docling.models.rapid_ocr_model  # noqa: F401
-from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
 from ._rapidocr_paths import resolve_packaged_onnx_and_keys
 import inspect
 
@@ -198,6 +238,10 @@ class GlossExtract:
         # Phase-1 extraction safety controls
         self.batch_policy: str = os.getenv("GLOSSAPI_BATCH_POLICY", "safe").strip().lower()
         self.max_batch_files: int = max(1, int(os.getenv("GLOSSAPI_BATCH_MAX", "3")))
+        if self.batch_policy in {"safe", "pypdfium"}:
+            self.max_batch_files = 1
+        elif self.batch_policy in {"docling", "throughput", "docling_batched"}:
+            self.max_batch_files = 5
         self.use_pypdfium_backend: bool = self.batch_policy in {"safe", "pypdfium"}
         self._thread_caps_applied: bool = False
 
@@ -213,7 +257,12 @@ class GlossExtract:
         if max_batch_files is not None:
             self.max_batch_files = max(1, int(max_batch_files))
         else:
-            self.max_batch_files = max(1, self.max_batch_files)
+            if policy_norm in {"safe", "pypdfium"}:
+                self.max_batch_files = 1
+            elif policy_norm in {"docling", "throughput", "docling_batched"}:
+                self.max_batch_files = 5
+            else:
+                self.max_batch_files = max(1, self.max_batch_files)
         if prefer_safe_backend is None:
             prefer_safe_backend = policy_norm in {"safe", "pypdfium"}
         self.use_pypdfium_backend = bool(prefer_safe_backend)
@@ -440,6 +489,8 @@ class GlossExtract:
         to avoid duplicated provider checks and option wiring. Falls back to the legacy
         inline path if the canonical builder is unavailable.
         """
+        _ensure_docling_converter_loaded()
+        _ensure_docling_pipeline_loaded()
         # Enable/disable Docling pipeline timings collection (for benchmarks)
         try:
             from docling.datamodel.settings import settings as _settings  # type: ignore
@@ -991,6 +1042,16 @@ class GlossExtract:
         timeout_dir: Optional[Path] = None,
     ) -> bool:
         """Process one document safely, updating metadata on failure."""
+        if getattr(self, "use_pypdfium_backend", False):
+            try:
+                self._log.info("Using PyPDFium safe extractor for %s", Path(file_path).name)
+            except Exception:
+                pass
+            return self._process_single_document_pypdfium(
+                file_path,
+                output_dir=output_dir,
+                timeout_dir=timeout_dir,
+            )
         filename = Path(file_path).name
         try:
             conv_results = self._convert_all_with_timeout([file_path], timeout_s=self.processing_timeout)
@@ -1033,6 +1094,82 @@ class GlossExtract:
         except Exception as meta_exc:
             self._log.warning(f"Failed to record failure metadata for {filename}: {meta_exc}")
         return False
+
+    def _process_single_document_pypdfium(
+        self,
+        file_path: Path,
+        *,
+        output_dir: Path,
+        timeout_dir: Optional[Path] = None,
+    ) -> bool:
+        """Minimal PyPDFium-based extraction path for safe mode."""
+        try:
+            import pypdfium2 as pdfium  # type: ignore
+        except ImportError as exc:
+            self._log.error("PyPDFium backend requested but pypdfium2 is not installed: %s", exc)
+            return False
+
+        stem = Path(file_path).stem
+        out_md_path = output_dir / f"{stem}.md"
+
+        try:
+            doc = pdfium.PdfDocument(str(file_path))
+        except Exception as exc:
+            self._log.error("PyPDFium failed to open %s: %s", Path(file_path).name, exc)
+            return False
+
+        texts: List[str] = []
+        page_count = 0
+        try:
+            page_count = len(doc)
+            for index in range(page_count):
+                try:
+                    page = doc[index]
+                    text_page = page.get_textpage()
+                    content = text_page.get_text_range()
+                    text = content.replace("\r\n", "\n").replace("\r", "\n").strip()
+                    if text:
+                        texts.append(text)
+                except Exception as page_exc:
+                    self._log.warning(
+                        "PyPDFium failed on page %d of %s: %s",
+                        index + 1,
+                        Path(file_path).name,
+                        page_exc,
+                    )
+            markdown = "\n\n".join(texts)
+            out_md_path.write_text(markdown, encoding="utf-8")
+            self._update_extraction_metadata(
+                output_dir=output_dir,
+                src_file=Path(file_path),
+                status="ok",
+                extraction_mode="pypdfium",
+                page_count=page_count,
+            )
+            return True
+        except Exception as exc:
+            self._log.error("PyPDFium extraction failed for %s: %s", Path(file_path).name, exc)
+            try:
+                self._update_extraction_metadata(
+                    output_dir=output_dir,
+                    src_file=Path(file_path),
+                    status="failure",
+                    extraction_mode="pypdfium",
+                    page_count=page_count or None,
+                )
+            except Exception:
+                pass
+            if timeout_dir is not None:
+                try:
+                    copy2(file_path, timeout_dir / Path(file_path).name)
+                except Exception:
+                    pass
+            return False
+        finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
 
     def _update_extraction_metadata(
         self,
@@ -1131,6 +1268,13 @@ class GlossExtract:
                 if policy != "safe" and not self.use_pypdfium_backend:
                     self._log.info("Batch policy capped to 1; processing documents sequentially.")
                 for file_path in normal_files:
+                    try:
+                        self._log.info(
+                            "Processing single document via %s backend",
+                            "pypdfium" if self.use_pypdfium_backend else "docling",
+                        )
+                    except Exception:
+                        pass
                     if self._process_single_document(file_path, output_dir=output_dir, timeout_dir=timeout_dir):
                         successful.append(Path(file_path).name)
                     else:
@@ -1189,8 +1333,8 @@ class GlossExtract:
         start_time = time.time()
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        # Ensure converter is created
-        if self.converter is None:
+        # Ensure converter is created only when using Docling pipelines
+        if self.converter is None and not getattr(self, "use_pypdfium_backend", False):
             self.create_extractor()
         
         # Create directories for problematic files and timeout files
