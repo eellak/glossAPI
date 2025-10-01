@@ -12,6 +12,10 @@ This is an open source project that provides tools for linguistic annotations
 and text processing, with a special focus on the Greek language.
 """
 
+from .rapidocr_safe import patch_docling_rapidocr
+
+patch_docling_rapidocr()
+
 from .gloss_section_classifier import GlossSectionClassifier
 from .corpus import Corpus
 from .sampler import Sampler

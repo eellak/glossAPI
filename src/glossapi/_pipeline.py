@@ -16,8 +16,10 @@ from docling.datamodel.pipeline_options import (
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from ._rapidocr_paths import resolve_packaged_onnx_and_keys
-from .rapidocr_safe import SafeRapidOcrModel
+from .rapidocr_safe import SafeRapidOcrModel, patch_docling_rapidocr
 from .ocr_pool import GLOBAL_RAPID_OCR_POOL
+
+patch_docling_rapidocr()
 
 
 def _resolve_accelerator(device: str | None) -> Tuple[AcceleratorOptions, bool]:
@@ -167,6 +169,12 @@ def build_rapidocr_pipeline(
             from docling.pipelines.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
         except Exception:  # pragma: no cover
             from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
+
+        import inspect
+
+        sig = inspect.signature(StandardPdfPipeline.__init__)
+        if "ocr_model" not in sig.parameters:
+            raise RuntimeError("Docling build does not support RapidOCR injection")
 
         def _factory():
             try:

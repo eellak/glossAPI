@@ -147,4 +147,30 @@ class SafeRapidOcrModel(_RapidOcrModel):
             yield page
 
 
-__all__ = ["SafeRapidOcrModel"]
+_PATCHED = False
+
+
+def patch_docling_rapidocr() -> None:
+    """Replace Docling's RapidOcrModel with the safe wrapper once per process."""
+
+    global _PATCHED
+    if _PATCHED:
+        return
+    try:
+        import docling.models.rapid_ocr_model as rapid_module  # type: ignore
+    except Exception:
+        return
+
+    if getattr(rapid_module, "_glossapi_safe_patch_applied", False):
+        _PATCHED = True
+        return
+
+    try:
+        rapid_module.RapidOcrModel = SafeRapidOcrModel  # type: ignore[attr-defined]
+        rapid_module._glossapi_safe_patch_applied = True  # type: ignore[attr-defined]
+        _PATCHED = True
+    except Exception:
+        return
+
+
+__all__ = ["SafeRapidOcrModel", "patch_docling_rapidocr"]
