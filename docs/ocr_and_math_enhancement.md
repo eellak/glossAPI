@@ -14,6 +14,18 @@ This document summarizes how GlossAPI uses the GPU for OCR and formula/code enri
 - Packaged RapidOCR models/keys found under `glossapi/models/rapidocr/{onnx,keys}` or via `GLOSSAPI_RAPIDOCR_ONNX_DIR`.
 - Optional helpers for Phase‑2 JSON: `pypdfium2`, `zstandard`.
 
+Always set the runtime environment before forcing OCR or math:
+
+```bash
+export GLOSSAPI_BATCH_POLICY=docling
+export GLOSSAPI_IMPORT_TORCH=1
+# optional: limit visible GPUs
+export CUDA_VISIBLE_DEVICES=0,1
+
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
+python -c "import onnxruntime as ort; print(ort.get_available_providers())"  # must list CUDAExecutionProvider
+```
+
 Check:
 ```bash
 python -c "import onnxruntime as ort; print(ort.get_available_providers())"  # must include CUDAExecutionProvider

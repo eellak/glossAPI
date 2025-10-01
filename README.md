@@ -259,6 +259,19 @@ This project is licensed under the [European Union Public Licence 1.2 (EUPL 1.2)
 
 The project includes a GPU-capable OCR pipeline using Docling for layout and RapidOCR (ONNXRuntime) for OCR. By default, Corpus.extract runs without OCR; use `Corpus.clean()` then `Corpus.ocr()` to re-extract only the pages/files that the Rust cleaner flags as badly extracted. These steps are portable across machines:
 
+- Always prepare the environment before forcing GPU OCR/math:
+
+```bash
+export GLOSSAPI_BATCH_POLICY=docling    # switch from the safe PyPDFium backend
+export GLOSSAPI_IMPORT_TORCH=1          # ensure workers import Torch for GPU discovery
+# optional: restrict cards
+export CUDA_VISIBLE_DEVICES=0,1
+
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
+python -c "import onnxruntime as ort; print(ort.get_available_providers())"
+# providers must include CUDAExecutionProvider (and ideally TensorrtExecutionProvider when available)
+```
+
 - Create a fresh venv and install packages
   - `python -m venv .venv && source .venv/bin/activate`
   - `pip install -U pip`

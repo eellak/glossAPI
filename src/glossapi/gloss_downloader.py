@@ -27,6 +27,7 @@ import re
 import string
 import aiofiles
 import json
+import ast
 import pandas as pd
 from urllib.parse import urlparse, unquote
 from collections import deque
@@ -2084,7 +2085,20 @@ class GlossDownloader:
                         obj = json.loads(s)
                         return _parse_links(obj)
                     except Exception:
-                        pass
+                        try:
+                            obj = ast.literal_eval(s)
+                            return _parse_links(obj)
+                        except Exception:
+                            pass
+                if any(sep in s for sep in ('\n', ';')) and 'http' in s:
+                    parts = [part.strip() for part in re.split(r'[;\n]+', s) if part.strip()]
+                    if parts:
+                        return parts
+                urls_in_text = re.findall(r'https?://\S+', s)
+                if len(urls_in_text) > 1:
+                    cleaned = [u.rstrip('.,)') for u in urls_in_text if u]
+                    if cleaned:
+                        return cleaned
                 # Fallback: single URL string
                 return [s]
             # Unknown types -> string cast

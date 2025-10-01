@@ -6,13 +6,21 @@ from docling.datamodel.base_models import InputFormat, ConversionStatus
 from docling.datamodel.pipeline_options import (
     AcceleratorDevice,
     AcceleratorOptions,
-    PictureDescriptionApiOptions,
     PdfPipelineOptions,
     RapidOcrOptions,
     LayoutOptions,
     TableStructureOptions,
     TableFormerMode,
 )
+
+try:
+    from docling.datamodel.pipeline_options import PictureDescriptionApiOptions
+except ImportError:  # pragma: no cover - older docling versions
+    class PictureDescriptionApiOptions:  # type: ignore
+        """Compatibility shim when PictureDescriptionApiOptions is missing."""
+
+        def __init__(self, *args, **kwargs):
+            pass
 from docling.datamodel.document import ConversionResult
 from docling.datamodel.settings import settings
 

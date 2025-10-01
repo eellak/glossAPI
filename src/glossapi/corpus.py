@@ -13,6 +13,7 @@ import sys
 import pickle
 import queue
 import time
+import json
 
 from .gloss_section import GlossSection
 from .gloss_section_classifier import GlossSectionClassifier
@@ -166,6 +167,9 @@ class Corpus:
         self.cleaned_markdown_dir = self.output_dir / "clean_markdown"
         # Define models_dir path but don't create the directory yet - only create it when needed
         self.models_dir = self.output_dir / "models"
+
+        # Track whether we've already printed the GPU setup banner in this process
+        self._gpu_banner_logged = False
         
         os.makedirs(self.markdown_dir, exist_ok=True)
         os.makedirs(self.sections_dir, exist_ok=True)
@@ -247,6 +251,8 @@ class Corpus:
         *,
         ocr_model_dir: Union[str, Path, None] = None,
         force_ocr_fallback: bool = False,
+        empty_char_threshold: int = 100,
+        empty_min_pages: int = 3,
     ) -> None:
         """Clean markdown files and evaluate badness using the Rust extension.
 
@@ -257,6 +263,8 @@ class Corpus:
             drop_bad: If True, files with badness_score > threshold are removed from downstream processing. Set to False to keep all files and only record the score.
             ocr_model_dir: [DEPRECATED – no effect] Use Corpus.ocr(model_dir=...) instead.
             force_ocr_fallback: [DEPRECATED – no effect] Use Corpus.ocr(fix_bad=True) instead.
+            empty_char_threshold: Character threshold (after stripping comments and whitespace) that flags markdown as nearly empty.
+            empty_min_pages: Minimum page count for a low-character document to trigger an OCR rerun recommendation.
         """
         import importlib
         from pathlib import Path
@@ -310,6 +318,32 @@ class Corpus:
 
         import os
         records: list = []  # will hold metrics for parquet merge
+        markdown_stats: List[Dict[str, Any]] = []
+        metrics_dir = self.output_dir / "json" / "metrics"
+
+        def _page_count_for(stem: str) -> Optional[int]:
+            candidates = [
+                metrics_dir / f"{stem}.metrics.json",
+                metrics_dir / f"{stem}.per_page.metrics.json",
+            ]
+            for candidate in candidates:
+                if not candidate.exists():
+                    continue
+                try:
+                    data = json.loads(candidate.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(data, dict):
+                    pc = data.get("page_count")
+                    if pc is not None:
+                        try:
+                            return int(pc)
+                        except Exception:
+                            pass
+                    pages = data.get("pages")
+                    if isinstance(pages, list):
+                        return len(pages)
+            return None
 
         # ----- Call Rust high-level pipeline once -----
         scripts_to_keep = ["greek", "latin"]  # keep common alphabetic scripts; numbers/punctuation are added internally
@@ -451,6 +485,22 @@ class Corpus:
 
         self.logger.info(f"Cleaned {len(records)} markdown files → {self.cleaned_markdown_dir}")
 
+        for md_path in sorted(self.cleaned_markdown_dir.glob("*.md")):
+            try:
+                raw_text = md_path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            text_no_comments = re.sub(r"<!--.*?-->", "", raw_text, flags=re.DOTALL)
+            char_count = sum(1 for ch in text_no_comments if not ch.isspace())
+            page_count = _page_count_for(md_path.stem)
+            markdown_stats.append(
+                {
+                    "filename": f"{md_path.stem}.pdf",
+                    "char_count_no_comments": int(char_count),
+                    "page_count": int(page_count) if page_count is not None else pd.NA,
+                }
+            )
+
         # ------------------------------------------------------------------
         # Update parquet with Mojibake metrics (single authoritative schema)
         # ------------------------------------------------------------------
@@ -565,7 +615,7 @@ class Corpus:
             self.logger.warning("Noise-metrics scoring failed: %s", e)
 
 
-        # Determine good / bad list based on rejection_reason
+        # Determine good / bad list based on enriched metrics
         if parquet_path and parquet_path.exists():
             df_final = pd.read_parquet(parquet_path)
             # --- tidy schema ---
@@ -595,26 +645,91 @@ class Corpus:
             # ensure no duplicate column names
             df_final = df_final.loc[:, ~df_final.columns.duplicated()]
 
-            # recompute rejection_reason with correct thresholds (ignore latin percentage)
-            if {"greek_badness_score", "mojibake_badness_score"}.issubset(df_final.columns):
-                _conds = [
-                    df_final["greek_badness_score"] > 60,
-                    df_final["mojibake_badness_score"] > 0.1,
-                ]
-                _choices = ["greek>60", "mojibake>0.1"]
-                df_final["filter"] = np.select(_conds, _choices, default="ok")
+            if markdown_stats:
+                stats_df = pd.DataFrame(markdown_stats)
+                df_final = df_final.merge(stats_df, on="filename", how="left")
 
-            # OCR moved to Corpus.ocr(); no OCR is performed in clean()
+            if "char_count_no_comments" in df_final.columns:
+                df_final["char_count_no_comments"] = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce")
+            if "page_count" in df_final.columns:
+                df_final["page_count"] = pd.to_numeric(df_final["page_count"], errors="coerce")
+
+            if "filter" in df_final.columns:
+                df_final["filter"] = df_final["filter"].fillna("ok")
+            else:
+                df_final["filter"] = "ok"
+            df_final["needs_ocr"] = False
+
+            def _append_reason(mask: pd.Series, reason: str, *, requires_ocr: bool) -> None:
+                if df_final.empty:
+                    return
+                if not isinstance(mask, pd.Series):
+                    mask = pd.Series(mask, index=df_final.index)
+                mask = mask.fillna(False)
+                if not bool(mask.any()):
+                    return
+                current = df_final.loc[mask, "filter"].astype(str)
+                df_final.loc[mask, "filter"] = np.where(
+                    current == "ok",
+                    reason,
+                    current + ";" + reason,
+                )
+                if requires_ocr:
+                    df_final.loc[mask, "needs_ocr"] = True
+
+            try:
+                empty_threshold_int = int(empty_char_threshold) if empty_char_threshold is not None else 0
+            except Exception:
+                empty_threshold_int = 0
+            if empty_threshold_int < 0:
+                empty_threshold_int = 0
+            try:
+                min_pages = int(empty_min_pages) if empty_min_pages is not None else 0
+            except Exception:
+                min_pages = 0
+            if min_pages < 0:
+                min_pages = 0
+
+            mojibake_series = pd.to_numeric(df_final.get("mojibake_badness_score"), errors="coerce")
+            if mojibake_series.notna().any():
+                _append_reason(mojibake_series > 0.1, "mojibake>0.1", requires_ocr=True)
+
+            greek_series = pd.to_numeric(df_final.get("greek_badness_score"), errors="coerce")
+            if greek_series.notna().any():
+                _append_reason(greek_series > 60, "non_greek_text", requires_ocr=False)
+
+            if "char_count_no_comments" in df_final.columns:
+                char_series = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce").fillna(0)
+                page_series_raw = pd.to_numeric(df_final.get("page_count"), errors="coerce")
+                page_series = page_series_raw.fillna(min_pages if min_pages else 0)
+                if empty_threshold_int > 0:
+                    low_mask = char_series < empty_threshold_int
+                    long_mask = page_series >= min_pages
+                    _append_reason(low_mask & long_mask, f"empty_text<{empty_threshold_int}", requires_ocr=True)
+                    if min_pages > 0:
+                        _append_reason(low_mask & ~long_mask, f"empty_text<{empty_threshold_int}_short", requires_ocr=False)
+                    total_low = int(low_mask.fillna(False).sum())
+                    long_low = int((low_mask & long_mask).fillna(False).sum())
+                    self.logger.info(
+                        "Empty text check: %d files below %d chars; %d have >= %d pages",
+                        total_low,
+                        empty_threshold_int,
+                        long_low,
+                        min_pages,
+                    )
+
+            df_final["needs_ocr"] = df_final["needs_ocr"].fillna(False).astype(bool)
 
             # persist cleaned parquet
             df_final.to_parquet(parquet_path, index=False)
-# ... (rest of the code remains the same)
             if drop_bad:
-                good_df = df_final[df_final["filter"] == "ok"]
-                self.good_files = [Path(f).stem for f in good_df["filename"].tolist()]
+                good_df = df_final[df_final["needs_ocr"] == False]
+                filenames = good_df.get("filename", pd.Series(dtype=str))
+                self.good_files = [Path(str(f)).stem for f in filenames.dropna().astype(str).tolist()]
                 self.logger.info(f"After filtering, {len(self.good_files)} good files remain")
             else:
-                self.good_files = [Path(f).stem for f in df_final["filename"].tolist()]
+                filenames = df_final.get("filename", pd.Series(dtype=str))
+                self.good_files = [Path(str(f)).stem for f in filenames.dropna().astype(str).tolist()]
         else:
             self.good_files = []
 
@@ -702,7 +817,9 @@ class Corpus:
             if parquet_path and parquet_path.exists():
                 import pandas as _pd
                 df = _pd.read_parquet(parquet_path)
-                if "filename" in df.columns and "filter" in df.columns:
+                if "filename" in df.columns and "needs_ocr" in df.columns:
+                    bad_files = df.loc[df["needs_ocr"] == True, "filename"].dropna().astype(str).tolist()
+                elif "filename" in df.columns and "filter" in df.columns:
                     bad_files = df.loc[df["filter"] != "ok", "filename"].dropna().astype(str).tolist()
         except Exception:
             pass
@@ -840,12 +957,15 @@ class Corpus:
                         if "filename" in df_meta.columns:
                             if "filter" not in df_meta.columns:
                                 df_meta["filter"] = "ok"
+                            if "needs_ocr" not in df_meta.columns:
+                                df_meta["needs_ocr"] = False
                             if "ocr_success" not in df_meta.columns:
                                 df_meta["ocr_success"] = False
                             for _fname in success_files:
                                 mask = df_meta["filename"].astype(str) == str(_fname)
                                 if mask.any():
                                     df_meta.loc[mask, "filter"] = "ok"
+                                    df_meta.loc[mask, "needs_ocr"] = False
                                     df_meta.loc[mask, "ocr_success"] = True
                             df_meta.to_parquet(parquet_path, index=False)
                     # Keep sectioner in sync with newly recovered files
@@ -884,7 +1004,7 @@ class Corpus:
         benchmark_mode: bool = False,
         export_doc_json: bool = True,
         emit_formula_index: bool = False,
-    ) -> None:
+        ) -> None:
         """Prepare and initialize the underlying extractor once per configuration.
 
         Builds the Docling converter only if the effective configuration changed.
@@ -893,6 +1013,18 @@ class Corpus:
         if self.extractor is None:
             from .gloss_extract import GlossExtract
             self.extractor = GlossExtract(url_column=self.url_column)
+
+        use_safe_backend = getattr(self.extractor, "use_pypdfium_backend", False)
+        if use_safe_backend and any(
+            bool(flag) for flag in (force_ocr, formula_enrichment, code_enrichment)
+        ):
+            policy = getattr(self.extractor, "batch_policy", "safe")
+            raise ValueError(
+                "Configuration conflict: Docling/rapid OCR features require an OCR-capable backend. "
+                f"force_ocr/formula_enrichment/code_enrichment were requested while GLOSSAPI_BATCH_POLICY='{policy}' "
+                "keeps the PyPDFium-safe backend active. Unset GLOSSAPI_BATCH_POLICY or set it to 'docling' before "
+                "enabling OCR or enrichment, or run without those flags."
+            )
 
         # Propagate toggles used by Phase‑1 helpers
         try:
@@ -919,26 +1051,23 @@ class Corpus:
         except Exception:
             images_scale_env = "1.25"
 
-        if getattr(self.extractor, "use_pypdfium_backend", False) and not any(
-            (force_ocr, formula_enrichment, code_enrichment)
-        ):
-            try:
-                self.extractor.converter = None
-                self.extractor._active_pdf_backend = None
-                self.logger.info("Prime extractor: using PyPDFium safe path (no Docling converter)")
-            except Exception:
-                pass
-        else:
-            # Ensure converter exists (reuse when unchanged)
-            self.extractor.ensure_extractor(
-                enable_ocr=bool(force_ocr),
-                force_full_page_ocr=bool(force_ocr),
-                formula_enrichment=bool(formula_enrichment),
-                code_enrichment=bool(code_enrichment),
-                images_scale=float(images_scale_env),
-                use_cls=bool(use_cls),
-                profile_timings=not bool(benchmark_mode),
-            )
+        # Hard GPU preflight before we attempt to build OCR/enrichment pipelines
+        self._gpu_preflight(
+            accel_type=accel_type,
+            require_ocr=bool(force_ocr),
+            require_math=bool(formula_enrichment or code_enrichment),
+        )
+
+        # Ensure converter exists (reuse when unchanged)
+        self.extractor.ensure_extractor(
+            enable_ocr=bool(force_ocr),
+            force_full_page_ocr=bool(force_ocr),
+            formula_enrichment=bool(formula_enrichment),
+            code_enrichment=bool(code_enrichment),
+            images_scale=float(images_scale_env),
+            use_cls=bool(use_cls),
+            profile_timings=not bool(benchmark_mode),
+        )
     def extract(
         self,
         input_format: str = "all",
@@ -1343,7 +1472,75 @@ class Corpus:
         os.makedirs(self.markdown_dir, exist_ok=True)
         self.extractor.extract_path(input_files, self.markdown_dir, skip_existing=skip_existing)
         self.logger.info(f"Extraction complete. Markdown files saved to {self.markdown_dir}")
-        
+
+
+    def _gpu_preflight(self, *, accel_type: str, require_ocr: bool, require_math: bool) -> None:
+        """Abort early when GPU OCR/math is requested but CUDA is unavailable."""
+        if not (require_ocr or require_math):
+            return
+
+        policy_env = os.environ.get("GLOSSAPI_BATCH_POLICY", "<unset>")
+        instructions = (
+            "Required environment for GPU OCR: export GLOSSAPI_BATCH_POLICY=docling; "
+            "export GLOSSAPI_IMPORT_TORCH=1; ensure CUDA_VISIBLE_DEVICES lists your GPUs."
+        )
+
+        # Enforce non-CPU accelerator selection when OCR/math is forced
+        accel_lower = str(accel_type or "").strip().lower()
+        if accel_lower.startswith("cpu"):
+            raise RuntimeError(
+                "GPU OCR was requested (force_ocr/math) but accel_type='CPU'. "
+                f"{instructions}"
+            )
+
+        try:
+            import onnxruntime as _ort  # type: ignore
+            providers = _ort.get_available_providers()
+        except Exception as exc:
+            raise RuntimeError(
+                "onnxruntime not available while attempting GPU OCR. "
+                "Install onnxruntime-gpu and rerun."
+            ) from exc
+
+        if "CUDAExecutionProvider" not in providers:
+            raise RuntimeError(
+                "CUDAExecutionProvider missing from onnxruntime providers. "
+                f"Detected providers={providers}. {instructions}"
+            )
+
+        torch_mod = _maybe_import_torch(force=True)
+        if torch_mod is None or not getattr(torch_mod, "cuda", None) or not torch_mod.cuda.is_available():
+            raise RuntimeError(
+                "Torch CUDA is not available but GPU OCR/math was requested. "
+                f"Install the CUDA wheel (e.g. torch==2.5.1+cu121) and set GLOSSAPI_IMPORT_TORCH=1."
+            )
+
+        device_count = torch_mod.cuda.device_count()
+        if device_count < 1:
+            raise RuntimeError(
+                "Torch CUDA initialised but reports zero devices visible. "
+                "Set CUDA_VISIBLE_DEVICES appropriately before running GPU OCR."
+            )
+        device_names = []
+        for idx in range(device_count):
+            try:
+                device_names.append(torch_mod.cuda.get_device_name(idx))
+            except Exception:
+                device_names.append(f"cuda:{idx}")
+
+        if not self._gpu_banner_logged:
+            self.logger.info(
+                "GPU OCR checklist:\n  export GLOSSAPI_BATCH_POLICY=docling\n  export GLOSSAPI_IMPORT_TORCH=1\n  # optional\n  export CUDA_VISIBLE_DEVICES=<gpu ids>"
+            )
+            self._gpu_banner_logged = True
+
+        self.logger.info(
+            "GPU preflight OK: policy=%s providers=%s torch_devices=%s",
+            policy_env,
+            ",".join(providers),
+            ", ".join(device_names) or "<none>",
+        )
+
 
     
 
@@ -2266,7 +2463,22 @@ def gpu_extract_worker_queue(
             emit_formula_index=bool(emit_index),
         )
     except Exception as _e:
-        print(f"[GPU{device_id}] Prime failed: {_e}")
+        msg = f"[GPU{device_id}] Prime failed: {_e}"
+        print(msg)
+        if result_q is not None:
+            try:
+                result_q.put(
+                    {
+                        "event": "exit",
+                        "worker": device_id,
+                        "exitcode": 1,
+                        "pid": os.getpid(),
+                        "error": str(_e),
+                    }
+                )
+            except Exception:
+                pass
+        raise
     try:
         if c.extractor is not None:
             c.extractor.external_state_updates = result_q is not None
