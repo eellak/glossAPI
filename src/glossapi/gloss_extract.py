@@ -1,6 +1,7 @@
 from typing import Dict, Set, List, Optional, Iterable, Tuple, Any, Union, Callable
 import importlib
 import sys
+import warnings
 
 from docling.datamodel.base_models import InputFormat, ConversionStatus
 from docling.datamodel.pipeline_options import (
@@ -30,12 +31,10 @@ def _maybe_import_torch(*, force: bool = False):
     torch_mod = sys.modules.get("torch")
     if torch_mod is not None:
         return torch_mod
-    flag = str(os.environ.get("GLOSSAPI_IMPORT_TORCH", "0")).strip().lower()
-    if force or flag in {"1", "true", "yes"}:
-        try:
-            return importlib.import_module("torch")  # type: ignore
-        except Exception:
-            return None
+    try:
+        return importlib.import_module("torch")  # type: ignore
+    except Exception:
+        return None
     return None
 DocumentConverter = None
 PdfFormatOption = None
@@ -244,13 +243,29 @@ class GlossExtract:
         self.batch_result_callback: Optional[Callable[[List[str], List[str]], None]] = None
         self.external_state_updates: bool = False
         # Phase-1 extraction safety controls
-        self.batch_policy: str = os.getenv("GLOSSAPI_BATCH_POLICY", "safe").strip().lower()
-        self.max_batch_files: int = max(1, int(os.getenv("GLOSSAPI_BATCH_MAX", "3")))
-        if self.batch_policy in {"safe", "pypdfium"}:
-            self.max_batch_files = 1
-        elif self.batch_policy in {"docling", "throughput", "docling_batched"}:
-            self.max_batch_files = 5
-        self.use_pypdfium_backend: bool = self.batch_policy in {"safe", "pypdfium"}
+        self.batch_policy: str = "safe"
+        self.max_batch_files: int = 1
+        self.use_pypdfium_backend: bool = True
+        policy_env = os.getenv("GLOSSAPI_BATCH_POLICY")
+        max_env = os.getenv("GLOSSAPI_BATCH_MAX")
+        max_override: Optional[int] = None
+        if policy_env or max_env:
+            warnings.warn(
+                "GLOSSAPI_BATCH_POLICY and GLOSSAPI_BATCH_MAX are deprecated. "
+                "Use Corpus.extract(... phase1_backend='docling') to select the Docling backend.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        if max_env:
+            try:
+                max_override = int(max_env)
+            except Exception:
+                try:
+                    self._log.warning("Ignoring invalid GLOSSAPI_BATCH_MAX=%s", max_env)
+                except Exception:
+                    pass
+                max_override = None
+        self.configure_batch_policy(policy_env or "safe", max_batch_files=max_override, prefer_safe_backend=None if (policy_env or max_env) else True)
         self._thread_caps_applied: bool = False
 
     def configure_batch_policy(

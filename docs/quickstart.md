@@ -8,11 +8,6 @@ This page shows the most common tasks in a few lines each.
 
 ```python
 from glossapi import Corpus
-import os
-
-os.environ['GLOSSAPI_BATCH_POLICY'] = 'safe'  # default, shown for clarity
-os.environ['GLOSSAPI_BATCH_MAX'] = '1'
-
 c = Corpus('IN', 'OUT')
 c.extract(input_format='pdf', accel_type='CUDA')  # OCR is off by default
 ```
@@ -24,17 +19,12 @@ mode when you prioritise stability.
 
 ```python
 from glossapi import Corpus
-import os
-
-os.environ['GLOSSAPI_BATCH_POLICY'] = 'docling'  # opt into native backend
-os.environ['GLOSSAPI_BATCH_MAX'] = '5'
-
 c = Corpus('IN', 'OUT')
-c.extract(input_format='pdf', accel_type='CUDA')
+c.extract(input_format='pdf', accel_type='CUDA', phase1_backend='docling')
 ```
 
-Raise `GLOSSAPI_BATCH_MAX` to stream multiple PDFs through `convert_all`.
-Use this only when you are comfortable trading stability for speed.
+`phase1_backend='docling'` streams multiple PDFs through Docling’s converter and
+should be used when you are comfortable trading some stability for throughput.
 
 ### Multi‑GPU
 

@@ -180,21 +180,24 @@ corpus.annotate()  # or corpus.annotate(annotation_type="chapter") For texts wit
 GlossAPI offers two extraction profiles:
 
 - **Safe (default)** — PyPDFium backend with size‑1 batching. Recommended when you prioritise stability.
-- **Docling/native** — batches documents through `docling_parse` for maximum throughput. Use only when you are comfortable trading some stability for speed.
+- **Docling/native** — runs the Docling parser and can batch multiple documents for higher throughput.
 
-Pick one via environment variables (or programmatically through `GlossExtract.configure_batch_policy(...)`):
+Choose the backend directly from the API:
 
-```bash
-# Safe mode
-export GLOSSAPI_BATCH_POLICY=safe
-export GLOSSAPI_BATCH_MAX=1
+```python
+from glossapi import Corpus
+c = Corpus('IN', 'OUT')
 
-# Higher throughput (use with caution)
-export GLOSSAPI_BATCH_POLICY=docling
-export GLOSSAPI_BATCH_MAX=5
+# Default (safe backend)
+c.extract(input_format='pdf')
+
+# Force Docling backend for Phase‑1 layout
+c.extract(input_format='pdf', phase1_backend='docling')
+
+# Any call that enables OCR or math enrichment automatically switches to Docling.
 ```
 
-Regardless of policy, the extractor now clamps OMP/OpenBLAS/MKL pools to a
+Regardless of backend, the extractor clamps OMP/OpenBLAS/MKL pools to a
 single thread per worker so multi‑GPU runs stay well behaved.
 
 ## Documentation
@@ -259,19 +262,6 @@ This project is licensed under the [European Union Public Licence 1.2 (EUPL 1.2)
 
 The project includes a GPU-capable OCR pipeline using Docling for layout and RapidOCR (ONNXRuntime) for OCR. By default, Corpus.extract runs without OCR; use `Corpus.clean()` then `Corpus.ocr()` to re-extract only the pages/files that the Rust cleaner flags as badly extracted. These steps are portable across machines:
 
-- Always prepare the environment before forcing GPU OCR/math:
-
-```bash
-export GLOSSAPI_BATCH_POLICY=docling    # switch from the safe PyPDFium backend
-export GLOSSAPI_IMPORT_TORCH=1          # ensure workers import Torch for GPU discovery
-# optional: restrict cards
-export CUDA_VISIBLE_DEVICES=0,1
-
-python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
-python -c "import onnxruntime as ort; print(ort.get_available_providers())"
-# providers must include CUDAExecutionProvider (and ideally TensorrtExecutionProvider when available)
-```
-
 - Create a fresh venv and install packages
   - `python -m venv .venv && source .venv/bin/activate`
   - `pip install -U pip`
@@ -279,6 +269,9 @@ python -c "import onnxruntime as ort; print(ort.get_available_providers())"
   - Ensure only GPU ORT is present: `pip uninstall -y onnxruntime || true`
 - Install Torch CUDA for GPU layout and enrichment (choose a build matching your driver):
     - `pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1`
+- Verify providers before running Phase‑2:
+  - `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"`
+  - `python -c "import onnxruntime as ort; print(ort.get_available_providers())"  # must list CUDAExecutionProvider`
 - Provide ONNX models and Greek keys
   - Package files under `glossapi/models/rapidocr/{onnx,keys}` or set `GLOSSAPI_RAPIDOCR_ONNX_DIR` to a directory containing:
     - `det/inference.onnx`, `rec/inference.onnx`, `cls/ch_ppocr_mobile_v2.0_cls_infer.onnx`, and `greek_ppocrv5_keys.txt`

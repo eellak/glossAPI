@@ -14,22 +14,11 @@ This document summarizes how GlossAPI uses the GPU for OCR and formula/code enri
 - Packaged RapidOCR models/keys found under `glossapi/models/rapidocr/{onnx,keys}` or via `GLOSSAPI_RAPIDOCR_ONNX_DIR`.
 - Optional helpers for Phase‑2 JSON: `pypdfium2`, `zstandard`.
 
-Always set the runtime environment before forcing OCR or math:
+Verify GPU readiness before forcing OCR or math:
 
 ```bash
-export GLOSSAPI_BATCH_POLICY=docling
-export GLOSSAPI_IMPORT_TORCH=1
-# optional: limit visible GPUs
-export CUDA_VISIBLE_DEVICES=0,1
-
-python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
-python -c "import onnxruntime as ort; print(ort.get_available_providers())"  # must list CUDAExecutionProvider
-```
-
-Check:
-```bash
-python -c "import onnxruntime as ort; print(ort.get_available_providers())"  # must include CUDAExecutionProvider
-python -c "import torch; import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"  # expects True, >=1
+python -c "import onnxruntime as ort; print(ort.get_available_providers())"            # must include CUDAExecutionProvider
 ```
 
 ## Running Phase‑1 (Extract)
@@ -46,6 +35,8 @@ c.extract(
     emit_formula_index=True,     # request json/<stem>.formula_index.jsonl alongside the default JSON
 )
 ```
+
+When `force_ocr=True` (or when math/code enrichment is enabled), GlossAPI automatically switches to the Docling backend and aborts if CUDA‑enabled torch/ONNXRuntime providers are not available.
 
 Outputs:
 - `markdown/<stem>.md`

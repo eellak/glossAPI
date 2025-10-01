@@ -25,15 +25,12 @@ def _maybe_import_torch(*, force: bool = False):
     torch_mod = sys.modules.get("torch")
     if torch_mod is not None:
         return torch_mod
-    flag = str(os.environ.get("GLOSSAPI_IMPORT_TORCH", "0")).strip().lower()
-    if force or flag in {"1", "true", "yes"}:
-        try:
-            import importlib
+    try:
+        import importlib
 
-            return importlib.import_module("torch")  # type: ignore
-        except Exception:
-            return None
-    return None
+        return importlib.import_module("torch")  # type: ignore
+    except Exception:
+        return None
 
 
 class _ProcessingStateManager:
@@ -170,7 +167,8 @@ class Corpus:
 
         # Track whether we've already printed the GPU setup banner in this process
         self._gpu_banner_logged = False
-        
+        self._phase1_backend = "safe"
+
         os.makedirs(self.markdown_dir, exist_ok=True)
         os.makedirs(self.sections_dir, exist_ok=True)
         os.makedirs(self.cleaned_markdown_dir, exist_ok=True)
@@ -904,6 +902,7 @@ class Corpus:
                     skip_existing=False,
                     export_doc_json=True,
                     emit_formula_index=True,
+                    phase1_backend="docling",
                 )
                 if json_dir.exists():
                     stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
@@ -936,6 +935,7 @@ class Corpus:
                 # When math follows we need JSON; otherwise it's optional
                 export_doc_json=bool(mode_norm == "ocr_bad_then_math"),
                 emit_formula_index=bool(mode_norm == "ocr_bad_then_math"),
+                phase1_backend="docling",
             )
             # Update metadata to reflect successful OCR reruns
             try:
@@ -1004,7 +1004,8 @@ class Corpus:
         benchmark_mode: bool = False,
         export_doc_json: bool = True,
         emit_formula_index: bool = False,
-        ) -> None:
+        phase1_backend: str = "auto",
+    ) -> None:
         """Prepare and initialize the underlying extractor once per configuration.
 
         Builds the Docling converter only if the effective configuration changed.
@@ -1014,24 +1015,21 @@ class Corpus:
             from .gloss_extract import GlossExtract
             self.extractor = GlossExtract(url_column=self.url_column)
 
-        use_safe_backend = getattr(self.extractor, "use_pypdfium_backend", False)
-        if use_safe_backend and any(
-            bool(flag) for flag in (force_ocr, formula_enrichment, code_enrichment)
-        ):
-            policy = getattr(self.extractor, "batch_policy", "safe")
-            raise ValueError(
-                "Configuration conflict: Docling/rapid OCR features require an OCR-capable backend. "
-                f"force_ocr/formula_enrichment/code_enrichment were requested while GLOSSAPI_BATCH_POLICY='{policy}' "
-                "keeps the PyPDFium-safe backend active. Unset GLOSSAPI_BATCH_POLICY or set it to 'docling' before "
-                "enabling OCR or enrichment, or run without those flags."
-            )
-
         # Propagate toggles used by Phase‑1 helpers
         try:
             setattr(self.extractor, "export_doc_json", bool(export_doc_json))
             setattr(self.extractor, "emit_formula_index", bool(emit_formula_index))
         except Exception:
             pass
+        # Resolve backend preference (safe vs docling)
+        backend_choice = self._resolve_phase1_backend(
+            phase1_backend,
+            force_ocr=bool(force_ocr),
+            formula_enrichment=bool(formula_enrichment),
+            code_enrichment=bool(code_enrichment),
+        )
+        self._phase1_backend = backend_choice
+
         # Threads
         try:
             if num_threads is not None:
@@ -1056,7 +1054,14 @@ class Corpus:
             accel_type=accel_type,
             require_ocr=bool(force_ocr),
             require_math=bool(formula_enrichment or code_enrichment),
+            require_backend_gpu=(backend_choice == "docling"),
         )
+
+        # Configure batch/backend policy based on resolved choice
+        if backend_choice == "docling":
+            self.extractor.configure_batch_policy("docling", max_batch_files=5, prefer_safe_backend=False)
+        else:
+            self.extractor.configure_batch_policy("safe", max_batch_files=1, prefer_safe_backend=True)
 
         # Ensure converter exists (reuse when unchanged)
         self.extractor.ensure_extractor(
@@ -1086,11 +1091,12 @@ class Corpus:
         benchmark_mode: bool = False,
         export_doc_json: bool = True,
         emit_formula_index: bool = False,
+        phase1_backend: str = "auto",
         _prepared: bool = False,
     ) -> None:
         """
         Extract input files to markdown format.
-        
+
         Args:
             input_format: Input format ("pdf", "docx", "xml_jats", "html", "pptx", "csv", "md", "all") (default: "all")
                           Note: Old .doc format (pre-2007) is not supported
@@ -1098,6 +1104,9 @@ class Corpus:
             accel_type: Acceleration type ("Auto", "CPU", "CUDA", "MPS") (default: "Auto")
             export_doc_json: When True (default), writes Docling layout JSON to `json/<stem>.docling.json(.zst)`
             emit_formula_index: Also emit `json/<stem>.formula_index.jsonl` (default: False)
+            phase1_backend: Selects the Phase-1 backend. ``"auto"`` (default) keeps the safe backend unless
+                OCR/math is requested, ``"safe"`` forces the PyPDFium backend, and ``"docling"`` forces the
+                Docling backend.
 
         """
         if not file_paths:
@@ -1110,6 +1119,13 @@ class Corpus:
         formula_batch_env = _os.getenv("GLOSSAPI_FORMULA_BATCH", "16")
         # Create output directory for downstream stages
         os.makedirs(self.markdown_dir, exist_ok=True)
+
+        backend_choice = self._resolve_phase1_backend(
+            phase1_backend,
+            force_ocr=bool(force_ocr),
+            formula_enrichment=bool(formula_enrichment),
+            code_enrichment=bool(code_enrichment),
+        )
         
         # Define supported formats
         supported_formats = ["pdf", "docx", "xml", "html", "pptx", "csv", "md"]
@@ -1248,9 +1264,11 @@ class Corpus:
                 except Exception:
                     threads_effective = int(num_threads) if isinstance(num_threads, int) else max(2, 2 * max(1, len(devs)))
 
+                batch_hint = 5 if backend_choice == "docling" and not force_ocr else 1
                 self.logger.info(
-                    "Phase-1 config: batch_size=%s threads=%s skip_existing=%s benchmark=%s",
-                    5 if not force_ocr else 1,
+                    "Phase-1 config: backend=%s batch_size=%s threads=%s skip_existing=%s benchmark=%s",
+                    backend_choice,
+                    batch_hint,
                     threads_effective,
                     bool(skip_existing),
                     bool(benchmark_mode),
@@ -1299,6 +1317,7 @@ class Corpus:
                             bool(benchmark_mode),
                             bool(export_doc_json),
                             bool(emit_formula_index),
+                            backend_choice,
                             result_q,
                         ),
                     )
@@ -1462,6 +1481,7 @@ class Corpus:
                 benchmark_mode=bool(benchmark_mode),
                 export_doc_json=bool(export_doc_json),
                 emit_formula_index=bool(emit_formula_index),
+                phase1_backend=backend_choice,
             )
         # Propagate benchmark mode to extractor to trim auxiliary I/O
         try:
@@ -1474,15 +1494,45 @@ class Corpus:
         self.logger.info(f"Extraction complete. Markdown files saved to {self.markdown_dir}")
 
 
-    def _gpu_preflight(self, *, accel_type: str, require_ocr: bool, require_math: bool) -> None:
+    def _resolve_phase1_backend(
+        self,
+        requested: Optional[str],
+        *,
+        force_ocr: bool,
+        formula_enrichment: bool,
+        code_enrichment: bool,
+    ) -> str:
+        valid = {"auto", "safe", "docling"}
+        choice = (requested or "auto").strip().lower()
+        if choice not in valid:
+            raise ValueError(
+                f"Invalid phase1_backend='{requested}'. Expected one of: 'auto', 'safe', 'docling'."
+            )
+        needs_gpu = bool(force_ocr or formula_enrichment or code_enrichment)
+        if choice == "auto":
+            choice = "docling" if needs_gpu else "safe"
+        if choice == "safe" and needs_gpu:
+            self.logger.info(
+                "Phase-1 backend 'safe' overridden to 'docling' because OCR/math enrichment was requested."
+            )
+            choice = "docling"
+        return choice
+
+    def _gpu_preflight(
+        self,
+        *,
+        accel_type: str,
+        require_ocr: bool,
+        require_math: bool,
+        require_backend_gpu: bool = False,
+    ) -> None:
         """Abort early when GPU OCR/math is requested but CUDA is unavailable."""
-        if not (require_ocr or require_math):
+        if not (require_ocr or require_math or require_backend_gpu):
             return
 
-        policy_env = os.environ.get("GLOSSAPI_BATCH_POLICY", "<unset>")
         instructions = (
-            "Required environment for GPU OCR: export GLOSSAPI_BATCH_POLICY=docling; "
-            "export GLOSSAPI_IMPORT_TORCH=1; ensure CUDA_VISIBLE_DEVICES lists your GPUs."
+            "GPU OCR and math enrichment require CUDA-enabled torch and onnxruntime-gpu. "
+            "Install the CUDA wheels and ensure NVIDIA drivers expose the desired devices."
         )
 
         # Enforce non-CPU accelerator selection when OCR/math is forced
@@ -1512,7 +1562,7 @@ class Corpus:
         if torch_mod is None or not getattr(torch_mod, "cuda", None) or not torch_mod.cuda.is_available():
             raise RuntimeError(
                 "Torch CUDA is not available but GPU OCR/math was requested. "
-                f"Install the CUDA wheel (e.g. torch==2.5.1+cu121) and set GLOSSAPI_IMPORT_TORCH=1."
+                "Install the CUDA wheel (e.g. torch==2.5.1+cu121) and ensure CUDA drivers/devices are visible."
             )
 
         device_count = torch_mod.cuda.device_count()
@@ -1530,13 +1580,12 @@ class Corpus:
 
         if not self._gpu_banner_logged:
             self.logger.info(
-                "GPU OCR checklist:\n  export GLOSSAPI_BATCH_POLICY=docling\n  export GLOSSAPI_IMPORT_TORCH=1\n  # optional\n  export CUDA_VISIBLE_DEVICES=<gpu ids>"
+                "GPU preflight: using torch + onnxruntime GPU backends; ensure CUDA drivers are available."
             )
             self._gpu_banner_logged = True
 
         self.logger.info(
-            "GPU preflight OK: policy=%s providers=%s torch_devices=%s",
-            policy_env,
+            "GPU preflight OK: providers=%s torch_devices=%s",
             ",".join(providers),
             ", ".join(device_names) or "<none>",
         )
@@ -2266,9 +2315,10 @@ def _gpu_math_worker(device_id: int, in_dir: str, out_dir: str, work_q, batch_si
 
             _torch = _sys.modules.get("torch")
             if _torch is None:
-                flag = str(_os.environ.get("GLOSSAPI_IMPORT_TORCH", "0")).strip().lower()
-                if flag in {"1", "true", "yes"}:
+                try:
                     _torch = importlib.import_module("torch")  # type: ignore
+                except Exception:
+                    _torch = None
             if _torch is not None and hasattr(_torch, "set_num_threads"):
                 _torch.set_num_threads(1)
         except Exception:
@@ -2284,8 +2334,11 @@ def _gpu_math_worker(device_id: int, in_dir: str, out_dir: str, work_q, batch_si
                 import sys as _sys, importlib
 
                 _torch = _sys.modules.get("torch")
-                if _torch is None and str(_os.environ.get("GLOSSAPI_IMPORT_TORCH", "0")).strip().lower() in {"1", "true", "yes"}:
-                    _torch = importlib.import_module("torch")  # type: ignore
+                if _torch is None:
+                    try:
+                        _torch = importlib.import_module("torch")  # type: ignore
+                    except Exception:
+                        _torch = None
                 if _torch is not None:
                     _torch_name = _torch.cuda.get_device_name(0) if getattr(_torch, "cuda", None) and _torch.cuda.is_available() else "no-cuda"
                 else:
@@ -2375,6 +2428,7 @@ def gpu_extract_worker_queue(
     benchmark: bool,
     export_json: bool,
     emit_index: bool,
+    backend: str,
     result_q=None,
 ) -> None:
     import os as _os
@@ -2461,6 +2515,7 @@ def gpu_extract_worker_queue(
             benchmark_mode=benchmark,
             export_doc_json=bool(export_json),
             emit_formula_index=bool(emit_index),
+            phase1_backend=backend,
         )
     except Exception as _e:
         msg = f"[GPU{device_id}] Prime failed: {_e}"
@@ -2547,6 +2602,7 @@ def gpu_extract_worker_queue(
                             benchmark_mode=benchmark,
                             export_doc_json=bool(export_json),
                             emit_formula_index=bool(emit_index),
+                            phase1_backend=backend,
                             _prepared=True,
                         )
                         processed += len(batch)
@@ -2602,6 +2658,7 @@ def gpu_extract_worker_queue(
                         benchmark_mode=benchmark,
                         export_doc_json=bool(export_json),
                         emit_formula_index=bool(emit_index),
+                        phase1_backend=backend,
                         _prepared=True,
                     )
                     processed += len(batch)

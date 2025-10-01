@@ -46,12 +46,10 @@ def _maybe_import_torch(*, force: bool = False):
     torch_mod = sys.modules.get("torch")
     if torch_mod is not None:
         return torch_mod
-    flag = str(os.environ.get("GLOSSAPI_IMPORT_TORCH", "0")).strip().lower()
-    if force or flag in {"1", "true", "yes"}:
-        try:
-            return importlib.import_module("torch")  # type: ignore
-        except Exception:
-            return None
+    try:
+        return importlib.import_module("torch")  # type: ignore
+    except Exception:
+        return None
     return None
 
 
