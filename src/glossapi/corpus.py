@@ -249,8 +249,8 @@ class Corpus:
         *,
         ocr_model_dir: Union[str, Path, None] = None,
         force_ocr_fallback: bool = False,
-        empty_char_threshold: int = 100,
-        empty_min_pages: int = 3,
+        empty_char_threshold: int = 0,
+        empty_min_pages: int = 0,
     ) -> None:
         """Clean markdown files and evaluate badness using the Rust extension.
 
@@ -261,7 +261,7 @@ class Corpus:
             drop_bad: If True, files with badness_score > threshold are removed from downstream processing. Set to False to keep all files and only record the score.
             ocr_model_dir: [DEPRECATED – no effect] Use Corpus.ocr(model_dir=...) instead.
             force_ocr_fallback: [DEPRECATED – no effect] Use Corpus.ocr(fix_bad=True) instead.
-            empty_char_threshold: Character threshold (after stripping comments and whitespace) that flags markdown as nearly empty.
+            empty_char_threshold: Character threshold (after stripping comments and whitespace) that flags markdown as nearly empty. Default 0 only enforces the zero-character safeguard.
             empty_min_pages: Minimum page count for a low-character document to trigger an OCR rerun recommendation.
         """
         import importlib
@@ -316,7 +316,6 @@ class Corpus:
 
         import os
         records: list = []  # will hold metrics for parquet merge
-        markdown_stats: List[Dict[str, Any]] = []
         metrics_dir = self.output_dir / "json" / "metrics"
 
         def _page_count_for(stem: str) -> Optional[int]:
@@ -465,6 +464,8 @@ class Corpus:
                             "badness_score": row.get("badness_score_all_chars", 0.0),
                             "percentage_greek": row.get("percentage_greek_cleaned"),
                             "percentage_latin": row.get("percentage_latin_cleaned"),
+                            "char_count_no_comments": row.get("char_count_no_comments"),
+                            "is_empty": row.get("is_empty", False),
                         }
                     )
             except Exception as e:
@@ -482,22 +483,6 @@ class Corpus:
             self.logger.warning("Could not delete cleaning report %s: %s", report_parquet_path, e)
 
         self.logger.info(f"Cleaned {len(records)} markdown files → {self.cleaned_markdown_dir}")
-
-        for md_path in sorted(self.cleaned_markdown_dir.glob("*.md")):
-            try:
-                raw_text = md_path.read_text(encoding="utf-8")
-            except Exception:
-                continue
-            text_no_comments = re.sub(r"<!--.*?-->", "", raw_text, flags=re.DOTALL)
-            char_count = sum(1 for ch in text_no_comments if not ch.isspace())
-            page_count = _page_count_for(md_path.stem)
-            markdown_stats.append(
-                {
-                    "filename": f"{md_path.stem}.pdf",
-                    "char_count_no_comments": int(char_count),
-                    "page_count": int(page_count) if page_count is not None else pd.NA,
-                }
-            )
 
         # ------------------------------------------------------------------
         # Update parquet with Mojibake metrics (single authoritative schema)
@@ -523,6 +508,8 @@ class Corpus:
                 "greek_badness_score",
                 "greek_latin_percentage",
                 "rejection_reason",
+                "char_count_no_comments",
+                "is_empty",
             ]:
                 if col not in df.columns:
                     df[col] = pd.NA
@@ -643,20 +630,40 @@ class Corpus:
             # ensure no duplicate column names
             df_final = df_final.loc[:, ~df_final.columns.duplicated()]
 
-            if markdown_stats:
-                stats_df = pd.DataFrame(markdown_stats)
-                df_final = df_final.merge(stats_df, on="filename", how="left")
+            def _collapse_measure(df: pd.DataFrame, base: str) -> None:
+                cols = [col for col in df.columns if col == base or col.startswith(f"{base}_")]
+                if not cols:
+                    return
+                collapsed = None
+                for col in cols:
+                    values = pd.to_numeric(df[col], errors="coerce")
+                    collapsed = values if collapsed is None else collapsed.combine_first(values)
+                df[base] = collapsed
+                for col in cols:
+                    if col != base:
+                        df.drop(columns=col, inplace=True, errors="ignore")
+
+            _collapse_measure(df_final, "char_count_no_comments")
+            _collapse_measure(df_final, "page_count")
 
             if "char_count_no_comments" in df_final.columns:
                 df_final["char_count_no_comments"] = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce")
             if "page_count" in df_final.columns:
                 df_final["page_count"] = pd.to_numeric(df_final["page_count"], errors="coerce")
 
-            if "filter" in df_final.columns:
-                df_final["filter"] = df_final["filter"].fillna("ok")
-            else:
-                df_final["filter"] = "ok"
+            df_final["filter"] = "ok"
             df_final["needs_ocr"] = False
+            if "is_empty" in df_final.columns:
+                df_final["is_empty"] = df_final["is_empty"].fillna(False).astype(bool)
+            else:
+                df_final["is_empty"] = False
+
+            filename_series = df_final.get("filename")
+            if filename_series is None:
+                pdf_mask = pd.Series(False, index=df_final.index)
+            else:
+                pdf_mask = filename_series.astype(str).str.lower().str.endswith(".pdf")
+                pdf_mask = pdf_mask.fillna(False)
 
             def _append_reason(mask: pd.Series, reason: str, *, requires_ocr: bool) -> None:
                 if df_final.empty:
@@ -664,16 +671,22 @@ class Corpus:
                 if not isinstance(mask, pd.Series):
                     mask = pd.Series(mask, index=df_final.index)
                 mask = mask.fillna(False)
-                if not bool(mask.any()):
+                applicable = (mask & pdf_mask).fillna(False)
+                if not bool(applicable.any()):
                     return
-                current = df_final.loc[mask, "filter"].astype(str)
-                df_final.loc[mask, "filter"] = np.where(
-                    current == "ok",
-                    reason,
-                    current + ";" + reason,
-                )
+                current = df_final.loc[applicable, "filter"].astype(str)
+
+                def _merge_reason(value: str) -> str:
+                    if value == "ok" or not value:
+                        return reason
+                    parts = [part for part in value.split(";") if part]
+                    if reason not in parts:
+                        parts.append(reason)
+                    return ";".join(parts)
+
+                df_final.loc[applicable, "filter"] = current.apply(_merge_reason)
                 if requires_ocr:
-                    df_final.loc[mask, "needs_ocr"] = True
+                    df_final.loc[applicable, "needs_ocr"] = True
 
             try:
                 empty_threshold_int = int(empty_char_threshold) if empty_char_threshold is not None else 0
@@ -698,11 +711,25 @@ class Corpus:
 
             if "char_count_no_comments" in df_final.columns:
                 char_series = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce").fillna(0)
-                page_series_raw = pd.to_numeric(df_final.get("page_count"), errors="coerce")
-                page_series = page_series_raw.fillna(min_pages if min_pages else 0)
-                if empty_threshold_int > 0:
+                page_series_raw = df_final.get("page_count")
+                if page_series_raw is not None:
+                    page_series = pd.to_numeric(page_series_raw, errors="coerce")
+                else:
+                    page_series = pd.Series(np.nan, index=df_final.index, dtype="float64")
+                page_series = page_series.fillna(min_pages if min_pages else 0)
+
+                zero_mask = char_series <= 0
+                zero_pdf = (zero_mask & pdf_mask).fillna(False)
+                if bool(zero_pdf.any()):
+                    df_final.loc[zero_pdf.index, "is_empty"] = df_final.loc[zero_pdf.index, "is_empty"] | zero_pdf
+                if empty_threshold_int == 0:
+                    zeros = int(zero_pdf.sum())
+                    if zeros:
+                        self.logger.info("Empty text check: %d files have zero characters", zeros)
+                    _append_reason(zero_pdf, "empty_text==0", requires_ocr=True)
+                elif empty_threshold_int > 0:
                     low_mask = char_series < empty_threshold_int
-                    long_mask = page_series >= min_pages
+                    long_mask = page_series >= max(1, min_pages)
                     _append_reason(low_mask & long_mask, f"empty_text<{empty_threshold_int}", requires_ocr=True)
                     if min_pages > 0:
                         _append_reason(low_mask & ~long_mask, f"empty_text<{empty_threshold_int}_short", requires_ocr=False)

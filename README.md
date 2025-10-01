@@ -32,6 +32,7 @@ Prerequisites
 - Python 3.8+
 - NVIDIA driver with CUDA 12.x recommended (check with `nvidia-smi`)
 - Rust toolchain (required for Rust extensions: noise + cleaner) and maturin
+- GL runtime libraries for headless OpenCV (e.g. `sudo apt-get install -y libgl1 libglib2.0-0` on AWS Ubuntu images)
 
 Install Rust + maturin (once per machine):
 ```bash
@@ -54,6 +55,7 @@ uv venv .venv
 
 # Fast path: install project with dependencies (builds Rust extensions via maturin)
 uv pip install -e .
+uv pip install "opencv-python==4.8.1.78" rapidocr  # AWS headless RapidOCR/OpenCV support
 
 # Alternative (stricter sync):
 # uv pip sync requirements.txt

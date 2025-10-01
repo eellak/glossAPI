@@ -1,5 +1,10 @@
-use pyo3::prelude::*;
+use arrow::array::{ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray};
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::record_batch::RecordBatch;
+use parquet::arrow::ArrowWriter;
+use parquet::file::properties::WriterProperties;
 use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use std::collections::HashSet;
@@ -7,14 +12,10 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex}; // Mutex will be needed for collecting report_entries if done from parallel loop
 use walkdir;
-use csv;
-use arrow::array::{ArrayRef, Float64Array, StringArray};
-use arrow::datatypes::{DataType, Field, Schema};
-use arrow::record_batch::RecordBatch;
-use parquet::arrow::ArrowWriter;
-use parquet::file::properties::WriterProperties;
 
 use chrono;
+use once_cell::sync::Lazy;
+use regex::Regex;
 
 use crate::cleaning_module;
 use crate::directory_processor; // Add this import
@@ -26,6 +27,45 @@ struct FinalReportEntry {
     badness_score_all_chars: Option<f64>,
     percentage_greek_cleaned: Option<f64>,
     percentage_latin_cleaned: Option<f64>,
+    char_count_no_comments: i64,
+    is_empty: bool,
+}
+
+static HTML_COMMENT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<!--.*?-->").unwrap());
+static INLINE_DISPLAY_MATH_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(\\\[.*?\\\])|(\\\(.*?\\\))|(\$\$.*?\$\$)").unwrap());
+
+fn strip_latex_envs(mut text: String) -> String {
+    const LATEX_ENVS: [&str; 11] = [
+        "equation",
+        "equation*",
+        "align",
+        "align*",
+        "gather",
+        "gather*",
+        "multline",
+        "multline*",
+        "eqnarray",
+        "eqnarray*",
+        "comment",
+    ];
+    for env in LATEX_ENVS.iter() {
+        let escaped = regex::escape(env);
+        let pattern = format!(r"\\begin\{{{env}\}}.*?\\end\{{{env}\}}", env = escaped);
+        let re = Regex::new(&pattern).unwrap();
+        text = re.replace_all(&text, "").into_owned();
+    }
+    text
+}
+
+fn sanitized_char_count(content: &str) -> (i64, bool) {
+    let mut sanitized = HTML_COMMENT_RE.replace_all(content, "").into_owned();
+    sanitized = strip_latex_envs(sanitized);
+    sanitized = INLINE_DISPLAY_MATH_RE
+        .replace_all(&sanitized, "")
+        .into_owned();
+    let count = sanitized.chars().filter(|ch| !ch.is_whitespace()).count() as i64;
+    (count, count == 0)
 }
 
 /// Orchestrates the complete document processing pipeline.
@@ -45,7 +85,10 @@ pub fn run_complete_pipeline(
 ) -> PyResult<()> {
     println!("Rust: Starting REFACTORED STAGED complete pipeline (calling batch functions)...");
     println!("Rust: Input directory: {}", input_dir_str);
-    println!("Rust: Output cleaned files directory (final): {}", output_cleaned_files_dir_str);
+    println!(
+        "Rust: Output cleaned files directory (final): {}",
+        output_cleaned_files_dir_str
+    );
     println!("Rust: Output report CSV: {}", output_report_csv_str);
     println!("Rust: Scripts to keep: {:?}", scripts_to_keep_input);
     println!("Rust: Number of threads: {}", num_threads);
@@ -61,35 +104,63 @@ pub fn run_complete_pipeline(
     // Ensure final output directory for cleaned files exists (batch_remove_tables_from_files will need it)
     let final_output_cleaned_files_path = Path::new(output_cleaned_files_dir_str);
     if !final_output_cleaned_files_path.exists() {
-        println!("Rust: Creating final output directory for cleaned files: {}...", final_output_cleaned_files_path.display());
-        fs::create_dir_all(final_output_cleaned_files_path).map_err(|e| PyValueError::new_err(format!("Failed to create final output directory {}: {}", final_output_cleaned_files_path.display(), e)))?;
+        println!(
+            "Rust: Creating final output directory for cleaned files: {}...",
+            final_output_cleaned_files_path.display()
+        );
+        fs::create_dir_all(final_output_cleaned_files_path).map_err(|e| {
+            PyValueError::new_err(format!(
+                "Failed to create final output directory {}: {}",
+                final_output_cleaned_files_path.display(),
+                e
+            ))
+        })?;
         println!("Rust: Final output directory for cleaned files created.");
     }
 
     // --- Setup Main Temporary Directory for this Pipeline Run ---
     // Let's use a subdirectory within the system's temp directory for better isolation and cleanup.
-    let temp_pipeline_root_name = format!("text_cleaner_rs_pipeline_{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default());
+    let temp_pipeline_root_name = format!(
+        "text_cleaner_rs_pipeline_{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
     let mut temp_pipeline_root_dir = std::env::temp_dir();
     temp_pipeline_root_dir.push(temp_pipeline_root_name);
 
-    println!("Rust: Creating main temporary directory for pipeline: {}...", temp_pipeline_root_dir.display());
-    fs::create_dir_all(&temp_pipeline_root_dir).map_err(|e| PyValueError::new_err(format!("Failed to create main temporary pipeline directory {}: {}", temp_pipeline_root_dir.display(), e)))?;
+    println!(
+        "Rust: Creating main temporary directory for pipeline: {}...",
+        temp_pipeline_root_dir.display()
+    );
+    fs::create_dir_all(&temp_pipeline_root_dir).map_err(|e| {
+        PyValueError::new_err(format!(
+            "Failed to create main temporary pipeline directory {}: {}",
+            temp_pipeline_root_dir.display(),
+            e
+        ))
+    })?;
     println!("Rust: Main temporary pipeline directory created.");
-    
+
     // --- Define paths for intermediate stages ---
     let temp_stage1_cleaned_dir = temp_pipeline_root_dir.join("stage1_cleaned_files");
-    let temp_stage2_detailed_report_csv = temp_pipeline_root_dir.join("stage2_detailed_table_report.csv");
+    let temp_stage2_detailed_report_csv =
+        temp_pipeline_root_dir.join("stage2_detailed_table_report.csv");
 
     // Convert paths to &str for the directory_processor functions
     let temp_stage1_cleaned_dir_str = temp_stage1_cleaned_dir.to_string_lossy().into_owned();
-    let temp_stage2_detailed_report_csv_str = temp_stage2_detailed_report_csv.to_string_lossy().into_owned();
-    
+    let temp_stage2_detailed_report_csv_str = temp_stage2_detailed_report_csv
+        .to_string_lossy()
+        .into_owned();
+
     // --- Setup for character sets (used by Stage 4, generate_analysis_report_for_directory sets its own) ---
     println!("Rust: Setting up allowed characters for final analysis stage...");
     let mut allowed_chars_final_analysis = HashSet::new();
     let base_scripts = vec!["punctuation", "numbers", "common_symbols"];
-    for script_key_str in scripts_to_keep_input.iter().map(|s| s.as_str()).chain(base_scripts.iter().copied()) {
-         if let Some(script_set) = cleaning_module::SCRIPT_SETS.get(script_key_str) {
+    for script_key_str in scripts_to_keep_input
+        .iter()
+        .map(|s| s.as_str())
+        .chain(base_scripts.iter().copied())
+    {
+        if let Some(script_set) = cleaning_module::SCRIPT_SETS.get(script_key_str) {
             allowed_chars_final_analysis.extend(script_set);
         }
     }
@@ -97,54 +168,83 @@ pub fn run_complete_pipeline(
     allowed_chars_final_analysis.insert('\t');
     allowed_chars_final_analysis.insert('\n');
     let allowed_chars_final_analysis_arc = Arc::new(allowed_chars_final_analysis);
-    let unusual_chars_final_analysis_arc = Arc::new(cleaning_module::SCRIPT_SETS.get("unusual").cloned().unwrap_or_default());
+    let unusual_chars_final_analysis_arc = Arc::new(
+        cleaning_module::SCRIPT_SETS
+            .get("unusual")
+            .cloned()
+            .unwrap_or_default(),
+    );
     let scripts_to_keep_input_arc_final = Arc::new(scripts_to_keep_input.clone());
     println!("Rust: Allowed characters for final analysis setup complete.");
-
 
     // Wrap the core logic in a result block to ensure cleanup happens
     let pipeline_result = (|| {
         // === STAGE 1: Initial Cleaning to Temporary Directory ===
-        println!("\nRust: === Starting STAGE 1: Initial Cleaning to {} ===", temp_stage1_cleaned_dir.display());
-        fs::create_dir_all(&temp_stage1_cleaned_dir).map_err(|e| PyValueError::new_err(format!("Failed to create stage 1 temp output directory {}: {}", temp_stage1_cleaned_dir.display(), e)))?;
-        
+        println!(
+            "\nRust: === Starting STAGE 1: Initial Cleaning to {} ===",
+            temp_stage1_cleaned_dir.display()
+        );
+        fs::create_dir_all(&temp_stage1_cleaned_dir).map_err(|e| {
+            PyValueError::new_err(format!(
+                "Failed to create stage 1 temp output directory {}: {}",
+                temp_stage1_cleaned_dir.display(),
+                e
+            ))
+        })?;
+
         directory_processor::generate_analysis_report_for_directory(
-            py, 
+            py,
             input_dir_str,
             None, // output_csv_path_str: We don't want a CSV from this stage
             Some(&temp_stage1_cleaned_dir_str), // output_dir_cleaned_files_str: Output to our temp dir
-            scripts_to_keep_input.clone(), // scripts_to_keep
+            scripts_to_keep_input.clone(),      // scripts_to_keep
             num_threads,
-        ).map_err(|e| {
-            let err_msg = format!("Stage 1 (generate_analysis_report_for_directory) failed: {}", e);
+        )
+        .map_err(|e| {
+            let err_msg = format!(
+                "Stage 1 (generate_analysis_report_for_directory) failed: {}",
+                e
+            );
             println!("Rust: ERROR - {}", err_msg);
-            PyValueError::new_err(err_msg) 
+            PyValueError::new_err(err_msg)
         })?;
         println!("Rust: === STAGE 1: Initial Cleaning COMPLETED ===\n");
 
         // === STAGE 2: Detailed Table Report Generation ===
-        println!("Rust: === Starting STAGE 2: Detailed Table Report Generation to {} ===", temp_stage2_detailed_report_csv.display());
+        println!(
+            "Rust: === Starting STAGE 2: Detailed Table Report Generation to {} ===",
+            temp_stage2_detailed_report_csv.display()
+        );
         directory_processor::batch_generate_detailed_table_report_csv(
-            py, 
+            py,
             &temp_stage1_cleaned_dir_str, // input_dir_str: From Stage 1 output
             &temp_stage2_detailed_report_csv_str, // output_csv_path_str: Our temp CSV
             num_threads,
-        ).map_err(|e| {
-            let err_msg = format!("Stage 2 (batch_generate_detailed_table_report_csv) failed: {}", e);
+        )
+        .map_err(|e| {
+            let err_msg = format!(
+                "Stage 2 (batch_generate_detailed_table_report_csv) failed: {}",
+                e
+            );
             println!("Rust: ERROR - {}", err_msg);
             PyValueError::new_err(err_msg)
         })?;
         println!("Rust: === STAGE 2: Detailed Table Report Generation COMPLETED ===\n");
 
         // === STAGE 3: Table Removal ===
-        println!("Rust: === Starting STAGE 3: Table Removal (from {} to {}) ===", temp_stage1_cleaned_dir.display(), final_output_cleaned_files_path.display());
+        println!(
+            "Rust: === Starting STAGE 3: Table Removal (from {} to {}) ===",
+            temp_stage1_cleaned_dir.display(),
+            final_output_cleaned_files_path.display()
+        );
         directory_processor::batch_remove_tables_from_files(
-            py, 
+            py,
             &temp_stage1_cleaned_dir_str, // input_markdown_dir_str: From Stage 1 output
             &temp_stage2_detailed_report_csv_str, // detailed_report_csv_path_str: From Stage 2 output
             output_cleaned_files_dir_str, // output_processed_md_dir_str: Final user-specified dir
             num_threads,
-        ).map_err(|e| {
+        )
+        .map_err(|e| {
             let err_msg = format!("Stage 3 (batch_remove_tables_from_files) failed: {}", e);
             println!("Rust: ERROR - {}", err_msg);
             PyValueError::new_err(err_msg)
@@ -153,16 +253,23 @@ pub fn run_complete_pipeline(
 
         // === STAGE 4: Final Analysis & Report Generation (from Final Output) ===
         println!("Rust: === Starting STAGE 4: Final Analysis & Report Generation ===");
-        let report_entries_mutex: Arc<Mutex<Vec<FinalReportEntry>>> = Arc::new(Mutex::new(Vec::new()));
-        
-        let final_processed_files_for_report: Vec<PathBuf> = walkdir::WalkDir::new(final_output_cleaned_files_path)
-            .into_iter()
-            .filter_map(Result::ok)
-            .filter(|e| e.path().is_file() && e.path().extension().map_or(false, |ext| ext == "md"))
-            .map(|e| e.path().to_path_buf())
-            .collect();
+        let report_entries_mutex: Arc<Mutex<Vec<FinalReportEntry>>> =
+            Arc::new(Mutex::new(Vec::new()));
 
-        println!("Rust: Found {} files in final_output_dir for Stage 4 analysis.", final_processed_files_for_report.len());
+        let final_processed_files_for_report: Vec<PathBuf> =
+            walkdir::WalkDir::new(final_output_cleaned_files_path)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|e| {
+                    e.path().is_file() && e.path().extension().map_or(false, |ext| ext == "md")
+                })
+                .map(|e| e.path().to_path_buf())
+                .collect();
+
+        println!(
+            "Rust: Found {} files in final_output_dir for Stage 4 analysis.",
+            final_processed_files_for_report.len()
+        );
 
         if final_processed_files_for_report.is_empty() {
             println!("Rust: No files found in the final output directory for Stage 4 analysis. Report will be empty or headers only.");
@@ -170,11 +277,17 @@ pub fn run_complete_pipeline(
             // Configure Rayon thread pool (can re-use or create new for this specific stage if needed)
             // For simplicity, let's assume the previous pool configuration is fine, or recreate one.
             // Using a new pool specifically for this stage to ensure no interference
-             let pool_s4 = ThreadPoolBuilder::new()
-                .num_threads(if num_threads > 0 { num_threads } else { rayon::current_num_threads() })
+            let pool_s4 = ThreadPoolBuilder::new()
+                .num_threads(if num_threads > 0 {
+                    num_threads
+                } else {
+                    rayon::current_num_threads()
+                })
                 .build()
-                .map_err(|e| PyValueError::new_err(format!("Failed to build thread pool for Stage 4: {}", e)))?;
-            
+                .map_err(|e| {
+                    PyValueError::new_err(format!("Failed to build thread pool for Stage 4: {}", e))
+                })?;
+
             pool_s4.install(|| {
                 final_processed_files_for_report
                     .par_iter()
@@ -188,11 +301,11 @@ pub fn run_complete_pipeline(
                                 // println!("Rust: [S4-Thread {}] Read final_content for report: {}", thread_id, report_relative_path.display()); // Verbose
                                 let analysis_result = cleaning_module::perform_text_analysis(
                                     &final_content,
-                                    &*allowed_chars_final_analysis_arc, 
+                                    &*allowed_chars_final_analysis_arc,
                                     &*unusual_chars_final_analysis_arc,
-                                    &*scripts_to_keep_input_arc_final, 
-                                    true, 
-                                    None, 
+                                    &*scripts_to_keep_input_arc_final,
+                                    true,
+                                    None,
                                 );
                                 // println!("Rust: [S4-Thread {}] Final analysis done for report: {}", thread_id, report_relative_path.display()); // Verbose
 
@@ -236,14 +349,22 @@ pub fn run_complete_pipeline(
                                         }
                                     })
                                 });
-                                
+
+                                let (char_count_no_comments, is_empty) = sanitized_char_count(&final_content);
+                                let pdf_name = report_relative_path
+                                    .file_stem()
+                                    .map(|stem| format!("{}.pdf", stem.to_string_lossy()))
+                                    .unwrap_or_else(|| report_relative_path.to_string_lossy().into_owned());
+
                                 let report_entry = FinalReportEntry {
-                                    file_name: report_relative_path.to_string_lossy().into_owned(),
+                                    file_name: pdf_name,
                                     badness_score_all_chars: rounded_badness_score,
                                     percentage_greek_cleaned: rounded_percentage_greek,
                                     percentage_latin_cleaned: rounded_percentage_latin,
+                                    char_count_no_comments,
+                                    is_empty,
                                 };
-                                
+
                                 report_entries_mutex.lock().unwrap().push(report_entry);
                                 // println!("Rust: [S4-Thread {}] Report entry pushed for: {}", thread_id, report_relative_path.display()); // Verbose
                             }
@@ -258,24 +379,50 @@ pub fn run_complete_pipeline(
 
         // --- Final CSV Writing (after all stages) ---
         let final_report_entries = Arc::try_unwrap(report_entries_mutex)
-            .map_err(|_e| PyValueError::new_err("Mutex for report data was poisoned (arc unwrap failed) for Stage 4"))?
+            .map_err(|_e| {
+                PyValueError::new_err(
+                    "Mutex for report data was poisoned (arc unwrap failed) for Stage 4",
+                )
+            })?
             .into_inner()
-            .map_err(|_e| PyValueError::new_err("Mutex for report data was poisoned (into_inner failed) for Stage 4"))?;
-        
-        println!("Rust: Total files processed for Stage 4 report: {}", final_report_entries.len());
+            .map_err(|_e| {
+                PyValueError::new_err(
+                    "Mutex for report data was poisoned (into_inner failed) for Stage 4",
+                )
+            })?;
+
+        println!(
+            "Rust: Total files processed for Stage 4 report: {}",
+            final_report_entries.len()
+        );
 
         if !output_report_csv_str.is_empty() {
-            println!("Rust: Preparing to write final Parquet report to: {}", output_report_csv_str);
+            println!(
+                "Rust: Preparing to write final Parquet report to: {}",
+                output_report_csv_str
+            );
             if let Some(parent_dir) = Path::new(output_report_csv_str).parent() {
                 if !parent_dir.as_os_str().is_empty() && !parent_dir.exists() {
-                   println!("Rust: Creating parent directory for Parquet: {}", parent_dir.display());
-                   fs::create_dir_all(parent_dir).map_err(|e| PyValueError::new_err(format!("Failed to create parent for Parquet {}: {}", parent_dir.display(), e)))?;
-                   println!("Rust: Parent directory for Parquet created.");
+                    println!(
+                        "Rust: Creating parent directory for Parquet: {}",
+                        parent_dir.display()
+                    );
+                    fs::create_dir_all(parent_dir).map_err(|e| {
+                        PyValueError::new_err(format!(
+                            "Failed to create parent for Parquet {}: {}",
+                            parent_dir.display(),
+                            e
+                        ))
+                    })?;
+                    println!("Rust: Parent directory for Parquet created.");
                 }
             }
 
             // Build Arrow arrays from report entries
-            let file_names: Vec<&str> = final_report_entries.iter().map(|e| e.file_name.as_str()).collect();
+            let file_names: Vec<&str> = final_report_entries
+                .iter()
+                .map(|e| e.file_name.as_str())
+                .collect();
             let badness_vals: Vec<f64> = final_report_entries
                 .iter()
                 .map(|e| e.badness_score_all_chars.unwrap_or(0.0))
@@ -288,42 +435,71 @@ pub fn run_complete_pipeline(
                 .iter()
                 .map(|e| e.percentage_latin_cleaned.unwrap_or(0.0))
                 .collect();
+            let char_counts: Vec<i64> = final_report_entries
+                .iter()
+                .map(|e| e.char_count_no_comments)
+                .collect();
+            let empty_vals: Vec<bool> = final_report_entries.iter().map(|e| e.is_empty).collect();
 
             let file_name_array: ArrayRef = Arc::new(StringArray::from(file_names));
             let badness_array: ArrayRef = Arc::new(Float64Array::from(badness_vals));
             let greek_array: ArrayRef = Arc::new(Float64Array::from(greek_vals));
             let latin_array: ArrayRef = Arc::new(Float64Array::from(latin_vals));
+            let char_count_array: ArrayRef = Arc::new(Int64Array::from(char_counts));
+            let empty_array: ArrayRef = Arc::new(BooleanArray::from(empty_vals));
 
             let schema = Schema::new(vec![
                 Field::new("file_name", DataType::Utf8, false),
                 Field::new("badness_score_all_chars", DataType::Float64, true),
                 Field::new("percentage_greek_cleaned", DataType::Float64, true),
                 Field::new("percentage_latin_cleaned", DataType::Float64, true),
+                Field::new("char_count_no_comments", DataType::Int64, false),
+                Field::new("is_empty", DataType::Boolean, false),
             ]);
 
             let batch = RecordBatch::try_new(
                 Arc::new(schema.clone()),
-                vec![file_name_array, badness_array, greek_array, latin_array],
-            ).map_err(|e| PyValueError::new_err(format!("Failed to build RecordBatch: {}", e)))?;
+                vec![
+                    file_name_array,
+                    badness_array,
+                    greek_array,
+                    latin_array,
+                    char_count_array,
+                    empty_array,
+                ],
+            )
+            .map_err(|e| PyValueError::new_err(format!("Failed to build RecordBatch: {}", e)))?;
 
-            let file = File::create(output_report_csv_str)
-                .map_err(|e| PyValueError::new_err(format!("Failed to create Parquet file: {}", e)))?;
+            let file = File::create(output_report_csv_str).map_err(|e| {
+                PyValueError::new_err(format!("Failed to create Parquet file: {}", e))
+            })?;
             let props = WriterProperties::builder().build();
-            let mut writer = ArrowWriter::try_new(file, Arc::new(schema), Some(props))
-                .map_err(|e| PyValueError::new_err(format!("Failed to create Parquet writer: {}", e)))?;
-            writer.write(&batch).map_err(|e| PyValueError::new_err(format!("Failed to write batch to Parquet: {}", e)))?;
-            writer.close().map_err(|e| PyValueError::new_err(format!("Failed to close Parquet writer: {}", e)))?;
+            let mut writer =
+                ArrowWriter::try_new(file, Arc::new(schema), Some(props)).map_err(|e| {
+                    PyValueError::new_err(format!("Failed to create Parquet writer: {}", e))
+                })?;
+            writer.write(&batch).map_err(|e| {
+                PyValueError::new_err(format!("Failed to write batch to Parquet: {}", e))
+            })?;
+            writer.close().map_err(|e| {
+                PyValueError::new_err(format!("Failed to close Parquet writer: {}", e))
+            })?;
 
-            println!("Rust: Parquet report written successfully at {}.", output_report_csv_str);
+            println!(
+                "Rust: Parquet report written successfully at {}.",
+                output_report_csv_str
+            );
         } else {
             println!("Rust: Parquet output path is empty, skipping report generation for Stage 4.");
         }
         Ok(()) // Success for the inner lambda
     })(); // End of the main try block for pipeline stages
 
-
     // --- Cleanup Main Temporary Directory ---
-    println!("Rust: Attempting to clean up main temporary pipeline directory: {}...", temp_pipeline_root_dir.display());
+    println!(
+        "Rust: Attempting to clean up main temporary pipeline directory: {}...",
+        temp_pipeline_root_dir.display()
+    );
     if temp_pipeline_root_dir.exists() {
         match fs::remove_dir_all(&temp_pipeline_root_dir) {
             Ok(_) => {
@@ -332,7 +508,10 @@ pub fn run_complete_pipeline(
                 if temp_pipeline_root_dir.exists() {
                     eprintln!("Rust: WARNING - Temporary directory {} STILL EXISTS after attempted removal call.", temp_pipeline_root_dir.display());
                 } else {
-                    println!("Rust: Temporary directory {} successfully confirmed removed after check.", temp_pipeline_root_dir.display());
+                    println!(
+                        "Rust: Temporary directory {} successfully confirmed removed after check.",
+                        temp_pipeline_root_dir.display()
+                    );
                 }
             }
             Err(e) => {
@@ -342,7 +521,7 @@ pub fn run_complete_pipeline(
     } else {
         println!("Rust: Main temporary pipeline directory not found for cleanup (might have failed creation or been removed already).");
     }
-    
+
     // Return the result of the pipeline execution
     match pipeline_result {
         Ok(_) => {
@@ -354,4 +533,4 @@ pub fn run_complete_pipeline(
             Err(e) // Propagate the error
         }
     }
-} 
+}
