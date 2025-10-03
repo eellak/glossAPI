@@ -4,7 +4,7 @@ import os
 import pandas as pd
 import random
 import numpy as np
-from typing import Dict, Optional, Union, List, Any, Tuple, Set
+from typing import Dict, Optional, Union, List, Any, Tuple, Set, Iterable
 import shutil
 import math
 import re
@@ -399,7 +399,95 @@ class Corpus:
         else:
             if self.metadata_path:
                 self.logger.warning(f"Metadata file not found: {self.metadata_path}")
-    
+
+    @staticmethod
+    def _project_root() -> Path:
+        """Locate the repository root that houses the Rust crates."""
+        here = Path(__file__).resolve()
+        for candidate in here.parents:
+            rust_dir = candidate / "rust"
+            if rust_dir.exists() and rust_dir.is_dir():
+                return candidate
+        return here.parents[2]
+
+    def _load_rust_extension(self, module_name: str, manifest_relative: str):
+        """Import a Rust extension, building it with maturin if necessary."""
+        import importlib
+
+        try:
+            return importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            self.logger.warning(
+                "Rust extension %s missing; attempting in-place build via maturin …",
+                module_name,
+            )
+            root_dir = self._project_root()
+            manifest = root_dir / manifest_relative
+            if not manifest.exists():
+                raise RuntimeError(
+                    f"Cannot locate Cargo manifest for {module_name} at {manifest}"
+                )
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "maturin>=1.5,<2.0"],
+                    check=True,
+                )
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "maturin",
+                        "develop",
+                        "--release",
+                        "--manifest-path",
+                        str(manifest),
+                    ],
+                    check=True,
+                )
+                return importlib.import_module(module_name)
+            except Exception as build_err:
+                raise RuntimeError(
+                    f"Automatic build of {module_name} failed: {build_err}"
+                )
+
+    def _load_metrics_dataframe(
+        self, parquet_path: Path, filenames: Optional[Iterable[str]] = None
+    ) -> pd.DataFrame:
+        """Load an analytics parquet or seed an empty frame keyed by filename."""
+        if parquet_path.exists():
+            return pd.read_parquet(parquet_path)
+        names: List[str] = []
+        if filenames is not None:
+            seen: Set[str] = set()
+            for item in filenames:
+                if item is None:
+                    continue
+                name = str(item)
+                if name and name not in seen:
+                    seen.add(name)
+                    names.append(name)
+        return pd.DataFrame({"filename": names})
+
+    @staticmethod
+    def _ensure_metric_columns(df: pd.DataFrame, defaults: Dict[str, Any]) -> None:
+        """Ensure metric columns exist with provided defaults."""
+        for column, default in defaults.items():
+            if column not in df.columns:
+                df[column] = default
+
+    @staticmethod
+    def _merge_metric_dataframe(
+        base: pd.DataFrame, updates: pd.DataFrame, *, key: str = "filename"
+    ) -> pd.DataFrame:
+        """Overlay scorer output onto the authoritative metrics dataframe."""
+        if updates.empty:
+            return base
+        base_idx = base.set_index(key, drop=False)
+        update_idx = updates.set_index(key, drop=False)
+        base_idx = base_idx.combine_first(update_idx)
+        base_idx.update(update_idx)
+        return base_idx.reset_index(drop=True)
+
     def clean(
         self,
         input_dir: Union[str, Path] = None,
@@ -424,7 +512,6 @@ class Corpus:
             empty_char_threshold: Character threshold (after stripping comments and whitespace) that flags markdown as nearly empty. Default 0 only enforces the zero-character safeguard.
             empty_min_pages: Minimum page count for a low-character document to trigger an OCR rerun recommendation.
         """
-        import importlib
         from pathlib import Path
         import shutil
         import pandas as pd
@@ -439,29 +526,10 @@ class Corpus:
         if ocr_model_dir is not None:
             self.ocr_model_dir = Path(ocr_model_dir)
 
-        # Try to import the compiled extension; build it on-the-fly if absent
-        try:
-            cleaner_mod = importlib.import_module("glossapi_rs_cleaner")
-            self.logger.info("Using compiled glossapi_rs_cleaner extension for fast cleaning")
-        except ModuleNotFoundError:
-            self.logger.warning("Rust extension glossapi_rs_cleaner missing; attempting in-place build via maturin …")
-            build_success = False
-            try:
-                root_dir = Path(__file__).resolve().parents[3]  # project root containing `rust/`
-                manifest = root_dir / "rust" / "glossapi_rs_cleaner" / "Cargo.toml"
-                # Ensure maturin present
-                subprocess.run([sys.executable, "-m", "pip", "install", "maturin>=1.5,<2.0"], check=True)
-                subprocess.run([sys.executable, "-m", "maturin", "develop", "--release", "--manifest-path", str(manifest)], check=True)
-                cleaner_mod = importlib.import_module("glossapi_rs_cleaner")
-                self.logger.info("Successfully built and loaded glossapi_rs_cleaner via maturin")
-                build_success = True
-            except Exception as build_err:
-                self.logger.error(f"Automatic build of glossapi_rs_cleaner failed: {build_err}")
-            if not build_success:
-                raise RuntimeError(
-                    "The Rust extension 'glossapi_rs_cleaner' is required but could not be built automatically. "
-                    "Ensure Rust toolchain and maturin are installed, or install the pre-built wheel."
-                )
+        self._load_rust_extension(
+            "glossapi_rs_cleaner", "rust/glossapi_rs_cleaner/Cargo.toml"
+        )
+        self.logger.info("Using compiled glossapi_rs_cleaner extension for fast cleaning")
 
         # Ensure cleaned directory exists and is empty (idempotent runs)
         if self.cleaned_markdown_dir.exists():
@@ -648,114 +716,114 @@ class Corpus:
         # Update parquet with Mojibake metrics (single authoritative schema)
         # ------------------------------------------------------------------
         if records:
-            df_metrics = pd.DataFrame(records)
-            df_metrics = df_metrics.rename(columns={
-                "badness_score": "mojibake_badness_score",
-                "percentage_latin": "mojibake_latin_percentage",
-            })
+            df_metrics = pd.DataFrame(records).rename(
+                columns={
+                    "badness_score": "mojibake_badness_score",
+                    "percentage_latin": "mojibake_latin_percentage",
+                }
+            )
 
-            if parquet_path and parquet_path.exists():
-                df = pd.read_parquet(parquet_path)
-            else:
-                parquet_path = self.output_dir / "download_results" / "download_results.parquet"
-                parquet_path.parent.mkdir(parents=True, exist_ok=True)
-                df = pd.DataFrame({"filename": df_metrics["filename"]})
+            if parquet_path is None:
+                parquet_path = (
+                    self.output_dir / "download_results" / "download_results.parquet"
+                )
+            parquet_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # ensure full schema exists
-            for col in [
-                "mojibake_badness_score",
-                "mojibake_latin_percentage",
-                "greek_badness_score",
-                "greek_latin_percentage",
-                "rejection_reason",
-                "char_count_no_comments",
-                "is_empty",
-            ]:
-                if col not in df.columns:
-                    df[col] = pd.NA
+            df = self._load_metrics_dataframe(parquet_path, df_metrics.get("filename"))
+            self._ensure_metric_columns(
+                df,
+                {
+                    "mojibake_badness_score": pd.NA,
+                    "mojibake_latin_percentage": pd.NA,
+                    "percentage_greek": pd.NA,
+                    "greek_badness_score": pd.NA,
+                    "greek_latin_percentage": pd.NA,
+                    "rejection_reason": pd.NA,
+                    "char_count_no_comments": pd.NA,
+                    "is_empty": pd.NA,
+                },
+            )
 
-            # fill mojibake values
-            df = df.set_index("filename")
-            df.update(df_metrics.set_index("filename"))
-            df.reset_index(inplace=True)
+            df = self._merge_metric_dataframe(
+                df,
+                df_metrics[
+                    [
+                        "filename",
+                        "mojibake_badness_score",
+                        "mojibake_latin_percentage",
+                        "percentage_greek",
+                        "char_count_no_comments",
+                        "is_empty",
+                    ]
+                ],
+            )
             df.to_parquet(parquet_path, index=False)
-            self.logger.info(f"Mojibake metrics updated in {parquet_path}")
+            self.logger.info("Mojibake metrics updated in %s", parquet_path)
 
         # ----- Noise-metrics scoring (Rust) -----
         try:
-            import importlib
             self.logger.info("Scoring cleaned markdown files with glossapi_rs_noise …")
-            try:
-                noise_mod = importlib.import_module("glossapi_rs_noise")
-            except ModuleNotFoundError:
-                # Attempt in-place build like with cleaner
-                self.logger.warning("Rust extension glossapi_rs_noise missing; attempting in-place build via maturin …")
-                try:
-                    root_dir = Path(__file__).resolve().parents[3]
-                    manifest = root_dir / "rust" / "glossapi_rs_noise" / "Cargo.toml"
-                    subprocess.run([sys.executable, "-m", "pip", "install", "maturin>=1.5,<2.0"], check=True)
-                    subprocess.run([sys.executable, "-m", "maturin", "develop", "--release", "--manifest-path", str(manifest)], check=True)
-                    noise_mod = importlib.import_module("glossapi_rs_noise")
-                    self.logger.info("Successfully built and loaded glossapi_rs_noise via maturin")
-                except Exception as build_err:
-                    self.logger.error(f"Automatic build of glossapi_rs_noise failed: {build_err}")
-                    raise
-
-            # Use detailed API to retrieve polytonic ratio as well
-            results = noise_mod.score_markdown_directory_detailed(str(self.cleaned_markdown_dir), os.cpu_count())
+            noise_mod = self._load_rust_extension(
+                "glossapi_rs_noise", "rust/glossapi_rs_noise/Cargo.toml"
+            )
+            results = noise_mod.score_markdown_directory_detailed(
+                str(self.cleaned_markdown_dir), os.cpu_count()
+            )
             if results:
-                # Unpack only the fields we need: path, score, latin_pct, table_ratio, poly_ratio
                 rows = []
                 for row in results:
-                    # row layout: (path, score, latin_pct, table_ratio, poly_ratio, ...)
                     try:
                         path, score, latin_pct, _table_ratio, poly_ratio = row[:5]
                     except Exception:
-                        # Fallback: skip malformed rows
                         continue
                     rows.append((path, float(score), float(latin_pct), float(poly_ratio)))
 
-                df_scores = pd.DataFrame(rows, columns=["filepath", "greek_badness_score", "greek_latin_percentage", "polytonic_ratio"])
-                # round polytonic ratio to 2 decimals here
+                df_scores = pd.DataFrame(
+                    rows,
+                    columns=[
+                        "filepath",
+                        "greek_badness_score",
+                        "greek_latin_percentage",
+                        "polytonic_ratio",
+                    ],
+                )
                 df_scores["polytonic_ratio"] = df_scores["polytonic_ratio"].round(2)
-                df_scores["md_filename"] = df_scores["filepath"].apply(lambda p: Path(p).name)
-                df_scores["stem"] = df_scores["md_filename"].str.replace(r"\.md$", "", regex=True)
-                # Only compute a provisional reason based on noise metrics available here.
-                # IMPORTANT: latin percentage must come from rs_cleaner (mojibake_latin_percentage),
-                # not rs_noise. Therefore, do NOT use greek_latin_percentage here. The authoritative
-                # filter is recomputed later after merging cleaner metrics.
-                conditions = [
-                    df_scores["greek_badness_score"] > 60,
-                ]
-                choices = ["greek>60"]
-                df_scores["rejection_reason"] = np.select(conditions, choices, default="ok")
-                # Load authoritative parquet (must exist from earlier step)
+                df_scores["stem"] = df_scores["filepath"].apply(lambda p: Path(p).name)
+                df_scores["stem"] = df_scores["stem"].str.replace(r"\.md$", "", regex=True)
+                df_scores["filename"] = df_scores["stem"] + ".pdf"
+                df_scores["rejection_reason"] = np.select(
+                    [df_scores["greek_badness_score"] > 60],
+                    ["greek>60"],
+                    default="ok",
+                )
                 if not parquet_path or not parquet_path.exists():
-                    self.logger.error("Expected parquet %s not found when adding noise metrics", parquet_path)
+                    self.logger.error(
+                        "Expected parquet %s not found when adding noise metrics",
+                        parquet_path,
+                    )
                 else:
-                    df = pd.read_parquet(parquet_path)
-                    df["stem"] = df["filename"].str.replace(r"\.pdf$", "", regex=True)
-
-                    for _, row in df_scores.iterrows():
-                        idx = df["stem"] == row["stem"]
-                        # Ensure destination columns exist
-                        for col in ["greek_badness_score", "greek_latin_percentage", "polytonic_ratio", "rejection_reason"]:
-                            if col not in df.columns:
-                                df[col] = pd.NA
-                        df.loc[idx, [
+                    df = self._load_metrics_dataframe(parquet_path)
+                    self._ensure_metric_columns(
+                        df,
+                        {
+                            "greek_badness_score": pd.NA,
+                            "greek_latin_percentage": pd.NA,
+                            "polytonic_ratio": pd.NA,
+                            "rejection_reason": pd.NA,
+                        },
+                    )
+                    updates = df_scores[
+                        [
+                            "filename",
                             "greek_badness_score",
                             "greek_latin_percentage",
                             "polytonic_ratio",
                             "rejection_reason",
-                        ]] = row[[
-                            "greek_badness_score",
-                            "greek_latin_percentage",
-                            "polytonic_ratio",
-                            "rejection_reason",
-                        ]].values
-                    df.drop(columns=["stem"], inplace=True)
+                        ]
+                    ]
+                    df = self._merge_metric_dataframe(df, updates)
                     df.to_parquet(parquet_path, index=False)
-                    self.logger.info(f"Noise metrics filled in {parquet_path}")
+                    self.logger.info("Noise metrics filled in %s", parquet_path)
         except Exception as e:
             self.logger.warning("Noise-metrics scoring failed: %s", e)
 
