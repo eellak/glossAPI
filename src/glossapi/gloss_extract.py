@@ -1104,7 +1104,7 @@ class GlossExtract:
                 self._log.warning(f"Failed to record timeout metadata for {filename}: {meta_exc}")
             return False
         except Exception as individual_error:
-            self._log.error(f"Failed to process file {filename}: {individual_error}")
+            self._log.error("Failed to process file %s: %s", filename, individual_error, exc_info=True)
         # Record general failure metadata
         try:
             self._update_extraction_metadata(

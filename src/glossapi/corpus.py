@@ -1639,6 +1639,9 @@ class Corpus:
                                 ok = result.get("processed", []) or []
                                 bad = result.get("problematic", []) or []
                                 processed_files.update(ok)
+                                if ok:
+                                    ok_names = {Path(str(x)).name for x in ok}
+                                    problematic_files.difference_update({item for item in problematic_files if Path(str(item)).name in ok_names})
                                 problematic_files.update(bad)
                                 state_mgr.save(processed_files, problematic_files)
                                 self.logger.info(
@@ -1684,7 +1687,7 @@ class Corpus:
 
                         if now - last_activity > 120:
                             self.logger.warning(
-                                "No batch completions reported for %.0fs (active workers: %d). Waiting...",
+                                "No batch completions reported for %.0fs (active workers: %d). Still waiting.",
                                 now - last_activity,
                                 len(active),
                             )

@@ -44,6 +44,66 @@ class SafeRapidOcrModel(_RapidOcrModel):
         options: RapidOcrOptions,
         accelerator_options,
     ):
+        if enabled:
+            try:
+                from ._rapidocr_paths import resolve_packaged_onnx_and_keys
+
+                resolved = resolve_packaged_onnx_and_keys()
+
+                _log.warning(
+                    'SafeRapidOcrModel initial options: det=%s rec=%s cls=%s keys=%s',
+                    getattr(options, 'det_model_path', None),
+                    getattr(options, 'rec_model_path', None),
+                    getattr(options, 'cls_model_path', None),
+                    getattr(options, 'rec_keys_path', None),
+                )
+
+                if resolved.det:
+                    options.det_model_path = resolved.det
+                if resolved.rec:
+                    options.rec_model_path = resolved.rec
+                if resolved.cls:
+                    options.cls_model_path = resolved.cls
+                if resolved.keys:
+                    options.rec_keys_path = resolved.keys
+
+                try:
+                    from rapidocr.ch_ppocr_rec import main as _rapidocr_rec_main
+
+                    if not getattr(_rapidocr_rec_main.TextRecognizer, '_glossapi_patch', False):
+                        original_get_character_dict = _rapidocr_rec_main.TextRecognizer.get_character_dict
+
+                        def _patched_get_character_dict(self, cfg):
+                            try:
+                                current_keys = cfg.get('keys_path', None)
+                                current_rec_keys = cfg.get('rec_keys_path', None)
+                                if current_rec_keys is None and current_keys is not None:
+                                    cfg['rec_keys_path'] = current_keys
+                                    _log.warning('Patched RapidOCR cfg: set rec_keys_path from keys_path=%s', current_keys)
+                                else:
+                                    _log.warning('Patched RapidOCR cfg: existing rec_keys_path=%s keys_path=%s', current_rec_keys, current_keys)
+                            except Exception:
+                                _log.warning('RapidOCR cfg inspection failed', exc_info=True)
+                            return original_get_character_dict(self, cfg)
+
+                        _rapidocr_rec_main.TextRecognizer.get_character_dict = _patched_get_character_dict
+                        _rapidocr_rec_main.TextRecognizer._glossapi_patch = True
+                except Exception:
+                    _log.warning('Failed to patch RapidOCR TextRecognizer for keys fallback', exc_info=True)
+
+                _log.warning(
+                    'SafeRapidOcrModel using packaged assets: det=%s rec=%s cls=%s keys=%s',
+                    options.det_model_path,
+                    options.rec_model_path,
+                    options.cls_model_path,
+                    options.rec_keys_path,
+                )
+            except Exception:
+                _log.warning(
+                    'SafeRapidOcrModel bootstrap failed to resolve packaged assets',
+                    exc_info=True,
+                )
+
         super().__init__(
             enabled=enabled,
             artifacts_path=artifacts_path,
@@ -64,12 +124,13 @@ class SafeRapidOcrModel(_RapidOcrModel):
         """
 
         if result is None:
+            _log.warning("RapidOCR returned None; skipping crop")
             return []
         boxes = getattr(result, "boxes", None)
         txts = getattr(result, "txts", None)
         scores = getattr(result, "scores", None)
         if boxes is None or txts is None or scores is None:
-            _log.warning("RapidOCR returned incomplete data; treating as empty")
+            _log.warning("RapidOCR returned incomplete data; treating crop as empty")
             return []
         try:
             return list(zip(boxes.tolist(), txts, scores))
@@ -161,10 +222,53 @@ def patch_docling_rapidocr() -> bool:
 
     rapid_module.RapidOcrModel = SafeRapidOcrModel
     try:
-        from docling.models import ocr_factory  # type: ignore
+        from docling.models.factories import get_ocr_factory  # type: ignore
+        import logging
 
-        factory = ocr_factory.OCRModelFactory()
-        factory._classes["rapidocr"] = SafeRapidOcrModel
+        factory = get_ocr_factory()
+        options_type = SafeRapidOcrModel.get_options_type()
+
+        if hasattr(factory, "classes"):
+            factory.classes[options_type] = SafeRapidOcrModel
+        elif hasattr(factory, "_classes"):
+            factory._classes[options_type] = SafeRapidOcrModel
+        logging.getLogger(__name__).info(
+            "Registered SafeRapidOcrModel for %s", options_type
+        )
+        try:
+            from docling.pipeline import standard_pdf_pipeline as _std_pdf  # type: ignore
+            from docling.datamodel.pipeline_options import RapidOcrOptions  # type: ignore
+            from functools import lru_cache
+        except Exception as _exc:  # pragma: no cover - best effort
+            logging.getLogger(__name__).warning(
+                "Docling factory patch limited to local mutation: %s", _exc
+            )
+        else:
+            original_get_factory = getattr(
+                _std_pdf.get_ocr_factory, "__wrapped__", _std_pdf.get_ocr_factory
+            )
+
+            def _ensure_safe(factory_obj):
+                try:
+                    current = factory_obj.classes.get(RapidOcrOptions)
+                    if current is not SafeRapidOcrModel:
+                        factory_obj.classes[RapidOcrOptions] = SafeRapidOcrModel
+                except AttributeError:
+                    current = getattr(factory_obj, "_classes", {}).get(RapidOcrOptions)
+                    if current is not SafeRapidOcrModel:
+                        getattr(factory_obj, "_classes", {})[RapidOcrOptions] = SafeRapidOcrModel
+                return factory_obj
+
+            @lru_cache(maxsize=None)
+            def _patched_get_ocr_factory(allow_external_plugins: bool = False):
+                return _ensure_safe(original_get_factory(allow_external_plugins))
+
+            _patched_get_ocr_factory.__wrapped__ = original_get_factory  # type: ignore[attr-defined]
+            _std_pdf.get_ocr_factory = _patched_get_ocr_factory  # type: ignore[attr-defined]
+            try:
+                _ensure_safe(_std_pdf.get_ocr_factory(False))
+            except Exception:
+                pass
     except Exception as exc:  # pragma: no cover - best effort
         import logging
 
