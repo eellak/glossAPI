@@ -133,7 +133,7 @@ def test_prime_extractor_configures_docling_backend_for_ocr(tmp_path, monkeypatc
     )
 
     assert corpus.extractor.last_policy == "docling"
-    assert corpus.extractor.last_max_batch_files == 5
+    assert corpus.extractor.last_max_batch_files == 1
     assert corpus.extractor.last_prefer_safe_backend is False
     ensure_kwargs = corpus.extractor.ensure_calls[0]
     assert ensure_kwargs["enable_ocr"] is True

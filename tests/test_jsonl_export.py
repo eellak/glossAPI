@@ -109,6 +109,7 @@ def test_jsonl_export_produces_expected_record(tmp_path):
     assert record["char_count_no_comments"] == 123
     assert record["triage_label"] == "math_dense"
     assert record["extra_meta"] == "keep-me"
+    assert record.get("webdocs_score") is None
 
 
 def test_jsonl_export_handles_missing_math_data(tmp_path):
@@ -166,3 +167,4 @@ def test_jsonl_export_handles_missing_math_data(tmp_path):
     assert record["math_accepted"] == 0
     assert record["formula_total"] == 0
     assert record["code_total"] == 0
+    assert record.get("webdocs_score") is None

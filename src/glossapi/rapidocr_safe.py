@@ -147,30 +147,31 @@ class SafeRapidOcrModel(_RapidOcrModel):
             yield page
 
 
-_PATCHED = False
-
-
-def patch_docling_rapidocr() -> None:
-    """Replace Docling's RapidOcrModel with the safe wrapper once per process."""
-
-    global _PATCHED
-    if _PATCHED:
-        return
-    try:
-        import docling.models.rapid_ocr_model as rapid_module  # type: ignore
-    except Exception:
-        return
-
-    if getattr(rapid_module, "_glossapi_safe_patch_applied", False):
-        _PATCHED = True
-        return
+def patch_docling_rapidocr() -> bool:
+    """Replace Docling's RapidOcrModel with the safe shim if available."""
 
     try:
-        rapid_module.RapidOcrModel = SafeRapidOcrModel  # type: ignore[attr-defined]
-        rapid_module._glossapi_safe_patch_applied = True  # type: ignore[attr-defined]
-        _PATCHED = True
-    except Exception:
-        return
+        import docling.models.rapid_ocr_model as rapid_module
+    except Exception:  # pragma: no cover - Docling missing
+        return False
+
+    current = getattr(rapid_module, "RapidOcrModel", None)
+    if current is SafeRapidOcrModel:
+        return False
+
+    rapid_module.RapidOcrModel = SafeRapidOcrModel
+    try:
+        from docling.models import ocr_factory  # type: ignore
+
+        factory = ocr_factory.OCRModelFactory()
+        factory._classes["rapidocr"] = SafeRapidOcrModel
+    except Exception as exc:  # pragma: no cover - best effort
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Failed to re-register SafeRapidOcrModel: %s", exc
+        )
+    return True
 
 
 __all__ = ["SafeRapidOcrModel", "patch_docling_rapidocr"]

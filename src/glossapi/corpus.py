@@ -164,6 +164,7 @@ class Corpus:
         self.cleaned_markdown_dir = self.output_dir / "clean_markdown"
         # Define models_dir path but don't create the directory yet - only create it when needed
         self.models_dir = self.output_dir / "models"
+        self.logs_dir = self.output_dir / "logs"
 
         # Track whether we've already printed the GPU setup banner in this process
         self._gpu_banner_logged = False
@@ -172,6 +173,7 @@ class Corpus:
         os.makedirs(self.markdown_dir, exist_ok=True)
         os.makedirs(self.sections_dir, exist_ok=True)
         os.makedirs(self.cleaned_markdown_dir, exist_ok=True)
+        os.makedirs(self.logs_dir, exist_ok=True)
         
         # Setup output files
         self.sections_parquet = self.sections_dir / "sections_for_annotation.parquet"
@@ -1568,6 +1570,22 @@ class Corpus:
                 for full_path in path_list:
                     task_q.put(full_path)
                 procs = []
+                worker_log_dir_env = os.environ.get("GLOSSAPI_WORKER_LOG_DIR")
+                worker_log_dir_to_use = worker_log_dir_env
+                if not worker_log_dir_to_use:
+                    try:
+                        default_worker_log_dir = self.logs_dir / "ocr_workers"
+                        default_worker_log_dir.mkdir(parents=True, exist_ok=True)
+                        worker_log_dir_to_use = str(default_worker_log_dir)
+                    except Exception as exc:
+                        self.logger.warning(
+                            "Unable to prepare worker log directory %s: %s",
+                            default_worker_log_dir,
+                            exc,
+                        )
+                        worker_log_dir_to_use = None
+                if worker_log_dir_to_use:
+                    os.environ["GLOSSAPI_WORKER_LOG_DIR"] = worker_log_dir_to_use
                 for dev_id in devs:
                     p = ctx.Process(
                         target=gpu_extract_worker_queue,
@@ -1675,6 +1693,10 @@ class Corpus:
                     for p in procs:
                         if p.is_alive():
                             p.join()
+                    if worker_log_dir_env is not None:
+                        os.environ["GLOSSAPI_WORKER_LOG_DIR"] = worker_log_dir_env
+                    else:
+                        os.environ.pop("GLOSSAPI_WORKER_LOG_DIR", None)
 
                 if any_fail:
                     self.logger.warning("One or more GPU workers exited with non-zero status.")
@@ -2701,6 +2723,7 @@ def gpu_extract_worker_queue(
     result_q=None,
 ) -> None:
     import os as _os
+    import sys as _sys
     import time as _time
     from pathlib import Path as _Path
 
@@ -2722,6 +2745,18 @@ def gpu_extract_worker_queue(
             pass
 
     _ensure_thread_caps()
+    _worker_log_handle = None
+    try:
+        _log_dir = _os.environ.get("GLOSSAPI_WORKER_LOG_DIR")
+        if _log_dir:
+            _log_path = _Path(_log_dir).expanduser()
+            _log_path.mkdir(parents=True, exist_ok=True)
+            _worker_log_file = _log_path / f"gpu{device_id}_{_os.getpid()}.log"
+            _worker_log_handle = open(_worker_log_file, "a", encoding="utf-8", buffering=1)
+            _sys.stdout = _worker_log_handle
+            _sys.stderr = _worker_log_handle
+    except Exception:
+        _worker_log_handle = None
     # Bind this worker to a single GPU id
     _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
     _os.environ["GLOSSAPI_DOCLING_DEVICE"] = "cuda:0"
@@ -2796,7 +2831,7 @@ def gpu_extract_worker_queue(
                         "event": "exit",
                         "worker": device_id,
                         "exitcode": 1,
-                        "pid": os.getpid(),
+                        "pid": _os.getpid(),
                         "error": str(_e),
                     }
                 )
@@ -2817,7 +2852,7 @@ def gpu_extract_worker_queue(
                                 "worker": device_id,
                                 "processed": [str(x) for x in ok_list],
                                 "problematic": [str(x) for x in bad_list],
-                                "pid": os.getpid(),
+                                "pid": _os.getpid(),
                             }
                         )
                     except Exception as exc:
@@ -2886,7 +2921,7 @@ def gpu_extract_worker_queue(
                                         "worker": device_id,
                                         "processed": [],
                                         "problematic": list(batch),
-                                        "pid": os.getpid(),
+                                        "pid": _os.getpid(),
                                         "error": str(_e),
                                     }
                                 )
@@ -2942,7 +2977,7 @@ def gpu_extract_worker_queue(
                                     "worker": device_id,
                                     "processed": [],
                                     "problematic": list(batch),
-                                    "pid": os.getpid(),
+                                    "pid": _os.getpid(),
                                     "error": str(_e),
                                 }
                             )
@@ -2971,7 +3006,14 @@ def gpu_extract_worker_queue(
                 "event": "exit",
                 "worker": device_id,
                 "exitcode": exit_code,
-                "pid": os.getpid(),
+                "pid": _os.getpid(),
             })
         except Exception as exc:
             print(f"[GPU{device_id}] Failed to report exit: {exc}")
+
+    if _worker_log_handle is not None:
+        try:
+            _worker_log_handle.flush()
+            _worker_log_handle.close()
+        except Exception:
+            pass
