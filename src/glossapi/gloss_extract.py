@@ -832,7 +832,6 @@ class GlossExtract:
                         file_path,
                         timeout_s=self.chunk_timeout_s,
                         page_range=(start, end),
-                        max_num_pages=(end - start + 1),
                     )
                     if conv_res.status in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
                         markdown_content = conv_res.document.export_to_markdown()
