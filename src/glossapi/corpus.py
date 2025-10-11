@@ -14,6 +14,7 @@ import pickle
 import queue
 import time
 import json
+from dataclasses import dataclass
 
 from .gloss_section import GlossSection
 from .gloss_section_classifier import GlossSectionClassifier
@@ -31,6 +32,82 @@ def _maybe_import_torch(*, force: bool = False):
         return importlib.import_module("torch")  # type: ignore
     except Exception:
         return None
+
+
+@dataclass
+class _SkiplistManager:
+    """Single-writer helper around the on-disk fatal skip-list."""
+
+    path: Path
+    logger: logging.Logger
+    _cache: Optional[Set[str]] = None
+
+    @staticmethod
+    def _normalize(entry: Optional[str]) -> Optional[str]:
+        if not entry:
+            return None
+        stem = Path(entry.strip()).stem
+        return stem or None
+
+    def load(self) -> Set[str]:
+        if self._cache is not None:
+            return set(self._cache)
+        stems: Set[str] = set()
+        try:
+            if self.path.exists():
+                for line in self.path.read_text(encoding="utf-8").splitlines():
+                    norm = self._normalize(line)
+                    if norm:
+                        stems.add(norm)
+        except Exception as exc:
+            self.logger.warning("Failed to read skip-list %s: %s", self.path, exc)
+        self._cache = stems
+        return set(stems)
+
+    def add(self, new_entries: Iterable[str]) -> Set[str]:
+        current = self.load()
+        to_add = {stem for stem in (self._normalize(val) for val in new_entries) if stem}
+        if not to_add or to_add.issubset(current):
+            return current
+        merged = current | to_add
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+            tmp.write_text("\n".join(sorted(merged)) + "\n", encoding="utf-8")
+            os.replace(tmp, self.path)
+            self._cache = merged
+            self.logger.warning(
+                "Skip-list updated (%d new stem%s): %s",
+                len(to_add),
+                "s" if len(to_add) != 1 else "",
+                ", ".join(sorted(to_add)),
+            )
+        except Exception as exc:
+            self.logger.error("Failed to update skip-list %s: %s", self.path, exc)
+        return self.load()
+
+    def reload(self) -> Set[str]:
+        self._cache = None
+        return self.load()
+
+
+def _resolve_skiplist_path(output_dir: Path, logger: logging.Logger) -> Path:
+    env_override = os.environ.get("GLOSSAPI_SKIPLIST_PATH")
+    if env_override:
+        return Path(env_override)
+
+    candidate = output_dir / "skiplists" / "fatal_skip.txt"
+    legacy = output_dir.parent / "aws_bundle" / "skiplists" / "fatal_skip.txt"
+
+    for option in (candidate, legacy):
+        try:
+            option.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.debug("Skip-list path %s could not be prepared: %s", option, exc)
+        if option.exists():
+            return option
+
+    return candidate
 
 
 class _ProcessingStateManager:
@@ -916,7 +993,11 @@ class Corpus:
 
                 df_final.loc[applicable, "filter"] = current.apply(_merge_reason)
                 if requires_ocr:
-                    df_final.loc[applicable, "needs_ocr"] = True
+                    needs_targets = applicable
+                    if "ocr_success" in df_final.columns:
+                        success_mask = df_final["ocr_success"].fillna(False)
+                        needs_targets = needs_targets & ~success_mask
+                    df_final.loc[needs_targets, "needs_ocr"] = True
 
             try:
                 empty_threshold_int = int(empty_char_threshold) if empty_char_threshold is not None else 0
@@ -937,7 +1018,7 @@ class Corpus:
 
             greek_series = pd.to_numeric(df_final.get("greek_badness_score"), errors="coerce")
             if greek_series.notna().any():
-                _append_reason(greek_series > 60, "non_greek_text", requires_ocr=False)
+                _append_reason(greek_series > 60, "non_greek_text", requires_ocr=True)
 
             if "char_count_no_comments" in df_final.columns:
                 char_series = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce").fillna(0)
@@ -1079,11 +1160,42 @@ class Corpus:
         except Exception:
             pass
 
+        skiplist_path = _resolve_skiplist_path(self.output_dir, self.logger)
+        skip_mgr = _SkiplistManager(skiplist_path, self.logger)
+        skip_stems = skip_mgr.load()
+        if skip_stems:
+            before = len(bad_files)
+            bad_files = [name for name in bad_files if Path(name).stem not in skip_stems]
+            removed = before - len(bad_files)
+            if removed:
+                self.logger.warning(
+                    "Skip-list %s filtered %d document(s) from Phase-3 OCR.",
+                    skiplist_path,
+                    removed,
+                )
+
         # Helper to run Phase‑2 enrichment over stems
         def _run_math(stems: List[str]) -> None:
             if not stems:
                 self.logger.info("No Docling JSON found for math enrichment.")
                 return
+            current_skips = skip_mgr.reload() if skip_mgr else set()
+            if current_skips:
+                before = len(stems)
+                stems = [s for s in stems if s not in current_skips]
+                removed = before - len(stems)
+                if removed:
+                    self.logger.warning(
+                        "Skip-list %s filtered %d document(s) from Phase-2 math.",
+                        skiplist_path,
+                        removed,
+                    )
+                if not stems:
+                    self.logger.info("All math targets filtered by skip-list; nothing to do.")
+                    return
+            local_targets = None
+            if math_targets:
+                local_targets = {s: math_targets.get(s) for s in stems if s in math_targets}
             if str(use_gpus).lower() == "multi":
                 # Detect GPU devices
                 devs = devices or []
@@ -1115,27 +1227,58 @@ class Corpus:
                     from multiprocessing import get_context
                     ctx = get_context("spawn")
                     work_q = ctx.Queue()
+                    result_q = ctx.Queue()
                     for s in stems:
                         work_q.put(s)
                     procs = []
                     for dev_id in devs:
-                        p = ctx.Process(target=_gpu_math_worker, args=(
-                            dev_id,
-                            str(self.input_dir),
-                            str(self.output_dir),
-                            work_q,
-                            int(math_batch_size),
-                            int(math_dpi_base),
-                            device or "cuda",
-                            math_targets or {},
-                        ))
+                        p = ctx.Process(
+                            target=_gpu_math_worker,
+                            args=(
+                                dev_id,
+                                str(self.input_dir),
+                                str(self.output_dir),
+                                work_q,
+                                int(math_batch_size),
+                                int(math_dpi_base),
+                                device or "cuda",
+                                local_targets or {},
+                                result_q,
+                            ),
+                        )
                         p.start()
                         procs.append(p)
-                    for p in procs:
-                        p.join()
+                    pending = len(procs)
+                    while pending:
+                        for p in list(procs):
+                            p.join(timeout=0.05)
+                            if p.is_alive():
+                                continue
+                            procs.remove(p)
+                            pending -= 1
+                        try:
+                            event = result_q.get_nowait()
+                        except queue.Empty:
+                            continue
+                        if event.get("event") == "math_batch":
+                            stems_bad = event.get("problematic", [])
+                            if stems_bad:
+                                skip_mgr.add(stems_bad)
+                        elif event.get("event") == "exit" and event.get("exitcode", 0) not in (0, None):
+                            self.logger.warning(
+                                "Math worker GPU%s exited with %s",
+                                event.get("worker"),
+                                event.get("exitcode"),
+                            )
                     return
             # Single-GPU path
-            self.formula_enrich_from_json(files=stems, device=(device or "cuda"), batch_size=int(math_batch_size), dpi_base=int(math_dpi_base), targets_by_stem=math_targets)
+            self.formula_enrich_from_json(
+                files=stems,
+                device=(device or "cuda"),
+                batch_size=int(math_batch_size),
+                dpi_base=int(math_dpi_base),
+                targets_by_stem=local_targets,
+            )
 
         # Branches
         if mode_norm == "math_only":
@@ -1484,6 +1627,22 @@ class Corpus:
         if not input_files:
             self.logger.warning(f"No {input_format} files found in {downloads_dir}")
             return
+
+        skiplist_path = _resolve_skiplist_path(self.output_dir, self.logger)
+        skip_mgr = _SkiplistManager(skiplist_path, self.logger)
+        skipped_stems = skip_mgr.load()
+        if skipped_stems:
+            before = len(input_files)
+            input_files = [p for p in input_files if p.stem not in skipped_stems]
+            removed = before - len(input_files)
+            if removed:
+                self.logger.warning(
+                    "Skip-list %s filtered %d file(s) from Phase-1 dispatch.",
+                    skiplist_path,
+                    removed,
+                )
+        else:
+            skipped_stems = set()
         
         self.logger.info(f"Found {len(input_files)} files to extract")
         
@@ -1555,7 +1714,17 @@ class Corpus:
                 pending_files = input_files
                 if skip_existing and processed_files:
                     processed_names = {Path(name).name for name in processed_files}
-                    pending_files = [p for p in input_files if p.name not in processed_names]
+                    pending_files = [p for p in pending_files if p.name not in processed_names]
+                if problematic_files:
+                    problematic_names = {Path(name).name for name in problematic_files}
+                    before_prob = len(pending_files)
+                    pending_files = [p for p in pending_files if p.name not in problematic_names]
+                    removed_prob = before_prob - len(pending_files)
+                    if removed_prob:
+                        self.logger.warning(
+                            "State resume: filtered %d pending file(s) already marked problematic.",
+                            removed_prob,
+                        )
 
                 if not pending_files:
                     self.logger.info("No pending files left after state filtering; skipping extraction.")
@@ -1564,12 +1733,13 @@ class Corpus:
                 # Dynamic work queue across GPUs
                 from multiprocessing import get_context
                 ctx = get_context("spawn")
+                manager = ctx.Manager()
                 task_q = ctx.Queue()
                 result_q = ctx.Queue()
+                status_map = manager.dict()
                 path_list = [str(p.resolve()) for p in pending_files]
                 for full_path in path_list:
                     task_q.put(full_path)
-                procs = []
                 worker_log_dir_env = os.environ.get("GLOSSAPI_WORKER_LOG_DIR")
                 worker_log_dir_to_use = worker_log_dir_env
                 if not worker_log_dir_to_use:
@@ -1586,6 +1756,14 @@ class Corpus:
                         worker_log_dir_to_use = None
                 if worker_log_dir_to_use:
                     os.environ["GLOSSAPI_WORKER_LOG_DIR"] = worker_log_dir_to_use
+                marker_base = Path(worker_log_dir_to_use) if worker_log_dir_to_use else (self.logs_dir / "ocr_workers")
+                try:
+                    marker_base.mkdir(parents=True, exist_ok=True)
+                except Exception as exc:
+                    self.logger.debug("Unable to prepare marker directory %s: %s", marker_base, exc)
+                procs: List[Any] = []
+                proc_gpu: Dict[int, int] = {}
+                marker_files: Dict[int, Path] = {dev_id: marker_base / f"gpu{dev_id}.current" for dev_id in devs}
                 for dev_id in devs:
                     p = ctx.Process(
                         target=gpu_extract_worker_queue,
@@ -1606,15 +1784,19 @@ class Corpus:
                             bool(emit_formula_index),
                             backend_choice,
                             result_q,
+                            status_map,
+                            str(marker_base),
                         ),
                     )
                     p.start()
                     procs.append(p)
+                    if p.pid is not None:
+                        proc_gpu[p.pid] = dev_id
                 active = list(procs)
                 any_fail = False
                 last_summary = time.time()
                 last_activity = time.time()
-                heartbeat: Dict[int, float] = {p.pid or idx: time.time() for idx, p in enumerate(procs)}
+                heartbeat: Dict[int, float] = {p.pid or -1: time.time() for p in procs}
                 exit_count = 0
                 try:
                     while active or exit_count < len(devs):
@@ -1623,10 +1805,75 @@ class Corpus:
                             if p.is_alive():
                                 continue
                             active.remove(p)
+                            if p in procs:
+                                procs.remove(p)
+                            pid = p.pid or -1
+                            heartbeat[pid] = time.time()
+                            gpu_id = proc_gpu.pop(pid, None)
                             if p.exitcode not in (0, None):
                                 any_fail = True
                                 self.logger.warning("GPU worker pid=%s exited with code %s", p.pid, p.exitcode)
-                            heartbeat[p.pid or -1] = time.time()
+                                current_paths: List[str] = []
+                                stems_for_skip: List[str] = []
+                                if gpu_id is not None:
+                                    current_entry = status_map.pop(gpu_id, None)
+                                    if current_entry:
+                                        if not isinstance(current_entry, (list, tuple, set)):
+                                            current_entry = [current_entry]
+                                        current_paths = [str(x) for x in current_entry]
+                                        stems_for_skip = [Path(path).stem for path in current_paths]
+                                    marker_path = marker_files.get(gpu_id)
+                                    if marker_path:
+                                        try:
+                                            marker_path.unlink(missing_ok=True)
+                                        except Exception:
+                                            pass
+                                if current_paths:
+                                    problematic_files.update(current_paths)
+                                    state_mgr.save(processed_files, problematic_files)
+                                if stems_for_skip:
+                                    skip_mgr.add(stems_for_skip)
+                                if gpu_id is not None:
+                                    self.logger.info("Respawning GPU%s worker after crash.", gpu_id)
+                                    replacement = ctx.Process(
+                                        target=gpu_extract_worker_queue,
+                                        args=(
+                                            gpu_id,
+                                            str(self.input_dir),
+                                            str(self.output_dir),
+                                            task_q,
+                                            bool(force_ocr),
+                                            bool(formula_enrichment),
+                                            bool(code_enrichment),
+                                            bool(use_cls),
+                                            bool(skip_existing),
+                                            str(input_format),
+                                            int(threads_effective),
+                                            bool(benchmark_mode),
+                                            bool(export_doc_json),
+                                            bool(emit_formula_index),
+                                            backend_choice,
+                                            result_q,
+                                            status_map,
+                                            str(marker_base),
+                                        ),
+                                    )
+                                    replacement.start()
+                                    procs.append(replacement)
+                                    active.append(replacement)
+                                    if replacement.pid is not None:
+                                        proc_gpu[replacement.pid] = gpu_id
+                                        heartbeat[replacement.pid] = time.time()
+                                continue
+                            else:
+                                if gpu_id is not None:
+                                    status_map.pop(gpu_id, None)
+                                    marker_path = marker_files.get(gpu_id)
+                                    if marker_path:
+                                        try:
+                                            marker_path.unlink(missing_ok=True)
+                                        except Exception:
+                                            pass
                         drained = False
                         while True:
                             try:
@@ -1635,14 +1882,16 @@ class Corpus:
                                 break
                             drained = True
                             last_activity = time.time()
-                            if result.get("event") == "batch":
-                                ok = result.get("processed", []) or []
-                                bad = result.get("problematic", []) or []
+                            event_type = result.get("event")
+                            if event_type == "batch":
+                                ok = [str(x) for x in (result.get("processed", []) or [])]
+                                bad = [str(x) for x in (result.get("problematic", []) or [])]
                                 processed_files.update(ok)
                                 if ok:
                                     ok_names = {Path(str(x)).name for x in ok}
                                     problematic_files.difference_update({item for item in problematic_files if Path(str(item)).name in ok_names})
-                                problematic_files.update(bad)
+                                if bad:
+                                    problematic_files.update(bad)
                                 state_mgr.save(processed_files, problematic_files)
                                 self.logger.info(
                                     "GPU%s batch complete: +%d processed, +%d problematic (totals: %d processed, %d problematic)",
@@ -1655,7 +1904,7 @@ class Corpus:
                                 worker_pid = result.get("pid")
                                 if worker_pid is not None:
                                     heartbeat[worker_pid] = time.time()
-                            elif result.get("event") == "exit":
+                            elif event_type == "exit":
                                 exit_count += 1
                                 if result.get("exitcode", 0) not in (0, None):
                                     any_fail = True
@@ -1665,10 +1914,23 @@ class Corpus:
                                 worker_pid = result.get("pid")
                                 if worker_pid is not None:
                                     heartbeat[worker_pid] = time.time()
+                                worker_gpu = result.get("worker")
+                                if worker_gpu is not None:
+                                    try:
+                                        worker_gpu_int = int(worker_gpu)
+                                    except Exception:
+                                        worker_gpu_int = None
+                                    else:
+                                        status_map.pop(worker_gpu_int, None)
+                                        marker_path = marker_files.get(worker_gpu_int)
+                                        if marker_path:
+                                            try:
+                                                marker_path.unlink(missing_ok=True)
+                                            except Exception:
+                                                pass
 
                         now = time.time()
                         if now - last_summary > 30:
-                            pending = 0
                             try:
                                 pending = result_q.qsize()
                             except NotImplementedError:
@@ -1696,6 +1958,10 @@ class Corpus:
                     for p in procs:
                         if p.is_alive():
                             p.join()
+                    try:
+                        manager.shutdown()
+                    except Exception:
+                        pass
                     if worker_log_dir_env is not None:
                         os.environ["GLOSSAPI_WORKER_LOG_DIR"] = worker_log_dir_env
                     else:
@@ -2591,7 +2857,17 @@ class Corpus:
             except Exception as e:
                 self.logger.warning("Phase‑2 failed for %s: %s", stem, e)
 
-def _gpu_math_worker(device_id: int, in_dir: str, out_dir: str, work_q, batch_size: int, dpi_base: int, device: str, targets_map: Dict[str, List[Tuple[int, int]]]) -> None:
+def _gpu_math_worker(
+    device_id: int,
+    in_dir: str,
+    out_dir: str,
+    work_q,
+    batch_size: int,
+    dpi_base: int,
+    device: str,
+    targets_map: Dict[str, List[Tuple[int, int]]],
+    result_q=None,
+) -> None:
     import os as _os
 
     def _ensure_thread_caps():
@@ -2671,6 +2947,7 @@ def _gpu_math_worker(device_id: int, in_dir: str, out_dir: str, work_q, batch_si
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
     batch: list[str] = []
     B = max(1, int(batch_size))
+    exit_code = 0
     import queue as _queue
     while True:
         try:
@@ -2679,14 +2956,29 @@ def _gpu_math_worker(device_id: int, in_dir: str, out_dir: str, work_q, batch_si
             if batch:
                 _targets = {s: targets_map.get(s) for s in batch if s in targets_map} if targets_map else None
                 try:
-                    c.formula_enrich_from_json(files=list(batch), device=(device or "cuda"), batch_size=B, dpi_base=int(dpi_base), targets_by_stem=_targets)
+                    c.formula_enrich_from_json(
+                        files=list(batch),
+                        device=(device or "cuda"),
+                        batch_size=B,
+                        dpi_base=int(dpi_base),
+                        targets_by_stem=_targets,
+                    )
                 except Exception as _e:
                     print(f"[MATH GPU{device_id}] Batch failed ({len(batch)}): {_e}")
-                    for s in batch:
+                    if result_q is not None:
                         try:
-                            work_q.put(s)
+                            result_q.put(
+                                {
+                                    "event": "math_batch",
+                                    "worker": device_id,
+                                    "problematic": list(batch),
+                                    "pid": _os.getpid(),
+                                    "error": str(_e),
+                                }
+                            )
                         except Exception:
                             pass
+                    exit_code = 1
                 batch.clear()
             break
         if isinstance(nm, str) and nm.strip():
@@ -2694,17 +2986,45 @@ def _gpu_math_worker(device_id: int, in_dir: str, out_dir: str, work_q, batch_si
         if len(batch) >= B:
             _targets = {s: targets_map.get(s) for s in batch if s in targets_map} if targets_map else None
             try:
-                c.formula_enrich_from_json(files=list(batch), device=(device or "cuda"), batch_size=B, dpi_base=int(dpi_base), targets_by_stem=_targets)
+                c.formula_enrich_from_json(
+                    files=list(batch),
+                    device=(device or "cuda"),
+                    batch_size=B,
+                    dpi_base=int(dpi_base),
+                    targets_by_stem=_targets,
+                )
             except Exception as _e:
                 print(f"[MATH GPU{device_id}] Batch failed ({len(batch)}): {_e}")
-                for s in batch:
+                if result_q is not None:
                     try:
-                        work_q.put(s)
+                        result_q.put(
+                            {
+                                "event": "math_batch",
+                                "worker": device_id,
+                                "problematic": list(batch),
+                                "pid": _os.getpid(),
+                                "error": str(_e),
+                            }
+                        )
                     except Exception:
                         pass
+                exit_code = 1
                 batch.clear()
                 continue
             batch.clear()
+
+    if result_q is not None:
+        try:
+            result_q.put(
+                {
+                    "event": "exit",
+                    "worker": device_id,
+                    "exitcode": exit_code,
+                    "pid": _os.getpid(),
+                }
+            )
+        except Exception:
+            pass
 
 # Top-level worker function for multi-GPU extraction (picklable by multiprocessing)
 def gpu_extract_worker_queue(
@@ -2724,6 +3044,8 @@ def gpu_extract_worker_queue(
     emit_index: bool,
     backend: str,
     result_q=None,
+    status_map=None,
+    marker_dir: Optional[str] = None,
 ) -> None:
     import os as _os
     import sys as _sys
@@ -2748,6 +3070,32 @@ def gpu_extract_worker_queue(
             pass
 
     _ensure_thread_caps()
+    _status_proxy = status_map
+    _marker_path = _Path(marker_dir).expanduser() / f"gpu{device_id}.current" if marker_dir else None
+
+    def _update_current(batch_items: List[str]) -> None:
+        if _status_proxy is not None:
+            try:
+                _status_proxy[device_id] = list(batch_items)
+            except Exception:
+                pass
+        if _marker_path is not None:
+            try:
+                _marker_path.write_text("\n".join(batch_items) + "\n", encoding="utf-8")
+            except Exception:
+                pass
+
+    def _clear_current() -> None:
+        if _status_proxy is not None:
+            try:
+                _status_proxy.pop(device_id, None)
+            except Exception:
+                pass
+        if _marker_path is not None:
+            try:
+                _marker_path.unlink(missing_ok=True)
+            except Exception:
+                pass
     _worker_log_handle = None
     try:
         _log_dir = _os.environ.get("GLOSSAPI_WORKER_LOG_DIR")
@@ -2895,6 +3243,7 @@ def gpu_extract_worker_queue(
                 # queue.Empty or other -> flush any pending batch then exit
                 if batch:
                     try:
+                        _update_current(list(batch))
                         c.extract(
                             input_format=input_fmt,
                             num_threads=threads,
@@ -2913,6 +3262,7 @@ def gpu_extract_worker_queue(
                             _prepared=True,
                         )
                         processed += len(batch)
+                        _clear_current()
                     except Exception as _e:
                         exit_code = 1
                         print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
@@ -2935,22 +3285,18 @@ def gpu_extract_worker_queue(
                                 work_q.put(_path)
                             except Exception:
                                 pass
+                        _clear_current()
                     batch.clear()
                 break
             except Exception as exc:
                 exit_code = 1
                 print(f"[GPU{device_id}] Queue receive error: {exc}")
-                if batch:
-                    for _path in batch:
-                        try:
-                            work_q.put(_path)
-                        except Exception:
-                            pass
                 break
             if isinstance(nm, str) and nm.strip():
                 batch.append(nm)
             if len(batch) >= BATCH_SIZE:
                 try:
+                    _update_current(list(batch))
                     c.extract(
                         input_format=input_fmt,
                         num_threads=threads,
@@ -2969,6 +3315,7 @@ def gpu_extract_worker_queue(
                         _prepared=True,
                     )
                     processed += len(batch)
+                    _clear_current()
                 except Exception as _e:
                     exit_code = 1
                     print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
@@ -2991,6 +3338,7 @@ def gpu_extract_worker_queue(
                             work_q.put(_path)
                         except Exception:
                             pass
+                    _clear_current()
                 batch.clear()
             # Occasional heartbeat
             if _time.time() - last_progress > 30:
@@ -3002,6 +3350,8 @@ def gpu_extract_worker_queue(
     except Exception as exc:
         exit_code = 1
         print(f"[GPU{device_id}] Fatal worker error: {exc}")
+
+    _clear_current()
 
     if result_q is not None:
         try:

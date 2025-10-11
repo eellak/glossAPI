@@ -7,60 +7,36 @@ import pytest
 import torch
 
 from glossapi import Corpus
+from glossapi.corpus import _resolve_skiplist_path
+from fpdf import FPDF
 
 
 pytest.importorskip("docling")
 pytest.importorskip("glossapi_rs_cleaner")
 
 
+_FONT_PATH = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+
+
 def _write_pdf(path: Path, text: str | None) -> None:
-    """Create a tiny PDF containing the provided text (or a blank page)."""
+    """Create a one-page PDF using DejaVuSans to preserve non-ASCII text."""
 
-    def _obj(obj_id: int, body: str) -> bytes:
-        return f"{obj_id} 0 obj\n{body}\nendobj\n".encode("utf-8")
-
-    escaped = "" if text is None else text.replace("(", r"\(").replace(")", r"\)")
-    if escaped:
-        stream_body = f"BT\n/F1 12 Tf\n72 720 Td\n({escaped}) Tj\nET\n"
+    pdf = FPDF()
+    pdf.add_page()
+    if _FONT_PATH.exists():
+        pdf.add_font("DejaVuSans", "", str(_FONT_PATH))
+        pdf.set_font("DejaVuSans", "", 16)
     else:
-        stream_body = "BT\nET\n"
-    stream_bytes = stream_body.encode("utf-8")
+        pdf.set_font("Helvetica", "", 16)
 
-    objects = [
-        _obj(1, "<< /Type /Catalog /Pages 2 0 R >>"),
-        _obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
-        _obj(
-            3,
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
-            "/Resources << /Font << /F1 5 0 R >> >> >>",
-        ),
-        _obj(
-            4,
-            f"<< /Length {len(stream_bytes)} >>\nstream\n{stream_body}\nendstream",
-        ),
-        _obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
-    ]
+    content = (text or "").strip()
+    if not content:
+        # Leave the page mostly blank but add a tiny marker so OCR sees an empty page.
+        pdf.ln(10)
+    else:
+        pdf.multi_cell(0, 10, content)
 
-    header = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
-    output = bytearray(header)
-    offsets: list[int] = []
-    for chunk in objects:
-        offsets.append(len(output))
-        output.extend(chunk)
-
-    xref_start = len(output)
-    output.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
-    output.extend(b"0000000000 65535 f \n")
-    for offset in offsets:
-        output.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
-
-    trailer = (
-        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
-        f"startxref\n{xref_start}\n%%EOF\n"
-    )
-    output.extend(trailer.encode("ascii"))
-
-    path.write_bytes(bytes(output))
+    pdf.output(str(path))
 
 
 def _assert_dir_contents(
@@ -165,3 +141,87 @@ def test_pipeline_smoke_and_artifacts(tmp_path):
 
     sections_file = sections_dir / "sections_for_annotation.parquet"
     assert sections_file.exists()
+
+
+def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
+    assert torch.cuda.is_available(), "CUDA GPU expected for docling pipeline test"
+    providers = ort.get_available_providers()
+    assert "CUDAExecutionProvider" in providers, f"CUDAExecutionProvider missing: {providers}"
+
+    device_idx = 0
+    if torch.cuda.device_count() > 1:
+        device_idx = torch.cuda.current_device()
+
+    monkeypatch.setenv("GLOSSAPI_GPU_BATCH_SIZE", "1")
+    monkeypatch.setenv("GLOSSAPI_WORKER_LOG_VERBOSE", "0")
+
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+
+    documents = {
+        "blank": None,
+        "greek_text": "Καλημέρα κόσμε",
+        "math_latex": r"\[\int_0^\infty e^{-x^2} \, dx = \frac{\sqrt{\pi}}{2}\]",
+        "greek_consonants": "".join(
+            part
+            for part in [
+                "ββββ", "γγγγ", "δδδδ", "ζζζζ", "θθθθ", "κκκκ",
+                "λλλλ", "μμμμ", "νννν", "ξξξξ", "ππππ", "ρρρρ",
+                "σσσσ", "ςςςς", "ττττ", "φφφφ", "χχχχ", "ψψψψ",
+            ]
+        ),
+    }
+
+    for stem, content in documents.items():
+        _write_pdf(corpus_dir / f"{stem}.pdf", content)
+
+    corpus = Corpus(input_dir=corpus_dir, output_dir=corpus_dir)
+
+    corpus.extract(
+        input_format="pdf",
+        accel_type="CUDA",
+        num_threads=1,
+        emit_formula_index=True,
+        phase1_backend="docling",
+        force_ocr=True,
+        use_gpus="single",
+        devices=[device_idx],
+    )
+
+    corpus.clean()
+
+    parquet_path = corpus_dir / "download_results" / "download_results.parquet"
+    results_after_clean = pd.read_parquet(parquet_path).set_index("filename")
+    greek_row = results_after_clean.loc["greek_consonants.pdf"]
+    assert greek_row["greek_badness_score"] > 60, "Expected high greek badness score"
+    assert bool(greek_row["needs_ocr"]), "Greek consonant doc should require OCR rerun"
+    assert "non_greek_text" in str(greek_row.get("filter", "")), "Filter should record non-Greek text"
+
+    corpus.ocr(
+        fix_bad=True,
+        math_enhance=True,
+        use_gpus="single",
+        devices=[device_idx],
+    )
+
+    results_after_ocr = pd.read_parquet(parquet_path).set_index("filename")
+    greek_after = results_after_ocr.loc["greek_consonants.pdf"]
+    assert not bool(greek_after["needs_ocr"]), "Greek consonant doc should be resolved after OCR rerun"
+    assert bool(greek_after.get("ocr_success", False)), "OCR rerun should mark greek consonant doc as success"
+
+    json_dir = corpus_dir / "json"
+    assert json_dir.exists(), "Docling JSON directory should exist after extraction"
+    for stem in documents:
+        if stem == "blank":
+            # Blank documents may be routed to timeout/problematic, skip strict JSON check.
+            continue
+        json_plain = json_dir / f"{stem}.docling.json"
+        json_zst = json_dir / f"{stem}.docling.json.zst"
+        assert json_plain.exists() or json_zst.exists(), f"Missing Docling JSON for {stem}"
+
+    math_sidecar = corpus_dir / "sidecars" / "math" / "math_latex.json"
+    assert math_sidecar.exists(), "Expected math enrichment to produce math sidecar metrics"
+
+    skiplist_path = _resolve_skiplist_path(corpus.output_dir, corpus.logger)
+    if skiplist_path.exists():
+        assert not skiplist_path.read_text(encoding="utf-8").strip(), "Fatal skip-list should remain empty"

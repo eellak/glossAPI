@@ -224,7 +224,10 @@ def patch_docling_rapidocr() -> bool:
     try:
         from docling.models.factories import get_ocr_factory  # type: ignore
         import logging
+    except Exception:
+        return True
 
+    try:
         factory = get_ocr_factory()
         options_type = SafeRapidOcrModel.get_options_type()
 
