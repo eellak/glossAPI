@@ -9,6 +9,7 @@ import torch
 from glossapi import Corpus
 from glossapi.corpus import _resolve_skiplist_path
 from fpdf import FPDF
+from PIL import Image, ImageDraw, ImageFont
 
 
 pytest.importorskip("docling")
@@ -18,8 +19,26 @@ pytest.importorskip("glossapi_rs_cleaner")
 _FONT_PATH = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
 
 
-def _write_pdf(path: Path, text: str | None) -> None:
-    """Create a one-page PDF using DejaVuSans to preserve non-ASCII text."""
+def _render_formula_image(text: str, dest: Path) -> None:
+    font_size = 28
+    if _FONT_PATH.exists():
+        font = ImageFont.truetype(str(_FONT_PATH), font_size)
+    else:
+        font = ImageFont.load_default()
+
+    dummy = Image.new("L", (10, 10), color=255)
+    draw_dummy = ImageDraw.Draw(dummy)
+    bbox = draw_dummy.textbbox((0, 0), text, font=font)
+    width = max(1, bbox[2] - bbox[0] + 20)
+    height = max(1, bbox[3] - bbox[1] + 20)
+    image = Image.new("L", (width, height), color=255)
+    draw = ImageDraw.Draw(image)
+    draw.text((10, 10), text, font=font, fill=0)
+    image.save(dest, format="PNG")
+
+
+def _write_pdf(path: Path, payload: str | None | dict) -> None:
+    """Create a one-page PDF; supports optional embedded formula image."""
 
     pdf = FPDF()
     pdf.add_page()
@@ -29,14 +48,39 @@ def _write_pdf(path: Path, text: str | None) -> None:
     else:
         pdf.set_font("Helvetica", "", 16)
 
-    content = (text or "").strip()
-    if not content:
-        # Leave the page mostly blank but add a tiny marker so OCR sees an empty page.
-        pdf.ln(10)
+    text_before = ""
+    text_after = ""
+    formula_text = None
+    if isinstance(payload, dict):
+        text_before = (payload.get("pre_text") or "").strip()
+        text_after = (payload.get("post_text") or "").strip()
+        formula_text = payload.get("formula_text")
     else:
-        pdf.multi_cell(0, 10, content)
+        text_before = (payload or "").strip()
+
+    if text_before:
+        pdf.multi_cell(0, 10, text_before)
+        pdf.ln(4)
+    else:
+        pdf.ln(10)
+
+    temp_img: Path | None = None
+    if formula_text:
+        temp_img = path.with_suffix(".tmp_formula.png")
+        _render_formula_image(str(formula_text), temp_img)
+        pdf.image(str(temp_img), x=40, w=120)
+        pdf.ln(6)
+
+    if text_after:
+        pdf.multi_cell(0, 10, text_after)
 
     pdf.output(str(path))
+
+    if temp_img and temp_img.exists():
+        try:
+            temp_img.unlink()
+        except OSError:
+            pass
 
 
 def _assert_dir_contents(
@@ -161,7 +205,11 @@ def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
     documents = {
         "blank": None,
         "greek_text": "Καλημέρα κόσμε",
-        "math_latex": r"\[\int_0^\infty e^{-x^2} \, dx = \frac{\sqrt{\pi}}{2}\]",
+        "math_latex": {
+            "pre_text": "Equation (1):",
+            "post_text": "∫₀^∞ e^{-x²} dx = √π / 2",
+            "formula_text": "∫₀^∞ e^{-x²} dx = √π / 2",
+        },
         "greek_consonants": "".join(
             part
             for part in [

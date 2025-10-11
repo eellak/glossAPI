@@ -125,8 +125,25 @@ def enrich_from_docling_json(
         rois.append(RoiEntry(page_no=page_no, bbox=bbox, label=lab, per_page_ix=cur_ix))
 
     if not rois:
-        # Nothing to enrich; just export existing MD
+        # Nothing to enrich; still emit the base markdown (and fall back to raw text if empty)
+        out_md_path.parent.mkdir(parents=True, exist_ok=True)
         doc.save_as_markdown(out_md_path)
+        try:
+            rendered = out_md_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            rendered = ""
+        if not rendered.strip():
+            # Some Docling docs store text only in the lightweight texts list; surface it so the
+            # markdown is not empty (important for tests and downstream auditability).
+            fallback: list[str] = []
+            text_items = getattr(doc, "texts", None)
+            if text_items:
+                for item in text_items:
+                    value = getattr(item, "text", None) if hasattr(item, "text") else None
+                    if value:
+                        fallback.append(str(value))
+            if fallback:
+                out_md_path.write_text("\n\n".join(fallback), encoding="utf-8")
         return {"items": 0, "accepted": 0, "time_sec": 0.0}
 
     # Build recognizer
