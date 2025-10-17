@@ -16,6 +16,7 @@ import time
 import json
 from dataclasses import dataclass
 
+from ._naming import canonical_stem
 from .gloss_section import GlossSection
 from .gloss_section_classifier import GlossSectionClassifier
 from .gloss_downloader import GlossDownloader
@@ -46,7 +47,7 @@ class _SkiplistManager:
     def _normalize(entry: Optional[str]) -> Optional[str]:
         if not entry:
             return None
-        stem = Path(entry.strip()).stem
+        stem = canonical_stem(entry.strip())
         return stem or None
 
     def load(self) -> Set[str]:
@@ -284,10 +285,7 @@ class Corpus:
         def _stem_for(value: str) -> str:
             if not value:
                 return ""
-            name = str(value)
-            if "." in name:
-                return name.rsplit(".", 1)[0]
-            return name
+            return canonical_stem(value)
 
         df["__stem__"] = df["filename"].astype(str).map(_stem_for)
         metadata_by_stem: dict[str, dict[str, Any]] = {}
@@ -375,7 +373,7 @@ class Corpus:
         records_written = 0
         with output_path.open("w", encoding="utf-8") as fp:
             for md_path in sorted(markdown_root.glob("*.md")):
-                stem = md_path.stem
+                stem = canonical_stem(md_path)
                 metadata = metadata_by_stem.get(stem)
                 if metadata is None:
                     continue
@@ -617,13 +615,26 @@ class Corpus:
 
         # Prepare parquet helper
         parquet_schema = ParquetSchema({"url_column": self.url_column})
-        parquet_path = parquet_schema.find_metadata_parquet(self.input_dir)
+        existing_metadata = parquet_schema.find_metadata_parquet(self.input_dir)
+        parquet_path: Optional[Path] = Path(existing_metadata) if existing_metadata else None
         if parquet_path is None:
-            parquet_path = parquet_schema.ensure_metadata_parquet(self.output_dir)
+            ensured = parquet_schema.ensure_metadata_parquet(self.output_dir)
+            if ensured is not None:
+                parquet_path = Path(ensured)
         if parquet_path is None:
-            parquet_path = parquet_schema.ensure_metadata_parquet(self.input_dir)
+            ensured = parquet_schema.ensure_metadata_parquet(self.input_dir)
+            if ensured is not None:
+                parquet_path = Path(ensured)
         if parquet_path is None:
-            parquet_path = self.output_dir / "download_results" / "download_results.parquet"
+            parquet_path = None
+            metadata_target = self.output_dir / "download_results" / "download_results.parquet"
+            self.logger.info(
+                "Cleaner: no metadata parquet found; will bootstrap %s when metrics become available.",
+                metadata_target,
+            )
+        else:
+            metadata_target = parquet_path
+        parquet_path = metadata_target
 
         import os
         records: list = []  # will hold metrics for parquet merge
@@ -806,10 +817,6 @@ class Corpus:
                 }
             )
 
-            if parquet_path is None:
-                parquet_path = (
-                    self.output_dir / "download_results" / "download_results.parquet"
-                )
             parquet_path.parent.mkdir(parents=True, exist_ok=True)
 
             df = self._load_metrics_dataframe(parquet_path, df_metrics.get("filename"))
@@ -840,7 +847,7 @@ class Corpus:
                     ]
                 ],
             )
-            df.to_parquet(parquet_path, index=False)
+            parquet_schema.write_metadata_parquet(df, parquet_path)
             self.logger.info("Mojibake metrics updated in %s", parquet_path)
 
         # ----- Noise-metrics scoring (Rust) -----
@@ -879,7 +886,7 @@ class Corpus:
                     ["greek>60"],
                     default="ok",
                 )
-                if not parquet_path or not parquet_path.exists():
+                if not parquet_path.exists():
                     self.logger.error(
                         "Expected parquet %s not found when adding noise metrics",
                         parquet_path,
@@ -905,14 +912,14 @@ class Corpus:
                         ]
                     ]
                     df = self._merge_metric_dataframe(df, updates)
-                    df.to_parquet(parquet_path, index=False)
+                    parquet_schema.write_metadata_parquet(df, parquet_path)
                     self.logger.info("Noise metrics filled in %s", parquet_path)
         except Exception as e:
             self.logger.warning("Noise-metrics scoring failed: %s", e)
 
 
         # Determine good / bad list based on enriched metrics
-        if parquet_path and parquet_path.exists():
+        if parquet_path.exists():
             df_final = pd.read_parquet(parquet_path)
             # --- tidy schema ---
             df_final.rename(columns={
@@ -1061,15 +1068,15 @@ class Corpus:
             df_final["needs_ocr"] = df_final["needs_ocr"].fillna(False).astype(bool)
 
             # persist cleaned parquet
-            df_final.to_parquet(parquet_path, index=False)
+            parquet_schema.write_metadata_parquet(df_final, parquet_path)
             if drop_bad:
                 good_df = df_final[df_final["needs_ocr"] == False]
                 filenames = good_df.get("filename", pd.Series(dtype=str))
-                self.good_files = [Path(str(f)).stem for f in filenames.dropna().astype(str).tolist()]
+                self.good_files = [canonical_stem(f) for f in filenames.dropna().astype(str).tolist()]
                 self.logger.info(f"After filtering, {len(self.good_files)} good files remain")
             else:
                 filenames = df_final.get("filename", pd.Series(dtype=str))
-                self.good_files = [Path(str(f)).stem for f in filenames.dropna().astype(str).tolist()]
+                self.good_files = [canonical_stem(f) for f in filenames.dropna().astype(str).tolist()]
         else:
             self.good_files = []
 
@@ -1104,7 +1111,8 @@ class Corpus:
         use_gpus: str = "single",
         devices: Optional[List[int]] = None,
         force: Optional[bool] = None,
-        reprocess_completed: bool = False,
+        reprocess_completed: Optional[bool] = None,
+        skip_existing: Optional[bool] = None,
     ) -> None:
         """OCR and/or math enrichment with explicit mode control.
 
@@ -1121,8 +1129,11 @@ class Corpus:
         - fix_bad: re-run OCR on documents marked bad by the cleaner (default True).
         - math_enhance: run math/code enrichment after OCR (default True).
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
-        - reprocess_completed: when False (default), skip documents already flagged as successfully
-          OCRed or math-enriched in metadata. Set True to force reprocessing.
+        - reprocess_completed: when False, skip documents already flagged as successfully
+          OCRed or math-enriched in metadata. Set True to force reprocessing. Defaults to False
+          unless ``skip_existing`` overrides it.
+        - skip_existing: legacy alias for ``reprocess_completed`` (``skip_existing=True`` equals
+          ``reprocess_completed=False``). Prefer the explicit ``reprocess_completed`` toggle.
         """
         # Normalize mode from explicit value or legacy flags
         mode_norm = None
@@ -1151,8 +1162,33 @@ class Corpus:
                     "OCR: no operation requested (enable fix_bad and/or math_enhance or set mode='ocr_bad'|'math_only'|'ocr_bad_then_math')"
                 )
                 return
+        reprocess_explicit = reprocess_completed is not None
+        reprocess_flag = bool(reprocess_completed) if reprocess_explicit else False
+        if skip_existing is not None:
+            skip_flag = bool(skip_existing)
+            try:
+                self.logger.warning(
+                    "Corpus.ocr(skip_existing=...) is deprecated; use reprocess_completed=... instead."
+                )
+            except Exception:
+                pass
+            desired = not skip_flag
+            if reprocess_explicit and desired != reprocess_flag:
+                try:
+                    self.logger.info(
+                        "Corpus.ocr(): skip_existing=%s overrides reprocess_completed=%s (effective reprocess_completed=%s).",
+                        skip_flag,
+                        reprocess_flag,
+                        desired,
+                    )
+                except Exception:
+                    pass
+            reprocess_flag = desired
+        reprocess_completed = reprocess_flag
         # Identify bad documents from parquet (Rust cleaner output)
         bad_files: List[str] = []
+        skipped_completed = 0
+        skipped_skiplist = 0
         parquet_meta: Optional["pd.DataFrame"] = None
         ocr_done_files: List[str] = []
         ocr_done_stems: Set[str] = set()
@@ -1173,19 +1209,20 @@ class Corpus:
                 ocr_done: Set[str] = set()
                 if "ocr_success" in df.columns:
                     ocr_done_files = df.loc[df["ocr_success"].fillna(False), "filename"].dropna().astype(str).tolist()
-                    ocr_done = {Path(str(name)).stem for name in ocr_done_files}
+                    ocr_done = {canonical_stem(str(name)) for name in ocr_done_files}
                     ocr_done_stems = set(ocr_done)
                 if "math_enriched" in df.columns:
                     math_done_files = df.loc[df["math_enriched"].fillna(False), "filename"].dropna().astype(str).tolist()
                 elif "enriched_math" in df.columns:
                     math_done_files = df.loc[df["enriched_math"].fillna(False), "filename"].dropna().astype(str).tolist()
                 if math_done_files:
-                    math_done_stems = {Path(str(name)).stem for name in math_done_files}
+                    math_done_stems = {canonical_stem(str(name)) for name in math_done_files}
                 if not reprocess_completed and ocr_done:
                     before = len(bad_files)
-                    bad_files = [name for name in bad_files if Path(name).stem not in ocr_done]
+                    bad_files = [name for name in bad_files if canonical_stem(name) not in ocr_done]
                     removed = before - len(bad_files)
                     if removed:
+                        skipped_completed = removed
                         self.logger.info(
                             "OCR: skipping %d already completed document(s) (reprocess_completed=False).",
                             removed,
@@ -1202,25 +1239,38 @@ class Corpus:
         except Exception:
             pass
 
+        ocr_candidates_initial = len(bad_files)
         skiplist_path = _resolve_skiplist_path(self.output_dir, self.logger)
         skip_mgr = _SkiplistManager(skiplist_path, self.logger)
         skip_stems = skip_mgr.load()
         if skip_stems:
             before = len(bad_files)
-            bad_files = [name for name in bad_files if Path(name).stem not in skip_stems]
+            bad_files = [name for name in bad_files if canonical_stem(name) not in skip_stems]
             removed = before - len(bad_files)
             if removed:
+                skipped_skiplist = removed
                 self.logger.warning(
                     "Skip-list %s filtered %d document(s) from Phase-3 OCR.",
                     skiplist_path,
                     removed,
                 )
+        try:
+            self.logger.info(
+                "OCR targets: total=%d kept=%d skipped_completed=%d skipped_skiplist=%d",
+                ocr_candidates_initial,
+                len(bad_files),
+                skipped_completed,
+                skipped_skiplist,
+            )
+        except Exception:
+            pass
 
         # Helper to run Phase‑2 enrichment over stems
         def _run_math(stems: List[str]) -> None:
             if not stems:
                 self.logger.info("No Docling JSON found for math enrichment.")
                 return
+            initial_math_targets = len(stems)
             current_skips = skip_mgr.reload() if skip_mgr else set()
             if current_skips:
                 before = len(stems)
@@ -1235,6 +1285,15 @@ class Corpus:
                 if not stems:
                     self.logger.info("All math targets filtered by skip-list; nothing to do.")
                     return
+            try:
+                self.logger.info(
+                    "Math targets: total=%d kept=%d filtered_skiplist=%d",
+                    initial_math_targets,
+                    len(stems),
+                    initial_math_targets - len(stems),
+                )
+            except Exception:
+                pass
             local_targets = None
             if math_targets:
                 local_targets = {s: math_targets.get(s) for s in stems if s in math_targets}
@@ -1363,7 +1422,7 @@ class Corpus:
                                             pass
                                 if exitcode not in (0, None) and gpu_id is not None:
                                     if stems_for_skip:
-                                        skip_mgr.add(stems_for_skip)
+                                        skip_mgr.add(canonical_stem(s) for s in stems_for_skip)
                                     self.logger.warning(
                                         "Math worker GPU%s exited with %s",
                                         gpu_id,
@@ -1411,7 +1470,7 @@ class Corpus:
                                 if event.get("event") == "math_batch":
                                     stems_bad = event.get("problematic", [])
                                     if stems_bad:
-                                        skip_mgr.add(stems_bad)
+                                        skip_mgr.add(canonical_stem(s) for s in stems_bad)
                                     worker = event.get("worker")
                                     try:
                                         worker_gpu = int(worker)
@@ -1456,7 +1515,7 @@ class Corpus:
                         except queue.Empty:
                             pass
                         if remaining_after_cap:
-                            skip_mgr.add(remaining_after_cap)
+                            skip_mgr.add(canonical_stem(s) for s in remaining_after_cap)
                             self.logger.error(
                                 "No active math workers remain; skipped %d pending item(s)",
                                 len(remaining_after_cap),
@@ -1492,7 +1551,7 @@ class Corpus:
             json_dir = self.output_dir / "json"
             stems: List[str] = []
             if json_dir.exists():
-                stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
+                stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
             if not stems:
                 self.extract(
                     input_format="pdf",
@@ -1508,7 +1567,7 @@ class Corpus:
                     phase1_backend="docling",
                 )
                 if json_dir.exists():
-                    stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
+                    stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
             if not reprocess_completed and stems and parquet_meta is not None:
                 if math_done_stems:
                     before = len(stems)
@@ -1529,7 +1588,7 @@ class Corpus:
                 json_dir = self.output_dir / "json"
                 stems = []
                 if json_dir.exists():
-                    stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
+                    stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
                 _run_math(stems)
             return
 
@@ -1559,7 +1618,7 @@ class Corpus:
 
                 success_files: List[str] = []
                 for _fname in bad_files:
-                    stem = Path(_fname).stem
+                    stem = canonical_stem(_fname)
                     if (self.markdown_dir / f"{stem}.md").exists():
                         success_files.append(_fname)
 
@@ -1583,10 +1642,10 @@ class Corpus:
                                     df_meta.loc[mask, "filter"] = "ok"
                                     df_meta.loc[mask, "needs_ocr"] = False
                                     df_meta.loc[mask, "ocr_success"] = True
-                            df_meta.to_parquet(parquet_path, index=False)
+                            parquet_schema.write_metadata_parquet(df_meta, parquet_path)
                     # Keep sectioner in sync with newly recovered files
                     try:
-                        stems = [Path(_f).stem for _f in success_files]
+                        stems = [canonical_stem(_f) for _f in success_files]
                         if hasattr(self, "good_files"):
                             for _stem in stems:
                                 if _stem not in getattr(self, "good_files", []):
@@ -1608,11 +1667,11 @@ class Corpus:
 
         if mode_norm == "ocr_bad_then_math":
             try:
-                stems = [Path(f).stem for f in bad_files]
+                stems = [canonical_stem(f) for f in bad_files]
                 if not stems:
                     json_dir = self.output_dir / "json"
                     if json_dir.exists():
-                        stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
+                        stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
                 if not reprocess_completed:
                     if math_done_stems:
                         before = len(stems)
@@ -1859,7 +1918,7 @@ class Corpus:
         skipped_stems = skip_mgr.load()
         if skipped_stems:
             before = len(input_files)
-            input_files = [p for p in input_files if p.stem not in skipped_stems]
+            input_files = [p for p in input_files if canonical_stem(p) not in skipped_stems]
             removed = before - len(input_files)
             if removed:
                 self.logger.warning(
@@ -2046,7 +2105,7 @@ class Corpus:
                                         if not isinstance(current_entry, (list, tuple, set)):
                                             current_entry = [current_entry]
                                         current_paths = [str(x) for x in current_entry]
-                                        stems_for_skip = [Path(path).stem for path in current_paths]
+                                        stems_for_skip = [canonical_stem(path) for path in current_paths]
                                     marker_path = marker_files.get(gpu_id)
                                     if marker_path:
                                         try:
@@ -2109,21 +2168,22 @@ class Corpus:
                             last_activity = time.time()
                             event_type = result.get("event")
                             if event_type == "batch":
-                                ok = [str(x) for x in (result.get("processed", []) or [])]
-                                bad = [str(x) for x in (result.get("problematic", []) or [])]
-                                processed_files.update(ok)
-                                if ok:
-                                    ok_names = {Path(str(x)).name for x in ok}
-                                    problematic_files.difference_update({item for item in problematic_files if Path(str(item)).name in ok_names})
-                                if bad:
-                                    problematic_files.update(bad)
-                                    skip_mgr.add(Path(str(x)).stem for x in bad)
+                                ok_raw = [str(x) for x in (result.get("processed", []) or [])]
+                                bad_raw = [str(x) for x in (result.get("problematic", []) or [])]
+                                ok_stems = [canonical_stem(x) for x in ok_raw]
+                                bad_stems = [canonical_stem(x) for x in bad_raw]
+                                if ok_stems:
+                                    processed_files.update(ok_stems)
+                                    problematic_files.difference_update(ok_stems)
+                                if bad_stems:
+                                    problematic_files.update(bad_stems)
+                                    skip_mgr.add(bad_stems)
                                 state_mgr.save(processed_files, problematic_files)
                                 self.logger.info(
                                     "GPU%s batch complete: +%d processed, +%d problematic (totals: %d processed, %d problematic)",
                                     result.get("worker"),
-                                    len(ok),
-                                    len(bad),
+                                    len(ok_stems),
+                                    len(bad_stems),
                                     len(processed_files),
                                     len(problematic_files),
                                 )
@@ -2201,7 +2261,7 @@ class Corpus:
                 except queue.Empty:
                     pass
                 if remaining_after_failure:
-                    skip_mgr.add(Path(str(x)).stem for x in remaining_after_failure)
+                    skip_mgr.add(canonical_stem(x) for x in remaining_after_failure)
                     self.logger.error(
                         "No active extraction workers remain; skipped %d pending item(s)",
                         len(remaining_after_failure),
@@ -2458,7 +2518,7 @@ class Corpus:
                                 lambda x: (str(x) + ',section') if (pd.notna(x) and 'section' not in str(x)) else ('download,extract,section' if pd.isna(x) else x)
                             )
                             # Write back in-place
-                            df_meta.to_parquet(parquet_path, index=False)
+                            parquet_schema.write_metadata_parquet(df_meta, Path(parquet_path))
                         except Exception as e:
                             self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
                 except Exception as e:
@@ -2863,14 +2923,14 @@ class Corpus:
         # Build used filename bases set to avoid collisions on resume
         used_bases = set()
         try:
-            used_bases |= {str(Path(fn).stem) for fn in existing_filenames if isinstance(fn, str)}
+            used_bases |= {canonical_stem(str(fn)) for fn in existing_filenames if isinstance(fn, str)}
         except Exception:
             pass
         try:
             # Also include on-disk stems
             downloads_dir = Path(self.output_dir) / 'downloads'
             if downloads_dir.exists():
-                used_bases |= {p.stem for p in downloads_dir.glob('*') if p.is_file()}
+                used_bases |= {canonical_stem(p) for p in downloads_dir.glob('*') if p.is_file()}
         except Exception:
             pass
 

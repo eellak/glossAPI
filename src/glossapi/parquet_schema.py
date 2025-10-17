@@ -5,14 +5,184 @@ This module defines standard schemas for parquet files used throughout the Gloss
 pipeline, ensuring consistency between different pipeline stages.
 """
 
+from __future__ import annotations
+
 import json
 import os
+import time
+from contextlib import contextmanager
+from numbers import Number
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
+
+try:  # Optional dependency – lazily confirmed via _ensure_pyarrow()
+    import pyarrow as pa  # type: ignore[import]
+    import pyarrow.parquet as pq  # type: ignore[import]
+except ImportError:  # pragma: no cover - exercised when pyarrow missing
+    pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
+
+try:
+    from filelock import FileLock
+except ImportError:  # pragma: no cover - optional helper
+    FileLock = None
+
+from ._naming import canonical_stem
+
+_BOOLEAN_METADATA_COLUMNS: Tuple[str, ...] = (
+    "download_success",
+    "is_duplicate",
+    "needs_ocr",
+    "ocr_success",
+    "math_enriched",
+    "enriched_math",
+    "is_empty",
+)
+
+
+def _ensure_pyarrow() -> Tuple[Any, Any]:
+    """Import pyarrow on demand, surfacing a friendly error if missing."""
+
+    global pa, pq  # noqa: PLW0603 - shared cache for optional dependency
+    if pa is not None and pq is not None:
+        return pa, pq
+    try:
+        import pyarrow as pa_mod  # type: ignore[import]
+        import pyarrow.parquet as pq_mod  # type: ignore[import]
+    except ImportError as exc:  # pragma: no cover - depends on environment
+        raise RuntimeError(
+            "pyarrow is required to read or write metadata parquets. "
+            "Install it with `pip install pyarrow` inside the active environment."
+        ) from exc
+    pa = pa_mod  # type: ignore[assignment]
+    pq = pq_mod  # type: ignore[assignment]
+    return pa, pq
+
+
+def _coerce_bool_value(value: Any) -> object:
+    """Normalize common truthy/falsey representations to pandas boolean domain."""
+
+    if value is None:
+        return pd.NA
+    if value is pd.NA:
+        return pd.NA
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Number) and not isinstance(value, bool):
+        try:
+            if pd.isna(value):
+                return pd.NA
+        except Exception:
+            pass
+        return bool(int(value))
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "y", "t"}:
+            return True
+        if lowered in {"false", "0", "no", "n", "f"}:
+            return False
+        if lowered in {"", "none", "null"}:
+            return pd.NA
+        return pd.NA
+    try:
+        return bool(value)
+    except Exception:
+        return pd.NA
+
+
+def _boolean_series(series: pd.Series) -> pd.Series:
+    values = [_coerce_bool_value(v) for v in series.tolist()]
+    return pd.Series(pd.array(values, dtype="boolean"), index=series.index)
+
+
+def _nullable_or(lhs: object, rhs: object) -> object:
+    if lhs is True or rhs is True:
+        return True
+    if pd.isna(lhs) or pd.isna(rhs):
+        return pd.NA
+    return False
+
+
+def _prepare_metadata_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a copy with normalized boolean columns and legacy aliases aligned."""
+
+    if df.empty:
+        return df.copy()
+    result = df.copy()
+
+    math_series: Optional[pd.Series] = None
+    if "math_enriched" in result.columns:
+        math_series = _boolean_series(result["math_enriched"])
+    if "enriched_math" in result.columns:
+        enriched_series = _boolean_series(result["enriched_math"])
+        if math_series is None:
+            math_series = enriched_series
+        else:
+            math_series = math_series.combine(enriched_series, _nullable_or)
+    if math_series is not None:
+        math_series = math_series.astype("boolean")
+        result["math_enriched"] = math_series
+        result["enriched_math"] = math_series
+
+    for column in _BOOLEAN_METADATA_COLUMNS:
+        if column not in result.columns:
+            continue
+        result[column] = _boolean_series(result[column])
+
+    return result
+
+
+@contextmanager
+def _parquet_lock(path: Path) -> Iterator[None]:
+    """Serialize writers via file-based lock, falling back to atomic rename."""
+
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    if FileLock is not None:
+        lock = FileLock(str(lock_path))
+        with lock:
+            yield
+        return
+
+    acquired = False
+    handle: Optional[int] = None
+    try:
+        while not acquired:
+            try:
+                handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                acquired = True
+            except FileExistsError:
+                time.sleep(0.05)
+        yield
+    finally:
+        if handle is not None:
+            try:
+                os.close(handle)
+            except Exception:
+                pass
+        try:
+            os.unlink(lock_path)
+        except FileNotFoundError:
+            pass
+
+
+def _write_metadata_parquet(df: pd.DataFrame, parquet_path: Path) -> None:
+    prepared = _prepare_metadata_frame(df)
+    parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    pa_mod, pq_mod = _ensure_pyarrow()
+    table = pa_mod.Table.from_pandas(prepared, preserve_index=False)
+    tmp_path = parquet_path.with_suffix(parquet_path.suffix + ".tmp")
+    with _parquet_lock(parquet_path):
+        try:
+            pq_mod.write_table(table, tmp_path)
+            os.replace(tmp_path, parquet_path)
+        finally:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
 
 
 class ParquetSchema:
@@ -60,59 +230,84 @@ class ParquetSchema:
         self.url_column = self.config.get('url_column', 'url')
     
     # Basic schema with common fields used across all parquet files
-    COMMON_SCHEMA = pa.schema([
-        ('id', pa.string()),
-        ('row_id', pa.int64()),
-        ('filename', pa.string()),
-    ])
+    if pa is not None:
+        COMMON_SCHEMA = pa.schema(
+            [
+                ("id", pa.string()),
+                ("row_id", pa.int64()),
+                ("filename", pa.string()),
+            ]
+        )
+    else:  # pragma: no cover - pyarrow not installed
+        COMMON_SCHEMA = None
     
     # Metadata schema for files used by downloader and quality assessment
-    METADATA_SCHEMA = pa.schema([
-        ('filename', pa.string()),
-        ('url', pa.string()),  # Can be customized with url_column parameter
-        ('download_success', pa.bool_()),
-        ('download_error', pa.string()),
-        ('trigrams', pa.string()),  # Values: "natural", "unnatural", "unknown"
-        ('processing_stage', pa.string()),  # Tracks progress through pipeline
-        ('badness_score', pa.float64()),
-        ('percentage_greek', pa.float64()),
-        ('percentage_latin', pa.float64()),
-    ])
+    if pa is not None:
+        METADATA_SCHEMA = pa.schema(
+            [
+                ("filename", pa.string()),
+                ("url", pa.string()),  # Can be customized with url_column parameter
+                ("download_success", pa.bool_()),
+                ("download_error", pa.string()),
+                ("trigrams", pa.string()),  # Values: "natural", "unnatural", "unknown"
+                ("processing_stage", pa.string()),  # Tracks progress through pipeline
+                ("badness_score", pa.float64()),
+                ("percentage_greek", pa.float64()),
+                ("percentage_latin", pa.float64()),
+            ]
+        )
+    else:  # pragma: no cover - pyarrow not installed
+        METADATA_SCHEMA = None
     
     # Additional schemas for specific pipeline stages
-    DOWNLOAD_SCHEMA = pa.schema([
-        ('url', pa.string()),  # Will be replaced with the actual url_column
-        ('download_success', pa.bool_()),
-        ('download_error', pa.string()),
-        ('download_retry_count', pa.int32()),
-        ('filename', pa.string()),
-        ('file_ext', pa.string()),
-        ('is_duplicate', pa.bool_()),
-        ('duplicate_of', pa.string()),
-        ('source_row', pa.int32()),
-        ('url_index', pa.int32()),
-        ('filename_base', pa.string()),
-    ])
+    if pa is not None:
+        DOWNLOAD_SCHEMA = pa.schema(
+            [
+                ("url", pa.string()),  # Will be replaced with the actual url_column
+                ("download_success", pa.bool_()),
+                ("download_error", pa.string()),
+                ("download_retry_count", pa.int32()),
+                ("filename", pa.string()),
+                ("file_ext", pa.string()),
+                ("is_duplicate", pa.bool_()),
+                ("duplicate_of", pa.string()),
+                ("source_row", pa.int32()),
+                ("url_index", pa.int32()),
+                ("filename_base", pa.string()),
+            ]
+        )
+    else:  # pragma: no cover - pyarrow not installed
+        DOWNLOAD_SCHEMA = None
     
-    SECTION_SCHEMA = pa.schema([
-        ('id', pa.string()),
-        ('row_id', pa.int64()),
-        ('filename', pa.string()),
-        ('title', pa.string()),
-        ('content', pa.string()),
-        ('section', pa.string()),
-    ])
+    if pa is not None:
+        SECTION_SCHEMA = pa.schema(
+            [
+                ("id", pa.string()),
+                ("row_id", pa.int64()),
+                ("filename", pa.string()),
+                ("title", pa.string()),
+                ("content", pa.string()),
+                ("section", pa.string()),
+            ]
+        )
+    else:  # pragma: no cover - pyarrow not installed
+        SECTION_SCHEMA = None
     
-    CLASSIFIED_SCHEMA = pa.schema([
-        ('id', pa.string()),
-        ('row_id', pa.int64()),
-        ('filename', pa.string()),
-        ('title', pa.string()),
-        ('content', pa.string()),
-        ('section', pa.string()),
-        ('predicted_section', pa.string()),
-        ('probability', pa.float64()),
-    ])
+    if pa is not None:
+        CLASSIFIED_SCHEMA = pa.schema(
+            [
+                ("id", pa.string()),
+                ("row_id", pa.int64()),
+                ("filename", pa.string()),
+                ("title", pa.string()),
+                ("content", pa.string()),
+                ("section", pa.string()),
+                ("predicted_section", pa.string()),
+                ("probability", pa.float64()),
+            ]
+        )
+    else:  # pragma: no cover - pyarrow not installed
+        CLASSIFIED_SCHEMA = None
     
     def get_required_metadata(self) -> Dict[str, str]:
         """
@@ -400,13 +595,14 @@ class ParquetSchema:
             row["processing_stage"] = ",".join(stages)
 
         def _row_for(stem: str) -> Dict[str, Any]:
-            row = records.get(stem)
+            canonical = canonical_stem(stem)
+            row = records.get(canonical)
             if row is None:
                 row = {key: value for key, value in defaults.items()}
-                row["filename"] = f"{stem}.pdf"
+                row["filename"] = f"{canonical}.pdf"
                 row["file_ext"] = "pdf"
-                row["filename_base"] = stem
-                records[stem] = row
+                row["filename_base"] = canonical
+                records[canonical] = row
             return row
 
         # 1) Original downloads (PDFs)
@@ -417,9 +613,10 @@ class ParquetSchema:
         pdf_paths.extend(sorted(p for p in base_dir.glob("*.pdf") if p.is_file()))
 
         for pdf_path in pdf_paths:
-            stem = pdf_path.stem
+            stem = canonical_stem(pdf_path)
             row = _row_for(stem)
-            row[self.url_column] = row.get(self.url_column, "") or ""
+            if not row.get(self.url_column):
+                row[self.url_column] = ""
             row["filename"] = pdf_path.name
             row["file_ext"] = pdf_path.suffix.lstrip(".").lower()
             row["filename_base"] = stem
@@ -438,7 +635,7 @@ class ParquetSchema:
             for md_path in md_dir.glob("*.md"):
                 if not md_path.is_file():
                     continue
-                stem = md_path.stem
+                stem = canonical_stem(md_path)
                 row = _row_for(stem)
                 if not row["filename"]:
                     row["filename"] = f"{stem}.pdf"
@@ -453,7 +650,7 @@ class ParquetSchema:
             for latex_map in json_dir.glob("*.latex_map.jsonl"):
                 if not latex_map.is_file():
                     continue
-                stem = latex_map.name.replace(".latex_map.jsonl", "")
+                stem = canonical_stem(latex_map)
                 row = _row_for(stem)
                 row["math_enriched"] = True
                 _append_stage(row, "math")
@@ -491,10 +688,7 @@ class ParquetSchema:
             for metrics_file in metrics_dir.glob("*.metrics.json"):
                 if not metrics_file.is_file():
                     continue
-                name = metrics_file.name
-                if not name.endswith(".metrics.json"):
-                    continue
-                stem = name[:-len(".metrics.json")]
+                stem = canonical_stem(metrics_file)
                 try:
                     payload = json.loads(metrics_file.read_text(encoding="utf-8"))
                 except Exception:
@@ -507,7 +701,7 @@ class ParquetSchema:
                 name = per_page.name
                 if not name.endswith(".per_page.metrics.json"):
                     continue
-                stem = name[:-len(".per_page.metrics.json")]
+                stem = canonical_stem(per_page)
                 try:
                     payload = json.loads(per_page.read_text(encoding="utf-8"))
                 except Exception:
@@ -525,7 +719,7 @@ class ParquetSchema:
                     payload = json.loads(triage_file.read_text(encoding="utf-8"))
                 except Exception:
                     continue
-                stem = triage_file.stem
+                stem = canonical_stem(triage_file)
                 row = _row_for(stem)
                 for key in ("formula_total", "formula_avg_pp", "formula_p90_pp", "pages_total", "pages_with_formula"):
                     if key in payload and pd.isna(row.get(key)):
@@ -543,7 +737,7 @@ class ParquetSchema:
                     payload = json.loads(math_file.read_text(encoding="utf-8"))
                 except Exception:
                     continue
-                stem = math_file.stem
+                stem = canonical_stem(math_file)
                 row = _row_for(stem)
                 items = payload.get("items")
                 accepted = payload.get("accepted")
@@ -575,9 +769,21 @@ class ParquetSchema:
             ordered_columns.insert(0, self.url_column)
         df = df.reindex(columns=ordered_columns, fill_value=pd.NA)
         df.sort_values(by="filename", inplace=True)
-        pq.write_table(pa.Table.from_pandas(df, preserve_index=False), parquet_path)
+        _write_metadata_parquet(df, parquet_path)
         logger.info("Synthesised metadata parquet with %d row(s): %s", len(df), parquet_path)
         return parquet_path
+
+    @staticmethod
+    def normalize_metadata_frame(df: pd.DataFrame) -> pd.DataFrame:
+        """Expose metadata normalisation for callers who need in-memory updates."""
+
+        return _prepare_metadata_frame(df)
+
+    def write_metadata_parquet(self, df: pd.DataFrame, parquet_path: Union[str, Path]) -> None:
+        """Persist metadata updates with schema/dtype normalisation and locking."""
+
+        target = Path(parquet_path)
+        _write_metadata_parquet(df, target)
 
     def is_valid_metadata_parquet(self, filepath: Union[str, Path]) -> bool:
         """

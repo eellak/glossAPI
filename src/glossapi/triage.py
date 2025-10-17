@@ -4,8 +4,12 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Optional
-import pandas as pd
+
 import numpy as np
+import pandas as pd
+
+from ._naming import canonical_stem
+from .parquet_schema import ParquetSchema
 
 
 def summarize_math_density_from_metrics(per_page_path: Path) -> dict[str, Any]:
@@ -80,13 +84,17 @@ def update_download_results_parquet(root_dir: Path, filename_stem: str, summary:
         else:
             df = pd.DataFrame()
         # Ensure filename column and find/create row
+        schema = ParquetSchema()
         if "filename" not in df.columns:
             df["filename"] = pd.Series(dtype=str)
-        mask = df["filename"].astype(str).str.replace(r"\.pdf$", "", regex=True) == filename_stem
+        target_stem = canonical_stem(filename_stem)
+        stem_series = df["filename"].astype(str).map(canonical_stem)
+        mask = stem_series == target_stem
         if not mask.any():
             # append new row
-            df.loc[len(df)] = {"filename": f"{filename_stem}.pdf"}
-            mask = df["filename"].astype(str).str.replace(r"\.pdf$", "", regex=True) == filename_stem
+            df.loc[len(df)] = {"filename": f"{target_stem}.pdf"}
+            stem_series = df["filename"].astype(str).map(canonical_stem)
+            mask = stem_series == target_stem
         # Rounded numeric fields for readability/consistency
         ints = ["formula_total", "pages_total", "pages_with_formula"]
         floats = ["formula_avg_pp", "formula_p90_pp"]
@@ -103,7 +111,7 @@ def update_download_results_parquet(root_dir: Path, filename_stem: str, summary:
                 except Exception:
                     df.loc[mask, col] = summary.get(col)
         df.loc[mask, "phase_recommended"] = recommendation
-        df.to_parquet(parquet_path, index=False)
+        schema.write_metadata_parquet(df, parquet_path)
         return parquet_path
     except Exception:
         return None
@@ -139,7 +147,10 @@ def update_math_enrich_results(parquet_path: Path, stem: str, *, items: int, acc
     df = pd.read_parquet(parquet_path)
     if "filename" not in df.columns:
         return
-    mask = df["filename"].astype(str).str.replace(r"\.pdf$", "", regex=True) == stem
+    schema = ParquetSchema()
+    target_stem = canonical_stem(stem)
+    stem_series = df["filename"].astype(str).map(canonical_stem)
+    mask = stem_series == target_stem
     if not mask.any():
         return
     df.loc[mask, "enriched_math"] = True
@@ -150,4 +161,4 @@ def update_math_enrich_results(parquet_path: Path, stem: str, *, items: int, acc
         df["math_enriched"] = df.get("enriched_math", False)
     if mask.any():
         df.loc[mask, "math_enriched"] = True
-    df.to_parquet(parquet_path, index=False)
+    schema.write_metadata_parquet(df, parquet_path)
