@@ -1,3 +1,5 @@
+import inspect
+import queue
 import sys
 from types import SimpleNamespace
 
@@ -156,3 +158,86 @@ def test_prime_extractor_requires_cuda_for_formula_enrichment(tmp_path, monkeypa
         )
 
     assert "Torch CUDA is not available" in str(exc.value)
+
+
+def test_gpu_worker_does_not_requeue_failed_paths():
+    from glossapi.corpus import gpu_extract_worker_queue
+
+    source = inspect.getsource(gpu_extract_worker_queue)
+    assert "work_q.put(_path)" not in source, "GPU worker should not requeue failed paths"
+    assert "_clear_current()" in source, "GPU worker should clear status markers"
+
+
+def test_gpu_worker_requeues_failed_batch(tmp_path, monkeypatch):
+    import glossapi.corpus as corpus_mod
+
+    processed_batches = []
+
+    class FakeCorpus:
+        def __init__(self, input_dir, output_dir):
+            self.input_dir = input_dir
+            self.output_dir = output_dir
+            self.extract_calls = 0
+            self.extractor = SimpleNamespace(max_batch_files=2)
+
+        def prime_extractor(self, *args, **kwargs):
+            return None
+
+        def extract(self, *, file_paths=None, **kwargs):
+            paths = list(file_paths or [])
+            processed_batches.append(paths)
+            self.extract_calls += 1
+            if self.extract_calls == 1:
+                raise RuntimeError("boom")
+            return None
+
+    monkeypatch.setattr(corpus_mod, "Corpus", FakeCorpus)
+    monkeypatch.setattr("glossapi.Corpus", FakeCorpus)
+    monkeypatch.delenv("GLOSSAPI_WORKER_LOG_DIR", raising=False)
+
+    work_q = queue.Queue()
+    work_q.put("doc.pdf")
+    result_q = queue.Queue()
+    status_map: dict = {}
+
+    with pytest.raises(SystemExit) as exit_info:
+        corpus_mod.gpu_extract_worker_queue(
+            device_id=0,
+            in_dir=str(tmp_path),
+            out_dir=str(tmp_path),
+            work_q=work_q,
+            force=False,
+            fe=False,
+            ce=False,
+            use_cls_w=False,
+            skip=False,
+            input_fmt="pdf",
+            threads=1,
+            benchmark=False,
+            export_json=False,
+            emit_index=False,
+            backend="safe",
+            result_q=result_q,
+            status_map=status_map,
+            marker_dir=None,
+        )
+    assert exit_info.value.code == 1
+
+    events = []
+    while True:
+        try:
+            events.append(result_q.get_nowait())
+        except queue.Empty:
+            break
+
+    batch_events = [ev for ev in events if ev.get("event") == "batch"]
+    assert batch_events, "Expected batch failure event from worker"
+    assert batch_events[0]["problematic"] == ["doc.pdf"]
+
+    exit_events = [ev for ev in events if ev.get("event") == "exit"]
+    assert exit_events, "Expected exit event from worker"
+    assert exit_events[0]["exitcode"] == 1
+
+    assert processed_batches == [["doc.pdf"]]
+    assert work_q.empty()
+    assert status_map == {}

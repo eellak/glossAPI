@@ -183,6 +183,9 @@ def test_pipeline_smoke_and_artifacts(tmp_path):
     _assert_dir_contents(corpus_dir / "download_results", {".parquet"})
     _assert_dir_contents(sections_dir, {".parquet"})
 
+    text_markdown = (markdown_dir / "text.md").read_text(encoding="utf-8").strip()
+    assert "A simple line of text" in text_markdown
+
     sections_file = sections_dir / "sections_for_annotation.parquet"
     assert sections_file.exists()
 
@@ -270,6 +273,93 @@ def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
     math_sidecar = corpus_dir / "sidecars" / "math" / "math_latex.json"
     assert math_sidecar.exists(), "Expected math enrichment to produce math sidecar metrics"
 
+    markdown_dir = corpus_dir / "markdown"
+    greek_text_md = (markdown_dir / "greek_text.md").read_text(encoding="utf-8")
+    assert documents["greek_text"] in greek_text_md, "Greek text markdown should match source text"
+
+    greek_consonants_md = (markdown_dir / "greek_consonants.md").read_text(encoding="utf-8")
+    normalized_consonants = greek_consonants_md.lower().replace(" ", "")
+    for letter in ["β","γ","δ","ζ","θ","κ","λ","μ","ν","ξ","π","ρ","σ","τ","φ","χ","ψ"]:
+        assert letter in normalized_consonants, f"Expected to find {letter!r} in greek consonants markdown"
+
+    math_latex_md = (markdown_dir / "math_latex.md").read_text(encoding="utf-8")
+    assert documents["math_latex"]["pre_text"] in math_latex_md
+    assert (
+        documents["math_latex"]["post_text"] in math_latex_md
+        or "formula-not-decoded" in math_latex_md
+    ), "Expected math formula or enrichment placeholder in math_latex markdown"
+    if documents["math_latex"]["formula_text"] not in math_latex_md:
+        assert "formula-not-decoded" in math_latex_md
+
     skiplist_path = _resolve_skiplist_path(corpus.output_dir, corpus.logger)
     if skiplist_path.exists():
         assert not skiplist_path.read_text(encoding="utf-8").strip(), "Fatal skip-list should remain empty"
+
+
+def test_clean_skips_files_with_successful_ocr(tmp_path, monkeypatch):
+    assert torch.cuda.is_available(), "CUDA GPU expected for OCR recovery test"
+    providers = ort.get_available_providers()
+    assert "CUDAExecutionProvider" in providers, f"CUDAExecutionProvider missing: {providers}"
+
+    device_idx = 0
+    if torch.cuda.device_count() > 1:
+        device_idx = torch.cuda.current_device()
+
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+
+    consonants_pdf = corpus_dir / "consonants.pdf"
+    _write_pdf(
+        consonants_pdf,
+        "".join(
+            [
+                "ββββ",
+                "γγγγ",
+                "δδδδ",
+                "ζζζζ",
+                "θθθθ",
+                "κκκκ",
+                "λλλλ",
+                "μμμμ",
+                "νννν",
+                "ξξξξ",
+                "ππππ",
+                "ρρρρ",
+                "σσσσ",
+                "ττττ",
+                "φφφφ",
+                "χχχχ",
+                "ψψψψ",
+            ]
+        ),
+    )
+
+    corpus = Corpus(input_dir=corpus_dir, output_dir=corpus_dir)
+    monkeypatch.setenv("GLOSSAPI_WORKER_LOG_VERBOSE", "0")
+
+    corpus.extract(
+        input_format="pdf",
+        accel_type="CUDA",
+        num_threads=1,
+        phase1_backend="docling",
+        force_ocr=True,
+        use_gpus="single",
+        devices=[device_idx],
+    )
+
+    corpus.clean(drop_bad=False)
+
+    parquet_path = corpus_dir / "download_results" / "download_results.parquet"
+    df_initial = pd.read_parquet(parquet_path).set_index("filename")
+    assert bool(df_initial.loc["consonants.pdf", "needs_ocr"])
+    assert "non_greek_text" in str(df_initial.loc["consonants.pdf", "filter"])
+
+    df_initial.loc["consonants.pdf", "ocr_success"] = True
+    df_initial.loc["consonants.pdf", "needs_ocr"] = False
+    df_initial.reset_index().to_parquet(parquet_path, index=False)
+
+    corpus.clean(drop_bad=False, input_dir=corpus.output_dir / "markdown")
+
+    df_after = pd.read_parquet(parquet_path).set_index("filename")
+    assert not bool(df_after.loc["consonants.pdf", "needs_ocr"])
+    assert "non_greek_text" in str(df_after.loc["consonants.pdf", "filter"])

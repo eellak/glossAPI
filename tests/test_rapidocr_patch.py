@@ -185,8 +185,8 @@ def _install_docling_stub(*, supports_injection: bool) -> None:
 
     class _Log:
         @staticmethod
-        def warning(_msg):
-            pass
+        def warning(_msg, *args, **kwargs):
+            return None
 
     rapid_module.RapidOcrModel = RapidOcrModel
     rapid_module.TextCell = TextCell

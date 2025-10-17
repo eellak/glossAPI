@@ -1221,16 +1221,53 @@ class Corpus:
                         except Exception:
                             pass
                 if not devs:
-                    self.logger.warning("Multi-GPU math requested but no GPUs detected; falling back to single GPU")
-                    self.formula_enrich_from_json(files=stems, device=(device or "cuda"), batch_size=int(math_batch_size), dpi_base=int(math_dpi_base), targets_by_stem=math_targets)
+                    msg = "Multi-GPU math requested but no GPUs detected; aborting math enhancement"
+                    self.logger.error(msg)
+                    raise RuntimeError(msg)
                 else:
                     from multiprocessing import get_context
+
                     ctx = get_context("spawn")
                     work_q = ctx.Queue()
                     result_q = ctx.Queue()
+                    manager = ctx.Manager()
+                    status_map = manager.dict()
                     for s in stems:
                         work_q.put(s)
-                    procs = []
+
+                    worker_log_dir_env = os.environ.get("GLOSSAPI_WORKER_LOG_DIR")
+                    worker_log_dir_to_use = worker_log_dir_env
+                    if not worker_log_dir_to_use:
+                        default_worker_log_dir = self.logs_dir / "math_workers"
+                        try:
+                            default_worker_log_dir.mkdir(parents=True, exist_ok=True)
+                            worker_log_dir_to_use = str(default_worker_log_dir)
+                        except Exception as exc:
+                            self.logger.warning(
+                                "Unable to prepare worker log directory %s: %s",
+                                default_worker_log_dir,
+                                exc,
+                            )
+                            worker_log_dir_to_use = None
+                    if worker_log_dir_to_use:
+                        os.environ["GLOSSAPI_WORKER_LOG_DIR"] = worker_log_dir_to_use
+                    marker_base = Path(worker_log_dir_to_use) if worker_log_dir_to_use else (self.logs_dir / "math_workers")
+                    try:
+                        marker_base.mkdir(parents=True, exist_ok=True)
+                    except Exception:
+                        pass
+                    marker_files: Dict[int, Path] = {dev_id: marker_base / f"gpu{dev_id}.current" for dev_id in devs}
+
+                    procs: List[Any] = []
+                    active: List[Any] = []
+                    proc_gpu: Dict[int, int] = {}
+                    try:
+                        respawn_cap = int(os.environ.get("GLOSSAPI_MATH_RESPAWN_CAP", "5"))
+                    except Exception:
+                        respawn_cap = 5
+                    respawn_cap = max(0, respawn_cap)
+                    respawn_counts: Dict[int, int] = {dev_id: 0 for dev_id in devs}
+
                     for dev_id in devs:
                         p = ctx.Process(
                             target=_gpu_math_worker,
@@ -1244,32 +1281,156 @@ class Corpus:
                                 device or "cuda",
                                 local_targets or {},
                                 result_q,
+                                status_map,
+                                str(marker_base),
                             ),
                         )
                         p.start()
                         procs.append(p)
-                    pending = len(procs)
-                    while pending:
-                        for p in list(procs):
-                            p.join(timeout=0.05)
-                            if p.is_alive():
-                                continue
-                            procs.remove(p)
-                            pending -= 1
+                        active.append(p)
+                        if p.pid is not None:
+                            proc_gpu[p.pid] = dev_id
+
+                    try:
+                        last_summary = time.time()
+                        while active:
+                            for p in list(active):
+                                p.join(timeout=0.05)
+                                if p.is_alive():
+                                    continue
+                                active.remove(p)
+                                if p in procs:
+                                    procs.remove(p)
+                                pid = p.pid or -1
+                                gpu_id = proc_gpu.pop(pid, None)
+                                exitcode = p.exitcode
+                                stems_for_skip: List[str] = []
+                                if gpu_id is not None:
+                                    current_entry = status_map.pop(gpu_id, None)
+                                    if current_entry:
+                                        if isinstance(current_entry, (list, tuple, set)):
+                                            entries = list(current_entry)
+                                        else:
+                                            entries = [current_entry]
+                                        stems_for_skip = [str(item) for item in entries if item]
+                                    marker_path = marker_files.get(gpu_id)
+                                    if marker_path:
+                                        try:
+                                            marker_path.unlink(missing_ok=True)
+                                        except Exception:
+                                            pass
+                                if exitcode not in (0, None) and gpu_id is not None:
+                                    if stems_for_skip:
+                                        skip_mgr.add(stems_for_skip)
+                                    self.logger.warning(
+                                        "Math worker GPU%s exited with %s",
+                                        gpu_id,
+                                        exitcode,
+                                    )
+                                    respawn_counts[gpu_id] = respawn_counts.get(gpu_id, 0) + 1
+                                    attempts = respawn_counts[gpu_id]
+                                    if respawn_cap and attempts > respawn_cap:
+                                        self.logger.error(
+                                            "Math worker GPU%s exceeded respawn cap (%s); not respawning",
+                                            gpu_id,
+                                            respawn_cap,
+                                        )
+                                        continue
+                                    replacement = ctx.Process(
+                                        target=_gpu_math_worker,
+                                        args=(
+                                            gpu_id,
+                                            str(self.input_dir),
+                                            str(self.output_dir),
+                                            work_q,
+                                            int(math_batch_size),
+                                            int(math_dpi_base),
+                                            device or "cuda",
+                                            local_targets or {},
+                                            result_q,
+                                            status_map,
+                                            str(marker_base),
+                                        ),
+                                    )
+                                    replacement.start()
+                                    procs.append(replacement)
+                                    active.append(replacement)
+                                    if replacement.pid is not None:
+                                        proc_gpu[replacement.pid] = gpu_id
+                                    continue
+
+                            while True:
+                                try:
+                                    event = result_q.get_nowait()
+                                except queue.Empty:
+                                    break
+                                if not event:
+                                    continue
+                                if event.get("event") == "math_batch":
+                                    stems_bad = event.get("problematic", [])
+                                    if stems_bad:
+                                        skip_mgr.add(stems_bad)
+                                    worker = event.get("worker")
+                                    try:
+                                        worker_gpu = int(worker)
+                                    except Exception:
+                                        worker_gpu = None
+                                    if worker_gpu is not None:
+                                        status_map.pop(worker_gpu, None)
+                                        marker_path = marker_files.get(worker_gpu)
+                                        if marker_path:
+                                            try:
+                                                marker_path.unlink(missing_ok=True)
+                                            except Exception:
+                                                pass
+                                elif event.get("event") == "exit" and event.get("exitcode", 0) not in (0, None):
+                                    self.logger.warning(
+                                        "Math worker GPU%s reported exit code %s",
+                                        event.get("worker"),
+                                        event.get("exitcode"),
+                                    )
+
+                            now = time.time()
+                            if now - last_summary > 30:
+                                try:
+                                    qsize = work_q.qsize()
+                                except NotImplementedError:
+                                    qsize = -1
+                                self.logger.info(
+                                    "Math progress: queue=%d active_workers=%d",
+                                    qsize,
+                                    len(active),
+                                )
+                                last_summary = now
+
+                            if not active:
+                                break
+                        remaining_after_cap: List[str] = []
                         try:
-                            event = result_q.get_nowait()
+                            while True:
+                                item = work_q.get_nowait()
+                                if isinstance(item, str) and item.strip():
+                                    remaining_after_cap.append(item)
                         except queue.Empty:
-                            continue
-                        if event.get("event") == "math_batch":
-                            stems_bad = event.get("problematic", [])
-                            if stems_bad:
-                                skip_mgr.add(stems_bad)
-                        elif event.get("event") == "exit" and event.get("exitcode", 0) not in (0, None):
-                            self.logger.warning(
-                                "Math worker GPU%s exited with %s",
-                                event.get("worker"),
-                                event.get("exitcode"),
+                            pass
+                        if remaining_after_cap:
+                            skip_mgr.add(remaining_after_cap)
+                            self.logger.error(
+                                "No active math workers remain; skipped %d pending item(s)",
+                                len(remaining_after_cap),
                             )
+                    finally:
+                        for p in procs:
+                            if p.is_alive():
+                                p.join()
+                        try:
+                            manager.shutdown()
+                        except Exception:
+                            pass
+                        if worker_log_dir_env is not None:
+                            os.environ["GLOSSAPI_WORKER_LOG_DIR"] = worker_log_dir_env
+                        else:
+                            os.environ.pop("GLOSSAPI_WORKER_LOG_DIR", None)
                     return
             # Single-GPU path
             self.formula_enrich_from_json(
@@ -1797,9 +1958,8 @@ class Corpus:
                 last_summary = time.time()
                 last_activity = time.time()
                 heartbeat: Dict[int, float] = {p.pid or -1: time.time() for p in procs}
-                exit_count = 0
                 try:
-                    while active or exit_count < len(devs):
+                    while active:
                         for p in list(active):
                             p.join(timeout=0.05)
                             if p.is_alive():
@@ -1892,6 +2052,7 @@ class Corpus:
                                     problematic_files.difference_update({item for item in problematic_files if Path(str(item)).name in ok_names})
                                 if bad:
                                     problematic_files.update(bad)
+                                    skip_mgr.add(Path(str(x)).stem for x in bad)
                                 state_mgr.save(processed_files, problematic_files)
                                 self.logger.info(
                                     "GPU%s batch complete: +%d processed, +%d problematic (totals: %d processed, %d problematic)",
@@ -1905,7 +2066,6 @@ class Corpus:
                                 if worker_pid is not None:
                                     heartbeat[worker_pid] = time.time()
                             elif event_type == "exit":
-                                exit_count += 1
                                 if result.get("exitcode", 0) not in (0, None):
                                     any_fail = True
                                     self.logger.warning(
@@ -1966,6 +2126,21 @@ class Corpus:
                         os.environ["GLOSSAPI_WORKER_LOG_DIR"] = worker_log_dir_env
                     else:
                         os.environ.pop("GLOSSAPI_WORKER_LOG_DIR", None)
+
+                remaining_after_failure: List[str] = []
+                try:
+                    while True:
+                        pending_item = task_q.get_nowait()
+                        if isinstance(pending_item, str) and pending_item.strip():
+                            remaining_after_failure.append(pending_item)
+                except queue.Empty:
+                    pass
+                if remaining_after_failure:
+                    skip_mgr.add(Path(str(x)).stem for x in remaining_after_failure)
+                    self.logger.error(
+                        "No active extraction workers remain; skipped %d pending item(s)",
+                        len(remaining_after_failure),
+                    )
 
                 if any_fail:
                     self.logger.warning("One or more GPU workers exited with non-zero status.")
@@ -2867,8 +3042,12 @@ def _gpu_math_worker(
     device: str,
     targets_map: Dict[str, List[Tuple[int, int]]],
     result_q=None,
+    status_map=None,
+    marker_dir: str | None = None,
 ) -> None:
     import os as _os
+    from pathlib import Path as _Path
+    import sys as _sys
 
     def _ensure_thread_caps():
         caps = {
@@ -2881,21 +3060,23 @@ def _gpu_math_worker(
         for k, v in caps.items():
             _os.environ.setdefault(k, v)
         try:
-            import sys as _sys, importlib
+            import sys as _sys
 
             _torch = _sys.modules.get("torch")
-            if _torch is None:
-                try:
-                    _torch = importlib.import_module("torch")  # type: ignore
-                except Exception:
-                    _torch = None
             if _torch is not None and hasattr(_torch, "set_num_threads"):
                 _torch.set_num_threads(1)
         except Exception:
             pass
 
-    _ensure_thread_caps()
     _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    _ensure_thread_caps()
+    _status_proxy = status_map
+    _marker_path = None
+    if marker_dir:
+        try:
+            _marker_path = _Path(marker_dir).expanduser() / f"gpu{device_id}.current"
+        except Exception:
+            _marker_path = None
     # Worker GPU binding banner (prints by default; disable with GLOSSAPI_WORKER_LOG_VERBOSE=0)
     try:
         _verbose = str(_os.environ.get("GLOSSAPI_WORKER_LOG_VERBOSE", "1")).strip().lower()
@@ -2942,89 +3123,144 @@ def _gpu_math_worker(
             _sys.path.insert(0, str((_pl.Path(out_dir).resolve().parents[1] / 'src').resolve()))
             from glossapi import Corpus as _Corpus  # type: ignore
         except Exception as _e:
-            print(f"[MATH GPU{device_id}] Cannot import glossapi in worker: {_e}")
-            return
+            try:
+                print(f"[MATH GPU{device_id}] Cannot import glossapi in worker: {_e}")
+            except Exception:
+                pass
+            if result_q is not None:
+                try:
+                    result_q.put(
+                        {
+                            "event": "exit",
+                            "worker": device_id,
+                            "exitcode": 1,
+                            "pid": _os.getpid(),
+                        }
+                    )
+                except Exception:
+                    pass
+            _sys.exit(1)
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
     batch: list[str] = []
     B = max(1, int(batch_size))
     exit_code = 0
     import queue as _queue
-    while True:
+
+    def _report_failure(err: Exception, items: List[str]) -> None:
+        nonlocal exit_code
         try:
-            nm = work_q.get_nowait()
-        except _queue.Empty:
-            if batch:
-                _targets = {s: targets_map.get(s) for s in batch if s in targets_map} if targets_map else None
+            print(f"[MATH GPU{device_id}] Batch failed ({len(items)}): {err}")
+        except Exception:
+            pass
+        if result_q is not None:
+            try:
+                result_q.put(
+                    {
+                        "event": "math_batch",
+                        "worker": device_id,
+                        "problematic": list(items),
+                        "pid": _os.getpid(),
+                        "error": str(err),
+                    }
+                )
+            except Exception:
+                pass
+        exit_code = 1
+
+    def _update_current(batch_items: List[str]) -> None:
+        if not batch_items:
+            return
+        if _status_proxy is not None:
+            try:
+                _status_proxy[device_id] = list(batch_items)
+            except Exception:
+                pass
+        if _marker_path is not None:
+            try:
+                _marker_path.write_text("\n".join(batch_items) + "\n", encoding="utf-8")
+            except Exception:
+                pass
+
+    def _clear_current() -> None:
+        if _status_proxy is not None:
+            try:
+                _status_proxy.pop(device_id, None)
+            except Exception:
+                pass
+        if _marker_path is not None:
+            try:
+                _marker_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    try:
+        while True:
+            try:
+                nm = work_q.get_nowait()
+            except _queue.Empty:
+                if batch:
+                    pending = list(batch)
+                    _targets = {s: targets_map.get(s) for s in pending if s in targets_map} if targets_map else None
+                    try:
+                        _update_current(pending)
+                        c.formula_enrich_from_json(
+                            files=pending,
+                            device=(device or "cuda"),
+                            batch_size=B,
+                            dpi_base=int(dpi_base),
+                            targets_by_stem=_targets,
+                        )
+                    except Exception as _e:
+                        _report_failure(_e, pending)
+                        batch.clear()
+                        break
+                    else:
+                        _clear_current()
+                        batch.clear()
+                break
+            if isinstance(nm, str) and nm.strip():
+                batch.append(nm)
+                _update_current(list(batch))
+            if len(batch) >= B:
+                pending = list(batch)
+                _targets = {s: targets_map.get(s) for s in pending if s in targets_map} if targets_map else None
                 try:
+                    _update_current(pending)
                     c.formula_enrich_from_json(
-                        files=list(batch),
+                        files=pending,
                         device=(device or "cuda"),
                         batch_size=B,
                         dpi_base=int(dpi_base),
                         targets_by_stem=_targets,
                     )
                 except Exception as _e:
-                    print(f"[MATH GPU{device_id}] Batch failed ({len(batch)}): {_e}")
-                    if result_q is not None:
-                        try:
-                            result_q.put(
-                                {
-                                    "event": "math_batch",
-                                    "worker": device_id,
-                                    "problematic": list(batch),
-                                    "pid": _os.getpid(),
-                                    "error": str(_e),
-                                }
-                            )
-                        except Exception:
-                            pass
-                    exit_code = 1
-                batch.clear()
-            break
-        if isinstance(nm, str) and nm.strip():
-            batch.append(nm)
-        if len(batch) >= B:
-            _targets = {s: targets_map.get(s) for s in batch if s in targets_map} if targets_map else None
-            try:
-                c.formula_enrich_from_json(
-                    files=list(batch),
-                    device=(device or "cuda"),
-                    batch_size=B,
-                    dpi_base=int(dpi_base),
-                    targets_by_stem=_targets,
-                )
-            except Exception as _e:
-                print(f"[MATH GPU{device_id}] Batch failed ({len(batch)}): {_e}")
-                if result_q is not None:
-                    try:
-                        result_q.put(
-                            {
-                                "event": "math_batch",
-                                "worker": device_id,
-                                "problematic": list(batch),
-                                "pid": _os.getpid(),
-                                "error": str(_e),
-                            }
-                        )
-                    except Exception:
-                        pass
-                exit_code = 1
-                batch.clear()
-                continue
-            batch.clear()
-
-    if result_q is not None:
+                    _report_failure(_e, pending)
+                    batch.clear()
+                    break
+                else:
+                    batch.clear()
+                    _clear_current()
+    except Exception as _unexpected:
+        if exit_code == 0:
+            exit_code = 1
         try:
-            result_q.put(
-                {
-                    "event": "exit",
-                    "worker": device_id,
-                    "exitcode": exit_code,
-                    "pid": _os.getpid(),
-                }
-            )
+            print(f"[MATH GPU{device_id}] Unexpected error: {_unexpected}")
         except Exception:
             pass
+    finally:
+        if result_q is not None:
+            try:
+                result_q.put(
+                    {
+                        "event": "exit",
+                        "worker": device_id,
+                        "exitcode": exit_code,
+                        "pid": _os.getpid(),
+                    }
+                )
+            except Exception:
+                pass
+        _sys.exit(exit_code)
 
 # Top-level worker function for multi-GPU extraction (picklable by multiprocessing)
 def gpu_extract_worker_queue(
@@ -3155,7 +3391,20 @@ def gpu_extract_worker_queue(
             from glossapi import Corpus as _Corpus  # type: ignore
         except Exception as _e:
             print(f"[GPU{device_id}] Cannot import glossapi in worker: {_e}")
-            return
+            if result_q is not None:
+                try:
+                    result_q.put(
+                        {
+                            "event": "exit",
+                            "worker": device_id,
+                            "exitcode": 1,
+                            "pid": _os.getpid(),
+                            "error": str(_e),
+                        }
+                    )
+                except Exception:
+                    pass
+            _sys.exit(1)
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
     # Prime once per worker (persistent converter)
     try:
@@ -3280,11 +3529,6 @@ def gpu_extract_worker_queue(
                                 )
                             except Exception:
                                 pass
-                        for _path in batch:
-                            try:
-                                work_q.put(_path)
-                            except Exception:
-                                pass
                         _clear_current()
                     batch.clear()
                 break
@@ -3333,11 +3577,6 @@ def gpu_extract_worker_queue(
                             )
                         except Exception:
                             pass
-                    for _path in batch:
-                        try:
-                            work_q.put(_path)
-                        except Exception:
-                            pass
                     _clear_current()
                 batch.clear()
             # Occasional heartbeat
@@ -3370,3 +3609,4 @@ def gpu_extract_worker_queue(
             _worker_log_handle.close()
         except Exception:
             pass
+    _sys.exit(exit_code)
