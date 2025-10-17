@@ -89,6 +89,34 @@ def test_ensure_metadata_parquet_builds_from_artifacts(tmp_path):
     assert parquet_again == parquet_path
 
 
+def test_ensure_metadata_parquet_updates_existing(tmp_path):
+    base_dir = tmp_path / "existing"
+    download_dir = base_dir / "download_results"
+    download_dir.mkdir(parents=True, exist_ok=True)
+
+    existing = download_dir / "download_results_remaining.parquet"
+    df = pd.DataFrame(
+        {
+            "filename": ["doc.pdf"],
+            "url": ["http://example.com/doc.pdf"],
+        }
+    )
+    df.to_parquet(existing, index=False)
+
+    # create a minimal downloads tree so ensure can locate sidecar data if needed
+    (base_dir / "downloads").mkdir(parents=True, exist_ok=True)
+
+    schema = ParquetSchema({"url_column": "url"})
+    result = schema.ensure_metadata_parquet(base_dir)
+
+    assert result == existing
+    assert not (download_dir / "download_results.parquet").exists()
+
+    updated = pd.read_parquet(existing)
+    assert "math_enriched" in updated.columns
+    assert "ocr_success" in updated.columns
+
+
 def _ensure_parquet_worker(base_dir: Path) -> None:
     schema = ParquetSchema({"url_column": "url"})
     schema.ensure_metadata_parquet(base_dir)

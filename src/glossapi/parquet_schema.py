@@ -556,6 +556,23 @@ class ParquetSchema:
         download_results_dir.mkdir(parents=True, exist_ok=True)
         logger = logging.getLogger(__name__)
 
+        existing_df = pd.DataFrame()
+        target_path: Optional[Path] = None
+        existing_candidates = sorted(
+            f
+            for f in download_results_dir.glob("*.parquet")
+            if ".partial." not in f.name and f.name != parquet_path.name
+        )
+        if existing_candidates:
+            candidate = existing_candidates[0]
+            try:
+                existing_df = pd.read_parquet(candidate)
+                target_path = candidate
+            except Exception as exc:
+                logger.debug("Failed to read existing metadata parquet %s: %s", candidate, exc)
+                existing_df = pd.DataFrame()
+                target_path = candidate
+
         defaults: Dict[str, Any] = {
             self.url_column: "",
             "filename": "",
@@ -764,21 +781,64 @@ class ParquetSchema:
                 row["math_enriched"] = True
                 _append_stage(row, "math")
 
-        if not records:
-            logger.warning("Unable to synthesise metadata parquet under %s – no artifacts discovered", base_dir)
-            return None
-
-        df = pd.DataFrame(list(records.values()))
+        df_records = pd.DataFrame(list(records.values())) if records else pd.DataFrame()
         # Ensure column order is stable for readability
         ordered_columns = list(defaults.keys())
         if "filename" not in ordered_columns:
             ordered_columns.insert(0, "filename")
         if self.url_column not in ordered_columns:
             ordered_columns.insert(0, self.url_column)
-        df = df.reindex(columns=ordered_columns, fill_value=pd.NA)
-        df.sort_values(by="filename", inplace=True)
-        _write_metadata_parquet(df, parquet_path)
-        logger.info("Synthesised metadata parquet with %d row(s): %s", len(df), parquet_path)
+        df_records = df_records.reindex(columns=ordered_columns, fill_value=pd.NA)
+        if not df_records.empty:
+            df_records.sort_values(by="filename", inplace=True)
+
+        if target_path is not None:
+            combined = df_records
+            if combined.empty and not existing_df.empty:
+                combined = existing_df.copy()
+            elif not combined.empty and not existing_df.empty and "filename" in existing_df.columns:
+                base_idx = combined.set_index("filename", drop=False)
+                existing_idx = existing_df.set_index("filename", drop=False)
+                base_idx = base_idx.combine_first(existing_idx)
+                base_idx.update(existing_idx)
+                combined = base_idx.reset_index(drop=True)
+            elif combined.empty:
+                combined = existing_df.copy()
+
+            if combined.empty:
+                logger.warning(
+                    "Unable to update metadata parquet under %s – no artifacts discovered",
+                    base_dir,
+                )
+                return target_path
+
+            for column, default in defaults.items():
+                if column not in combined.columns:
+                    combined[column] = default
+            combined = combined.reindex(columns=ordered_columns, fill_value=pd.NA)
+            combined.sort_values(by="filename", inplace=True)
+            _write_metadata_parquet(combined, target_path)
+            logger.info(
+                "Updated existing metadata parquet with %d row(s): %s",
+                len(combined),
+                target_path,
+            )
+            return target_path
+
+        if df_records.empty:
+            logger.warning(
+                "Unable to synthesise metadata parquet under %s – no artifacts discovered",
+                base_dir,
+            )
+            return None
+
+        df_records.sort_values(by="filename", inplace=True)
+        _write_metadata_parquet(df_records, parquet_path)
+        logger.info(
+            "Synthesised metadata parquet with %d row(s): %s",
+            len(df_records),
+            parquet_path,
+        )
         return parquet_path
 
     @staticmethod

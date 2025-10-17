@@ -216,6 +216,15 @@ class Corpus:
             self.extraction_model_path = package_dir / "models" / "kmeans_weights.joblib"
             
         self.metadata_path = Path(metadata_path) if metadata_path else None
+        if self.metadata_path is not None:
+            try:
+                if self.metadata_path.exists():
+                    self._metadata_parquet_path = self.metadata_path
+                else:
+                    self.logger.warning("Provided metadata_path does not exist: %s", self.metadata_path)
+                    self.metadata_path = None
+            except Exception:
+                self.metadata_path = None
         
         # Store annotation mapping - default is to treat 'Κεφάλαιο' as chapter
         self.annotation_mapping = annotation_mapping or {'Κεφάλαιο': 'chapter'}
@@ -3195,7 +3204,15 @@ class Corpus:
                 # Update parquet with enrichment results
                 try:
                     from .triage import update_math_enrich_results  # type: ignore
-                    pq_path = self.output_dir / 'download_results' / 'download_results.parquet'
+                    pq_path = self._get_cached_metadata_parquet()
+                    if pq_path is None:
+                        from .parquet_schema import ParquetSchema as _ParquetSchema
+
+                        pq_schema = _ParquetSchema({"url_column": self.url_column})
+                        pq_path = self._resolve_metadata_parquet(pq_schema, ensure=True, search_input=True)
+                    if pq_path is None:
+                        pq_path = self.output_dir / 'download_results' / 'download_results.parquet'
+                    self._cache_metadata_parquet(pq_path)
                     update_math_enrich_results(pq_path, stem, items=int(stats.get('items', 0)), accepted=int(stats.get('accepted', 0)), time_sec=float(stats.get('time_sec', 0.0)))
                 except Exception as _e:
                     self.logger.warning("Parquet math-enrich update failed for %s: %s", stem, _e)
@@ -3311,12 +3328,11 @@ def _gpu_math_worker(
                     pass
             _sys.exit(1)
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
-    batch: list[str] = []
     B = max(1, int(batch_size))
     exit_code = 0
     import queue as _queue
 
-    def _report_failure(err: Exception, items: List[str]) -> None:
+    def _report_failure(err: Exception, items: List[str], *, fatal: bool = False) -> None:
         nonlocal exit_code
         try:
             print(f"[MATH GPU{device_id}] Batch failed ({len(items)}): {err}")
@@ -3335,7 +3351,47 @@ def _gpu_math_worker(
                 )
             except Exception:
                 pass
-        exit_code = 1
+        if fatal:
+            exit_code = 1
+
+    def _quarantine_items(items: List[str]) -> None:
+        if not items:
+            return
+        try:
+            downloads_root = _Path(out_dir) / "downloads"
+            if not downloads_root.exists():
+                return
+            quarantine_root = downloads_root / "problematic_math"
+            quarantine_root.mkdir(parents=True, exist_ok=True)
+            json_root = _Path(out_dir) / "json"
+            json_quarantine = json_root / "problematic_math"
+            try:
+                json_quarantine.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            import shutil as _shutil
+
+            for stem in items:
+                try:
+                    name = str(stem).strip()
+                    if not name:
+                        continue
+                    pdf_src = downloads_root / f"{name}.pdf"
+                    if pdf_src.exists():
+                        dst = quarantine_root / pdf_src.name
+                        if not dst.exists():
+                            _shutil.copy2(pdf_src, dst)
+                    if json_root.exists():
+                        for suffix in (".docling.json.zst", ".docling.json", ".latex_map.jsonl"):
+                            candidate = json_root / f"{name}{suffix}"
+                            if candidate.exists():
+                                dst = json_quarantine / candidate.name
+                                if not dst.exists():
+                                    _shutil.copy2(candidate, dst)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _update_current(batch_items: List[str]) -> None:
         if not batch_items:
@@ -3366,50 +3422,30 @@ def _gpu_math_worker(
     try:
         while True:
             try:
-                nm = work_q.get_nowait()
+                nm = work_q.get(timeout=1.0)
             except _queue.Empty:
-                if batch:
-                    pending = list(batch)
-                    _targets = {s: targets_map.get(s) for s in pending if s in targets_map} if targets_map else None
-                    try:
-                        _update_current(pending)
-                        c.formula_enrich_from_json(
-                            files=pending,
-                            device=(device or "cuda"),
-                            batch_size=B,
-                            dpi_base=int(dpi_base),
-                            targets_by_stem=_targets,
-                        )
-                    except Exception as _e:
-                        _report_failure(_e, pending)
-                        batch.clear()
-                        break
-                    else:
-                        _clear_current()
-                        batch.clear()
                 break
-            if isinstance(nm, str) and nm.strip():
-                batch.append(nm)
-                _update_current(list(batch))
-            if len(batch) >= B:
-                pending = list(batch)
-                _targets = {s: targets_map.get(s) for s in pending if s in targets_map} if targets_map else None
-                try:
-                    _update_current(pending)
-                    c.formula_enrich_from_json(
-                        files=pending,
-                        device=(device or "cuda"),
-                        batch_size=B,
-                        dpi_base=int(dpi_base),
-                        targets_by_stem=_targets,
-                    )
-                except Exception as _e:
-                    _report_failure(_e, pending)
-                    batch.clear()
-                    break
-                else:
-                    batch.clear()
-                    _clear_current()
+            if not isinstance(nm, str):
+                continue
+            stem = nm.strip()
+            if not stem:
+                continue
+            pending = [stem]
+            _update_current(pending)
+            _targets = {stem: targets_map.get(stem)} if targets_map and stem in targets_map else None
+            try:
+                c.formula_enrich_from_json(
+                    files=pending,
+                    device=(device or "cuda"),
+                    batch_size=B,
+                    dpi_base=int(dpi_base),
+                    targets_by_stem=_targets,
+                )
+            except Exception as _e:
+                _report_failure(_e, pending, fatal=False)
+                _quarantine_items(pending)
+            finally:
+                _clear_current()
     except Exception as _unexpected:
         if exit_code == 0:
             exit_code = 1
