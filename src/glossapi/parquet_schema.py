@@ -98,9 +98,11 @@ def _boolean_series(series: pd.Series) -> pd.Series:
 
 
 def _nullable_or(lhs: object, rhs: object) -> object:
-    if lhs is True or rhs is True:
+    lhs_norm = _coerce_bool_value(lhs)
+    rhs_norm = _coerce_bool_value(rhs)
+    if lhs_norm is True or rhs_norm is True:
         return True
-    if pd.isna(lhs) or pd.isna(rhs):
+    if lhs_norm is pd.NA or rhs_norm is pd.NA:
         return pd.NA
     return False
 

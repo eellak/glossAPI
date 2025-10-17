@@ -146,6 +146,23 @@ def test_math_enriched_alias_populated(tmp_path):
     assert bool(row["enriched_math"])
 
 
+def test_nullable_or_handles_numpy_bool():
+    import numpy as np
+
+    df = pd.DataFrame(
+        {
+            "filename": ["stem.pdf"],
+            "math_enriched": [np.bool_(True)],
+            "enriched_math": [pd.NA],
+        }
+    )
+    schema = ParquetSchema()
+    normalised = schema.normalize_metadata_frame(df)
+    row = normalised.iloc[0]
+    assert bool(row["math_enriched"])
+    assert bool(row["enriched_math"])
+
+
 def test_ensure_metadata_parquet_no_artifacts(tmp_path, caplog):
     base_dir = tmp_path / "empty"
     base_dir.mkdir()
@@ -164,6 +181,7 @@ def test_canonical_stem_variants():
         "alpha.latex_map.jsonl": "alpha",
         "beta.metrics.json": "beta",
         "gamma.per_page.metrics.json": "gamma",
+        "delta.with.dots.pdf": "delta.with.dots",
     }
     for source, expected in cases.items():
         assert canonical_stem(source) == expected
