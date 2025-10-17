@@ -1024,10 +1024,9 @@ class GlossExtract:
         if existing is not None:
             return existing
 
-        # Create a basic parquet from markdown files
         pipeline_root = markdown_dir.parent
         schema = ParquetSchema({'url_column': getattr(self, 'url_column', 'url')})
-        created = schema.create_basic_metadata_parquet(markdown_dir, pipeline_root)
+        created = schema.ensure_metadata_parquet(pipeline_root)
         if created is None:
             self._log.warning("Could not create a basic metadata parquet; extraction metadata will not be recorded.")
         else:

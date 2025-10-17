@@ -5,12 +5,14 @@ This module defines standard schemas for parquet files used throughout the Gloss
 pipeline, ensuring consistency between different pipeline stages.
 """
 
+import json
 import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Union, Tuple
 
 
 class ParquetSchema:
@@ -326,6 +328,257 @@ class ParquetSchema:
         logger.warning(f"No suitable metadata parquet found in {directory}")
         return None
     
+    def ensure_metadata_parquet(self, base_dir: Union[str, Path]) -> Optional[Path]:
+        """
+        Ensure that a consolidated metadata parquet exists for a pipeline run.
+
+        When the canonical ``download_results/download_results.parquet`` file is
+        missing, this method gathers the available artifacts (downloads, markdown,
+        metrics, math sidecars, etc.) and synthesises a best-effort metadata table
+        so downstream stages always have a consistent entry point.
+
+        Returns:
+            Optional[Path]: Path to the ensured parquet, or ``None`` when no rows
+            could be inferred.
+        """
+        import logging
+        import math
+
+        base_dir = Path(base_dir)
+        download_results_dir = base_dir / "download_results"
+        parquet_path = download_results_dir / "download_results.parquet"
+        if parquet_path.exists():
+            return parquet_path
+
+        download_results_dir.mkdir(parents=True, exist_ok=True)
+        logger = logging.getLogger(__name__)
+
+        defaults: Dict[str, Any] = {
+            self.url_column: "",
+            "filename": "",
+            "file_ext": "",
+            "download_success": False,
+            "download_error": "",
+            "download_retry_count": 0,
+            "is_duplicate": False,
+            "duplicate_of": "",
+            "source_row": pd.NA,
+            "url_index": pd.NA,
+            "filename_base": "",
+            "filter": "ok",
+            "needs_ocr": False,
+            "ocr_success": False,
+            "processing_stage": "",
+            "mojibake_badness_score": pd.NA,
+            "mojibake_latin_percentage": pd.NA,
+            "percentage_greek": pd.NA,
+            "char_count_no_comments": pd.NA,
+            "is_empty": False,
+            "page_count": pd.NA,
+            "pages_total": pd.NA,
+            "pages_with_formula": pd.NA,
+            "formula_total": pd.NA,
+            "formula_avg_pp": pd.NA,
+            "formula_p90_pp": pd.NA,
+            "phase_recommended": pd.NA,
+            "math_enriched": False,
+            "math_items": pd.NA,
+            "math_accepted": pd.NA,
+            "math_accept_rate": pd.NA,
+            "math_time_sec": pd.NA,
+        }
+
+        records: Dict[str, Dict[str, Any]] = {}
+
+        def _append_stage(row: Dict[str, Any], stage: str) -> None:
+            if not stage:
+                return
+            current = row.get("processing_stage") or ""
+            stages = [part for part in current.split(",") if part]
+            if stage not in stages:
+                stages.append(stage)
+            row["processing_stage"] = ",".join(stages)
+
+        def _row_for(stem: str) -> Dict[str, Any]:
+            row = records.get(stem)
+            if row is None:
+                row = {key: value for key, value in defaults.items()}
+                row["filename"] = f"{stem}.pdf"
+                row["file_ext"] = "pdf"
+                row["filename_base"] = stem
+                records[stem] = row
+            return row
+
+        # 1) Original downloads (PDFs)
+        downloads_dir = base_dir / "downloads"
+        pdf_paths: List[Path] = []
+        if downloads_dir.exists():
+            pdf_paths.extend(sorted(p for p in downloads_dir.rglob("*.pdf") if p.is_file()))
+        pdf_paths.extend(sorted(p for p in base_dir.glob("*.pdf") if p.is_file()))
+
+        for pdf_path in pdf_paths:
+            stem = pdf_path.stem
+            row = _row_for(stem)
+            row[self.url_column] = row.get(self.url_column, "") or ""
+            row["filename"] = pdf_path.name
+            row["file_ext"] = pdf_path.suffix.lstrip(".").lower()
+            row["filename_base"] = stem
+            row["download_success"] = True
+            row["download_error"] = ""
+            _append_stage(row, "download")
+
+        # 2) Markdown outputs (extraction + cleaning)
+        markdown_sources = [
+            (base_dir / "markdown", "extract"),
+            (base_dir / "clean_markdown", "clean"),
+        ]
+        for md_dir, stage in markdown_sources:
+            if not md_dir.exists():
+                continue
+            for md_path in md_dir.glob("*.md"):
+                if not md_path.is_file():
+                    continue
+                stem = md_path.stem
+                row = _row_for(stem)
+                if not row["filename"]:
+                    row["filename"] = f"{stem}.pdf"
+                row["filename_base"] = stem
+                _append_stage(row, "extract")
+                if stage == "clean":
+                    _append_stage(row, "clean")
+
+        # 3) Latex maps indicate successful math enrichment
+        json_dir = base_dir / "json"
+        if json_dir.exists():
+            for latex_map in json_dir.glob("*.latex_map.jsonl"):
+                if not latex_map.is_file():
+                    continue
+                stem = latex_map.name.replace(".latex_map.jsonl", "")
+                row = _row_for(stem)
+                row["math_enriched"] = True
+                _append_stage(row, "math")
+
+        # 4) Metrics JSON (page counts, formula counts)
+        def _ingest_metrics_payload(stem: str, payload: Dict[str, Any]) -> None:
+            row = _row_for(stem)
+            page_count = payload.get("page_count")
+            if page_count is not None:
+                try:
+                    row["page_count"] = int(page_count)
+                except Exception:
+                    row["page_count"] = page_count
+            pages = payload.get("pages") or []
+            if isinstance(pages, list) and pages:
+                row["pages_total"] = len(pages)
+                try:
+                    formula_counts = [int(p.get("formula_count", 0) or 0) for p in pages]
+                except Exception:
+                    formula_counts = []
+                if formula_counts:
+                    total_formula = sum(formula_counts)
+                    if pd.isna(row["formula_total"]):
+                        row["formula_total"] = total_formula
+                    row["formula_avg_pp"] = (
+                        float(total_formula) / max(1, len(formula_counts))
+                    )
+                    formula_counts_sorted = sorted(formula_counts)
+                    idx = max(0, math.ceil(0.9 * len(formula_counts_sorted)) - 1)
+                    row["formula_p90_pp"] = float(formula_counts_sorted[idx])
+                    row["pages_with_formula"] = sum(1 for c in formula_counts if c > 0)
+
+        metrics_dir = json_dir / "metrics" if json_dir.exists() else None
+        if metrics_dir and metrics_dir.exists():
+            for metrics_file in metrics_dir.glob("*.metrics.json"):
+                if not metrics_file.is_file():
+                    continue
+                name = metrics_file.name
+                if not name.endswith(".metrics.json"):
+                    continue
+                stem = name[:-len(".metrics.json")]
+                try:
+                    payload = json.loads(metrics_file.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(payload, dict):
+                    _ingest_metrics_payload(stem, payload)
+            for per_page in metrics_dir.glob("*.per_page.metrics.json"):
+                if not per_page.is_file():
+                    continue
+                name = per_page.name
+                if not name.endswith(".per_page.metrics.json"):
+                    continue
+                stem = name[:-len(".per_page.metrics.json")]
+                try:
+                    payload = json.loads(per_page.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(payload, dict):
+                    _ingest_metrics_payload(stem, payload)
+
+        # 5) Triage sidecars (phase recommendation, formula stats)
+        triage_dir = base_dir / "sidecars" / "triage"
+        if triage_dir.exists():
+            for triage_file in triage_dir.glob("*.json"):
+                if not triage_file.is_file():
+                    continue
+                try:
+                    payload = json.loads(triage_file.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                stem = triage_file.stem
+                row = _row_for(stem)
+                for key in ("formula_total", "formula_avg_pp", "formula_p90_pp", "pages_total", "pages_with_formula"):
+                    if key in payload and pd.isna(row.get(key)):
+                        row[key] = payload.get(key)
+                if "phase_recommended" in payload and pd.isna(row.get("phase_recommended")):
+                    row["phase_recommended"] = payload.get("phase_recommended")
+
+        # 6) Math sidecars (items, acceptance rate, duration)
+        math_dir = base_dir / "sidecars" / "math"
+        if math_dir.exists():
+            for math_file in math_dir.glob("*.json"):
+                if not math_file.is_file():
+                    continue
+                try:
+                    payload = json.loads(math_file.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                stem = math_file.stem
+                row = _row_for(stem)
+                items = payload.get("items")
+                accepted = payload.get("accepted")
+                time_sec = payload.get("time_sec")
+                if items is not None:
+                    row["math_items"] = items
+                if accepted is not None:
+                    row["math_accepted"] = accepted
+                if items:
+                    try:
+                        row["math_accept_rate"] = float(accepted) / float(items) if accepted is not None else row["math_accept_rate"]
+                    except Exception:
+                        pass
+                if time_sec is not None:
+                    row["math_time_sec"] = time_sec
+                row["math_enriched"] = True
+                _append_stage(row, "math")
+
+        if not records:
+            logger.warning("Unable to synthesise metadata parquet under %s – no artifacts discovered", base_dir)
+            return None
+
+        df = pd.DataFrame(list(records.values()))
+        # Ensure column order is stable for readability
+        ordered_columns = list(defaults.keys())
+        if "filename" not in ordered_columns:
+            ordered_columns.insert(0, "filename")
+        if self.url_column not in ordered_columns:
+            ordered_columns.insert(0, self.url_column)
+        df = df.reindex(columns=ordered_columns, fill_value=pd.NA)
+        df.sort_values(by="filename", inplace=True)
+        pq.write_table(pa.Table.from_pandas(df, preserve_index=False), parquet_path)
+        logger.info("Synthesised metadata parquet with %d row(s): %s", len(df), parquet_path)
+        return parquet_path
+
     def is_valid_metadata_parquet(self, filepath: Union[str, Path]) -> bool:
         """
         Check if a parquet file conforms to the metadata schema used by downloader.
@@ -356,12 +609,16 @@ class ParquetSchema:
         Returns:
             Path: Path to the created parquet file, or None if creation failed
         """
+        pipeline_root = Path(output_dir)
+        ensured = self.ensure_metadata_parquet(pipeline_root)
+        if ensured is not None:
+            return ensured
+
         try:
             markdown_dir = Path(markdown_dir)
-            output_dir = Path(output_dir)
             
             # Create output directory if it doesn't exist
-            download_results_dir = output_dir / "download_results"
+            download_results_dir = pipeline_root / "download_results"
             os.makedirs(download_results_dir, exist_ok=True)
             
             # Get all markdown files in the input directory

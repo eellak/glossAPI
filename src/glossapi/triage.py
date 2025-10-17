@@ -133,8 +133,7 @@ def update_math_enrich_results(parquet_path: Path, stem: str, *, items: int, acc
             "time_sec": float(time_sec),
         }
         (sc_dir / f"{stem}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        return
-    # Legacy path
+    # Always try to update consolidated parquet as well
     if not Path(parquet_path).exists():
         return
     df = pd.read_parquet(parquet_path)
@@ -147,4 +146,8 @@ def update_math_enrich_results(parquet_path: Path, stem: str, *, items: int, acc
     df.loc[mask, "math_items"] = int(items)
     df.loc[mask, "math_accept_rate"] = (float(accepted) / float(items)) if items else 0.0
     df.loc[mask, "math_time_sec"] = float(time_sec)
+    if "math_enriched" not in df.columns:
+        df["math_enriched"] = df.get("enriched_math", False)
+    if mask.any():
+        df.loc[mask, "math_enriched"] = True
     df.to_parquet(parquet_path, index=False)

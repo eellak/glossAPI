@@ -617,9 +617,13 @@ class Corpus:
 
         # Prepare parquet helper
         parquet_schema = ParquetSchema({"url_column": self.url_column})
-        parquet_path = parquet_schema.find_metadata_parquet(self.input_dir) or (
-            self.input_dir / "download_results" / "download_results.parquet"
-        )
+        parquet_path = parquet_schema.find_metadata_parquet(self.input_dir)
+        if parquet_path is None:
+            parquet_path = parquet_schema.ensure_metadata_parquet(self.output_dir)
+        if parquet_path is None:
+            parquet_path = parquet_schema.ensure_metadata_parquet(self.input_dir)
+        if parquet_path is None:
+            parquet_path = self.output_dir / "download_results" / "download_results.parquet"
 
         import os
         records: list = []  # will hold metrics for parquet merge
@@ -1100,6 +1104,7 @@ class Corpus:
         use_gpus: str = "single",
         devices: Optional[List[int]] = None,
         force: Optional[bool] = None,
+        reprocess_completed: bool = False,
     ) -> None:
         """OCR and/or math enrichment with explicit mode control.
 
@@ -1116,6 +1121,8 @@ class Corpus:
         - fix_bad: re-run OCR on documents marked bad by the cleaner (default True).
         - math_enhance: run math/code enrichment after OCR (default True).
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
+        - reprocess_completed: when False (default), skip documents already flagged as successfully
+          OCRed or math-enriched in metadata. Set True to force reprocessing.
         """
         # Normalize mode from explicit value or legacy flags
         mode_norm = None
@@ -1146,9 +1153,15 @@ class Corpus:
                 return
         # Identify bad documents from parquet (Rust cleaner output)
         bad_files: List[str] = []
+        parquet_meta: Optional["pd.DataFrame"] = None
+        ocr_done_files: List[str] = []
+        ocr_done_stems: Set[str] = set()
+        math_done_files: List[str] = []
+        math_done_stems: Set[str] = set()
         try:
             from glossapi.parquet_schema import ParquetSchema
             parquet_schema = ParquetSchema({"url_column": self.url_column})
+            parquet_schema.ensure_metadata_parquet(self.output_dir)
             parquet_path = parquet_schema.find_metadata_parquet(self.output_dir)
             if parquet_path and parquet_path.exists():
                 import pandas as _pd
@@ -1157,6 +1170,35 @@ class Corpus:
                     bad_files = df.loc[df["needs_ocr"] == True, "filename"].dropna().astype(str).tolist()
                 elif "filename" in df.columns and "filter" in df.columns:
                     bad_files = df.loc[df["filter"] != "ok", "filename"].dropna().astype(str).tolist()
+                ocr_done: Set[str] = set()
+                if "ocr_success" in df.columns:
+                    ocr_done_files = df.loc[df["ocr_success"].fillna(False), "filename"].dropna().astype(str).tolist()
+                    ocr_done = {Path(str(name)).stem for name in ocr_done_files}
+                    ocr_done_stems = set(ocr_done)
+                if "math_enriched" in df.columns:
+                    math_done_files = df.loc[df["math_enriched"].fillna(False), "filename"].dropna().astype(str).tolist()
+                elif "enriched_math" in df.columns:
+                    math_done_files = df.loc[df["enriched_math"].fillna(False), "filename"].dropna().astype(str).tolist()
+                if math_done_files:
+                    math_done_stems = {Path(str(name)).stem for name in math_done_files}
+                if not reprocess_completed and ocr_done:
+                    before = len(bad_files)
+                    bad_files = [name for name in bad_files if Path(name).stem not in ocr_done]
+                    removed = before - len(bad_files)
+                    if removed:
+                        self.logger.info(
+                            "OCR: skipping %d already completed document(s) (reprocess_completed=False).",
+                            removed,
+                        )
+                if reprocess_completed and mode_norm in {"ocr_bad", "ocr_bad_then_math"} and ocr_done_files:
+                    pending = {str(f) for f in bad_files}
+                    for fname in ocr_done_files:
+                        if fname not in pending:
+                            bad_files.append(fname)
+                            pending.add(fname)
+                parquet_meta = df
+            else:
+                parquet_meta = None
         except Exception:
             pass
 
@@ -1467,6 +1509,16 @@ class Corpus:
                 )
                 if json_dir.exists():
                     stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
+            if not reprocess_completed and stems and parquet_meta is not None:
+                if math_done_stems:
+                    before = len(stems)
+                    stems = [s for s in stems if s not in math_done_stems]
+                    removed = before - len(stems)
+                    if removed:
+                        self.logger.info(
+                            "Math enrichment: skipping %d already enriched document(s) (reprocess_completed=False).",
+                            removed,
+                        )
             _run_math(stems)
             return
 
@@ -1561,6 +1613,19 @@ class Corpus:
                     json_dir = self.output_dir / "json"
                     if json_dir.exists():
                         stems = [p.name.replace(".docling.json.zst", "").replace(".docling.json", "") for p in json_dir.glob("*.docling.json*")]
+                if not reprocess_completed:
+                    if math_done_stems:
+                        before = len(stems)
+                        stems = [s for s in stems if s not in math_done_stems]
+                        removed = before - len(stems)
+                        if removed:
+                            self.logger.info(
+                                "Math enrichment: skipping %d already enriched document(s) (reprocess_completed=False).",
+                                removed,
+                            )
+                if not stems:
+                    self.logger.info("Math enrichment: no pending documents after filtering.")
+                    return
                 _run_math(stems)
             except Exception as _e:
                 self.logger.warning("Phase‑2 enrichment after OCR failed: %s", _e)
@@ -2356,9 +2421,11 @@ class Corpus:
             from glossapi.parquet_schema import ParquetSchema
             parquet_schema = ParquetSchema({'url_column': self.downloader_config.get('url_column', 'url')})
             # Prefer the output_dir parquet which consolidates current run metadata
+            parquet_schema.ensure_metadata_parquet(self.output_dir)
             parquet_path = parquet_schema.find_metadata_parquet(self.output_dir)
             if parquet_path is None:
                 # Try legacy input_dir locations
+                parquet_schema.ensure_metadata_parquet(self.input_dir)
                 parquet_path = parquet_schema.find_metadata_parquet(self.input_dir)
                 if parquet_path is None:
                     dl_dir = self.input_dir / 'download_results'
