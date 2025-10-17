@@ -143,8 +143,14 @@ def _parquet_lock(path: Path) -> Iterator[None]:
     lock_path = path.with_suffix(path.suffix + ".lock")
     if FileLock is not None:
         lock = FileLock(str(lock_path))
-        with lock:
-            yield
+        try:
+            with lock:
+                yield
+        finally:
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                pass
         return
 
     acquired = False

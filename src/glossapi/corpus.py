@@ -196,6 +196,7 @@ class Corpus:
         # Store paths
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
+        self._metadata_parquet_path: Optional[Path] = None
         
         # Package directory for default models
         package_dir = Path(__file__).parent
@@ -262,6 +263,55 @@ class Corpus:
         self.filename_to_doctype = {}
         
         self._load_metadata()
+
+    def _get_cached_metadata_parquet(self) -> Optional[Path]:
+        """Return cached metadata parquet path if it still exists."""
+
+        if self._metadata_parquet_path is not None:
+            if self._metadata_parquet_path.exists():
+                return self._metadata_parquet_path
+            self._metadata_parquet_path = None
+        return None
+
+    def _cache_metadata_parquet(self, candidate: Optional[Union[str, Path]]) -> Optional[Path]:
+        """Remember the provided parquet path for subsequent lookups."""
+
+        if candidate is None:
+            return None
+        path = Path(candidate)
+        self._metadata_parquet_path = path
+        return path
+
+    def _resolve_metadata_parquet(
+        self,
+        parquet_schema: "ParquetSchema",
+        *,
+        ensure: bool = True,
+        search_input: bool = True,
+    ) -> Optional[Path]:
+        """Return a best-effort metadata parquet path, caching the result."""
+
+        cached = self._get_cached_metadata_parquet()
+        if cached is not None:
+            return cached
+        if ensure:
+            ensured = parquet_schema.ensure_metadata_parquet(self.output_dir)
+            if ensured is not None:
+                return self._cache_metadata_parquet(ensured)
+        found = parquet_schema.find_metadata_parquet(self.output_dir)
+        if found is not None:
+            return self._cache_metadata_parquet(found)
+        if search_input:
+            input_dirs = [self.input_dir]
+            dl_dir = self.input_dir / "download_results"
+            if dl_dir.exists():
+                input_dirs.append(dl_dir)
+            for directory in input_dirs:
+                if directory.exists():
+                    located = parquet_schema.find_metadata_parquet(directory)
+                    if located is not None:
+                        return self._cache_metadata_parquet(located)
+        return None
 
     def jsonl(self, output_path: Union[str, Path]) -> Path:
         """Export cleaned markdown and metadata into a JSONL corpus."""
@@ -615,18 +665,20 @@ class Corpus:
 
         # Prepare parquet helper
         parquet_schema = ParquetSchema({"url_column": self.url_column})
-        existing_metadata = parquet_schema.find_metadata_parquet(self.input_dir)
-        parquet_path: Optional[Path] = Path(existing_metadata) if existing_metadata else None
+        parquet_path: Optional[Path] = self._get_cached_metadata_parquet()
+        if parquet_path is None:
+            existing_metadata = parquet_schema.find_metadata_parquet(self.input_dir)
+            if existing_metadata is not None:
+                parquet_path = self._cache_metadata_parquet(existing_metadata)
         if parquet_path is None:
             ensured = parquet_schema.ensure_metadata_parquet(self.output_dir)
             if ensured is not None:
-                parquet_path = Path(ensured)
+                parquet_path = self._cache_metadata_parquet(ensured)
         if parquet_path is None:
             ensured = parquet_schema.ensure_metadata_parquet(self.input_dir)
             if ensured is not None:
-                parquet_path = Path(ensured)
+                parquet_path = self._cache_metadata_parquet(ensured)
         if parquet_path is None:
-            parquet_path = None
             metadata_target = self.output_dir / "download_results" / "download_results.parquet"
             self.logger.info(
                 "Cleaner: no metadata parquet found; will bootstrap %s when metrics become available.",
@@ -634,7 +686,7 @@ class Corpus:
             )
         else:
             metadata_target = parquet_path
-        parquet_path = metadata_target
+        parquet_path = self._cache_metadata_parquet(metadata_target)
 
         import os
         records: list = []  # will hold metrics for parquet merge
@@ -1197,8 +1249,7 @@ class Corpus:
         try:
             from glossapi.parquet_schema import ParquetSchema
             parquet_schema = ParquetSchema({"url_column": self.url_column})
-            parquet_schema.ensure_metadata_parquet(self.output_dir)
-            parquet_path = parquet_schema.find_metadata_parquet(self.output_dir)
+            parquet_path = self._resolve_metadata_parquet(parquet_schema, ensure=True, search_input=True)
             if parquet_path and parquet_path.exists():
                 import pandas as _pd
                 df = _pd.read_parquet(parquet_path)
@@ -1624,8 +1675,8 @@ class Corpus:
 
                 if success_files:
                     parquet_schema = _ParquetSchema({"url_column": self.url_column})
-                    parquet_path = parquet_schema.find_metadata_parquet(self.output_dir)
-                    if parquet_path and Path(parquet_path).exists():
+                    parquet_path = self._resolve_metadata_parquet(parquet_schema, ensure=True, search_input=True)
+                    if parquet_path and parquet_path.exists():
                         import pandas as _pd
 
                         df_meta = _pd.read_parquet(parquet_path)
@@ -1642,6 +1693,7 @@ class Corpus:
                                     df_meta.loc[mask, "filter"] = "ok"
                                     df_meta.loc[mask, "needs_ocr"] = False
                                     df_meta.loc[mask, "ocr_success"] = True
+                            self._cache_metadata_parquet(parquet_path)
                             parquet_schema.write_metadata_parquet(df_meta, parquet_path)
                     # Keep sectioner in sync with newly recovered files
                     try:
@@ -2480,19 +2532,9 @@ class Corpus:
             self.logger.info("No good_files from clean(); using parquet filter/ocr_success if available")
             from glossapi.parquet_schema import ParquetSchema
             parquet_schema = ParquetSchema({'url_column': self.downloader_config.get('url_column', 'url')})
-            # Prefer the output_dir parquet which consolidates current run metadata
-            parquet_schema.ensure_metadata_parquet(self.output_dir)
-            parquet_path = parquet_schema.find_metadata_parquet(self.output_dir)
-            if parquet_path is None:
-                # Try legacy input_dir locations
-                parquet_schema.ensure_metadata_parquet(self.input_dir)
-                parquet_path = parquet_schema.find_metadata_parquet(self.input_dir)
-                if parquet_path is None:
-                    dl_dir = self.input_dir / 'download_results'
-                    if dl_dir.exists():
-                        parquet_path = parquet_schema.find_metadata_parquet(dl_dir)
+            parquet_path = self._resolve_metadata_parquet(parquet_schema, ensure=True, search_input=True)
 
-            if parquet_path is not None and Path(parquet_path).exists():
+            if parquet_path is not None and parquet_path.exists():
                 try:
                     df_meta = pd.read_parquet(parquet_path)
                     mask = pd.Series(False, index=df_meta.index)
@@ -2518,7 +2560,8 @@ class Corpus:
                                 lambda x: (str(x) + ',section') if (pd.notna(x) and 'section' not in str(x)) else ('download,extract,section' if pd.isna(x) else x)
                             )
                             # Write back in-place
-                            parquet_schema.write_metadata_parquet(df_meta, Path(parquet_path))
+                            self._cache_metadata_parquet(parquet_path)
+                            parquet_schema.write_metadata_parquet(df_meta, parquet_path)
                         except Exception as e:
                             self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
                 except Exception as e:
@@ -3081,10 +3124,10 @@ class Corpus:
         try:
             from glossapi.parquet_schema import ParquetSchema
             ps = ParquetSchema({'url_column': self.url_column})
-            pq = ps.find_metadata_parquet(self.output_dir)
+            pq = self._resolve_metadata_parquet(ps, ensure=True, search_input=True)
         except Exception:
             pq = None
-        if pq and Path(pq).exists():
+        if pq and pq.exists():
             try:
                 import pandas as _pd
                 _df = _pd.read_parquet(pq)

@@ -185,3 +185,42 @@ def test_canonical_stem_variants():
     }
     for source, expected in cases.items():
         assert canonical_stem(source) == expected
+
+
+def test_corpus_reuses_canonical_metadata(tmp_path):
+    from glossapi.corpus import Corpus
+
+    root = tmp_path / "bundle"
+    download_dir = root / "download_results"
+    download_dir.mkdir(parents=True, exist_ok=True)
+
+    schema = ParquetSchema({"url_column": "url"})
+    canonical = download_dir / "download_results.parquet"
+    df_canonical = pd.DataFrame(
+        {
+            "filename": ["doc.pdf"],
+            "url": ["http://example.com/doc.pdf"],
+            "math_enriched": [True],
+        }
+    )
+    schema.write_metadata_parquet(df_canonical, canonical)
+
+    metrics = download_dir / "download_results_remaining.parquet"
+    df_metrics = pd.DataFrame(
+        {
+            "filename": ["doc.pdf"],
+            "filter": ["ok"],
+            "mojibake_badness_score": [0.0],
+        }
+    )
+    df_metrics.to_parquet(metrics, index=False)
+
+    corpus = Corpus(input_dir=root, output_dir=root)
+
+    helper = ParquetSchema({"url_column": corpus.url_column})
+    resolved = corpus._resolve_metadata_parquet(helper, ensure=True, search_input=True)
+    assert resolved == canonical
+
+    # Subsequent calls should reuse cached path without re-reading metrics file
+    again = corpus._resolve_metadata_parquet(helper, ensure=False, search_input=False)
+    assert again == canonical
