@@ -144,6 +144,8 @@ class GlossExtract:
         """
         # Default timeout for processing files (10 minutes in seconds)
         self.processing_timeout = 600
+        # Timeout budget for text-layer extraction scales with page count
+        self.per_page_timeout_s = 20
         # Default to layout-only extraction; OCR is enabled explicitly by callers
         self.pipeline_options = PdfPipelineOptions()
         self.pipeline_options.do_ocr = False
@@ -336,33 +338,42 @@ class GlossExtract:
 
     def _convert_all_with_timeout(self, files: Iterable[Path], timeout_s: int, **kwargs):
         """Use Docling native timeout if available; otherwise call directly (no fallback wrapper)."""
+        file_list = [Path(f) for f in files]
+        if not file_list:
+            return []
+
+        budgets = [
+            self._calculate_text_timeout(file_path=path, fallback=timeout_s)
+            for path in file_list
+        ]
+
         try:
             sig_all = inspect.signature(self.converter.convert_all)  # type: ignore[attr-defined]
             timeout_kw = next((n for n in ("timeout", "timeout_s") if n in sig_all.parameters), None)
         except Exception:
             timeout_kw = None
 
-        kw = dict(raises_on_error=False)
-        kw.update(kwargs)
-
         backend_cls = getattr(self, "_active_pdf_backend", None)
         is_native_backend = backend_cls is DoclingParseV2DocumentBackend if backend_cls else False
 
-        if timeout_kw and not is_native_backend:
-            kw[timeout_kw] = int(timeout_s)
-            return list(self.converter.convert_all(files, **kw))  # type: ignore
+        if timeout_kw and not is_native_backend and len(set(budgets)) == 1:
+            kw = dict(raises_on_error=False)
+            kw.update(kwargs)
+            kw[timeout_kw] = int(budgets[0])
+            return list(self.converter.convert_all(file_list, **kw))  # type: ignore
 
         results = []
-        for f in files:
-            results.append(self._convert_with_timeout(Path(f), timeout_s, **kwargs))
+        for path, budget in zip(file_list, budgets):
+            results.append(self._convert_with_timeout(path, budget, **kwargs))
         return results
 
     def _convert_with_timeout(self, file: Path, timeout_s: int, **kwargs):
+        budget = timeout_s if timeout_s is not None else self._calculate_text_timeout(file_path=file)
         timeout_kw = self._supports_native_timeout()
         kw = dict(raises_on_error=False)
         kw.update(kwargs)
         if timeout_kw:
-            kw[timeout_kw] = int(timeout_s)
+            kw[timeout_kw] = int(budget)
         return self.converter.convert(file, **kw)  # type: ignore
                     
     def set_log_file(self, logfile):
@@ -775,6 +786,32 @@ class GlossExtract:
             self._log.warning(f"Failed to get page count for {file_path}: {e}")
             return None
 
+    def _calculate_text_timeout(
+        self,
+        *,
+        file_path: Optional[Path] = None,
+        page_count: Optional[int] = None,
+        fallback: Optional[int] = None,
+    ) -> int:
+        """
+        Determine the timeout budget for text-layer extraction based on page count.
+        Falls back to the provided baseline when the page count cannot be resolved.
+        """
+        per_page = int(getattr(self, "per_page_timeout_s", 20) or 20)
+        baseline = fallback if fallback is not None else self.processing_timeout
+        try:
+            baseline = int(baseline)
+        except Exception:
+            baseline = per_page
+        if baseline <= 0:
+            baseline = per_page
+        if page_count is None and file_path is not None:
+            page_count = self._get_pdf_page_count(file_path)
+        if page_count is None or page_count <= 0:
+            return baseline
+        budget = max(int(page_count) * per_page, per_page)
+        return budget
+
     def _process_file_chunked(self, file_path: Path, output_dir: Path, timeout_dir: Optional[Path] = None) -> bool:
         """
         Process a single long PDF in chunks using Docling's native page_range.
@@ -824,13 +861,18 @@ class GlossExtract:
             status = None
             t0 = time.time()
             last_error: Optional[str] = None
+            chunk_page_count = end - start + 1
+            chunk_timeout_budget = self._calculate_text_timeout(
+                page_count=chunk_page_count,
+                fallback=self.chunk_timeout_s,
+            )
 
             while True:
                 tries += 1
                 try:
                     conv_res = self._convert_with_timeout(
                         file_path,
-                        timeout_s=self.chunk_timeout_s,
+                        timeout_s=chunk_timeout_budget,
                         page_range=(start, end),
                     )
                     if conv_res.status in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
@@ -1143,7 +1185,18 @@ class GlossExtract:
         page_count = 0
         try:
             page_count = len(doc)
+            timeout_budget = self._calculate_text_timeout(
+                file_path=file_path,
+                page_count=page_count,
+                fallback=self.processing_timeout,
+            )
+            deadline = time.time() + timeout_budget
             for index in range(page_count):
+                if time.time() > deadline:
+                    raise TimeoutError(
+                        f"PyPDFium extraction timed out after {timeout_budget}s "
+                        f"while processing {Path(file_path).name}"
+                    )
                 try:
                     page = doc[index]
                     text_page = page.get_textpage()
@@ -1168,6 +1221,24 @@ class GlossExtract:
                 page_count=page_count,
             )
             return True
+        except TimeoutError as exc:
+            self._log.error("PyPDFium extraction timeout for %s: %s", Path(file_path).name, exc)
+            try:
+                self._update_extraction_metadata(
+                    output_dir=output_dir,
+                    src_file=Path(file_path),
+                    status="timeout",
+                    extraction_mode="pypdfium",
+                    page_count=page_count or None,
+                )
+            except Exception:
+                pass
+            if timeout_dir is not None:
+                try:
+                    copy2(file_path, timeout_dir / Path(file_path).name)
+                except Exception:
+                    pass
+            return False
         except Exception as exc:
             self._log.error("PyPDFium extraction failed for %s: %s", Path(file_path).name, exc)
             try:

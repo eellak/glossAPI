@@ -61,6 +61,8 @@ c.extract(input_format='pdf', accel_type='CUDA', emit_formula_index=True)
 c.formula_enrich_from_json(device='cuda', batch_size=12)
 ```
 
+Progress (downloaded, OCRed, math-enriched) now lives in `download_results/download_results.parquet`; rerun `c.ocr(..., reprocess_completed=True)` whenever you need to force already successful rows back through OCR or math.
+
 ## Full Pipeline (download → extract → clean/ocr → section → annotate)
 
 ```python

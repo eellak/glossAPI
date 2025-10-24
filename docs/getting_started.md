@@ -1,93 +1,98 @@
-# Getting Started
+# Onboarding Guide
 
-## Installation
+This guide gets a new GlossAPI contributor from clone → first extraction with minimal detours. Use it alongside the [Quickstart recipes](quickstart.md) once you're ready to explore specialised flows.
+
+## Checklist
+
+- Python 3.8+ (3.10 recommended)
+- Recent `pip` (or `uv`) and a C/C++ toolchain for Rust wheels
+- Optional: NVIDIA GPU with CUDA 12.x drivers for Docling/RapidOCR acceleration
+
+## Install GlossAPI
+
+### Option 1 — pip (evaluate quickly)
 
 ```bash
-export PYTHONNOUSERSITE=1  # prevent ~/.local packages from interfering
+export PYTHONNOUSERSITE=1  # keep ~/.local packages out of the way
 pip install glossapi
 ```
 
-### Using conda on AWS SageMaker / Amazon Linux
-
-If you are on a SageMaker instance where `conda` is the primary environment
-manager, clone the repo and run the helper script to create a dedicated conda
-env:
+### Option 2 — local development (recommended)
 
 ```bash
-git clone https://github.com/your-org/glossAPI.git
+git clone https://github.com/eellak/glossAPI.git
+cd glossAPI
+python -m venv .venv && source .venv/bin/activate
+pip install -U pip maturin
+pip install -e .
+```
+
+This builds the Rust extensions needed for `Corpus.clean()` and noise metrics. Re-run `pip install -e .` after pulling changes that touch Rust crates.
+
+### Option 3 — conda on SageMaker / Amazon Linux
+
+```bash
+git clone https://github.com/eellak/glossAPI.git
 cd glossAPI
 chmod +x scripts/setup_conda.sh
 ./scripts/setup_conda.sh
-
-# Activate when needed
 conda activate glossapi
 ```
 
-The script provisions Python 3.10, installs Rust/maturin, and installs GlossAPI
-in editable mode via `pip install -e .`, then builds the required Rust
-extensions. Continue with the GPU prerequisites below inside the activated
-environment.
+The helper script provisions Python 3.10, installs Rust + `maturin`, performs an editable install, and applies the Docling RapidOCR patch automatically.
 
-### Build Rust extensions (required)
+## GPU prerequisites (optional but recommended)
 
-Whether you use a virtualenv or conda, run these commands once per environment
-after installing dependencies:
+- Install ONNX Runtime GPU and make sure the CPU wheel is absent:
+
+  ```bash
+  pip install onnxruntime-gpu==1.18.1
+  pip uninstall -y onnxruntime || true
+  ```
+
+- For Docling layout + math enrichment on GPU:
+
+  ```bash
+  pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1
+  ```
+
+- Verify the providers:
+
+  ```bash
+  python -c "import onnxruntime as ort; print(ort.get_available_providers())"
+  python -c "import torch; print(torch.cuda.is_available())"
+  ```
+
+## RapidOCR models & keys
+
+GlossAPI ships the required ONNX models and Greek keys under `glossapi/models/rapidocr/{onnx,keys}`. To override them, set `GLOSSAPI_RAPIDOCR_ONNX_DIR` to a directory containing:
+
+- `det/inference.onnx`
+- `rec/inference.onnx`
+- `cls/ch_ppocr_mobile_v2.0_cls_infer.onnx`
+- `greek_ppocrv5_keys.txt`
+
+## First run (lightweight corpus)
 
 ```bash
-python -m pip install "maturin>=1.5,<2.0"
-python -m maturin develop --release --manifest-path rust/glossapi_rs_cleaner/Cargo.toml
-python -m maturin develop --release --manifest-path rust/glossapi_rs_noise/Cargo.toml
-```
-
-Without these extensions `Corpus.clean()` and noise metrics will not work.
-
-> **Note:** Remove any previously installed `glossapi_rs_cleaner`/
-> `glossapi_rs_noise` wheels from your user site (e.g. `pip uninstall -y
-> glossapi_rs_cleaner glossapi_rs_noise`) so the interpreter always imports the
-> versions built inside your environment.
-
-### GPU prerequisites
-
-- NVIDIA GPU and recent driver (CUDA 12.x recommended).
-- ONNXRuntime GPU (for OCR):
-  - `pip install onnxruntime-gpu==1.18.1`
-  - Ensure CPU ORT is NOT installed: `pip uninstall -y onnxruntime || true`
-- Torch CUDA (for layout + math enrichment, optional):
-  - `pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1`
-
-Verify:
-```bash
-python -c "import onnxruntime as ort; print(ort.get_available_providers())"  # must include CUDAExecutionProvider
-python -c "import torch; print(torch.cuda.is_available())"
-```
-
-### Models & keys
-
-GlossAPI ships packaged RapidOCR models/keys under `glossapi/models/rapidocr/{onnx,keys}`. To override, set `GLOSSAPI_RAPIDOCR_ONNX_DIR` to a directory containing:
-
-- det/inference.onnx
-- rec/inference.onnx
-- cls/ch_ppocr_mobile_v2.0_cls_infer.onnx
-- greek_ppocrv5_keys.txt
-
-## First Run
-
-```python
+python - <<'PY'
+from pathlib import Path
 from glossapi import Corpus
-c = Corpus('IN', 'OUT')
 
-# Extract PDFs to Markdown (no OCR by default)
-c.extract(input_format='pdf')
+input_dir = Path("samples/lightweight_pdf_corpus/pdfs")
+output_dir = Path("artifacts/lightweight_pdf_run")
+output_dir.mkdir(parents=True, exist_ok=True)
 
-# Clean and compute quality metrics
-c.clean()
-
-# Re‑extract only bad files with GPU OCR (runs math enrichment by default)
-c.ocr()
-
-# Section and annotate
-c.section()
-c.annotate()
+corpus = Corpus(input_dir, output_dir)
+corpus.extract(input_format="pdf")
+PY
 ```
 
-See quickstart.md for condensed recipes (GPU OCR, multi‑GPU, math enrichment).
+- Inspect `artifacts/lightweight_pdf_run/markdown/` and compare with `samples/lightweight_pdf_corpus/expected_outputs.json`.
+- Run `pytest tests/test_pipeline_smoke.py` for a reproducible regression check tied to the same corpus.
+
+## Next steps
+
+- Jump into [Quickstart recipes](quickstart.md) for GPU OCR, Docling, and enrichment commands.
+- Explore [Pipeline overview](pipeline.md) to understand each processing stage and emitted artifact.
+- When ready to contribute docs, expand the placeholders in `docs/divio/`.

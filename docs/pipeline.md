@@ -18,6 +18,7 @@ GlossAPI is a staged pipeline. You can enter at any stage and use the same folde
 ```
 OUT/
 ├── downloads/
+│   └── problematic_math/
 ├── download_results/
 ├── markdown/
 │   └── <stem>.md
@@ -25,9 +26,10 @@ OUT/
 │   ├── <stem>.docling.json(.zst)
 │   ├── <stem>.formula_index.jsonl
 │   ├── <stem>.latex_map.jsonl
-│   └── metrics/
+│   ├── metrics/
 │       ├── <stem>.metrics.json
 │       └── <stem>.per_page.metrics.json
+│   └── problematic_math/
 ├── sections/
 │   └── sections_for_annotation.parquet
 ├── classified_sections.parquet
@@ -37,3 +39,4 @@ OUT/
 Notes:
 - Enriched Markdown replaces the plain Markdown (single canonical location).
 - Metrics lived under `markdown/` in earlier versions; they now live under `json/metrics/`.
+- When math enrichment cannot recover after the configured number of respawns, the corresponding PDFs and Docling artifacts are copied into the `problematic_math/` folders above and the stems are added to the fatal skip-list for later review.

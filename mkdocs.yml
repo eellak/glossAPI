@@ -9,7 +9,27 @@ theme:
     - content.code.copy
 nav:
   - Home: index.md
-  - Math Enrichment: math_enrichment_runtime.md
+  - Onboarding:
+      - Onboarding Guide: getting_started.md
+      - Quickstart Recipes: quickstart.md
+      - Lightweight PDF Corpus: lightweight_corpus.md
+  - Pipeline:
+      - Pipeline Overview: pipeline.md
+      - OCR & Math Enrichment: ocr_and_math_enhancement.md
+      - Multi-GPU & Scaling: multi_gpu.md
+  - Configuration & Ops:
+      - Configuration: configuration.md
+      - AWS Job Distribution: aws_job_distribution.md
+      - Troubleshooting: troubleshooting.md
+  - Reference:
+      - Corpus API: api/corpus.md
+      - Math Enrichment Runtime: math_enrichment_runtime.md
+  - Divio Skeleton:
+      - Overview: divio/overview.md
+      - Tutorials: divio/tutorials.md
+      - How-to Guides: divio/how_to_guides.md
+      - Reference: divio/reference.md
+      - Explanation: divio/explanation.md
 docs_dir: docs
 markdown_extensions:
   - admonition

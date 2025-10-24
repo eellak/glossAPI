@@ -25,6 +25,7 @@ Regardless of backend, the extractor clamps OMP/OpenBLAS/MKL pools to one thread
 - `GLOSSAPI_LATEX_MAX_REPEAT` (default `50`): stop on last‑token repetition runs.
 - `GLOSSAPI_LATEX_MAX_NEW_TOKENS` (optional): cap decoder new tokens.
 - `GLOSSAPI_LATEX_LEN_STRIDE` (default `16`): stride for length checks.
+- `GLOSSAPI_MATH_RESPAWN_CAP` (default `5`): maximum number of times a crashed math worker is respawned per GPU during multi‑GPU enrichment (set to `0` to disable respawns).
 
 ### Centralized LaTeX Policy (Post‑processing)
 
@@ -39,6 +40,11 @@ All LaTeX policy knobs are loaded via `glossapi.text_sanitize.load_latex_policy(
 
 - `OMP_NUM_THREADS` / `MKL_NUM_THREADS`: cap CPU threads to avoid oversubscription.
 - Cache locations: `HF_HOME`, `XDG_CACHE_HOME`, `DOCLING_CACHE_DIR`.
+
+## Worker Logging
+
+- `GLOSSAPI_WORKER_LOG_DIR`: override the directory used for per-worker logs and `gpu<N>.current` markers (defaults to `logs/ocr_workers/` or `logs/math_workers/` under the output directory).
+- `GLOSSAPI_WORKER_LOG_VERBOSE` = `1|0` (default `1`): emit (or suppress) the GPU binding banner each worker prints on startup.
 
 ## RapidOCR Model Paths
 

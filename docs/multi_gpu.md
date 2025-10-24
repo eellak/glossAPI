@@ -27,6 +27,9 @@ c.ocr(use_gpus='multi', math_batch_size=12)
 ```
 
 - Spawns math workers that bind to their GPU via `CUDA_VISIBLE_DEVICES`. Formula decoding runs on `cuda:0` relative to each worker.
+- Each worker writes a marker file (`logs/math_workers/gpu<N>.current`) containing the stems it is processing and keeps an append-only log in `logs/math_workers/` (override with `GLOSSAPI_WORKER_LOG_DIR`).
+- Crashed workers are respawned automatically; control the retry budget per GPU with `GLOSSAPI_MATH_RESPAWN_CAP` (default `5`). Use `GLOSSAPI_WORKER_LOG_VERBOSE=0` to silence the banner that prints the binding info.
+- When a device exceeds the respawn cap, remaining stems are added to the fatal skip-list and their artifacts are quarantined under `downloads/problematic_math/` and `json/problematic_math/` for follow-up.
 
 ## Provider & Device Checks
 
