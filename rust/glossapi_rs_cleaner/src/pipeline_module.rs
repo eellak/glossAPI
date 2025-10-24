@@ -75,6 +75,7 @@ fn sanitized_char_count(content: &str) -> (i64, bool) {
 /// 4. Writing processed files to the output directory.
 /// 5. Final analysis (badness, script percentages) on processed files, generating a CSV report.
 #[pyfunction]
+#[pyo3(signature = (input_dir_str, output_cleaned_files_dir_str, output_report_csv_str, scripts_to_keep_input, num_threads, write_cleaned_files=true))]
 pub fn run_complete_pipeline(
     py: Python,
     input_dir_str: &str,
@@ -82,6 +83,7 @@ pub fn run_complete_pipeline(
     output_report_csv_str: &str,
     scripts_to_keep_input: Vec<String>,
     num_threads: usize,
+    write_cleaned_files: bool,
 ) -> PyResult<()> {
     println!("Rust: Starting REFACTORED STAGED complete pipeline (calling batch functions)...");
     println!("Rust: Input directory: {}", input_dir_str);
@@ -92,6 +94,7 @@ pub fn run_complete_pipeline(
     println!("Rust: Output report CSV: {}", output_report_csv_str);
     println!("Rust: Scripts to keep: {:?}", scripts_to_keep_input);
     println!("Rust: Number of threads: {}", num_threads);
+    println!("Rust: write_cleaned_files flag: {}", write_cleaned_files);
 
     let main_input_path = Path::new(input_dir_str);
     if !main_input_path.is_dir() {
@@ -101,21 +104,23 @@ pub fn run_complete_pipeline(
     }
     println!("Rust: Input path validated as directory.");
 
-    // Ensure final output directory for cleaned files exists (batch_remove_tables_from_files will need it)
+    // Ensure final output directory for cleaned files exists when asked to persist them
     let final_output_cleaned_files_path = Path::new(output_cleaned_files_dir_str);
-    if !final_output_cleaned_files_path.exists() {
-        println!(
-            "Rust: Creating final output directory for cleaned files: {}...",
-            final_output_cleaned_files_path.display()
-        );
-        fs::create_dir_all(final_output_cleaned_files_path).map_err(|e| {
-            PyValueError::new_err(format!(
-                "Failed to create final output directory {}: {}",
-                final_output_cleaned_files_path.display(),
-                e
-            ))
-        })?;
-        println!("Rust: Final output directory for cleaned files created.");
+    if write_cleaned_files {
+        if !final_output_cleaned_files_path.exists() {
+            println!(
+                "Rust: Creating final output directory for cleaned files: {}...",
+                final_output_cleaned_files_path.display()
+            );
+            fs::create_dir_all(final_output_cleaned_files_path).map_err(|e| {
+                PyValueError::new_err(format!(
+                    "Failed to create final output directory {}: {}",
+                    final_output_cleaned_files_path.display(),
+                    e
+                ))
+            })?;
+            println!("Rust: Final output directory for cleaned files created.");
+        }
     }
 
     // --- Setup Main Temporary Directory for this Pipeline Run ---
@@ -231,17 +236,34 @@ pub fn run_complete_pipeline(
         })?;
         println!("Rust: === STAGE 2: Detailed Table Report Generation COMPLETED ===\n");
 
+        // Prepare destination for Stage 3 (temporary if we are not persisting cleaned files)
+        let stage3_output_dir = if write_cleaned_files {
+            final_output_cleaned_files_path.to_path_buf()
+        } else {
+            temp_pipeline_root_dir.join("stage3_cleaned_files")
+        };
+        if !stage3_output_dir.exists() {
+            fs::create_dir_all(&stage3_output_dir).map_err(|e| {
+                PyValueError::new_err(format!(
+                    "Failed to create Stage 3 output directory {}: {}",
+                    stage3_output_dir.display(),
+                    e
+                ))
+            })?;
+        }
+        let stage3_output_dir_str = stage3_output_dir.to_string_lossy().into_owned();
+
         // === STAGE 3: Table Removal ===
         println!(
             "Rust: === Starting STAGE 3: Table Removal (from {} to {}) ===",
             temp_stage1_cleaned_dir.display(),
-            final_output_cleaned_files_path.display()
+            stage3_output_dir.display()
         );
         directory_processor::batch_remove_tables_from_files(
             py,
             &temp_stage1_cleaned_dir_str, // input_markdown_dir_str: From Stage 1 output
             &temp_stage2_detailed_report_csv_str, // detailed_report_csv_path_str: From Stage 2 output
-            output_cleaned_files_dir_str, // output_processed_md_dir_str: Final user-specified dir
+            &stage3_output_dir_str,               // output_processed_md_dir_str
             num_threads,
         )
         .map_err(|e| {
@@ -257,7 +279,7 @@ pub fn run_complete_pipeline(
             Arc::new(Mutex::new(Vec::new()));
 
         let final_processed_files_for_report: Vec<PathBuf> =
-            walkdir::WalkDir::new(final_output_cleaned_files_path)
+            walkdir::WalkDir::new(&stage3_output_dir)
                 .into_iter()
                 .filter_map(Result::ok)
                 .filter(|e| {
@@ -267,12 +289,13 @@ pub fn run_complete_pipeline(
                 .collect();
 
         println!(
-            "Rust: Found {} files in final_output_dir for Stage 4 analysis.",
-            final_processed_files_for_report.len()
+            "Rust: Found {} files in Stage 4 analysis directory {}.",
+            final_processed_files_for_report.len(),
+            stage3_output_dir.display()
         );
 
         if final_processed_files_for_report.is_empty() {
-            println!("Rust: No files found in the final output directory for Stage 4 analysis. Report will be empty or headers only.");
+            println!("Rust: No files found in the Stage 4 analysis directory. Report will be empty or headers only.");
         } else {
             // Configure Rayon thread pool (can re-use or create new for this specific stage if needed)
             // For simplicity, let's assume the previous pool configuration is fine, or recreate one.
@@ -293,7 +316,9 @@ pub fn run_complete_pipeline(
                     .par_iter()
                     .for_each(|final_file_path| {
                         let thread_id = rayon::current_thread_index().unwrap_or(997);
-                        let report_relative_path = final_file_path.strip_prefix(final_output_cleaned_files_path).unwrap_or(final_file_path);
+                        let report_relative_path = final_file_path
+                            .strip_prefix(&stage3_output_dir)
+                            .unwrap_or(final_file_path);
                         // println!("Rust: [S4-Thread {}] Analyzing for report: {}", thread_id, report_relative_path.display()); // Kept for context, can be too verbose
 
                         match fs::read_to_string(final_file_path) {

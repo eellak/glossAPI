@@ -123,6 +123,7 @@ class CleanPhaseMixin:
         num_threads: int = None,
         drop_bad: bool = True,
         *,
+        write_cleaned_files: bool = True,
         ocr_model_dir: Union[str, Path, None] = None,
         force_ocr_fallback: bool = False,
         empty_char_threshold: int = 0,
@@ -135,6 +136,7 @@ class CleanPhaseMixin:
             threshold: Badness threshold for optional dropping.
             num_threads: Rayon thread-count to pass to Rust.
             drop_bad: If True, files with badness_score > threshold are removed from downstream processing. Set to False to keep all files and only record the score.
+            write_cleaned_files: Set False to skip writing cleaned markdown files; metrics and parquet updates still occur.
             ocr_model_dir: [DEPRECATED – no effect] Use Corpus.ocr(model_dir=...) instead.
             force_ocr_fallback: [DEPRECATED – no effect] Use Corpus.ocr(fix_bad=True) instead.
             empty_char_threshold: Character threshold (after stripping comments and whitespace) that flags markdown as nearly empty. Default 0 only enforces the zero-character safeguard.
@@ -160,9 +162,10 @@ class CleanPhaseMixin:
         self.logger.info("Using compiled glossapi_rs_cleaner extension for fast cleaning")
 
         # Ensure cleaned directory exists and is empty (idempotent runs)
-        if self.cleaned_markdown_dir.exists():
-            shutil.rmtree(self.cleaned_markdown_dir)
-        self.cleaned_markdown_dir.mkdir(parents=True, exist_ok=True)
+        if write_cleaned_files:
+            if self.cleaned_markdown_dir.exists():
+                shutil.rmtree(self.cleaned_markdown_dir)
+            self.cleaned_markdown_dir.mkdir(parents=True, exist_ok=True)
 
         # Prepare parquet helper
         parquet_schema = ParquetSchema({"url_column": self.url_column})
@@ -302,7 +305,8 @@ class CleanPhaseMixin:
             "import glossapi_rs_cleaner\n"
             f"glossapi_rs_cleaner.run_complete_pipeline({repr(str(input_dir))}, "
             f"{repr(str(self.cleaned_markdown_dir))}, {repr(str(report_parquet_path))}, "
-            f"{repr(scripts_to_keep)}, {int(num_threads or os.cpu_count() or 4)})\n"
+            f"{repr(scripts_to_keep)}, {int(num_threads or os.cpu_count() or 4)}, "
+            f"{'True' if write_cleaned_files else 'False'})\n"
         )
 
         process = subprocess.Popen(
@@ -487,7 +491,7 @@ class CleanPhaseMixin:
             # round Greek scores for readability
             for _col in ("greek_badness_score", "greek_latin_percentage"):
                 if _col in df_final.columns:
-                    df_final[_col] = df_final[_col].round(3)
+                    df_final[_col] = pd.to_numeric(df_final[_col], errors="coerce").round(3)
             if "polytonic_ratio" in df_final.columns:
                 df_final["polytonic_ratio"] = df_final["polytonic_ratio"].round(2)
 
@@ -632,7 +636,8 @@ class CleanPhaseMixin:
             self.good_files = []
 
         # After cleaning, point markdown_dir to cleaned files for downstream stages
-        self.markdown_dir = self.cleaned_markdown_dir
+        if write_cleaned_files:
+            self.markdown_dir = self.cleaned_markdown_dir
 
     def filter(self, *args, **kwargs):  # type: ignore[override]
         """Deprecated: use :py:meth:`clean` instead.  Retained for one release."""
