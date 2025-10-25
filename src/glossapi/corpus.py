@@ -4,13 +4,217 @@ import os
 import pandas as pd
 import random
 import numpy as np
-from typing import Dict, Optional, Union, List, Any
+from typing import Dict, Optional, Union, List, Any, Protocol
 import shutil
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from .gloss_extract import GlossExtract
 from .gloss_section import GlossSection
 from .gloss_section_classifier import GlossSectionClassifier
 from .gloss_downloader import GlossDownloader
+
+
+@dataclass
+class CorpusConfig:
+    """
+    Configuration container for Corpus processing parameters.
+
+    Separates configuration logic from business logic for better maintainability.
+    """
+    input_dir: Union[str, Path]
+    output_dir: Union[str, Path]
+    section_classifier_model_path: Optional[Union[str, Path]] = None
+    extraction_model_path: Optional[Union[str, Path]] = None
+    metadata_path: Optional[Union[str, Path]] = None
+    annotation_mapping: Optional[Dict[str, str]] = None
+    downloader_config: Optional[Dict[str, Any]] = None
+    log_level: int = logging.INFO
+    verbose: bool = False
+
+    def __post_init__(self):
+        """Post-initialization processing and validation."""
+        # Convert paths to Path objects
+        self.input_dir = Path(self.input_dir)
+        self.output_dir = Path(self.output_dir)
+
+        if self.section_classifier_model_path:
+            self.section_classifier_model_path = Path(self.section_classifier_model_path)
+        if self.extraction_model_path:
+            self.extraction_model_path = Path(self.extraction_model_path)
+        if self.metadata_path:
+            self.metadata_path = Path(self.metadata_path)
+
+        # Set default annotation mapping
+        if self.annotation_mapping is None:
+            self.annotation_mapping = {'Κεφάλαιο': 'chapter'}
+
+        # Set default downloader config
+        if self.downloader_config is None:
+            self.downloader_config = {}
+
+    def get_default_model_paths(self) -> Dict[str, Path]:
+        """Get default model paths from the package directory."""
+        package_dir = Path(__file__).parent
+        return {
+            'section_classifier': (self.section_classifier_model_path or
+                                 package_dir / "models" / "section_classifier.joblib"),
+            'extraction': (self.extraction_model_path or
+                          package_dir / "models" / "kmeans_weights.joblib")
+        }
+
+
+class FileManager:
+    """
+    Handles file and directory operations for the Corpus processing pipeline.
+
+    Centralizes file management logic and provides a clean interface for
+    directory creation, path resolution, and file operations.
+    """
+
+    def __init__(self, config: CorpusConfig):
+        """Initialize file manager with configuration."""
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+
+        # Create base output directory
+        self.output_dir = config.output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Initialize subdirectories
+        self._setup_directories()
+
+        # Setup file paths
+        self._setup_file_paths()
+
+    def _setup_directories(self):
+        """Create and configure processing directories."""
+        self.markdown_dir = self.output_dir / "markdown"
+        self.sections_dir = self.output_dir / "sections"
+        self.cleaned_markdown_dir = self.output_dir / "clean_markdown"
+        self.models_dir = self.output_dir / "models"
+
+        # Create directories that are always needed
+        self.markdown_dir.mkdir(exist_ok=True)
+        self.sections_dir.mkdir(exist_ok=True)
+        self.cleaned_markdown_dir.mkdir(exist_ok=True)
+
+    def _setup_file_paths(self):
+        """Setup file paths for various processing stages."""
+        self.sections_parquet = self.sections_dir / "sections_for_annotation.parquet"
+        self.classified_parquet = self.output_dir / "classified_sections.parquet"
+        self.fully_annotated_parquet = self.output_dir / "fully_annotated_sections.parquet"
+
+    def ensure_models_directory(self):
+        """Create models directory when needed."""
+        self.models_dir.mkdir(exist_ok=True)
+
+    def get_download_results_dir(self) -> Path:
+        """Get the download results directory path."""
+        return self.output_dir / "download_results"
+
+    def get_downloads_dir(self) -> Path:
+        """Get the downloads directory path."""
+        return self.output_dir / "downloads"
+
+
+class ComponentFactory:
+    """
+    Factory for creating processing components.
+
+    Implements the Factory pattern to centralize component creation and
+    make it easier to substitute implementations for testing.
+    """
+
+    def __init__(self, config: CorpusConfig):
+        """Initialize factory with configuration."""
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+
+    def create_extractor(self, url_column: str = 'url') -> GlossExtract:
+        """Create a GlossExtract component."""
+        return GlossExtract(url_column=url_column)
+
+    def create_sectioner(self) -> GlossSection:
+        """Create a GlossSection component."""
+        return GlossSection()
+
+    def create_classifier(self) -> GlossSectionClassifier:
+        """Create a GlossSectionClassifier component."""
+        return GlossSectionClassifier()
+
+    def create_downloader(self, url_column: str = 'url',
+                         verbose: Optional[bool] = None) -> GlossDownloader:
+        """Create a GlossDownloader component."""
+        return GlossDownloader(
+            url_column=url_column,
+            output_dir=str(self.config.output_dir),
+            log_level=self.config.log_level,
+            verbose=verbose if verbose is not None else self.config.verbose
+        )
+
+
+class MetadataLoader:
+    """
+    Handles loading and processing of metadata files.
+
+    Separates metadata loading logic from the main Corpus class.
+    """
+
+    def __init__(self, config: CorpusConfig):
+        """Initialize metadata loader."""
+        self.config = config
+        self.logger = logging.getLogger(__name__)
+
+    def load_metadata(self) -> Dict[str, str]:
+        """
+        Load metadata file and return filename-to-document-type mapping.
+
+        Returns:
+            Dictionary mapping filenames to document types
+        """
+        if not self.config.metadata_path or not self.config.metadata_path.exists():
+            if self.config.metadata_path:
+                self.logger.warning(f"Metadata file not found: {self.config.metadata_path}")
+            return {}
+
+        try:
+            self.logger.info(f"Loading metadata from {self.config.metadata_path}")
+            metadata_df = pd.read_parquet(self.config.metadata_path)
+
+            if 'filename' not in metadata_df.columns or 'document_type' not in metadata_df.columns:
+                self.logger.warning("Metadata file missing required columns")
+                return {}
+
+            return self._create_filename_mapping(metadata_df)
+
+        except Exception as e:
+            self.logger.error(f"Error loading metadata: {e}")
+            return {}
+
+    def _create_filename_mapping(self, metadata_df: pd.DataFrame) -> Dict[str, str]:
+        """Create filename to document type mapping with extension handling."""
+        filename_to_doctype = {}
+
+        for _, row in metadata_df.iterrows():
+            filename = str(row['filename'])
+            doctype = row['document_type']
+
+            # Add original filename
+            filename_to_doctype[filename] = doctype
+
+            # Add filename without extension
+            if '.' in filename:
+                base_filename = filename.rsplit('.', 1)[0]
+                filename_to_doctype[base_filename] = doctype
+
+            # Add filename with .md extension
+            if not filename.endswith('.md'):
+                md_filename = f"{filename}.md"
+                filename_to_doctype[md_filename] = doctype
+
+        self.logger.info(f"Loaded {len(filename_to_doctype)} filename-to-doctype mappings")
+        return filename_to_doctype
 
 class Corpus:
     """
@@ -27,8 +231,8 @@ class Corpus:
     """
     
     def __init__(
-        self, 
-        input_dir: Union[str, Path], 
+        self,
+        input_dir: Union[str, Path],
         output_dir: Union[str, Path],
         section_classifier_model_path: Optional[Union[str, Path]] = None,
         extraction_model_path: Optional[Union[str, Path]] = None,
@@ -40,7 +244,7 @@ class Corpus:
     ):
         """
         Initialize the Corpus processor.
-        
+
         Args:
             input_dir: Directory containing input files (PDF or markdown)
             output_dir: Base directory for all outputs
@@ -53,6 +257,19 @@ class Corpus:
             log_level: Logging level (default: logging.INFO)
             verbose: Whether to enable verbose logging for debugging (default: False)
         """
+        # Setup configuration using new OOP structure
+        self.config = CorpusConfig(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            section_classifier_model_path=section_classifier_model_path,
+            extraction_model_path=extraction_model_path,
+            metadata_path=metadata_path,
+            annotation_mapping=annotation_mapping,
+            downloader_config=downloader_config,
+            log_level=log_level,
+            verbose=verbose
+        )
+
         # Setup logging
         logging.basicConfig(
             level=log_level,
@@ -60,128 +277,56 @@ class Corpus:
         )
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(log_level)
-        
-        # Verbose flag for detailed logging
-        self.verbose = verbose
-        
-        # Store paths
-        self.input_dir = Path(input_dir)
-        self.output_dir = Path(output_dir)
-        
-        # Package directory for default models
-        package_dir = Path(__file__).parent
-        
-        # Handle section classifier model path
-        if section_classifier_model_path:
-            self.section_classifier_model_path = Path(section_classifier_model_path)
-        else:
-            # Use default model path in the package
-            self.section_classifier_model_path = package_dir / "models" / "section_classifier.joblib"
-        
-        # Handle extraction model path
-        if extraction_model_path:
-            self.extraction_model_path = Path(extraction_model_path)
-        else:
-            # Use default model path in the package
-            self.extraction_model_path = package_dir / "models" / "kmeans_weights.joblib"
-            
-        self.metadata_path = Path(metadata_path) if metadata_path else None
-        
-        # Store annotation mapping - default is to treat 'Κεφάλαιο' as chapter
-        self.annotation_mapping = annotation_mapping or {'Κεφάλαιο': 'chapter'}
-        
-        # Create output directory if it doesn't exist
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        # Initialize downloader config first
-        self.downloader_config = downloader_config or {}
-        
-        # Initialize component classes
-        # Get the URL column from downloader config or use default 'url'
-        self.url_column = self.downloader_config.get('url_column', 'url')
-        self.extractor = GlossExtract(url_column=self.url_column)
-        self.sectioner = GlossSection()
-        self.classifier = GlossSectionClassifier()
-        
-        # Create necessary directories
-        self.markdown_dir = self.output_dir / "markdown"
-        self.sections_dir = self.output_dir / "sections"
-        # Directory that will hold cleaned markdown after Rust-powered cleaning
-        self.cleaned_markdown_dir = self.output_dir / "clean_markdown"
-        # Define models_dir path but don't create the directory yet - only create it when needed
-        self.models_dir = self.output_dir / "models"
-        
-        os.makedirs(self.markdown_dir, exist_ok=True)
-        os.makedirs(self.sections_dir, exist_ok=True)
-        os.makedirs(self.cleaned_markdown_dir, exist_ok=True)
-        
-        # Setup output files
-        self.sections_parquet = self.sections_dir / "sections_for_annotation.parquet"
-        self.classified_parquet = self.output_dir / "classified_sections.parquet"
-        self.fully_annotated_parquet = self.output_dir / "fully_annotated_sections.parquet"
-        
-        # Initialize document type mapping
-        self.filename_to_doctype = {}
-        
-        self._load_metadata()
+
+        # Initialize components using dependency injection
+        self._initialize_components()
+
+        # Load metadata using dedicated loader
+        self.metadata_loader = MetadataLoader(self.config)
+        self.filename_to_doctype = self.metadata_loader.load_metadata()
+
+        # Keep backward compatibility attributes
+        self._setup_backward_compatibility_attributes()
+
+    def _initialize_components(self):
+        """Initialize all components using dependency injection."""
+        # Create file manager
+        self.file_manager = FileManager(self.config)
+
+        # Create component factory
+        self.factory = ComponentFactory(self.config)
+
+        # Initialize components using factory (for dependency injection)
+        url_column = self.config.downloader_config.get('url_column', 'url')
+        self.extractor = self.factory.create_extractor(url_column)
+        self.sectioner = self.factory.create_sectioner()
+        self.classifier = self.factory.create_classifier()
+
+    def _setup_backward_compatibility_attributes(self):
+        """Setup attributes for backward compatibility with existing code."""
+        # Direct path access for backward compatibility
+        self.input_dir = self.config.input_dir
+        self.output_dir = self.config.output_dir
+        self.markdown_dir = self.file_manager.markdown_dir
+        self.sections_dir = self.file_manager.sections_dir
+        self.cleaned_markdown_dir = self.file_manager.cleaned_markdown_dir
+        self.models_dir = self.file_manager.models_dir
+
+        # File paths
+        self.sections_parquet = self.file_manager.sections_parquet
+        self.classified_parquet = self.file_manager.classified_parquet
+        self.fully_annotated_parquet = self.file_manager.fully_annotated_parquet
+
+        # Configuration access
+        self.section_classifier_model_path = self.config.section_classifier_model_path
+        self.extraction_model_path = self.config.extraction_model_path
+        self.metadata_path = self.config.metadata_path
+        self.annotation_mapping = self.config.annotation_mapping
+        self.downloader_config = self.config.downloader_config
+        self.url_column = self.config.downloader_config.get('url_column', 'url')
+        self.verbose = self.config.verbose
     
-    def _load_metadata(self) -> None:
-        """Load metadata file if provided and extract document type mapping."""
-        if self.metadata_path and self.metadata_path.exists():
-            try:
-                self.logger.info(f"Loading metadata from {self.metadata_path}")
-                metadata_df = pd.read_parquet(self.metadata_path)
-                
-                # Debug information
-                self.logger.info(f"Metadata file has {len(metadata_df)} rows and columns: {metadata_df.columns.tolist()}")
-                self.logger.info(f"Sample filenames: {metadata_df['filename'].head(3).tolist()}")
-                self.logger.info(f"Sample document types: {metadata_df['document_type'].head(3).tolist()}")
-                
-                # Create a mapping from filename to document_type
-                if 'filename' in metadata_df.columns and 'document_type' in metadata_df.columns:
-                    self.logger.info("Both 'filename' and 'document_type' columns found in metadata")
-                    
-                    # Check if filenames have extensions
-                    sample_filenames = metadata_df['filename'].head(100).tolist()
-                    if any('.' in str(f) for f in sample_filenames):
-                        self.logger.warning("Some filenames in metadata contain extensions. This may cause matching issues.")
-                        self.logger.warning("Will attempt to match filenames both with and without extensions.")
-                        
-                        # Create a mapping that works with or without extensions
-                        self.filename_to_doctype = {}
-                        
-                        for idx, row in metadata_df.iterrows():
-                            filename = row['filename']
-                            doctype = row['document_type']
-                            
-                            # Add the original filename
-                            self.filename_to_doctype[filename] = doctype
-                            
-                            # Add filename without extension
-                            if '.' in filename:
-                                base_filename = filename.rsplit('.', 1)[0]
-                                self.filename_to_doctype[base_filename] = doctype
-                            
-                            # Add filename with .md extension
-                            if not filename.endswith('.md'):
-                                md_filename = f"{filename}.md"
-                                self.filename_to_doctype[md_filename] = doctype
-                    else:
-                        # Simple dictionary mapping without extension handling
-                        self.filename_to_doctype = dict(zip(
-                            metadata_df['filename'], 
-                            metadata_df['document_type']
-                        ))
-                    
-                    self.logger.info(f"Loaded {len(self.filename_to_doctype)} filename-to-doctype mappings")
-                else:
-                    self.logger.warning("Metadata file does not contain 'filename' or 'document_type' columns")
-            except Exception as e:
-                self.logger.error(f"Error loading metadata: {e}")
-        else:
-            if self.metadata_path:
-                self.logger.warning(f"Metadata file not found: {self.metadata_path}")
-    
+      
     def clean(
         self,
         input_dir: Union[str, Path] = None,
@@ -239,8 +384,8 @@ class Corpus:
 
         # Prepare parquet helper
         parquet_schema = ParquetSchema({"url_column": self.url_column})
-        parquet_path = parquet_schema.find_metadata_parquet(self.input_dir) or (
-            self.input_dir / "download_results" / "download_results.parquet"
+        parquet_path = parquet_schema.find_metadata_parquet(self.config.input_dir) or (
+            self.config.input_dir / "download_results" / "download_results.parquet"
         )
 
         import os
@@ -473,7 +618,7 @@ class Corpus:
         supported_formats = ["pdf", "docx", "xml", "html", "pptx", "csv", "md"]
         
         # Look for the downloads directory first
-        downloads_dir = self.output_dir / "downloads"
+        downloads_dir = self.file_manager.get_downloads_dir()
         
         # If downloads directory doesn't exist or is empty, check input directory and move files
         if not downloads_dir.exists() or not any(downloads_dir.iterdir()):
@@ -485,7 +630,7 @@ class Corpus:
             # Check input directory for supported files and move them
             input_files_to_move = []
             for ext in supported_formats:
-                found_files = list(self.input_dir.glob(f"*.{ext}"))
+                found_files = list(self.config.input_dir.glob(f"*.{ext}"))
                 if found_files:
                     self.logger.info(f"Found {len(found_files)} .{ext} files in input directory, moving to downloads...")
                     input_files_to_move.extend(found_files)
@@ -598,11 +743,11 @@ class Corpus:
             self.logger.info(f"Using URL column for parquet search: {parquet_schema.url_column}")
             
             # Look for input parquet with extraction column
-            input_parquet_path = parquet_schema.find_metadata_parquet(self.input_dir)
-            
+            input_parquet_path = parquet_schema.find_metadata_parquet(self.config.input_dir)
+
             # If not in input_dir, check download_results folder
             if input_parquet_path is None:
-                download_results_dir = self.input_dir / "download_results"
+                download_results_dir = self.config.input_dir / "download_results"
                 if download_results_dir.exists():
                     input_parquet_path = parquet_schema.find_metadata_parquet(download_results_dir)
             
@@ -703,11 +848,15 @@ class Corpus:
             self.logger.error(f"Sections file not found: {self.sections_parquet}. Please run section() first.")
             return
         
+        # Get model paths from configuration
+        model_paths = self.config.get_default_model_paths()
+        model_path = model_paths['section_classifier']
+
         # Check if section classifier model exists
-        model_exists = self.section_classifier_model_path.exists()
+        model_exists = model_path.exists()
         if not model_exists:
-            self.logger.warning(f"Model file not found at {self.section_classifier_model_path}. To train a new model, run GlossSectionClassifier.train_from_csv()")
-        
+            self.logger.warning(f"Model file not found at {model_path}. To train a new model, run GlossSectionClassifier.train_from_csv()")
+
         # If no trained model, skip annotation with a clear message
         if not model_exists:
             self.logger.warning(
@@ -715,11 +864,9 @@ class Corpus:
                 "If you are running from a git checkout (not the pip package), make sure the "
                 "'models/section_classifier.joblib' file is present or pass "
                 "section_classifier_model_path explicitly. Skipping annotation.",
-                self.section_classifier_model_path
+                model_path
             )
             return
-
-        model_path = str(self.section_classifier_model_path)
         # Classify sections and save output to 'classified_sections.parquet'
         self.classifier.classify_sections(
             input_parquet=str(self.sections_parquet),
@@ -870,25 +1017,25 @@ class Corpus:
     ) -> pd.DataFrame:
         """
         Download files from URLs in a parquet file.
-        
+
         If input_parquet is not specified, it will automatically look for any .parquet file
         in the input_dir and use the first one found.
-        
+
         Args:
             input_parquet: Path to input parquet file with URLs (optional)
                            If not provided, will search input_dir for parquet files
             url_column: Name of column containing URLs (defaults to 'url')
             verbose: Whether to enable verbose logging (overrides instance setting if provided)
             **kwargs: Additional parameters to override default downloader config
-        
+
         Returns:
             pd.DataFrame: DataFrame with download results
         """
         # If input_parquet not specified, find parquet files in input_dir
         if input_parquet is None:
-            parquet_files = list(self.input_dir.glob('*.parquet'))
+            parquet_files = list(self.config.input_dir.glob('*.parquet'))
             if not parquet_files:
-                raise ValueError(f"No parquet files found in {self.input_dir}")
+                raise ValueError(f"No parquet files found in {self.config.input_dir}")
             input_parquet = parquet_files[0]
             self.logger.info(f"Using parquet file: {input_parquet}")
         else:
@@ -969,11 +1116,9 @@ class Corpus:
             self.logger.info("No existing download results found or usable")
             existing_results = pd.DataFrame()
             
-        # Initialize downloader with the existing filenames to avoid
-        downloader = GlossDownloader(
+        # Initialize downloader using factory pattern
+        downloader = self.factory.create_downloader(
             url_column=url_column,
-            output_dir=str(self.output_dir),
-            log_level=self.logger.level,
             verbose=verbose if verbose is not None else self.verbose
         )
         
