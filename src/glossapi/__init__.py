@@ -12,9 +12,20 @@ This is an open source project that provides tools for linguistic annotations
 and text processing, with a special focus on the Greek language.
 """
 
-from .rapidocr_safe import patch_docling_rapidocr
+from __future__ import annotations
 
-patch_docling_rapidocr()
+import os
+
+_SKIP_DOCLING_BOOT = os.environ.get("GLOSSAPI_SKIP_DOCLING_BOOT") == "1"
+
+if not _SKIP_DOCLING_BOOT:
+    from .rapidocr_safe import patch_docling_rapidocr
+
+    patch_docling_rapidocr()
+else:
+    def patch_docling_rapidocr() -> bool:
+        """Placeholder when Docling bootstrap is skipped via env flag."""
+        return False
 
 from .gloss_section_classifier import GlossSectionClassifier
 from .corpus import Corpus

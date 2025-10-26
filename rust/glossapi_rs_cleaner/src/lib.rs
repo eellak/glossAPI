@@ -3,20 +3,18 @@
 
 // Internal modules
 mod cleaning_module;
-mod table_analysis_module;
 mod directory_processor;
-mod table_remover_module;
 mod pipeline_module;
+mod table_analysis_module;
+mod table_remover_module;
 
 // Export public items from modules via PyO3
-use pyo3::prelude::*;
-use pipeline_module::run_complete_pipeline; // Bring the #[pyfunction] into scope
 use directory_processor::{
-    generate_analysis_report_for_directory, 
-    batch_generate_detailed_table_report_csv, 
-    batch_remove_tables_from_files,
-    batch_generate_table_summary_csv
+    batch_generate_detailed_table_report_csv, batch_generate_table_summary_csv,
+    batch_remove_tables_from_files, generate_analysis_report_for_directory,
 };
+use pipeline_module::run_complete_pipeline; // Bring the #[pyfunction] into scope
+use pyo3::prelude::*;
 
 // Python module definition
 #[pymodule]
@@ -26,7 +24,10 @@ fn glossapi_rs_cleaner(_py: Python, m: &PyModule) -> PyResult<()> {
 
     // Re-exposing older functions for individual script compatibility
     m.add_function(wrap_pyfunction!(generate_analysis_report_for_directory, m)?)?;
-    m.add_function(wrap_pyfunction!(batch_generate_detailed_table_report_csv, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        batch_generate_detailed_table_report_csv,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(batch_remove_tables_from_files, m)?)?;
     m.add_function(wrap_pyfunction!(batch_generate_table_summary_csv, m)?)?;
 
@@ -35,7 +36,7 @@ fn glossapi_rs_cleaner(_py: Python, m: &PyModule) -> PyResult<()> {
     // after verifying their exact names and signatures as defined within their modules.
 
     m.add_class::<table_analysis_module::TableIssue>()?; // TableIssue is a PyClass
-    // Other classes like TableScan and SlimTextAnalysisResult are not PyClasses and were removed.
+                                                         // Other classes like TableScan and SlimTextAnalysisResult are not PyClasses and were removed.
 
     // Most functions from directory_processor are likely superseded by the new pipeline for typical use.
     // If specific ones like generate_analysis_report_for_directory are still needed independently,

@@ -246,6 +246,8 @@ class CleanPhaseMixin:
                 self.next_target = step
                 self.logged_full = False
                 self.last_message: Optional[str] = None
+                self.direct_updates = False
+                self.last_processed = 0
 
             def write(self, text: str) -> int:
                 if not text:
@@ -265,6 +267,35 @@ class CleanPhaseMixin:
             def _handle_line(self, line: str) -> None:
                 if not line:
                     return
+                direct = re.search(
+                    r"Rust cleaning progress:\s*(\d+)%\s*\((\d+)/(\d+)\)", line
+                )
+                if direct:
+                    try:
+                        percent = int(direct.group(1))
+                        processed = int(direct.group(2))
+                        total_reported = int(direct.group(3))
+                    except (TypeError, ValueError):
+                        percent = processed = 0
+                        total_reported = self.total
+                    else:
+                        if total_reported > 0 and total_reported != self.total:
+                            self.total = total_reported
+                            self.step = max(1, math.ceil(self.total * 0.02))
+                            self.next_target = self.step
+                    self.direct_updates = True
+                    self.last_processed = processed
+                    self.logger.info(
+                        "Rust cleaning progress: %d%% (%d/%d)",
+                        percent,
+                        processed,
+                        self.total or total_reported,
+                    )
+                    if percent >= 100 or (
+                        self.total and processed >= self.total
+                    ):
+                        self.logged_full = True
+                    return
                 match = re.search(r"Processing file:\s*(.+)", line)
                 if match:
                     path = match.group(1).strip()
@@ -277,6 +308,8 @@ class CleanPhaseMixin:
                     self.last_message = line
 
             def _log_progress(self) -> None:
+                if self.direct_updates:
+                    return
                 if self.total <= 0:
                     return
                 processed = len(self.processed)
@@ -293,7 +326,7 @@ class CleanPhaseMixin:
                 if self.total == 0:
                     self.logger.info("Rust cleaning progress: 100%% (0/0)")
                 elif not self.logged_full:
-                    processed = len(self.processed)
+                    processed = self.last_processed or len(self.processed)
                     self.logger.info(
                         "Rust cleaning progress: 100%% (%d/%d)", processed, self.total
                     )

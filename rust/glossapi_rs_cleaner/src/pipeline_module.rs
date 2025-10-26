@@ -96,6 +96,8 @@ pub fn run_complete_pipeline(
     println!("Rust: Number of threads: {}", num_threads);
     println!("Rust: write_cleaned_files flag: {}", write_cleaned_files);
 
+    let debug_logging = std::env::var_os("GLOSSAPI_RS_DEBUG").is_some();
+
     let main_input_path = Path::new(input_dir_str);
     if !main_input_path.is_dir() {
         let err_msg = format!("Input path is not a directory: {}", input_dir_str);
@@ -334,16 +336,17 @@ pub fn run_complete_pipeline(
                                 );
                                 // println!("Rust: [S4-Thread {}] Final analysis done for report: {}", thread_id, report_relative_path.display()); // Verbose
 
-                                // Debug print for raw analysis values
-                                println!(
-                                    "Rust: [S4-Thread {}] Raw Analysis for {}: BadnessAllChars: {:?}, GreekCount: {:?}, LatinCount: {:?}, CleanedNonWS: {:?}",
-                                    thread_id,
-                                    report_relative_path.display(),
-                                    analysis_result.badness_score_all_chars,
-                                    analysis_result.greek_char_count_after_clean,
-                                    analysis_result.latin_char_count_after_clean,
-                                    analysis_result.cleaned_non_whitespace_chars_after_clean
-                                );
+                                if debug_logging {
+                                    println!(
+                                        "Rust: [S4-Thread {}] Raw Analysis for {}: BadnessAllChars: {:?}, GreekCount: {:?}, LatinCount: {:?}, CleanedNonWS: {:?}",
+                                        thread_id,
+                                        report_relative_path.display(),
+                                        analysis_result.badness_score_all_chars,
+                                        analysis_result.greek_char_count_after_clean,
+                                        analysis_result.latin_char_count_after_clean,
+                                        analysis_result.cleaned_non_whitespace_chars_after_clean
+                                    );
+                                }
 
                                 // Badness score processing
                                 let rounded_badness_score = analysis_result.badness_score_all_chars.map(|b_val| {
