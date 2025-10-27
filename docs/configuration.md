@@ -18,6 +18,23 @@ GlossAPI exposes two Phase‑1 profiles. Use `Corpus.extract(..., phase1_backend
 
 Regardless of backend, the extractor clamps OMP/OpenBLAS/MKL pools to one thread per worker so multi‑GPU runs do not explode thread counts.
 
+### DeepSeek optional dependencies
+
+Install DeepSeek backend extras to enable the DeepSeek OCR path (imports remain lazy, so the package is optional). Use the CUDA 12.1 wheels for both vLLM and Torch:
+
+```bash
+pip install '.[deepseek]'
+
+# Install Torch CUDA 12.1 wheels (required by the DeepSeek script)
+pip install --extra-index-url https://download.pytorch.org/whl/cu121 \
+  'torch==2.5.1+cu121' 'torchvision==0.20.1+cu121'
+
+# Alternatively, use the requirements file (edit to uncomment torch lines):
+pip install -r deepseek-ocr/requirements-deepseek.txt
+```
+
+When using `backend='deepseek'`, equations are included inline in the OCR output; Phase‑2 math flags are accepted but skipped.
+
 ## Math Enrichment (Phase‑2)
 
 - `GLOSSAPI_LATEX_EARLYSTOP` = `1|0` (default 1): enable/disable early‑stop wrapper.

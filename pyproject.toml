@@ -49,6 +49,16 @@ cuda = [
     "torch==2.5.1",
     "torchvision==0.20.1",
 ]
+# DeepSeek OCR backend extras (CUDA 12.1 build of vLLM). Torch is not pinned here
+# because users should install the CUDA wheel from the PyTorch index
+# (see docs: installing torch==2.5.1+cu121 via extra index URL).
+deepseek = [
+    "vllm>=0.11.0",
+    "transformers>=4.45,<5",
+    "accelerate>=1.2.1,<2",
+    "pymupdf==1.24.10",
+    "Pillow==10.4.0",
+]
 docs = [
     "mkdocs>=1.5",
     "mkdocs-material>=9.5",

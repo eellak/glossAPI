@@ -7,6 +7,14 @@ This document summarizes how GlossAPI uses the GPU for OCR and formula/code enri
 - Phase‑1 (Extract): PDF → Markdown via Docling; optional GPU OCR via RapidOCR (ONNXRuntime). Optionally emit JSON + formula index for Phase‑2.
 - Phase‑2 (Enrich): From Docling JSON, decode math/code on the GPU (CodeFormula) and re‑emit enriched Markdown.
 
+Backends
+- `backend='rapidocr'` (default): Docling + RapidOCR; Phase‑2 math runs from Docling JSON.
+- `backend='deepseek'`: DeepSeek‑OCR; equations are included inline in OCR output, so Phase‑2 math is not required and is treated as a no‑op.
+
+Policy: never OCR and math on the same file
+- If a file needs OCR, GlossAPI runs OCR only (no Phase‑2 on that file in the same pass).
+- If a file does not need OCR but needs math, GlossAPI runs math‑only from Docling JSON. The JSON is produced by Phase‑1 (Docling layout) and must already exist.
+
 ## Prerequisites
 
 - ONNXRuntime GPU installed (no CPU ORT): `onnxruntime-gpu==1.18.1`
@@ -59,6 +67,24 @@ c.formula_enrich_from_json(
 Outputs:
 - `markdown/<stem>.md` — enriched Markdown overwrites the plain MD
 - `json/<stem>.latex_map.jsonl` — LaTeX strings + acceptance/metrics per item
+
+## DeepSeek usage
+
+Run OCR for files flagged by the cleaner as needing OCR (math flags are ignored for DeepSeek):
+
+```python
+from glossapi import Corpus
+c = Corpus('IN','OUT')
+c.ocr(backend='deepseek', fix_bad=True, math_enhance=True, mode='ocr_bad_then_math')
+# → runs OCR only for bad files; equations are included inline; Phase‑2 is skipped
+```
+
+If you need Phase‑2 math on files that do not require OCR, use RapidOCR/Docling and math‑only (expects Docling JSON from Phase‑1):
+
+```python
+c.ocr(backend='rapidocr', fix_bad=False, math_enhance=True, mode='math_only')
+# → runs Phase‑2 on non‑OCR files only (requires Docling JSON)
+```
 
 ## Multi‑GPU
 

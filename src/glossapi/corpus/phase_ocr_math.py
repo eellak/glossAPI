@@ -33,6 +33,7 @@ class OcrMathPhaseMixin:
         *,
         fix_bad: bool = True,
         mode: Optional[str] = None,
+        backend: str = "rapidocr",
         device: Optional[str] = None,
         model_dir: Optional[Union[str, Path]] = None,
         max_pages: Optional[int] = None,
@@ -50,6 +51,12 @@ class OcrMathPhaseMixin:
         force: Optional[bool] = None,
         reprocess_completed: Optional[bool] = None,
         skip_existing: Optional[bool] = None,
+        # Content debug: keep page separators and truncation markers when True
+        content_debug: bool = False,
+        CONTENT_DEBUG: Optional[bool] = None,
+        # Back-compat aliases (deprecated):
+        internal_debug: bool = False,
+        INTERNAL_DEBUG: Optional[bool] = None,
     ) -> None:
         """OCR and/or math enrichment with explicit mode control.
 
@@ -63,6 +70,8 @@ class OcrMathPhaseMixin:
             fix_bad only -> 'ocr_bad';
             math_enhance only -> 'math_only';
             neither -> no‑op.
+        - backend: 'rapidocr' (default) uses the Docling + RapidOCR path via Phase‑1 extract().
+                   'deepseek' uses the DeepSeek‑OCR path (no Docling JSON, math unsupported).
         - fix_bad: re-run OCR on documents marked bad by the cleaner (default True).
         - math_enhance: run math/code enrichment after OCR (default True).
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
@@ -72,6 +81,20 @@ class OcrMathPhaseMixin:
         - skip_existing: legacy alias for ``reprocess_completed`` (``skip_existing=True`` equals
           ``reprocess_completed=False``). Prefer the explicit ``reprocess_completed`` toggle.
         """
+        # Normalize backend
+        backend_norm = str(backend or "rapidocr").strip().lower()
+        if backend_norm not in {"rapidocr", "deepseek"}:
+            raise ValueError("backend must be 'rapidocr' or 'deepseek'")
+
+        # CONTENT_DEBUG override (preferred uppercase alias)
+        # Priority: CONTENT_DEBUG > INTERNAL_DEBUG > content_debug/internal_debug flags
+        if CONTENT_DEBUG is not None:
+            content_debug = bool(CONTENT_DEBUG)
+        elif INTERNAL_DEBUG is not None:
+            content_debug = bool(INTERNAL_DEBUG)
+        elif internal_debug:
+            content_debug = True
+
         # Normalize mode from explicit value or legacy flags
         mode_norm = None
         fix_bad_effective = bool(fix_bad)
@@ -122,6 +145,15 @@ class OcrMathPhaseMixin:
                     pass
             reprocess_flag = desired
         reprocess_completed = reprocess_flag
+
+        # DeepSeek semantics note
+        if backend_norm == "deepseek":
+            try:
+                self.logger.info(
+                    "DeepSeek backend: Phase-2 math is not required; equations are included inline via OCR."
+                )
+            except Exception:
+                pass
         # Identify bad documents from parquet (Rust cleaner output)
         bad_files: List[str] = []
         skipped_completed = 0
@@ -490,22 +522,21 @@ class OcrMathPhaseMixin:
             stems: List[str] = []
             if json_dir.exists():
                 stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
-            if not stems:
-                self.extract(
-                    input_format="pdf",
-                    num_threads=os.cpu_count() or 4,
-                    accel_type="CUDA",
-                    force_ocr=False,
-                    formula_enrichment=False,
-                    code_enrichment=False,
-                    filenames=None,
-                    skip_existing=False,
-                    export_doc_json=True,
-                    emit_formula_index=True,
-                    phase1_backend="docling",
-                )
-                if json_dir.exists():
-                    stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
+            # Do not generate layout JSON here; Phase‑1 is responsible for JSON artifacts.
+            # Never run math on files that need OCR
+            if bad_files:
+                before = len(stems)
+                bad_set = {canonical_stem(s) for s in bad_files}
+                stems = [s for s in stems if s not in bad_set]
+                removed = before - len(stems)
+                if removed:
+                    try:
+                        self.logger.info(
+                            "Math-only: skipping %d document(s) flagged for OCR",
+                            removed,
+                        )
+                    except Exception:
+                        pass
             if not reprocess_completed and stems and parquet_meta is not None:
                 if math_done_stems:
                     before = len(stems)
@@ -533,22 +564,38 @@ class OcrMathPhaseMixin:
         reran_ocr = False
 
         if mode_norm in {"ocr_bad", "ocr_bad_then_math"}:
-            self.extract(
-                input_format="pdf",
-                num_threads=os.cpu_count() or 4,
-                accel_type="CUDA",
-                force_ocr=True,
-                formula_enrichment=False,
-                code_enrichment=False,
-                filenames=bad_files,
-                skip_existing=False,
-                use_gpus=use_gpus,
-                devices=devices,
-                # When math follows we need JSON; otherwise it's optional
-                export_doc_json=bool(mode_norm == "ocr_bad_then_math"),
-                emit_formula_index=bool(mode_norm == "ocr_bad_then_math"),
-                phase1_backend="docling",
-            )
+            if backend_norm == "deepseek":
+                # DeepSeek path: run OCR via dedicated runner (no Docling JSON)
+                try:
+                    from glossapi.ocr import deepseek_runner as _deepseek_runner  # type: ignore
+
+                    _deepseek_runner.run_for_files(
+                        self,
+                        bad_files,
+                        model_dir=Path(model_dir) if model_dir else None,
+                        content_debug=bool(content_debug),
+                    )
+                except Exception as _e:
+                    self.logger.error("DeepSeek OCR runner failed: %s", _e)
+                    raise
+            else:
+                # RapidOCR/Docling path via Phase-1 extract
+                self.extract(
+                    input_format="pdf",
+                    num_threads=os.cpu_count() or 4,
+                    accel_type="CUDA",
+                    force_ocr=True,
+                    formula_enrichment=False,
+                    code_enrichment=False,
+                    filenames=bad_files,
+                    skip_existing=False,
+                    use_gpus=use_gpus,
+                    devices=devices,
+                    # Do not generate Docling JSON for OCR targets; math will skip them
+                    export_doc_json=False,
+                    emit_formula_index=False,
+                    phase1_backend="docling",
+                )
             reran_ocr = True
             # Update metadata to reflect successful OCR reruns
             try:
@@ -606,11 +653,14 @@ class OcrMathPhaseMixin:
 
         if mode_norm == "ocr_bad_then_math":
             try:
-                stems = [canonical_stem(f) for f in bad_files]
-                if not stems:
-                    json_dir = self.output_dir / "json"
-                    if json_dir.exists():
-                        stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
+                # Run math only on documents that do NOT require OCR
+                json_dir = self.output_dir / "json"
+                stems: List[str] = []
+                if json_dir.exists():
+                    stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
+                bad_set = {canonical_stem(f) for f in bad_files}
+                if stems:
+                    stems = [s for s in stems if s not in bad_set]
                 if not reprocess_completed:
                     if math_done_stems:
                         before = len(stems)

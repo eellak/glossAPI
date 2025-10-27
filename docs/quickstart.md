@@ -77,3 +77,14 @@ c.annotate()                         # classify/annotate sections
 ```
 
 See ocr_and_math_enhancement.md for GPU details, batch sizes, and artifact locations.
+
+### DeepSeek OCR
+
+DeepSeek can be used as an OCR backend; equations are included inline in the OCR output, so Phase‑2 math is not required and any math flags are ignored.
+
+```python
+from glossapi import Corpus
+c = Corpus('IN','OUT')
+c.ocr(backend='deepseek', fix_bad=True, math_enhance=True, mode='ocr_bad_then_math')
+# → OCR only for bad files; math is included inline in the Markdown
+```

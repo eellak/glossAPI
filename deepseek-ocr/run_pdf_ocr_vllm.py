@@ -21,7 +21,15 @@ import numpy as np
 from PIL import Image
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
-from vllm.model_executor.models.deepseek_ocr import NGramPerReqLogitsProcessor
+# Prefer DeepSeek OCR-specific components if available; otherwise fall back to VL2 equivalents
+try:  # vLLM builds without deepseek_ocr module on some releases
+    from vllm.model_executor.models.deepseek_ocr import (  # type: ignore
+        NGramPerReqLogitsProcessor,
+    )
+    _DEEPSEEK_OCR_AVAILABLE = True
+except Exception:  # pragma: no cover - import-time capability detection
+    NGramPerReqLogitsProcessor = None  # type: ignore
+    _DEEPSEEK_OCR_AVAILABLE = False
 
 DEFAULT_GROUNDED_PROMPT = "<image>\n<|grounding|>Convert the document to markdown."
 DEFAULT_CLEAN_PROMPT = "<image>\nConvert the document to markdown."
@@ -208,7 +216,12 @@ def build_llm(args: argparse.Namespace) -> LLM:
         enable_prefix_caching=False,
         mm_processor_cache_gb=0,
         gpu_memory_utilization=args.gpu_memory_utilization,
-        logits_processors=[NGramPerReqLogitsProcessor],
+        # Only pass OCR-specific logits processor when present in this vLLM build
+        logits_processors=(
+            [NGramPerReqLogitsProcessor]
+            if NGramPerReqLogitsProcessor is not None
+            else []
+        ),
         tensor_parallel_size=args.tensor_parallel_size,
     )
     if not args.no_fp8_kv:
@@ -300,8 +313,15 @@ def clean_output(
 
 @lru_cache(maxsize=1)
 def get_tokenizer() -> AutoTokenizer:
-    model_path = CHECKPOINT_DIR if CHECKPOINT_DIR.exists() else "deepseek-ai/DeepSeek-OCR"
-    return AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    if CHECKPOINT_DIR.exists():
+        model_id = CHECKPOINT_DIR
+    else:
+        model_id = (
+            "deepseek-ai/DeepSeek-OCR"
+            if _DEEPSEEK_OCR_AVAILABLE
+            else "deepseek-ai/DeepSeek-VL2"
+        )
+    return AutoTokenizer.from_pretrained(str(model_id), trust_remote_code=True)
 
 
 def _collect_special_strings(value, bucket: set[str]) -> None:
@@ -521,7 +541,15 @@ def collect_roi_jobs(
 
 @contextlib.contextmanager
 def vision_mode_override(base_size: int, image_size: int, crop_mode: bool):
-    module = importlib.import_module("vllm.transformers_utils.processors.deepseek_ocr")
+    # DeepSeek OCR processors may not be present in some vLLM releases; fall back to VL2
+    try:
+        module = importlib.import_module(
+            "vllm.transformers_utils.processors.deepseek_ocr"
+        )
+    except Exception:  # pragma: no cover - capability detection
+        module = importlib.import_module(
+            "vllm.transformers_utils.processors.deepseek_vl2"
+        )
     prev_base = getattr(module, "BASE_SIZE", None)
     prev_image = getattr(module, "IMAGE_SIZE", None)
     prev_crop = getattr(module, "CROP_MODE", None)
@@ -608,10 +636,16 @@ def parse_args() -> argparse.Namespace:
         default=8,
         help="Thread pool size for PDF rendering.",
     )
+    # Default model: prefer local checkout if present; otherwise pick a remote id.
+    default_model = (
+        str(CHECKPOINT_DIR)
+        if CHECKPOINT_DIR.exists()
+        else ("deepseek-ai/DeepSeek-OCR" if _DEEPSEEK_OCR_AVAILABLE else "deepseek-ai/DeepSeek-VL2")
+    )
     parser.add_argument(
         "--model",
         type=str,
-        default=str(CHECKPOINT_DIR),
+        default=default_model,
         help="Model identifier or local path.",
     )
     parser.add_argument(
@@ -712,6 +746,11 @@ def parse_args() -> argparse.Namespace:
         default="INFO",
         help="Logging level.",
     )
+    parser.add_argument(
+        "--content-debug",
+        action="store_true",
+        help="Include page separators (---pages---) and truncation markers.",
+    )
     return parser.parse_args()
 
 
@@ -776,6 +815,7 @@ def prepare_page_text(
     token_limit_hit: bool = False,
     token_limit: Optional[int] = None,
     metrics: Optional[dict[str, int]] = None,
+    content_debug: bool = False,
 ) -> str:
     text = strip_prompt_echo(text, prompt)
     cleaned = clean_output(text, keep_refdet=keep_refdet, metrics=metrics)
@@ -800,7 +840,7 @@ def prepare_page_text(
             dbg.write(f"{job.pdf_path.name}:{job.page_index+1} len={len(cleaned)} raw_len={len(text)}\n")
     except OSError:
         pass
-    if token_limit_hit:
+    if token_limit_hit and content_debug:
         warning = (
             f"[[Token limit reached at {token_limit} tokens; page may be truncated]]"
             if token_limit
@@ -856,7 +896,7 @@ def run_roi_second_pass(
 
 
 def write_combined_markdown(
-    combined_path: Path, aggregated_pages: dict[int, str]
+    combined_path: Path, aggregated_pages: dict[int, str], *, content_debug: bool = False
 ) -> None:
     if not aggregated_pages:
         return
@@ -865,17 +905,13 @@ def write_combined_markdown(
     sections: List[str] = []
     for offset, page_index in enumerate(sorted_pages):
         page_text = aggregated_pages[page_index].strip()
-        if offset == 0:
-            if page_text:
-                sections.append(page_text)
+        if not page_text:
             continue
-        header = f"----- Page {page_index + 1} -----"
-        if page_text:
-            sections.append(f"{header}\n\n{page_text}")
-        else:
-            sections.append(header)
+        if content_debug and offset > 0:
+            sections.append("---pages---")
+        sections.append(page_text)
 
-    body = "\n\n".join(section for section in sections if section).strip()
+    body = "\n\n".join(sections).strip()
     if body:
         body = canonicalize_markdown(body)
     combined = f"{body}\n" if body else ""
@@ -948,8 +984,10 @@ def main() -> None:
         pdf_files = all_pdf_files
 
     whitelist_ids = compute_whitelist_token_ids()
-    llm = build_llm(args)
-    sampling_params = build_sampling_params(args, args.mode, whitelist_ids)
+    llm = None
+    try:
+        llm = build_llm(args)
+        sampling_params = build_sampling_params(args, args.mode, whitelist_ids)
     clean_params = (
         build_sampling_params(args, "clean", whitelist_ids)
         if args.roi_second_pass or args.mode == "clean"
@@ -962,9 +1000,9 @@ def main() -> None:
     run_start = time.perf_counter()
     metrics: dict[str, int] = {}
 
-    executor = ThreadPoolExecutor(max_workers=args.cpu_workers)
-    try:
-        for pdf_path in pdf_files:
+        executor = ThreadPoolExecutor(max_workers=args.cpu_workers)
+        try:
+            for pdf_path in pdf_files:
             combined_name = f"{pdf_path.stem}.md"
             combined_path = output_root / combined_name
             if args.skip_existing and combined_path.exists():
@@ -996,7 +1034,9 @@ def main() -> None:
                 for job in batch:
                     if job.is_blank:
                         blank_text = get_blank_page_text()
-                        aggregated_pages[job.page_index] = blank_text
+                        aggregated_pages[job.page_index] = (
+                            blank_text if args.content_debug else ""
+                        )
                         pages_written += 1
                         if args.save_images:
                             stash_page_image(job, assets_root)
@@ -1022,6 +1062,7 @@ def main() -> None:
                         token_limit_hit=token_limit_hit,
                         token_limit=page_token_limit,
                         metrics=metrics,
+                        content_debug=bool(args.content_debug),
                     )
                     aggregated_pages[job.page_index] = cleaned
                     if args.save_images:
@@ -1076,6 +1117,7 @@ def main() -> None:
                             token_limit_hit=token_limit_hit,
                             token_limit=page_token_limit,
                             metrics=metrics,
+                            content_debug=bool(args.content_debug),
                         )
                         aggregated_pages[job.page_index] = cleaned
                         total_tokens += token_count
@@ -1122,7 +1164,9 @@ def main() -> None:
                         roi_count,
                     )
 
-            write_combined_markdown(combined_path, aggregated_pages)
+            write_combined_markdown(
+                combined_path, aggregated_pages, content_debug=bool(args.content_debug)
+            )
 
             total_pages += pages_written
             pdf_elapsed = time.perf_counter() - pdf_start
@@ -1135,25 +1179,45 @@ def main() -> None:
                     pages_written / max(pdf_elapsed, 1e-6),
                 )
 
-    finally:
-        executor.shutdown(wait=True)
+        finally:
+            executor.shutdown(wait=True)
 
-    total_elapsed = time.perf_counter() - run_start
-    pages_per_sec = total_pages / max(total_elapsed, 1e-6)
-    tokens_per_sec = total_tokens / max(total_elapsed, 1e-6)
-    logging.info(
-        "Completed %d page(s) in %.1fs (%.2f pages/s, %d tokens/s, %d ROI tokens)",
-        total_pages,
-        total_elapsed,
-        pages_per_sec,
-        int(tokens_per_sec),
-        roi_total_tokens,
-    )
-    metric_parts: List[str] = []
-    if metrics:
-        metric_parts = [f"{key}={value}" for key, value in metrics.items() if value]
-    if metric_parts:
-        logging.info("Sanity metrics: %s", ", ".join(sorted(metric_parts)))
+        total_elapsed = time.perf_counter() - run_start
+        pages_per_sec = total_pages / max(total_elapsed, 1e-6)
+        tokens_per_sec = total_tokens / max(total_elapsed, 1e-6)
+        logging.info(
+            "Completed %d page(s) in %.1fs (%.2f pages/s, %d tokens/s, %d ROI tokens)",
+            total_pages,
+            total_elapsed,
+            pages_per_sec,
+            int(tokens_per_sec),
+            roi_total_tokens,
+        )
+        metric_parts: List[str] = []
+        if metrics:
+            metric_parts = [f"{key}={value}" for key, value in metrics.items() if value]
+        if metric_parts:
+            logging.info("Sanity metrics: %s", ", ".join(sorted(metric_parts)))
+    finally:
+        # Encourage vLLM to shut down GPU/engine threads so process exits cleanly
+        with contextlib.suppress(Exception):
+            engine = getattr(llm, "llm_engine", None) if llm is not None else None
+            if engine is not None:
+                shutdown = getattr(engine, "shutdown", None)
+                if callable(shutdown):
+                    shutdown()
+        # Best-effort cleanup
+        try:
+            import torch  # type: ignore
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        import gc as _gc
+
+        del llm
+        _gc.collect()
 
 
 if __name__ == "__main__":

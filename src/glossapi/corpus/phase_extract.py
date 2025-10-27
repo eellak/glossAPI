@@ -24,7 +24,18 @@ from ..gloss_section import GlossSection
 from ..gloss_section_classifier import GlossSectionClassifier
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
-from .corpus_utils import _maybe_import_torch
+from .corpus_utils import _maybe_import_torch as _maybe_import_torch_fallback
+
+# Wrapper to allow tests to monkeypatch glossapi.corpus._maybe_import_torch.
+def _maybe_import_torch(force: bool = False):
+    try:
+        import glossapi.corpus as _corpus_pkg  # defer import to avoid cycles
+        pkg_fn = getattr(_corpus_pkg, "_maybe_import_torch", None)
+        if callable(pkg_fn):
+            return pkg_fn(force=force)
+    except Exception:
+        pass
+    return _maybe_import_torch_fallback(force=force)
 
 
 class ExtractPhaseMixin:
