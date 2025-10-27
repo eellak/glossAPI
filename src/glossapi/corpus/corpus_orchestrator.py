@@ -235,8 +235,17 @@ class Corpus(
                 
                 # Debug information
                 self.logger.info(f"Metadata file has {len(metadata_df)} rows and columns: {metadata_df.columns.tolist()}")
-                self.logger.info(f"Sample filenames: {metadata_df['filename'].head(3).tolist()}")
-                self.logger.info(f"Sample document types: {metadata_df['document_type'].head(3).tolist()}")
+                try:
+                    self.logger.info(f"Sample filenames: {metadata_df['filename'].head(3).tolist()}")
+                except Exception:
+                    pass
+                if 'document_type' not in metadata_df.columns:
+                    import pandas as _pd
+                    # Create a blank document_type column for downstream compatibility
+                    metadata_df['document_type'] = _pd.Series([_pd.NA] * len(metadata_df))
+                    self.logger.info("Added missing 'document_type' column to metadata (blank values)")
+                else:
+                    self.logger.info(f"Sample document types: {metadata_df['document_type'].head(3).tolist()}")
                 
                 # Create a mapping from filename to document_type
                 if 'filename' in metadata_df.columns and 'document_type' in metadata_df.columns:
@@ -254,6 +263,17 @@ class Corpus(
                         for idx, row in metadata_df.iterrows():
                             filename = row['filename']
                             doctype = row['document_type']
+                            # Skip empty/NA document types
+                            try:
+                                if doctype is None:
+                                    continue
+                                import pandas as _pd
+                                if doctype is _pd.NA or _pd.isna(doctype):
+                                    continue
+                                if not str(doctype).strip():
+                                    continue
+                            except Exception:
+                                pass
                             
                             # Add the original filename
                             self.filename_to_doctype[filename] = doctype
@@ -268,11 +288,18 @@ class Corpus(
                                 md_filename = f"{filename}.md"
                                 self.filename_to_doctype[md_filename] = doctype
                     else:
-                        # Simple dictionary mapping without extension handling
-                        self.filename_to_doctype = dict(zip(
-                            metadata_df['filename'], 
-                            metadata_df['document_type']
-                        ))
+                        # Simple dictionary mapping without extension handling (skip empty types)
+                        try:
+                            import pandas as _pd
+                            df_nt = metadata_df.copy()
+                            mask = (~df_nt['document_type'].isna()) & (df_nt['document_type'].astype(str).str.strip() != '')
+                            df_nt = df_nt[mask]
+                            self.filename_to_doctype = dict(zip(
+                                df_nt['filename'], 
+                                df_nt['document_type']
+                            ))
+                        except Exception:
+                            self.filename_to_doctype = {}
                     
                     self.logger.info(f"Loaded {len(self.filename_to_doctype)} filename-to-doctype mappings")
                 else:

@@ -577,6 +577,7 @@ class ParquetSchema:
             self.url_column: "",
             "filename": "",
             "file_ext": "",
+            "document_type": pd.NA,
             "download_success": False,
             "download_error": "",
             "download_retry_count": 0,

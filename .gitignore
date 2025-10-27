@@ -71,3 +71,4 @@ plans_reviews/
 \n# Local virtual environments
 glossapi_venv/
 .venv_docling/
+deepseek-ocr/DeepSeek-OCR-empty/

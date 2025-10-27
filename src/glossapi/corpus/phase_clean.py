@@ -363,7 +363,10 @@ class CleanPhaseMixin:
             progress.finalize()
 
         if return_code != 0:
-            raise RuntimeError("Rust cleaning pipeline failed")
+            # Do not abort the entire cleaning pass – proceed to evaluate gates
+            # using existing metrics on disk. If the Rust report is available,
+            # it will be merged below as usual.
+            self.logger.error("Rust cleaning pipeline failed (code=%s); proceeding with existing metrics", return_code)
 
         # ----- Parse metrics Parquet produced by Rust -----
         if report_parquet_path.exists():
@@ -611,16 +614,29 @@ class CleanPhaseMixin:
             if min_pages < 0:
                 min_pages = 0
 
-            mojibake_series = pd.to_numeric(df_final.get("mojibake_badness_score"), errors="coerce")
+            raw_moj = df_final.get("mojibake_badness_score")
+            if isinstance(raw_moj, pd.Series):
+                mojibake_series = pd.to_numeric(raw_moj, errors="coerce")
+            else:
+                mojibake_series = pd.Series(np.nan, index=df_final.index, dtype="float64")
             if mojibake_series.notna().any():
-                _append_reason(mojibake_series > 0.1, "mojibake>0.1", requires_ocr=True)
+                # Token policy: every OCR-trigger writes a filter tag.
+                # Mojibake threshold remains >0.1; tag renamed to ">0.1_mojibake".
+                _append_reason(mojibake_series > 0.1, ">0.1_mojibake", requires_ocr=True)
 
-            greek_series = pd.to_numeric(df_final.get("greek_badness_score"), errors="coerce")
+            raw_gr = df_final.get("greek_badness_score")
+            if isinstance(raw_gr, pd.Series):
+                greek_series = pd.to_numeric(raw_gr, errors="coerce")
+            else:
+                greek_series = pd.Series(np.nan, index=df_final.index, dtype="float64")
             if greek_series.notna().any():
-                _append_reason(greek_series > 60, "non_greek_text", requires_ocr=True)
+                # Greek script gate: keep threshold (>60) as-is.
+                # Rename token to "bad_greek" and explicitly trigger OCR.
+                _append_reason(greek_series > 60, "bad_greek", requires_ocr=True)
 
             if "char_count_no_comments" in df_final.columns:
-                char_series = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce").fillna(0)
+                # Preserve NaN to avoid treating unknown counts as zero
+                char_series = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce")
                 page_series_raw = df_final.get("page_count")
                 if page_series_raw is not None:
                     page_series = pd.to_numeric(page_series_raw, errors="coerce")
@@ -636,7 +652,8 @@ class CleanPhaseMixin:
                     zeros = int(zero_pdf.sum())
                     if zeros:
                         self.logger.info("Empty text check: %d files have zero characters", zeros)
-                    _append_reason(zero_pdf, "empty_text==0", requires_ocr=True)
+                    # Strict-empty safeguard: rename token to "is_empty" and trigger OCR.
+                    _append_reason(zero_pdf, "is_empty", requires_ocr=True)
                 elif empty_threshold_int > 0:
                     low_mask = char_series < empty_threshold_int
                     long_mask = page_series >= max(1, min_pages)
