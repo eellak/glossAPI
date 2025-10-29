@@ -44,6 +44,41 @@ class ExportPhaseMixin:
     ) -> Iterable[dict[str, Any]]:
         download_dir = self.output_dir / "download_results"
 
+        chunk_suffix_re = re.compile(r"__p\d{4}-\d{4}$")
+        page_range_re = re.compile(r"__p(\d+)-(\d+)")
+
+        def _strip_chunk_suffix(stem: str) -> str:
+            if not stem:
+                return stem
+            return chunk_suffix_re.sub("", stem)
+
+        def _strip_chunk_from_filename(value: str) -> str:
+            if not value:
+                return value
+            candidate = value.strip()
+            try:
+                path = Path(candidate)
+            except Exception:
+                path = None
+            if path is not None:
+                suffix = path.suffix
+                base = _strip_chunk_suffix(path.stem)
+                if suffix:
+                    return f"{base}{suffix}"
+                return base
+            return _strip_chunk_suffix(candidate)
+
+        def _chunk_sort_key(path: Path) -> tuple[int, int, str]:
+            match = page_range_re.search(path.stem)
+            if match:
+                try:
+                    start = int(match.group(1))
+                    end = int(match.group(2))
+                except Exception:
+                    start, end = sys.maxsize, sys.maxsize
+                return start, end, path.stem
+            return sys.maxsize, sys.maxsize, path.stem
+
         if metadata_path is not None:
             metadata_path = Path(metadata_path)
         else:
@@ -66,13 +101,22 @@ class ExportPhaseMixin:
 
         df["__stem__"] = df["filename"].astype(str).map(_stem_for)
         metadata_by_stem: dict[str, dict[str, Any]] = {}
+        metadata_is_chunk: dict[str, bool] = {}
         for _, row in df.iterrows():
             data = row.to_dict()
             stem = str(data.pop("__stem__", ""))
-            if stem:
-                metadata_by_stem[stem] = data
+            if not stem:
+                continue
+            base_stem = _strip_chunk_suffix(stem)
+            key = base_stem or stem
+            is_chunk = bool(chunk_suffix_re.search(stem))
+            existing_is_chunk = metadata_is_chunk.get(key)
+            if key not in metadata_by_stem or (existing_is_chunk and not is_chunk):
+                metadata_by_stem[key] = data
+                metadata_is_chunk[key] = is_chunk
 
         source_metadata_by_stem: dict[str, dict[str, Any]] = {}
+        source_metadata_is_chunk: dict[str, bool] = {}
         source_fields_order: Optional[List[str]] = None
         if source_metadata_key:
             assert source_metadata_path is not None  # guarded upstream
@@ -93,10 +137,51 @@ class ExportPhaseMixin:
                 if not isinstance(filename_raw, str) or not filename_raw.strip():
                     continue
                 stem = canonical_stem(str(filename_raw))
-                if stem:
-                    source_metadata_by_stem[stem] = data
+                if not stem:
+                    continue
+                base_stem = _strip_chunk_suffix(stem)
+                key = base_stem or stem
+                is_chunk = bool(chunk_suffix_re.search(stem))
+                existing_is_chunk = source_metadata_is_chunk.get(key)
+                if key not in source_metadata_by_stem or (existing_is_chunk and not is_chunk):
+                    source_metadata_by_stem[key] = data
+                    source_metadata_is_chunk[key] = is_chunk
 
-        markdown_root = self.cleaned_markdown_dir if any(self.cleaned_markdown_dir.glob("*.md")) else self.markdown_dir
+        markdown_root = self.cleaned_markdown_dir
+        chunks_root = markdown_root / "chunks"
+        if not markdown_root.exists():
+            markdown_root = self.markdown_dir
+            chunks_root = markdown_root / "chunks"
+        else:
+            has_root_markdown = any(markdown_root.glob("*.md"))
+            has_chunk_markdown = chunks_root.exists() and any(chunks_root.rglob("*.md"))
+            if not has_root_markdown and not has_chunk_markdown:
+                markdown_root = self.markdown_dir
+                chunks_root = markdown_root / "chunks"
+
+        document_entries: dict[str, dict[str, Any]] = {}
+
+        def _document_entry(key: str) -> dict[str, Any]:
+            return document_entries.setdefault(key, {"base_path": None, "chunk_paths": []})
+
+        for md_path in sorted(markdown_root.glob("*.md")):
+            stem = canonical_stem(md_path)
+            if not stem:
+                continue
+            base_stem = _strip_chunk_suffix(stem)
+            key = base_stem or stem
+            entry = _document_entry(key)
+            entry["base_path"] = md_path
+
+        if chunks_root.exists():
+            for chunk_path in sorted(chunks_root.rglob("*.md")):
+                stem = canonical_stem(chunk_path)
+                if not stem:
+                    continue
+                base_stem = _strip_chunk_suffix(stem)
+                key = base_stem or stem
+                entry = _document_entry(key)
+                entry.setdefault("chunk_paths", []).append(chunk_path)
 
         def _load_metrics(stem: str) -> tuple[Optional[int], Optional[int], Optional[int]]:
             metrics_dir = self.output_dir / "json" / "metrics"
@@ -176,35 +261,53 @@ class ExportPhaseMixin:
             metadata_fields_order = [str(field) for field in metadata_fields]
             metadata_fields_filter = set(metadata_fields_order)
 
-        for md_path in sorted(markdown_root.glob("*.md")):
-            stem = canonical_stem(md_path)
+        for stem in sorted(document_entries):
+            entry = document_entries[stem]
+            chunk_paths: List[Path] = entry.get("chunk_paths", []) or []
+            base_path: Optional[Path] = entry.get("base_path")
+            representative_path: Optional[Path] = base_path
+            if representative_path is None and chunk_paths:
+                representative_path = sorted(chunk_paths, key=_chunk_sort_key)[0]
             metadata = metadata_by_stem.get(stem)
             if metadata is None:
                 continue
             metadata = {k: _normalize_value(v) for k, v in metadata.items()}
             original_filename_value = metadata.get("filename")
-            document_text = md_path.read_text(encoding="utf-8")
+            if chunk_paths:
+                ordered_chunks = sorted(chunk_paths, key=_chunk_sort_key)
+                parts: List[str] = []
+                for path in ordered_chunks:
+                    parts.append(path.read_text(encoding="utf-8"))
+                document_text = "\n".join(parts)
+            elif representative_path is not None:
+                document_text = representative_path.read_text(encoding="utf-8")
+            else:
+                continue
 
             filetype = metadata.get("filetype") or metadata.get("file_ext")
             if not filetype:
-                filename_value = metadata.get("filename")
-                if isinstance(filename_value, str):
-                    filetype = Path(filename_value).suffix.lstrip(".")
+                filename_candidate = original_filename_value or metadata.get("filename")
+                if isinstance(filename_candidate, str):
+                    filetype = Path(filename_candidate).suffix.lstrip(".")
             metadata["filetype"] = filetype or None
 
             filename_value = metadata.get("filename")
             filename_base: Optional[str] = None
             if isinstance(filename_value, str) and filename_value.strip():
-                filename_base = Path(filename_value).stem
+                filename_base = _strip_chunk_suffix(Path(filename_value).stem)
+            if not filename_base and representative_path is not None:
+                filename_base = _strip_chunk_suffix(representative_path.stem)
             if not filename_base:
-                filename_base = Path(md_path).stem
+                filename_base = stem
             metadata["filename"] = filename_base
 
             filename_label = None
             if isinstance(original_filename_value, str) and original_filename_value.strip():
-                filename_label = original_filename_value.strip()
+                filename_label = _strip_chunk_from_filename(original_filename_value)
+            if not filename_label and representative_path is not None:
+                filename_label = _strip_chunk_from_filename(representative_path.name)
             if not filename_label:
-                filename_label = md_path.name
+                filename_label = stem
             doc_id = hashlib.sha256(filename_label.encode("utf-8")).hexdigest()
             metadata["doc_id"] = doc_id
 
@@ -252,31 +355,33 @@ class ExportPhaseMixin:
 
             if source_metadata_key:
                 source_entry = source_metadata_by_stem.get(stem)
-                filename_label = original_filename_value or metadata.get("filename") or md_path.name
+                fallback_name = representative_path.name if representative_path is not None else stem
+                source_lookup_label = original_filename_value or metadata.get("filename") or fallback_name
+                source_lookup_label = _strip_chunk_from_filename(str(source_lookup_label))
                 if source_entry is None:
-                    raise KeyError(f"Missing source metadata for filename '{filename_label}'")
+                    raise KeyError(f"Missing source metadata for filename '{source_lookup_label}'")
                 assert source_fields_order is not None
                 filtered_source: dict[str, Any] = {}
                 for key in source_fields_order:
                     if key not in source_entry:
-                        raise KeyError(f"Missing source metadata column '{key}' for filename '{filename_label}'")
+                        raise KeyError(f"Missing source metadata column '{key}' for filename '{source_lookup_label}'")
                     raw_value = source_entry[key]
                     if pd.isna(raw_value):
                         raise ValueError(
-                            f"Source metadata field '{key}' has no value for filename '{filename_label}'. "
+                            f"Source metadata field '{key}' has no value for filename '{source_lookup_label}'. "
                             "Use 'NA' explicitly if the value is unavailable."
                         )
                     if isinstance(raw_value, str):
                         if not raw_value.strip():
                             raise ValueError(
-                                f"Source metadata field '{key}' is blank for filename '{filename_label}'. "
+                                f"Source metadata field '{key}' is blank for filename '{source_lookup_label}'. "
                                 "Use 'NA' explicitly if the value is unavailable."
                             )
                     filtered_source[key] = _normalize_value(raw_value)
                 for key, value in filtered_source.items():
                     if value is None:
                         raise ValueError(
-                            f"Source metadata field '{key}' resolved to null for filename '{filename_label}'. "
+                            f"Source metadata field '{key}' resolved to null for filename '{source_lookup_label}'. "
                             "Use 'NA' explicitly if the value is unavailable."
                         )
                 record[source_metadata_key] = filtered_source
