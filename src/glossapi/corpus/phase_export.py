@@ -101,7 +101,7 @@ class ExportPhaseMixin:
 
         df["__stem__"] = df["filename"].astype(str).map(_stem_for)
         metadata_by_stem: dict[str, dict[str, Any]] = {}
-        metadata_is_chunk: dict[str, bool] = {}
+        metadata_chunks_by_stem: dict[str, List[dict[str, Any]]] = {}
         for _, row in df.iterrows():
             data = row.to_dict()
             stem = str(data.pop("__stem__", ""))
@@ -110,10 +110,215 @@ class ExportPhaseMixin:
             base_stem = _strip_chunk_suffix(stem)
             key = base_stem or stem
             is_chunk = bool(chunk_suffix_re.search(stem))
-            existing_is_chunk = metadata_is_chunk.get(key)
-            if key not in metadata_by_stem or (existing_is_chunk and not is_chunk):
+            if is_chunk:
+                metadata_chunks_by_stem.setdefault(key, []).append(data)
+            else:
                 metadata_by_stem[key] = data
-                metadata_is_chunk[key] = is_chunk
+
+        def _coerce_float(value: Any) -> Optional[float]:
+            if value is None:
+                return None
+            try:
+                if pd.isna(value):
+                    return None
+            except Exception:
+                pass
+            if isinstance(value, (bool, np.bool_)):
+                return float(bool(value))
+            if isinstance(value, (int, float, np.integer, np.floating)):
+                try:
+                    numeric = float(value)
+                except Exception:
+                    return None
+                if math.isnan(numeric):
+                    return None
+                return numeric
+            if isinstance(value, str):
+                stripped = value.strip()
+                if not stripped:
+                    return None
+                try:
+                    numeric = float(stripped)
+                except Exception:
+                    return None
+                if math.isnan(numeric):
+                    return None
+                return numeric
+            try:
+                numeric = float(value)
+            except Exception:
+                return None
+            if math.isnan(numeric):
+                return None
+            return numeric
+
+        def _coerce_bool(value: Any) -> Optional[bool]:
+            if value is None:
+                return None
+            try:
+                if pd.isna(value):
+                    return None
+            except Exception:
+                pass
+            if isinstance(value, (bool, np.bool_)):
+                return bool(value)
+            if isinstance(value, (int, np.integer)):
+                return bool(int(value))
+            if isinstance(value, (float, np.floating)):
+                numeric = float(value)
+                if math.isnan(numeric):
+                    return None
+                return bool(numeric)
+            if isinstance(value, str):
+                lowered = value.strip().lower()
+                if lowered in {"", "na", "none"}:
+                    return None
+                if lowered in {"true", "1", "yes", "y"}:
+                    return True
+                if lowered in {"false", "0", "no", "n"}:
+                    return False
+            return bool(value)
+
+        def _aggregate_metadata(stem: str, base_metadata: Optional[dict[str, Any]], chunk_metadatas: List[dict[str, Any]]) -> dict[str, Any]:
+            normalized_base = {k: _normalize_value(v) for k, v in (base_metadata or {}).items()}
+            if not chunk_metadatas:
+                return normalized_base
+
+            normalized_chunks: List[dict[str, Any]] = []
+            for entry in chunk_metadatas:
+                normalized_chunks.append({k: _normalize_value(v) for k, v in entry.items()})
+
+            def _chunk_entry_sort_key(entry: dict[str, Any]) -> tuple[int, int, str]:
+                filename_value = entry.get("filename") or ""
+                try:
+                    path = Path(str(filename_value))
+                except Exception:
+                    path = Path(stem)
+                return _chunk_sort_key(path)
+
+            normalized_chunks.sort(key=_chunk_entry_sort_key)
+
+            weights: List[float] = []
+            for entry in normalized_chunks:
+                weight = _coerce_float(entry.get("char_count_no_comments"))
+                weights.append(weight if weight is not None and weight > 0 else 0.0)
+
+            total_weight = sum(weights)
+
+            combined: dict[str, Any] = dict(normalized_base)
+
+            def _weighted_average(field: str) -> Optional[float]:
+                numerator = 0.0
+                weight_sum = 0.0
+                fallback: List[float] = []
+                for idx, entry in enumerate(normalized_chunks):
+                    value = _coerce_float(entry.get(field))
+                    if value is None:
+                        continue
+                    fallback.append(value)
+                    weight = weights[idx]
+                    if weight > 0:
+                        numerator += value * weight
+                        weight_sum += weight
+                if weight_sum > 0:
+                    return numerator / weight_sum
+                if fallback:
+                    return float(sum(fallback) / len(fallback))
+                return None
+
+            base_char_total = _coerce_float(normalized_base.get("char_count_no_comments"))
+            char_total = total_weight if total_weight > 0 else base_char_total
+            if char_total and char_total > 0:
+                rounded_total = round(char_total)
+                if abs(char_total - rounded_total) < 0.5:
+                    combined["char_count_no_comments"] = int(rounded_total)
+                else:
+                    combined["char_count_no_comments"] = char_total
+
+            weighted_fields = (
+                "mojibake_badness_score",
+                "greek_badness_score",
+                "latin_percentage",
+                "percentage_greek",
+                "polytonic_ratio",
+            )
+            rounding_precision = {
+                "mojibake_badness_score": 6,
+                "greek_badness_score": 3,
+                "latin_percentage": 3,
+                "percentage_greek": 3,
+                "polytonic_ratio": 2,
+            }
+            for field in weighted_fields:
+                aggregated_value = _weighted_average(field)
+                if aggregated_value is not None:
+                    precision = rounding_precision.get(field)
+                    if precision is not None:
+                        aggregated_value = round(float(aggregated_value), precision)
+                    combined[field] = aggregated_value
+
+            base_needs_ocr = _coerce_bool(normalized_base.get("needs_ocr")) or False
+            chunk_needs_ocr = any(bool(_coerce_bool(entry.get("needs_ocr"))) for entry in normalized_chunks)
+            combined["needs_ocr"] = bool(base_needs_ocr or chunk_needs_ocr)
+
+            base_is_empty = _coerce_bool(normalized_base.get("is_empty")) or False
+            chunk_is_empty = any(bool(_coerce_bool(entry.get("is_empty"))) for entry in normalized_chunks)
+            combined["is_empty"] = bool(base_is_empty or chunk_is_empty)
+
+            language_value = normalized_base.get("language")
+            if not language_value:
+                for entry in normalized_chunks:
+                    candidate = entry.get("language")
+                    if candidate:
+                        language_value = candidate
+                        break
+            if language_value:
+                combined["language"] = language_value
+
+            seen_filters: Set[str] = set()
+            filter_tokens: List[str] = []
+            saw_ok = False
+
+            def _append_filters(value: Any) -> None:
+                nonlocal saw_ok
+                if not isinstance(value, str):
+                    return
+                for token in value.split(";"):
+                    token = token.strip()
+                    if not token:
+                        continue
+                    if token == "ok":
+                        saw_ok = True
+                        continue
+                    if token not in seen_filters:
+                        seen_filters.add(token)
+                        filter_tokens.append(token)
+
+            _append_filters(normalized_base.get("filter"))
+            for entry in normalized_chunks:
+                _append_filters(entry.get("filter"))
+
+            if chunk_needs_ocr and "chunk_needs_ocr" not in seen_filters:
+                seen_filters.add("chunk_needs_ocr")
+                filter_tokens.append("chunk_needs_ocr")
+
+            if filter_tokens:
+                combined["filter"] = ";".join(filter_tokens)
+            else:
+                combined["filter"] = "ok" if saw_ok or not combined.get("filter") else combined.get("filter")
+
+            if not combined.get("filename"):
+                fallback_filename: Optional[str] = normalized_base.get("filename")
+                if not fallback_filename:
+                    for entry in normalized_chunks:
+                        candidate = entry.get("filename")
+                        if candidate:
+                            fallback_filename = candidate
+                            break
+                if fallback_filename:
+                    combined["filename"] = fallback_filename
+
+            return combined
 
         source_metadata_by_stem: dict[str, dict[str, Any]] = {}
         source_metadata_is_chunk: dict[str, bool] = {}
@@ -268,9 +473,11 @@ class ExportPhaseMixin:
             representative_path: Optional[Path] = base_path
             if representative_path is None and chunk_paths:
                 representative_path = sorted(chunk_paths, key=_chunk_sort_key)[0]
-            metadata = metadata_by_stem.get(stem)
-            if metadata is None:
+            base_metadata = metadata_by_stem.get(stem)
+            chunk_metadata = metadata_chunks_by_stem.get(stem, [])
+            if base_metadata is None and not chunk_metadata:
                 continue
+            metadata = _aggregate_metadata(stem, base_metadata, chunk_metadata)
             metadata = {k: _normalize_value(v) for k, v in metadata.items()}
             original_filename_value = metadata.get("filename")
             if chunk_paths:
