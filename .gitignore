@@ -68,7 +68,11 @@ glossapi_noise_analysis_report.md
 
 # private plans & reviews (not published)
 plans_reviews/
-\n# Local virtual environments
+
+# Local virtual environments
 glossapi_venv/
+glossapi_vanilla_venv/
+deepseek_venv/
+dependency_setup/.venvs/
 .venv_docling/
 deepseek-ocr/DeepSeek-OCR-empty/
