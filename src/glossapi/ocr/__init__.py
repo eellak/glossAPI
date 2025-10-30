@@ -8,15 +8,28 @@ does not require GPU stacks or model weights.
 
 from __future__ import annotations
 
-# Re-export runner entry points without importing heavy stacks at module import
+import importlib
 
-__all__ = ["deepseek_runner", "rapidocr_dispatch"]
+__all__ = [
+    "deepseek",
+    "rapidocr",
+    "math",
+    "utils",
+    "deepseek_runner",
+    "rapidocr_dispatch",
+]
+
+_SUBPACKAGES = {"deepseek", "rapidocr", "math", "utils"}
+_ALIASES = {
+    "deepseek_runner": "glossapi.ocr.deepseek.runner",
+    "rapidocr_dispatch": "glossapi.ocr.rapidocr.dispatch",
+}
 
 
 def __getattr__(name: str):
-    # Lazy import submodules when accessed as attributes
-    if name in ("deepseek_runner", "rapidocr_dispatch"):
-        import importlib
-
+    if name in _SUBPACKAGES:
         return importlib.import_module(f"glossapi.ocr.{name}")
+    target = _ALIASES.get(name)
+    if target:
+        return importlib.import_module(target)
     raise AttributeError(name)

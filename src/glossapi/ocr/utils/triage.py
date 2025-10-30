@@ -8,8 +8,8 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-from ._naming import canonical_stem
-from .parquet_schema import ParquetSchema
+from glossapi._naming import canonical_stem
+from glossapi.parquet_schema import ParquetSchema
 
 
 def summarize_math_density_from_metrics(per_page_path: Path) -> dict[str, Any]:
@@ -121,6 +121,7 @@ __all__ = [
     "summarize_math_density_from_metrics",
     "recommend_phase",
     "update_download_results_parquet",
+    "update_math_enrich_results",
 ]
 
 def update_math_enrich_results(parquet_path: Path, stem: str, *, items: int, accepted: int, time_sec: float) -> None:

@@ -106,7 +106,8 @@ def _ensure_docling_pipeline_loaded() -> None:
 from docling.pipeline.simple_pipeline import SimplePipeline
 # Ensure RapidOCR plugin is registered for factory-based OCR construction
 import docling.models.rapid_ocr_model  # noqa: F401
-from ._rapidocr_paths import resolve_packaged_onnx_and_keys
+from .ocr.rapidocr._paths import resolve_packaged_onnx_and_keys
+from .ocr.rapidocr.pool import GLOBAL_RAPID_OCR_POOL
 import inspect
 
 import ftfy
@@ -325,6 +326,40 @@ class GlossExtract:
             pass
         self._thread_caps_applied = True
 
+    def release_resources(self) -> None:
+        """Release Docling converters, pooled RapidOCR engines, and GPU caches."""
+        try:
+            self.converter = None
+        except Exception:
+            pass
+        for attr in (
+            "_active_pdf_options",
+            "_active_pdf_backend",
+            "_current_ocr_enabled",
+            "_last_extractor_cfg",
+        ):
+            try:
+                setattr(self, attr, None)
+            except Exception:
+                pass
+        try:
+            GLOBAL_RAPID_OCR_POOL.clear()
+        except Exception:
+            pass
+        torch_mod = _maybe_import_torch()
+        if torch_mod is not None and getattr(torch_mod, "cuda", None):
+            try:
+                if torch_mod.cuda.is_available():
+                    torch_mod.cuda.empty_cache()
+            except Exception:
+                pass
+            try:
+                ipc_collect = getattr(torch_mod.cuda, "ipc_collect", None)
+                if callable(ipc_collect):
+                    ipc_collect()
+            except Exception:
+                pass
+
     def _supports_native_timeout(self) -> str | None:
         """Return the timeout kwarg name if supported by Docling, else None."""
         try:
@@ -519,7 +554,7 @@ class GlossExtract:
     ):
         """Create a document converter with configured options using the canonical builder.
 
-        Delegates PDF pipeline construction to `glossapi._pipeline.build_rapidocr_pipeline`
+        Delegates PDF pipeline construction to `glossapi.ocr.rapidocr.pipeline.build_rapidocr_pipeline`
         to avoid duplicated provider checks and option wiring. Falls back to the legacy
         inline path if the canonical builder is unavailable.
         """
@@ -554,10 +589,15 @@ class GlossExtract:
         opts = None
         active_backend = DoclingParseV2DocumentBackend
         try:
+            from .ocr.rapidocr.pipeline import build_layout_pipeline, build_rapidocr_pipeline  # type: ignore
+        except Exception:  # pragma: no cover - adapter fallback
             from ._pipeline import build_layout_pipeline, build_rapidocr_pipeline  # type: ignore
-            device_str = self._current_device_str() or "cuda:0"
-            builder = build_rapidocr_pipeline if enable_ocr else build_layout_pipeline
-            engine, opts = builder(
+
+        device_str = self._current_device_str() or "cuda:0"
+        builder = build_rapidocr_pipeline if enable_ocr else build_layout_pipeline
+
+        try:
+            _, opts = builder(
                 device=device_str,
                 images_scale=float(images_scale),
                 formula_enrichment=bool(formula_enrichment),
@@ -1770,9 +1810,9 @@ class GlossExtract:
     def _export_docling_json_with_meta(self, conv_res: ConversionResult, output_dir: Path, stem: str) -> None:
         """Export DoclingDocument JSON (compressed) with metadata stamping for Phase-1."""
         try:
-            from .json_io import export_docling_json, _sha256_file  # type: ignore
+            from .ocr.utils.json_io import export_docling_json, _sha256_file  # type: ignore
         except Exception:
-            self._log.warning("glossapi.json_io not available; skipping JSON export")
+            self._log.warning("glossapi.ocr.utils.json_io not available; skipping JSON export")
             return
         try:
             # Attempt to resolve the original file path for hashing
@@ -1814,7 +1854,7 @@ class GlossExtract:
                 pages = []
             # Compute sha256 of source PDF if available
             try:
-                from .json_io import _sha256_file  # type: ignore
+                from .ocr.utils.json_io import _sha256_file  # type: ignore
                 from pathlib import Path as _Path
                 pdf_path = _Path(getattr(getattr(conv_res, 'input', None), 'file', ''))
                 sha256_pdf = _sha256_file(pdf_path) if (pdf_path and pdf_path.exists()) else ""

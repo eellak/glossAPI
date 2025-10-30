@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import glossapi.corpus as corpus_mod
-import glossapi.math_enrich as math_enrich_mod
+import glossapi.ocr.math as math_enrich_mod
 from glossapi import Corpus
 import pandas as pd
 
@@ -78,7 +78,7 @@ def test_math_skip_completed(tmp_path, monkeypatch):
         return {"items": 1, "accepted": 1, "time_sec": 0.0}
 
     monkeypatch.setattr(corpus_mod, "enrich_from_docling_json", fake_enrich, raising=False)
-    monkeypatch.setattr(math_enrich_mod, "enrich_from_docling_json", fake_enrich, raising=False)
+    monkeypatch.setitem(math_enrich_mod.__dict__, "enrich_from_docling_json", fake_enrich)
     assert corpus_mod.enrich_from_docling_json is fake_enrich
 
     monkeypatch.setattr(Corpus, "clean", lambda self, *a, **k: None, raising=False)

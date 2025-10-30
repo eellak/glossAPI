@@ -28,7 +28,7 @@ def test_deepseek_backend_stub_runs_and_updates_parquet(tmp_path, monkeypatch):
     (corpus.input_dir / fname).write_bytes(b"%PDF-1.4\n%stub\n")
 
     # Monkeypatch the runner internal to avoid heavy imports
-    import glossapi.ocr.deepseek_runner as runner
+    from glossapi.ocr.deepseek import runner
 
     def fake_run_one(pdf_path, md_out, metrics_out, cfg):
         md_out.parent.mkdir(parents=True, exist_ok=True)
@@ -57,4 +57,3 @@ def test_deepseek_backend_stub_runs_and_updates_parquet(tmp_path, monkeypatch):
     # extraction_mode is optional; if present assert value
     if "extraction_mode" in updated.columns:
         assert updated.loc[fname, "extraction_mode"] == "deepseek"
-

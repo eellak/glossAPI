@@ -29,7 +29,7 @@ def test_cross_backend_smoke_with_stubs(tmp_path, monkeypatch):
     df.to_parquet(parquet_path, index=False)
 
     # DeepSeek stub for OCR
-    import glossapi.ocr.deepseek_runner as runner
+    from glossapi.ocr.deepseek import runner
 
     def fake_run_for_files(self_ref, files, **kwargs):
         for f in files:
@@ -64,4 +64,3 @@ def test_cross_backend_smoke_with_stubs(tmp_path, monkeypatch):
     updated = pd.read_parquet(parquet_path).set_index("filename")
     assert bool(updated.loc["needs.pdf", "ocr_success"]) is True
     assert captured.get("files") == ["clean"], "Math-only should run for non-OCR stem only"
-

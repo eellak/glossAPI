@@ -37,14 +37,35 @@ PY
   with `samples/lightweight_pdf_corpus/expected_outputs.json` for a fast smoke check.
 - Rebuild the corpus anytime with `python samples/lightweight_pdf_corpus/generate_pdfs.py`.
 
+## Automated Environment Profiles
+
+Use `dependency_setup/setup_glossapi.sh` to provision a virtualenv with the right dependency stack for the three supported modes:
+
+```bash
+# Vanilla pipeline (no GPU OCR extras)
+./dependency_setup/setup_glossapi.sh --mode vanilla --venv dependency_setup/.venvs/vanilla --run-tests
+
+# Docling + RapidOCR mode
+./dependency_setup/setup_glossapi.sh --mode rapidocr --venv dependency_setup/.venvs/rapidocr --run-tests
+
+# DeepSeek OCR mode (requires weights under /path/to/deepseek-ocr/DeepSeek-OCR)
+./dependency_setup/setup_glossapi.sh \
+  --mode deepseek \
+  --venv dependency_setup/.venvs/deepseek \
+  --weights-dir /path/to/deepseek-ocr \
+  --run-tests --smoke-test
+```
+
+Pass `--download-deepseek` if you need the script to fetch weights automatically; otherwise it looks for `${REPO_ROOT}/deepseek-ocr/DeepSeek-OCR` unless you override `--weights-dir`. Check `dependency_setup/dependency_notes.md` for the latest pins, caveats, and validation history. The script also installs the Rust extensions in editable mode so local changes are picked up immediately.
+
 ## Choose Your Install Path
 
 | Scenario | Commands | Notes |
 | --- | --- | --- |
-| Pip users | `pip install glossapi` | Quick evaluation; GPU extras optional. |
-| Local development | `pip install -e .` after cloning | Builds Rust extensions automatically. |
-| Conda-based stacks | `scripts/setup_conda.sh` | Provisions Python 3.10 env + Rust + editable install. |
-| GPU acceleration | `pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1` | Optional Docling layout + math enrichment boost. |
+| Pip users | `pip install glossapi` | Fast vanilla evaluation with minimal dependencies. |
+| Mode automation (recommended) | `./dependency_setup/setup_glossapi.sh --mode {vanilla\|rapidocr\|deepseek}` | Creates an isolated venv per mode, installs Rust crates, and can run the relevant pytest subset. |
+| Manual editable install | `pip install -e .` after cloning | Keep this if you prefer to manage dependencies by hand. |
+| Conda-based stacks | `scripts/setup_conda.sh` | Provisions Python 3.10 env + Rust + editable install for Amazon Linux/SageMaker. |
 
 See the refreshed docs (`docs/index.md`) for detailed environment notes, CUDA/ORT combinations, and troubleshooting tips.
 

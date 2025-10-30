@@ -190,3 +190,122 @@ def canonicalize_markdown(text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
+
+# --- Early termination guards (lightweight O(n) scans) ---
+
+def _detect_repeated_char_cut(text: str, *, threshold: int = 200) -> Optional[int]:
+    """Return the index at which to cut if any single character repeats >= threshold.
+
+    The returned index is at the start of the offending run (exclusive of the run).
+    Runs reset across newlines. Complexity: O(n) time, O(1) space.
+    """
+    if threshold <= 1:
+        return 0
+    last_char: Optional[str] = None
+    run_len = 0
+    run_start = 0
+    for i, ch in enumerate(text):
+        if ch == "\n":
+            last_char = None
+            run_len = 0
+            continue
+        if ch == last_char:
+            run_len += 1
+            if run_len >= threshold:
+                # Keep up to `threshold` repeated characters, cut after that
+                return run_start + threshold
+        else:
+            last_char = ch
+            run_len = 1
+            run_start = i
+    return None
+
+
+def _detect_repeated_lines_cut(text: str, *, threshold: int = 10) -> Optional[int]:
+    """Return the index at which to cut if the same line repeats >= threshold times.
+
+    Comparison uses ``strip()`` normalization. The cut position is at the start of
+    the repeated run (the first repetition). Complexity: O(n) time, O(1) space.
+    """
+    if threshold <= 1:
+        return 0
+    prev_norm: Optional[str] = None
+    prev_start: int = 0
+    run_count: int = 0
+    run_start_idx: Optional[int] = None
+    i = 0
+    n = len(text)
+    while i <= n:
+        # Find end of current line (or end of text)
+        j = i
+        while j < n and text[j] != "\n":
+            j += 1
+        line = text[i:j]
+        norm = line.strip()
+        if prev_norm is not None and norm == prev_norm:
+            if run_count == 1:
+                # Start of repetition run spans from previous line start
+                run_start_idx = prev_start
+            run_count += 1
+            # Allow the first `threshold` identical lines, cut at the start of the (threshold+1)-th
+            if run_count > threshold:
+                return i
+        else:
+            prev_norm = norm
+            prev_start = i
+            run_count = 1
+            run_start_idx = None
+        # Advance to next line (skip newline char if present)
+        i = j + 1
+    return None
+
+
+def detect_early_stop_index(
+    text: str,
+    *,
+    line_repeat_threshold: int = 10,
+    char_repeat_threshold: int = 200,
+) -> Optional[int]:
+    """Find earliest cut index based on repetition heuristics.
+
+    Returns the smallest index where content should be cut to avoid degenerate
+    loops. If no condition triggers, returns ``None``.
+    """
+    idx_char = _detect_repeated_char_cut(text, threshold=char_repeat_threshold)
+    idx_line = _detect_repeated_lines_cut(text, threshold=line_repeat_threshold)
+    if idx_char is None:
+        return idx_line
+    if idx_line is None:
+        return idx_char
+    return min(idx_char, idx_line)
+
+
+def apply_early_stop(
+    text: str,
+    *,
+    content_debug: bool = False,
+    line_repeat_threshold: int = 10,
+    char_repeat_threshold: int = 200,
+    metrics: Optional[dict] = None,
+) -> str:
+    """Apply early termination heuristics to ``text`` and optionally append notice.
+
+    - Cuts when a single character repeats ``char_repeat_threshold`` times.
+    - Cuts when the same line repeats ``line_repeat_threshold`` times.
+    - Appends a debug marker only when ``content_debug`` is True.
+    Complexity: O(n).
+    """
+    cut = detect_early_stop_index(
+        text,
+        line_repeat_threshold=line_repeat_threshold,
+        char_repeat_threshold=char_repeat_threshold,
+    )
+    if cut is None:
+        return text
+    if metrics is not None:
+        metrics["early_stops"] = metrics.get("early_stops", 0) + 1
+    truncated = text[:cut].rstrip()
+    if content_debug:
+        notice = "[[Early stop: repetition detected]]"
+        return f"{truncated}\n\n{notice}" if truncated else notice
+    return truncated

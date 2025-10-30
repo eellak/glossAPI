@@ -20,7 +20,10 @@ import pandas as pd
 from .._naming import canonical_stem
 from ..gloss_downloader import GlossDownloader
 from ..gloss_section import GlossSection
-from ..gloss_section_classifier import GlossSectionClassifier
+try:
+    from ..gloss_section_classifier import GlossSectionClassifier  # type: ignore
+except Exception:
+    GlossSectionClassifier = None  # type: ignore[assignment]
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch
@@ -145,7 +148,10 @@ class Corpus(
         # Lazy-create extractor to avoid heavy imports unless needed
         self.extractor = None
         self.sectioner = GlossSection()
-        self.classifier = GlossSectionClassifier()
+        try:
+            self.classifier = GlossSectionClassifier() if GlossSectionClassifier is not None else None  # type: ignore[call-arg, assignment]
+        except Exception:
+            self.classifier = None
         
         self.output_dir = Path(output_dir)
         self.downloads_dir = self.output_dir / "downloads"
@@ -670,6 +676,17 @@ def gpu_extract_worker_queue(
         print(f"[GPU{device_id}] Fatal worker error: {exc}")
 
     _clear_current()
+
+    try:
+        extractor = getattr(c, "extractor", None)
+        release = getattr(extractor, "release_resources", None)
+        if callable(release):
+            release()
+    except Exception as exc:
+        try:
+            print(f"[GPU{device_id}] Failed to release extractor resources: {exc}")
+        except Exception:
+            pass
 
     if result_q is not None:
         try:

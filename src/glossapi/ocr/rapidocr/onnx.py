@@ -19,7 +19,7 @@ def _build_pipeline(
     images_scale: Optional[float] = None,
 ):
     # Delegate to canonical builder to avoid duplication
-    from ._pipeline import build_rapidocr_pipeline
+    from glossapi.ocr.rapidocr.pipeline import build_rapidocr_pipeline
 
     engine, opts = build_rapidocr_pipeline(
         device=(device or "cuda:0"),

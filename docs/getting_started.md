@@ -10,6 +10,27 @@ This guide gets a new GlossAPI contributor from clone → first extraction with 
 
 ## Install GlossAPI
 
+### Recommended — mode-aware setup script
+
+Use `dependency_setup/setup_glossapi.sh` to build an isolated virtualenv with the correct dependency set for vanilla, RapidOCR, or DeepSeek runs. Examples:
+
+```bash
+# Vanilla pipeline (CPU-only OCR)
+./dependency_setup/setup_glossapi.sh --mode vanilla --venv dependency_setup/.venvs/vanilla --run-tests
+
+# RapidOCR GPU stack
+./dependency_setup/setup_glossapi.sh --mode rapidocr --venv dependency_setup/.venvs/rapidocr --run-tests
+
+# DeepSeek OCR on GPU (expects weights under /path/to/deepseek-ocr/DeepSeek-OCR)
+./dependency_setup/setup_glossapi.sh \
+  --mode deepseek \
+  --venv dependency_setup/.venvs/deepseek \
+  --weights-dir /path/to/deepseek-ocr \
+  --run-tests --smoke-test
+```
+
+Add `--download-deepseek` if you need the script to fetch weights via Hugging Face; otherwise it searches `${REPO_ROOT}/deepseek-ocr/DeepSeek-OCR` unless you override `--weights-dir`. Inspect `dependency_setup/dependency_notes.md` for the latest pins, caveats, and validation runs. The script installs GlossAPI and its Rust crates in editable mode so source changes are picked up immediately.
+
 ### Option 1 — pip (evaluate quickly)
 
 ```bash
@@ -43,20 +64,11 @@ The helper script provisions Python 3.10, installs Rust + `maturin`, performs an
 
 ## GPU prerequisites (optional but recommended)
 
-- Install ONNX Runtime GPU and make sure the CPU wheel is absent:
+`setup_glossapi.sh` pulls the right CUDA/Torch/ONNX wheels for the RapidOCR and DeepSeek profiles. If you are curating dependencies manually, make sure you:
 
-  ```bash
-  pip install onnxruntime-gpu==1.18.1
-  pip uninstall -y onnxruntime || true
-  ```
-
-- For Docling layout + math enrichment on GPU:
-
-  ```bash
-  pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1
-  ```
-
-- Verify the providers:
+- Install the GPU build of ONNX Runtime (`onnxruntime-gpu`) and uninstall the CPU wheel.
+- Select the PyTorch build that matches your driver/toolkit (the repository currently targets CUDA 12.8 for DeepSeek).
+- Verify the providers with:
 
   ```bash
   python -c "import onnxruntime as ort; print(ort.get_available_providers())"

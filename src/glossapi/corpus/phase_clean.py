@@ -20,8 +20,7 @@ import pandas as pd
 
 from .._naming import canonical_stem
 from ..gloss_downloader import GlossDownloader
-from ..gloss_section import GlossSection
-from ..gloss_section_classifier import GlossSectionClassifier
+# Avoid importing section/classifier here; cleaning phase does not use them.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch
@@ -512,6 +511,18 @@ class CleanPhaseMixin:
         # Determine good / bad list based on enriched metrics
         if parquet_path.exists():
             df_final = pd.read_parquet(parquet_path)
+            self._ensure_metric_columns(
+                df_final,
+                {
+                    "mojibake_badness_score": pd.NA,
+                    "mojibake_latin_percentage": pd.NA,
+                    "percentage_greek": pd.NA,
+                    "greek_badness_score": pd.NA,
+                    "greek_latin_percentage": pd.NA,
+                    "char_count_no_comments": pd.NA,
+                    "is_empty": pd.NA,
+                },
+            )
             # --- tidy schema ---
             df_final.rename(columns={
                 "badness_score": "mojibake_badness_score",
@@ -621,8 +632,8 @@ class CleanPhaseMixin:
                 mojibake_series = pd.Series(np.nan, index=df_final.index, dtype="float64")
             if mojibake_series.notna().any():
                 # Token policy: every OCR-trigger writes a filter tag.
-                # Mojibake threshold remains >0.1; tag renamed to ">0.1_mojibake".
-                _append_reason(mojibake_series > 0.1, ">0.1_mojibake", requires_ocr=True)
+                # Keep original label for compatibility with tests and downstream tools.
+                _append_reason(mojibake_series > 0.1, "mojibake>0.1", requires_ocr=True)
 
             raw_gr = df_final.get("greek_badness_score")
             if isinstance(raw_gr, pd.Series):
@@ -631,8 +642,8 @@ class CleanPhaseMixin:
                 greek_series = pd.Series(np.nan, index=df_final.index, dtype="float64")
             if greek_series.notna().any():
                 # Greek script gate: keep threshold (>60) as-is.
-                # Rename token to "bad_greek" and explicitly trigger OCR.
-                _append_reason(greek_series > 60, "bad_greek", requires_ocr=True)
+                # Use canonical token expected by tests and downstream tools.
+                _append_reason(greek_series > 60, "non_greek_text", requires_ocr=True)
 
             if "char_count_no_comments" in df_final.columns:
                 # Preserve NaN to avoid treating unknown counts as zero

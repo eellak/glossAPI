@@ -21,7 +21,7 @@ import pandas as pd
 from .._naming import canonical_stem
 from ..gloss_downloader import GlossDownloader
 from ..gloss_section import GlossSection
-from ..gloss_section_classifier import GlossSectionClassifier
+# Avoid importing classifier here; section phase does not require it at import time.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch

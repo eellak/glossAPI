@@ -10,6 +10,8 @@ revert to the vanilla ``RapidOcrModel``.
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Optional, Type
@@ -25,6 +27,8 @@ from docling.utils.profiling import TimeRecorder
 from docling_core.types.doc import BoundingBox, CoordOrigin
 from docling_core.types.doc.page import BoundingRectangle
 
+from ._paths import resolve_packaged_onnx_and_keys
+
 
 class SafeRapidOcrModel(_RapidOcrModel):
     """Drop-in RapidOCR wrapper that copes with ``None`` OCR results.
@@ -37,6 +41,8 @@ class SafeRapidOcrModel(_RapidOcrModel):
     """
 
     # NOTE: keep signature identical so StandardPdfPipeline can instantiate it.
+    _rapidocr_available: Optional[bool] = None
+
     def __init__(
         self,
         enabled: bool,
@@ -44,10 +50,21 @@ class SafeRapidOcrModel(_RapidOcrModel):
         options: RapidOcrOptions,
         accelerator_options,
     ):
-        if enabled:
-            try:
-                from ._rapidocr_paths import resolve_packaged_onnx_and_keys
+        rapidocr_available = self._rapidocr_available
+        if rapidocr_available is None:
+            rapidocr_available = bool(
+                importlib.util.find_spec("rapidocr") is not None or "rapidocr" in sys.modules
+            )
+            SafeRapidOcrModel._rapidocr_available = rapidocr_available
 
+        effective_enabled = bool(enabled and rapidocr_available)
+        if enabled and not rapidocr_available:
+            _log.warning(
+                "RapidOCR python package not found; continuing with Docling pipeline OCR disabled."
+            )
+
+        if effective_enabled:
+            try:
                 resolved = resolve_packaged_onnx_and_keys()
 
                 _log.warning(
@@ -105,7 +122,7 @@ class SafeRapidOcrModel(_RapidOcrModel):
                 )
 
         super().__init__(
-            enabled=enabled,
+            enabled=effective_enabled,
             artifacts_path=artifacts_path,
             options=options,
             accelerator_options=accelerator_options,

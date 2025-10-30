@@ -140,6 +140,7 @@ def _prepare_metadata_frame(df: pd.DataFrame) -> pd.DataFrame:
 def _parquet_lock(path: Path) -> Iterator[None]:
     """Serialize writers via file-based lock, falling back to atomic rename."""
 
+    path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
     if FileLock is not None:
         lock = FileLock(str(lock_path))

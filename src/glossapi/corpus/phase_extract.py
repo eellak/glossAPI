@@ -20,8 +20,7 @@ import pandas as pd
 
 from .._naming import canonical_stem
 from ..gloss_downloader import GlossDownloader
-from ..gloss_section import GlossSection
-from ..gloss_section_classifier import GlossSectionClassifier
+# Avoid importing section/classifier here; extract phase does not use them.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch as _maybe_import_torch_fallback
@@ -799,3 +798,9 @@ class ExtractPhaseMixin:
         os.makedirs(self.markdown_dir, exist_ok=True)
         self.extractor.extract_path(input_files, self.markdown_dir, skip_existing=skip_existing)
         self.logger.info(f"Extraction complete. Markdown files saved to {self.markdown_dir}")
+        try:
+            release = getattr(self.extractor, "release_resources", None)
+            if callable(release):
+                release()
+        except Exception as exc:
+            self.logger.debug("Extractor resource release failed: %s", exc)

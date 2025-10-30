@@ -1,0 +1,6 @@
+"""RapidOCR subpackage (shim)."""
+
+from __future__ import annotations
+
+__all__ = ["dispatch"]
+

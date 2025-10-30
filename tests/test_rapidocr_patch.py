@@ -243,7 +243,7 @@ def _make_safe_ocr() -> SimpleNamespace:
     """Return an instantiated SafeRapidOcrModel with stubbed dependencies."""
     rapid_opts = sys.modules['docling.datamodel.pipeline_options'].RapidOcrOptions()
     accel_opts = sys.modules['docling.datamodel.pipeline_options'].AcceleratorOptions(device='cuda:0')
-    from glossapi.rapidocr_safe import SafeRapidOcrModel
+    from glossapi.ocr.rapidocr.safe import SafeRapidOcrModel
 
     return SafeRapidOcrModel(enabled=True, artifacts_path=None, options=rapid_opts, accelerator_options=accel_opts)
 
@@ -266,7 +266,7 @@ def test_patch_runs_on_import():
 
     importlib.import_module('glossapi')
     rapid_module = sys.modules['docling.models.rapid_ocr_model']
-    from glossapi.rapidocr_safe import SafeRapidOcrModel, patch_docling_rapidocr
+    from glossapi.ocr.rapidocr.safe import SafeRapidOcrModel, patch_docling_rapidocr
 
     assert rapid_module.RapidOcrModel is SafeRapidOcrModel
 
@@ -279,7 +279,7 @@ def test_build_rapidocr_pipeline_injects_when_supported(monkeypatch):
     _install_onnxruntime_stub()
 
     glossapi_mod = importlib.import_module('glossapi')
-    pipeline = importlib.reload(importlib.import_module('glossapi._pipeline'))
+    pipeline = importlib.reload(importlib.import_module('glossapi.ocr.rapidocr.pipeline'))
 
     monkeypatch.setattr(
         pipeline,
@@ -310,7 +310,7 @@ def test_build_rapidocr_pipeline_falls_back_without_injection(monkeypatch):
     _install_onnxruntime_stub()
 
     importlib.import_module('glossapi')
-    pipeline = importlib.reload(importlib.import_module('glossapi._pipeline'))
+    pipeline = importlib.reload(importlib.import_module('glossapi.ocr.rapidocr.pipeline'))
 
     monkeypatch.setattr(
         pipeline,

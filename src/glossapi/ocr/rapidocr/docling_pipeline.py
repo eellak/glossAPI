@@ -33,8 +33,8 @@ from docling.document_converter import (
 )
 from docling.datamodel.settings import settings
 
-from ._rapidocr_paths import resolve_packaged_onnx_and_keys
-from .metrics import compute_per_page_metrics
+from glossapi.ocr.rapidocr._paths import resolve_packaged_onnx_and_keys
+from glossapi.metrics import compute_per_page_metrics
 # Ensure RapidOCR factory is registered (avoids masked errors in older paths)
 import docling.models.rapid_ocr_model  # noqa: F401
 
@@ -102,7 +102,7 @@ def build_pipeline(
 ) -> Tuple[object, PdfPipelineOptions]:
     # Delegate to canonical pipeline builder to avoid duplication
     try:
-        from ._pipeline import build_rapidocr_pipeline  # type: ignore
+        from glossapi.ocr.rapidocr.pipeline import build_rapidocr_pipeline  # type: ignore
     except Exception as _e:  # pragma: no cover
         # Backward-compat fallback: inline builder (kept minimal to satisfy tests)
         from docling.datamodel.pipeline_options import AcceleratorOptions, TableStructureOptions, TableFormerMode, LayoutOptions, PdfPipelineOptions, RapidOcrOptions  # type: ignore
@@ -313,7 +313,7 @@ def _export(conv: ConversionResult, out_dir: Path, *, normalize_output: bool) ->
     md_path.write_text(md, encoding="utf-8")
     # Export DoclingDocument JSON via helper (compressed by default)
     try:
-        from .json_io import export_docling_json  # type: ignore
+        from glossapi.ocr.utils.json_io import export_docling_json  # type: ignore
         # Attach minimal meta for provenance
         meta = {"source_pdf_relpath": str(p)}
         export_docling_json(doc, json_path, compress="zstd", meta=meta)  # type: ignore[arg-type]

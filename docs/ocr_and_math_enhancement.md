@@ -15,8 +15,17 @@ Policy: never OCR and math on the same file
 - If a file needs OCR, GlossAPI runs OCR only (no Phase‑2 on that file in the same pass).
 - If a file does not need OCR but needs math, GlossAPI runs math‑only from Docling JSON. The JSON is produced by Phase‑1 (Docling layout) and must already exist.
 
+### Python API layout
+
+- DeepSeek entry point: `glossapi.ocr.deepseek.runner.run_for_files(...)`
+- RapidOCR dispatcher: `glossapi.ocr.rapidocr.dispatch.run_via_extract(...)`
+- Math enrichment: `glossapi.ocr.math.enrich.enrich_from_docling_json(...)`
+- Utility helpers (Docling JSON / cleaning): `glossapi.ocr.utils.*`
+
 ## Prerequisites
 
+- RapidOCR/Docling stack: `pip install '.[rapidocr]'`
+- DeepSeek CLI stack (in a dedicated venv recommended): `pip install '.[deepseek]'`
 - ONNXRuntime GPU installed (no CPU ORT): `onnxruntime-gpu==1.18.1`
 - Torch CUDA installed: e.g., `torch==2.5.1+cu121`
 - Packaged RapidOCR models/keys found under `glossapi/models/rapidocr/{onnx,keys}` or via `GLOSSAPI_RAPIDOCR_ONNX_DIR`.

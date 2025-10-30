@@ -24,12 +24,6 @@ dependencies = [
     "ftfy>=6.0.0",
     "tenacity>=8.0.0",
     "tqdm>=4.67.0",
-    # Docling + RapidOCR ONNX stack (aligned with repro)
-    "docling==2.48.0",
-    # Use RapidOCR core package; avoid rapidocr_onnxruntime to prevent pip
-    # from auto-installing the CPU-only 'onnxruntime' wheel.
-    "rapidocr>=3.3.0",
-    "onnxruntime-gpu==1.18.1",
     "pyyaml>=6.0",
     # Math/JSON enrichment helpers
     "pypdfium2>=4.0.0",
@@ -44,6 +38,14 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+# Docling + RapidOCR ONNX stack (kept optional to preserve import-light installs)
+rapidocr = [
+    "docling==2.48.0",
+    # Use RapidOCR core package; avoid rapidocr_onnxruntime to prevent pip
+    # from auto-installing the CPU-only 'onnxruntime' wheel.
+    "rapidocr>=3.3.0",
+    "onnxruntime-gpu==1.18.1",
+]
 # Optional CUDA layout acceleration (Docling)
 cuda = [
     "torch==2.5.1",
@@ -74,4 +76,10 @@ manifest-path = "rust/glossapi_rs_noise/Cargo.toml"
 include = ["src/**"]
 python-packages = [
     "glossapi"
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "rapidocr: requires the RapidOCR/Docling execution stack",
+    "deepseek: exercises the DeepSeek OCR pipeline",
 ]

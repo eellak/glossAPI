@@ -1,0 +1,6 @@
+"""Math enrichment subpackage (shim)."""
+
+from __future__ import annotations
+
+__all__ = ["enrich"]
+

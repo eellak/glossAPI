@@ -29,7 +29,7 @@ def test_deepseek_backend_ignores_math_flags_and_runs_ocr_only(tmp_path, monkeyp
     (corpus.input_dir / fname).write_bytes(b"%PDF-1.4\n%stub\n")
 
     # Capture deepseek runner calls and assert math is not invoked
-    import glossapi.ocr.deepseek_runner as runner
+    from glossapi.ocr.deepseek import runner
 
     calls = {}
 

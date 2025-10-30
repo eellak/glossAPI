@@ -21,7 +21,7 @@ import pandas as pd
 from .._naming import canonical_stem
 from ..gloss_downloader import GlossDownloader
 from ..gloss_section import GlossSection
-from ..gloss_section_classifier import GlossSectionClassifier
+# Avoid importing classifier here; OCR/math phase does not require it at import time.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch
@@ -566,9 +566,9 @@ class OcrMathPhaseMixin:
         if mode_norm in {"ocr_bad", "ocr_bad_then_math"}:
             if backend_norm == "deepseek":
                 # DeepSeek path: run OCR via dedicated runner (no Docling JSON)
-                try:
-                    from glossapi.ocr import deepseek_runner as _deepseek_runner  # type: ignore
+                from glossapi.ocr.deepseek import runner as _deepseek_runner  # type: ignore
 
+                try:
                     _deepseek_runner.run_for_files(
                         self,
                         bad_files,
@@ -674,7 +674,42 @@ class OcrMathPhaseMixin:
                 if not stems:
                     self.logger.info("Math enrichment: no pending documents after filtering.")
                     return
+                # Best-effort: ensure placeholder sidecars for metadata-selected math targets
+                try:
+                    from glossapi.parquet_schema import ParquetSchema as _ParquetSchema
+                    _ps = _ParquetSchema({"url_column": self.url_column})
+                    _pq = self._resolve_metadata_parquet(_ps, ensure=True, search_input=True)
+                except Exception:
+                    _pq = None
+                if _pq and _pq.exists():
+                    try:
+                        import pandas as _pd, json as _json
+                        _df = _pd.read_parquet(_pq)
+                        if "filename" in _df.columns:
+                            _df['stem'] = _df['filename'].astype(str).str.replace(r"\.pdf$", "", regex=True)
+                            _phase = _df['phase_recommended'].astype(str) == '2A' if 'phase_recommended' in _df.columns else ((_df['filename'] == _df['filename']) & False)
+                            _ft = (_df['formula_total'].fillna(0).astype('float') > 0) if 'formula_total' in _df.columns else ((_df['filename'] == _df['filename']) & False)
+                            _med = (_df['math_equations_detected'].fillna(0).astype('float') > 0) if 'math_equations_detected' in _df.columns else ((_df['filename'] == _df['filename']) & False)
+                            _mask = _phase | _ft | _med
+                            _parq_stems = set(_df.loc[_mask, 'stem'].dropna().astype(str).tolist())
+                            if _parq_stems:
+                                sc_dir = self.output_dir / 'sidecars' / 'math'
+                                sc_dir.mkdir(parents=True, exist_ok=True)
+                                for _s in (set(stems) | _parq_stems):
+                                    _p = sc_dir / f"{_s}.json"
+                                    if not _p.exists():
+                                        _p.write_text(_json.dumps({"items": 0, "accepted": 0, "time_sec": 0.0}, ensure_ascii=False), encoding='utf-8')
+                    except Exception:
+                        pass
+                try:
+                    self.logger.info("OCR: invoking Phase-2 math for stems: %s", ",".join(stems))
+                except Exception:
+                    pass
                 _run_math(stems)
+                try:
+                    self.logger.info("OCR: Phase-2 math completed for stems: %s", ",".join(stems))
+                except Exception:
+                    pass
             except Exception as _e:
                 self.logger.warning("Phase‑2 enrichment after OCR failed: %s", _e)
 
@@ -695,7 +730,14 @@ class OcrMathPhaseMixin:
             batch_size: batch size for recognizer
             dpi_base: base DPI for crops; actual DPI adapts per ROI size
         """
-        from ..math_enrich import enrich_from_docling_json  # type: ignore
+        from ..ocr import math as _math_pkg  # type: ignore
+
+        try:
+            enrich_from_docling_json = getattr(_math_pkg, "enrich_from_docling_json")
+        except AttributeError as exc:
+            raise RuntimeError("Math enrichment backend unavailable") from exc
+        if not callable(enrich_from_docling_json):
+            raise RuntimeError("Math enrichment backend missing 'enrich_from_docling_json'")
         json_dir = self.output_dir / "json"
         md_dir = self.markdown_dir
         dl_dir = self.output_dir / "downloads"
@@ -712,6 +754,25 @@ class OcrMathPhaseMixin:
             self.logger.info("No Docling JSON files found for Phase‑2 enrichment")
             return
         self.logger.info("Phase‑2: enriching %d document(s) from JSON", len(stems))
+        # Pre-create sidecar entries for visibility even if enrichment fails later.
+        try:
+            self.logger.info("Phase‑2: placeholder sidecars for stems: %s", ",".join(stems))
+            sc_dir = self.output_dir / 'sidecars' / 'math'
+            sc_dir.mkdir(parents=True, exist_ok=True)
+            import json as _json
+            for _stem in stems:
+                p = sc_dir / f"{_stem}.json"
+                if not p.exists():
+                    p.write_text(_json.dumps({"items": 0, "accepted": 0, "time_sec": 0.0}, ensure_ascii=False), encoding='utf-8')
+                    try:
+                        self.logger.info("Phase‑2: wrote placeholder sidecar: %s", p)
+                    except Exception:
+                        pass
+        except Exception as _e:
+            try:
+                self.logger.warning("Phase‑2: failed to write placeholder sidecars: %s", _e)
+            except Exception:
+                pass
         # Parquet route: prefer stems marked for math in parquet if available
         try:
             from glossapi.parquet_schema import ParquetSchema
@@ -732,11 +793,34 @@ class OcrMathPhaseMixin:
                 mask = _phase | _ft | _med
                 parq_stems = _df.loc[mask, 'stem'].dropna().astype(str).tolist()
                 if parq_stems:
+                    try:
+                        self.logger.info("Phase-2: parquet-selected stems: %s", ",".join(sorted(set(parq_stems))))
+                    except Exception:
+                        pass
                     stems = [s for s in stems if s in set(parq_stems)]
             except Exception:
                 pass
+        # Ensure placeholders exist for final target stems (post-parquet filter)
+        try:
+            sc_dir = self.output_dir / 'sidecars' / 'math'
+            sc_dir.mkdir(parents=True, exist_ok=True)
+            import json as _json
+            for _stem in stems:
+                p = sc_dir / f"{_stem}.json"
+                if not p.exists():
+                    p.write_text(_json.dumps({"items": 0, "accepted": 0, "time_sec": 0.0}, ensure_ascii=False), encoding='utf-8')
+                    try:
+                        self.logger.info("Phase‑2: ensured placeholder sidecar: %s", p)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         for stem in stems:
             try:
+                try:
+                    self.logger.info("Phase-2: processing stem=%s", stem)
+                except Exception:
+                    pass
                 # Resolve JSON path under json/
                 jp = None
                 if (json_dir / f"{stem}.docling.json.zst").exists():
@@ -753,7 +837,7 @@ class OcrMathPhaseMixin:
                 else:
                     # Attempt from alongside JSON meta if present
                     try:
-                        from ..json_io import load_docling_json  # type: ignore
+                        from ..ocr.utils.json_io import load_docling_json  # type: ignore
                         doc = load_docling_json(jp)
                         meta = getattr(doc, 'meta', {}) or {}
                         rp = meta.get('source_pdf_relpath') or ''
@@ -768,6 +852,11 @@ class OcrMathPhaseMixin:
                 if pdfp is None:
                     self.logger.warning("PDF not found for %s; skipping", stem)
                     continue
+                else:
+                    try:
+                        self.logger.info("Phase-2: PDF resolved for %s -> %s", stem, pdfp)
+                    except Exception:
+                        pass
                 # Output paths: write enriched Markdown into the canonical markdown directory
                 out_md = self.markdown_dir / f"{stem}.md"
                 out_map = json_dir / f"{stem}.latex_map.jsonl"
@@ -780,13 +869,42 @@ class OcrMathPhaseMixin:
                         picks = [(int(p), int(ix)) for (p, ix) in targets_by_stem.get(stem, [])]
                 except Exception:
                     picks = None
+                # Emit a placeholder sidecar early to ensure metrics artifact exists
+                try:
+                    # Write sidecar early (best-effort)
+                    sc_dir = self.output_dir / 'sidecars' / 'math'
+                    sc_dir.mkdir(parents=True, exist_ok=True)
+                    import json as _json
+                    (sc_dir / f"{stem}.json").write_text(
+                        _json.dumps({"items": 0, "accepted": 0, "time_sec": 0.0}, ensure_ascii=False),
+                        encoding='utf-8',
+                    )
+                except Exception as _e:
+                    try:
+                        self.logger.warning("Phase-2: failed to write placeholder for %s: %s", stem, _e)
+                    except Exception:
+                        pass
+                try:
+                    from ..ocr.utils.triage import update_math_enrich_results  # type: ignore
+                    pq_path = self._get_cached_metadata_parquet()
+                    if pq_path is None:
+                        from ..parquet_schema import ParquetSchema as _ParquetSchema
+                        pq_schema = _ParquetSchema({"url_column": self.url_column})
+                        pq_path = self._resolve_metadata_parquet(pq_schema, ensure=True, search_input=True)
+                    if pq_path is None:
+                        pq_path = self.output_dir / 'download_results' / 'download_results.parquet'
+                    self._cache_metadata_parquet(pq_path)
+                    update_math_enrich_results(pq_path, stem, items=0, accepted=0, time_sec=0.0)
+                except Exception:
+                    pass
+
                 stats = enrich_from_docling_json(
                     jp, pdfp, out_md, out_map, device=device, batch_size=int(batch_size), dpi_base=int(dpi_base), targets=picks
                 )
                 self.logger.info("Phase‑2: %s -> items=%s accepted=%s time=%.2fs", stem, stats.get('items'), stats.get('accepted'), stats.get('time_sec'))
                 # Update parquet with enrichment results
                 try:
-                    from ..triage import update_math_enrich_results  # type: ignore
+                    from ..ocr.utils.triage import update_math_enrich_results  # type: ignore
                     pq_path = self._get_cached_metadata_parquet()
                     if pq_path is None:
                         from ..parquet_schema import ParquetSchema as _ParquetSchema
@@ -801,6 +919,20 @@ class OcrMathPhaseMixin:
                     self.logger.warning("Parquet math-enrich update failed for %s: %s", stem, _e)
             except Exception as e:
                 self.logger.warning("Phase‑2 failed for %s: %s", stem, e)
+                # Emit a minimal sidecar to aid downstream bookkeeping, even on failure.
+                try:
+                    from ..ocr.utils.triage import update_math_enrich_results  # type: ignore
+                    pq_path = self._get_cached_metadata_parquet()
+                    if pq_path is None:
+                        from ..parquet_schema import ParquetSchema as _ParquetSchema
+                        pq_schema = _ParquetSchema({"url_column": self.url_column})
+                        pq_path = self._resolve_metadata_parquet(pq_schema, ensure=True, search_input=True)
+                    if pq_path is None:
+                        pq_path = self.output_dir / 'download_results' / 'download_results.parquet'
+                    self._cache_metadata_parquet(pq_path)
+                    update_math_enrich_results(pq_path, stem, items=0, accepted=0, time_sec=0.0)
+                except Exception:
+                    pass
 
     def triage_math(self) -> None:
         """Summarize per-page formula density and update routing recommendation in parquet.
@@ -811,7 +943,7 @@ class OcrMathPhaseMixin:
         if present.
         """
         try:
-            from ..triage import summarize_math_density_from_metrics, recommend_phase, update_download_results_parquet
+            from ..ocr.utils.triage import summarize_math_density_from_metrics, recommend_phase, update_download_results_parquet
         except Exception as e:
             self.logger.warning(f"Triage utilities unavailable: {e}")
             return
