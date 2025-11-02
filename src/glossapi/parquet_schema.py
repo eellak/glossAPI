@@ -203,25 +203,30 @@ class ParquetSchema:
     
     The pipeline uses two distinct types of parquet files:
     
-    1. Metadata Parquet:
+    1. Metadata Parquet (Pipeline State):
        - Each row represents a file (one-to-one relationship with files)
-       - Essential columns: filename, URL column (configurable), extraction quality
-       - Used by: downloader, extractor, and filter stages
-       - Example: download_results.parquet
+       - Contains pipeline metadata: processing stage flags, scores, errors, resumability info
+       - Distinguished from scraped data parquet by containing stage flags (stage_download, stage_extract, etc.)
+       - Essential columns: filename, URL column (configurable), stage flags, quality scores, error messages
+       - Used by: downloader, extractor, cleaner, OCR, and all pipeline stages for state tracking
+       - Example: download_results/download_results.parquet
        - Typical location: {output_dir}/download_results/
        - Schema: METADATA_SCHEMA, DOWNLOAD_SCHEMA
+       - Replaces the previous pickle-based state management (.processing_state.pkl files)
     
-    2. Sections Parquet:
+    2. Sections Parquet (Scraped Data):
        - Each row represents a section from a file (many-to-one relationship with files)
+       - Contains actual scraped/extracted content from documents
        - Essential columns: filename, title, content, section, predicted_section
        - Used by: section and annotation stages
        - Examples: sections_for_annotation.parquet, classified_sections.parquet
        - Typical location: {output_dir}/sections/
        - Schema: SECTION_SCHEMA, CLASSIFIED_SCHEMA
     
-    When the pipeline runs, it first creates and populates a metadata parquet,
-    then uses it to filter files, and finally creates section parquets from the
-    filtered files.
+    When the pipeline runs, it first creates and populates a metadata parquet (for state tracking),
+    then uses it to filter files, and finally creates section parquets from the filtered files.
+    The metadata parquet is the single source of truth for pipeline state, including which files
+    have been processed in each stage, scores, and any errors that occurred.
     """
     
     def __init__(self, pipeline_config: Optional[Dict[str, Any]] = None):
@@ -251,18 +256,59 @@ class ParquetSchema:
         COMMON_SCHEMA = None
     
     # Metadata schema for files used by downloader and quality assessment
+    # This schema distinguishes metadata parquet (pipeline state) from scraped data parquet
     if pa is not None:
         METADATA_SCHEMA = pa.schema(
             [
                 ("filename", pa.string()),
                 ("url", pa.string()),  # Can be customized with url_column parameter
+                # Processing stage flags (for resumability)
+                ("stage_download", pa.bool_()),  # Whether download stage completed successfully
+                ("stage_extract", pa.bool_()),  # Whether extract stage completed successfully
+                ("stage_clean", pa.bool_()),  # Whether clean stage completed successfully
+                ("stage_ocr", pa.bool_()),  # Whether OCR stage completed successfully
+                ("stage_section", pa.bool_()),  # Whether section stage completed successfully
+                ("stage_annotate", pa.bool_()),  # Whether annotate stage completed successfully
+                # Download stage
                 ("download_success", pa.bool_()),
                 ("download_error", pa.string()),
-                ("trigrams", pa.string()),  # Values: "natural", "unnatural", "unknown"
-                ("processing_stage", pa.string()),  # Tracks progress through pipeline
-                ("badness_score", pa.float64()),
+                ("download_retry_count", pa.int32()),
+                ("is_duplicate", pa.bool_()),
+                ("duplicate_of", pa.string()),
+                # Extract stage
+                ("extract_success", pa.bool_()),
+                ("extract_error", pa.string()),
+                # Clean stage
+                ("clean_success", pa.bool_()),
+                ("clean_error", pa.string()),
+                # Quality scores (all stages)
+                ("badness_score", pa.float64()),  # General badness score
+                ("mojibake_badness_score", pa.float64()),  # Mojibake-specific badness
+                ("greek_badness_score", pa.float64()),  # Greek-specific badness
                 ("percentage_greek", pa.float64()),
                 ("percentage_latin", pa.float64()),
+                ("percentage_greek_cleaned", pa.float64()),  # After cleaning
+                ("percentage_latin_cleaned", pa.float64()),  # After cleaning
+                ("char_count_no_comments", pa.int64()),  # Character count excluding comments
+                # OCR and Math enrichment
+                ("needs_ocr", pa.bool_()),
+                ("ocr_success", pa.bool_()),
+                ("ocr_error", pa.string()),
+                ("math_enriched", pa.bool_()),
+                ("math_items", pa.int32()),
+                ("math_accepted", pa.int32()),
+                ("math_accept_rate", pa.float64()),
+                ("math_time_sec", pa.float64()),
+                # Other metadata
+                ("trigrams", pa.string()),  # Values: "natural", "unnatural", "unknown"
+                ("processing_stage", pa.string()),  # Comma-separated list of completed stages (legacy)
+                ("is_empty", pa.bool_()),
+                ("page_count", pa.int32()),
+                ("pages_total", pa.int32()),
+                ("pages_with_formula", pa.int32()),
+                ("formula_total", pa.int32()),
+                ("formula_avg_pp", pa.float64()),
+                ("formula_p90_pp", pa.float64()),
             ]
         )
     else:  # pragma: no cover - pyarrow not installed
@@ -579,22 +625,51 @@ class ParquetSchema:
             "filename": "",
             "file_ext": "",
             "document_type": pd.NA,
+            # Stage flags
+            "stage_download": False,
+            "stage_extract": False,
+            "stage_clean": False,
+            "stage_ocr": False,
+            "stage_section": False,
+            "stage_annotate": False,
+            # Download stage
             "download_success": False,
             "download_error": "",
             "download_retry_count": 0,
             "is_duplicate": False,
             "duplicate_of": "",
+            # Extract stage
+            "extract_success": False,
+            "extract_error": "",
+            # Clean stage
+            "clean_success": False,
+            "clean_error": "",
+            # Scores
+            "badness_score": pd.NA,
+            "mojibake_badness_score": pd.NA,
+            "greek_badness_score": pd.NA,
+            "mojibake_latin_percentage": pd.NA,
+            "percentage_greek": pd.NA,
+            "percentage_latin": pd.NA,
+            "percentage_greek_cleaned": pd.NA,
+            "percentage_latin_cleaned": pd.NA,
+            "char_count_no_comments": pd.NA,
+            # OCR and Math
+            "needs_ocr": False,
+            "ocr_success": False,
+            "ocr_error": "",
+            "math_enriched": False,
+            "math_items": pd.NA,
+            "math_accepted": pd.NA,
+            "math_accept_rate": pd.NA,
+            "math_time_sec": pd.NA,
+            # Other metadata
             "source_row": pd.NA,
             "url_index": pd.NA,
             "filename_base": "",
             "filter": "ok",
-            "needs_ocr": False,
-            "ocr_success": False,
             "processing_stage": "",
-            "mojibake_badness_score": pd.NA,
-            "mojibake_latin_percentage": pd.NA,
-            "percentage_greek": pd.NA,
-            "char_count_no_comments": pd.NA,
+            "trigrams": "",
             "is_empty": False,
             "page_count": pd.NA,
             "pages_total": pd.NA,
@@ -603,11 +678,6 @@ class ParquetSchema:
             "formula_avg_pp": pd.NA,
             "formula_p90_pp": pd.NA,
             "phase_recommended": pd.NA,
-            "math_enriched": False,
-            "math_items": pd.NA,
-            "math_accepted": pd.NA,
-            "math_accept_rate": pd.NA,
-            "math_time_sec": pd.NA,
         }
 
         records: Dict[str, Dict[str, Any]] = {}
@@ -615,11 +685,25 @@ class ParquetSchema:
         def _append_stage(row: Dict[str, Any], stage: str) -> None:
             if not stage:
                 return
+            # Update legacy processing_stage string
             current = row.get("processing_stage") or ""
             stages = [part for part in current.split(",") if part]
             if stage not in stages:
                 stages.append(stage)
             row["processing_stage"] = ",".join(stages)
+            # Update stage flags for resumability
+            stage_flag_map = {
+                "download": "stage_download",
+                "extract": "stage_extract",
+                "clean": "stage_clean",
+                "ocr": "stage_ocr",
+                "section": "stage_section",
+                "annotate": "stage_annotate",
+                "math": "stage_ocr",  # Math enrichment is part of OCR stage
+            }
+            flag_name = stage_flag_map.get(stage.lower())
+            if flag_name:
+                row[flag_name] = True
 
         def _row_for(stem: str) -> Dict[str, Any]:
             canonical = canonical_stem(stem)

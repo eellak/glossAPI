@@ -435,7 +435,7 @@ class ExtractPhaseMixin:
                     bool(benchmark_mode),
                 )
 
-                state_mgr = _ProcessingStateManager(self.markdown_dir / ".processing_state.pkl")
+                state_mgr = _ProcessingStateManager(base_dir=self.output_dir)
                 processed_files, problematic_files = state_mgr.load()
                 if skip_existing and processed_files:
                     self.logger.info(

@@ -54,8 +54,10 @@ def test_extract_skips_processed_files_on_resume(tmp_path, monkeypatch):
     processed_pdf = downloads_dir / "already_done.pdf"
     processed_pdf.write_bytes(b"%PDF-1.4\n%dummy\n")
 
-    state_mgr = _ProcessingStateManager(markdown_dir / ".processing_state.pkl")
-    state_mgr.save({str(processed_pdf)}, set())
+    # Use parquet-based state management instead of pickle
+    state_mgr = _ProcessingStateManager(base_dir=tmp_path)
+    # Save processed file by filename
+    state_mgr.save({processed_pdf.name}, set())
 
     corpus = Corpus(input_dir=tmp_path, output_dir=tmp_path)
 

@@ -114,7 +114,6 @@ import ftfy
 import logging
 from contextlib import redirect_stdout
 import os
-import pickle
 import signal
 import time
 import re
@@ -750,59 +749,6 @@ class GlossExtract:
         except Exception:
             self._last_extractor_cfg = None
     
-    def _load_processing_state(self, state_file: Path) -> Dict[str, Set[str]]:
-        """
-        Load the processing state from a pickle file.
-        
-        Args:
-            state_file: Path to the pickle file
-            
-        Returns:
-            Dictionary with 'processed' and 'problematic' sets of filenames
-        """
-        if state_file.exists():
-            try:
-                with open(state_file, 'rb') as f:
-                    return pickle.load(f)
-            except Exception as e:
-                self._log.warning(f"Failed to load processing state: {e}. Starting fresh.")
-        
-        # If no state file or loading failed, check if output directory has existing files
-        output_dir = state_file.parent
-        if output_dir.exists():
-            self._log.info(f"No state file found, checking for existing output files in {output_dir}")
-            # Get all markdown files in the output directory
-            processed_files = set()
-            try:
-                for md_file in output_dir.glob("*.md"):
-                    # Extract the base filename without extension
-                    base_name = md_file.stem
-                    # For each likely input format, add a possible filename to the set
-                    for ext in ['pdf', 'docx', 'xml', 'html', 'pptx', 'csv', 'md']:
-                        processed_files.add(f"{base_name}.{ext}")
-                if processed_files:
-                    self._log.info(f"Found {len(processed_files) // 7} existing markdown files in output directory")
-            except Exception as e:
-                self._log.error(f"Error while scanning existing files: {e}")
-                
-            return {'processed': processed_files, 'problematic': set()}
-                
-        # Default state structure if file doesn't exist or can't be loaded
-        return {'processed': set(), 'problematic': set()}
-    
-    def _save_processing_state(self, state: Dict[str, Set[str]], state_file: Path) -> None:
-        """
-        Save the processing state to a pickle file.
-        
-        Args:
-            state: Dictionary with 'processed' and 'problematic' sets of filenames
-            state_file: Path to the pickle file
-        """
-        try:
-            with open(state_file, 'wb') as f:
-                pickle.dump(state, f)
-        except Exception as e:
-            self._log.error(f"Failed to save processing state: {e}")
 
     def _get_pdf_page_count(self, file_path: Path) -> Optional[int]:
         """
@@ -1477,18 +1423,20 @@ class GlossExtract:
         timeout_dir = output_dir / "timeout_files"
         timeout_dir.mkdir(exist_ok=True)
         
-        # State file for tracking progress
-        state_file = output_dir / ".processing_state.pkl"
-
+        # Use parquet-based state management instead of pickle
         if self.external_state_updates:
             processed_files = set()
             problematic_files = set()
         else:
-            state = self._load_processing_state(state_file)
+            # Try to find base_dir from output_dir (usually output_dir is markdown_dir)
+            # Look for parent directories that might contain download_results
+            base_dir = output_dir.parent if output_dir.name in ["markdown", "clean_markdown"] else output_dir
+            from ..corpus.corpus_state import _ProcessingStateManager
+            state_mgr = _ProcessingStateManager(base_dir=base_dir)
+            processed_files, problematic_files = state_mgr.load()
             if not skip_existing:
-                state = {'processed': set(), 'problematic': set()}
-            processed_files = state.get('processed', set())
-            problematic_files = state.get('problematic', set())
+                processed_files = set()
+                problematic_files = set()
         
         self._log.info(f"Found {len(processed_files)} already processed files")
         self._log.info(f"Found {len(problematic_files)} problematic files")
@@ -1583,11 +1531,11 @@ class GlossExtract:
                             self._log.error(f"Failed to copy problematic file {filename}: {e}")
             
             if not self.external_state_updates:
-                # Save the current state after each batch
-                self._save_processing_state({
-                    'processed': processed_files,
-                    'problematic': problematic_files
-                }, state_file)
+                # Save the current state after each batch using parquet-based state manager
+                from ..corpus.corpus_state import _ProcessingStateManager
+                base_dir = output_dir.parent if output_dir.name in ["markdown", "clean_markdown"] else output_dir
+                state_mgr = _ProcessingStateManager(base_dir=base_dir)
+                state_mgr.save(processed_files, problematic_files)
             
             batch_duration = time.time() - batch_start_time
             self._log.info(f"Batch processed in {batch_duration:.2f} seconds")
