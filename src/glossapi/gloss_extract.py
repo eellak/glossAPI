@@ -40,6 +40,9 @@ from shutil import copy2
 from collections import defaultdict
 import json
 from contextlib import contextmanager
+import pandas as pd
+import json
+
 
 class GlossExtract:
     """
@@ -379,7 +382,8 @@ class GlossExtract:
         timeout_dir.mkdir(exist_ok=True)
         
         # State file for tracking progress
-        state_file = output_dir / ".processing_state.pkl"
+        state_file = output_dir / ".processing_state.parquet"
+
         
         # Load the current processing state
         state = self._load_processing_state(state_file)
