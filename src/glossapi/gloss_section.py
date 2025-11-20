@@ -232,9 +232,25 @@ class GlossSection:
                 return False
         return True
 
-    def _is_header(self, line: str) -> bool:
-        """Check if line is a markdown header (#...)."""
-        return line.strip().startswith('#')
+    def _is_header(self, line):
+        stripped = line.strip()
+
+        # 1. Real markdown header
+        if re.match(r"^#{1,6}\s+\S", stripped):
+            return True
+
+        # 2. Detect section-like short labels (e.g. Α1., Β2.) → only if not bullet-like
+        if re.match(r'^[Α-ΩA-Z]\s*\.?\s*\d+\s*\.?\s*', stripped):
+            return True
+
+        # 3. Uppercase titles up to 8 words, no punctuation (excluding bullets)
+        if (stripped.isupper() and
+                len(stripped.split()) <= 8 and
+                not stripped.startswith(("-", "•", "·", "*")) and
+                not any(p in stripped for p in [".", ",", ";", ":", "!", "?"])):
+            return True
+
+        return False
 
     def _extract_section_level(self, line: str) -> Tuple[int, str]:
         """Extract header level and title from a markdown header line."""
