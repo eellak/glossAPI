@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "glossapi"
-version = "0.1.2"
+version = "0.1.3"
 description = "Academic document processing pipeline with Rust-powered markdown cleaning"
 authors = [
     {name = "GlossAPI Team", email = "glossapi.team@eellak.gr"}
