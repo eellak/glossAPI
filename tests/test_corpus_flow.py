@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pandas as pd
+
 from glossapi import Corpus
 from glossapi.corpus import _ProcessingStateManager
 
@@ -56,6 +58,9 @@ def test_extract_skips_processed_files_on_resume(tmp_path, monkeypatch):
 
     state_mgr = _ProcessingStateManager(markdown_dir / ".processing_state.pkl")
     state_mgr.save({str(processed_pdf)}, set())
+    corpus_dir = tmp_path
+    parquet_path = corpus_dir / "download_results" / "download_results.parquet"
+    assert parquet_path.exists()
 
     corpus = Corpus(input_dir=tmp_path, output_dir=tmp_path)
 
@@ -90,3 +95,6 @@ def test_extract_skips_processed_files_on_resume(tmp_path, monkeypatch):
     )
 
     assert dummy_calls == [], "Expected no extraction when files already marked processed"
+    df = state_mgr.schema.normalize_metadata_frame(pd.read_parquet(parquet_path))
+    row = df.loc[df["filename"] == processed_pdf.name].iloc[0]
+    assert str(row.get("extract_status")).strip().lower() == "success"

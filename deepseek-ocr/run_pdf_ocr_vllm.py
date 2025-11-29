@@ -988,126 +988,70 @@ def main() -> None:
     try:
         llm = build_llm(args)
         sampling_params = build_sampling_params(args, args.mode, whitelist_ids)
-    clean_params = (
-        build_sampling_params(args, "clean", whitelist_ids)
-        if args.roi_second_pass or args.mode == "clean"
-        else None
-    )
+        clean_params = (
+            build_sampling_params(args, "clean", whitelist_ids)
+            if args.roi_second_pass or args.mode == "clean"
+            else None
+        )
 
-    total_pages = 0
-    total_tokens = 0
-    roi_total_tokens = 0
-    run_start = time.perf_counter()
-    metrics: dict[str, int] = {}
+        total_pages = 0
+        total_tokens = 0
+        roi_total_tokens = 0
+        run_start = time.perf_counter()
+        metrics: dict[str, int] = {}
 
-        executor = ThreadPoolExecutor(max_workers=args.cpu_workers)
-        try:
+        with ThreadPoolExecutor(max_workers=args.cpu_workers) as executor:
             for pdf_path in pdf_files:
-            combined_name = f"{pdf_path.stem}.md"
-            combined_path = output_root / combined_name
-            if args.skip_existing and combined_path.exists():
-                logging.info(
-                    "[%s] combined output already exists; skipping.",
-                    pdf_path.name,
-                )
-                continue
-
-            page_jobs = render_pdf(pdf_path, args.dpi, executor, args.max_pages)
-            if not page_jobs:
-                continue
-
-            assets_root: Optional[Path] = None
-            if args.save_images or args.roi_second_pass:
-                assets_root = output_root / f"{pdf_path.stem}_assets"
-                assets_root.mkdir(parents=True, exist_ok=True)
-
-            aggregated_pages: dict[int, str] = {}
-            pdf_start = time.perf_counter()
-            pages_written = 0
-            roi_jobs: List[ROIJob] = []
-            roi_counters: dict[tuple[str, int], int] = {}
-            pages_to_retry: List[PageJob] = []
-
-            page_token_limit = getattr(sampling_params, "max_tokens", None)
-            for batch in batched(page_jobs, args.batch_pages):
-                working_batch = []
-                for job in batch:
-                    if job.is_blank:
-                        blank_text = get_blank_page_text()
-                        aggregated_pages[job.page_index] = (
-                            blank_text if args.content_debug else ""
-                        )
-                        pages_written += 1
-                        if args.save_images:
-                            stash_page_image(job, assets_root)
-                        logging.debug(
-                            "[%s] detected blank page %d; skipping inference",
-                            pdf_path.name,
-                            job.page_index + 1,
-                        )
-                        continue
-                    working_batch.append(job)
-                if not working_batch:
+                combined_name = f"{pdf_path.stem}.md"
+                combined_path = output_root / combined_name
+                if args.skip_existing and combined_path.exists():
+                    logging.info(
+                        "[%s] combined output already exists; skipping.",
+                        pdf_path.name,
+                    )
                     continue
-                results = process_batch(
-                    llm, working_batch, sampling_params, prompt, BASE_VISION_CONFIG
-                )
-                for job, raw_text, token_count, token_limit_hit in results:
-                    keep_refdet = args.mode == "grounded"
-                    cleaned = prepare_page_text(
-                        job,
-                        raw_text,
-                        keep_refdet=keep_refdet,
-                        prompt=prompt,
-                        token_limit_hit=token_limit_hit,
-                        token_limit=page_token_limit,
-                        metrics=metrics,
-                        content_debug=bool(args.content_debug),
-                    )
-                    aggregated_pages[job.page_index] = cleaned
-                    if args.save_images:
-                        stash_page_image(job, assets_root)
 
-                    total_tokens += token_count
-                    pages_written += 1
+                page_jobs = render_pdf(pdf_path, args.dpi, executor, args.max_pages)
+                if not page_jobs:
+                    continue
 
-                    if keep_refdet:
-                        regions = extract_refdet_regions(raw_text)
-                        label_counts = {label: len(boxes) for label, boxes in regions}
-                        if args.retry_large and any(
-                            label_counts.get(label, 0) == 0 for label in retry_labels
-                        ):
-                            pages_to_retry.append(job)
-                        if args.roi_second_pass:
-                            roi_jobs.extend(
-                                collect_roi_jobs(
-                                    job,
-                                    regions,
-                                    roi_labels,
-                                    args.roi_min_area,
-                                    roi_counters,
-                                )
+                assets_root: Optional[Path] = None
+                if args.save_images or args.roi_second_pass:
+                    assets_root = output_root / f"{pdf_path.stem}_assets"
+                    assets_root.mkdir(parents=True, exist_ok=True)
+
+                aggregated_pages: dict[int, str] = {}
+                pdf_start = time.perf_counter()
+                pages_written = 0
+                roi_jobs: List[ROIJob] = []
+                roi_counters: dict[tuple[str, int], int] = {}
+                pages_to_retry: List[PageJob] = []
+
+                page_token_limit = getattr(sampling_params, "max_tokens", None)
+                for batch in batched(page_jobs, args.batch_pages):
+                    working_batch = []
+                    for job in batch:
+                        if job.is_blank:
+                            blank_text = get_blank_page_text()
+                            aggregated_pages[job.page_index] = (
+                                blank_text if args.content_debug else ""
                             )
-
-            if args.retry_large and pages_to_retry:
-                logging.info(
-                    "[%s] retrying %d page(s) in Large vision mode",
-                    pdf_path.name,
-                    len(pages_to_retry),
-                )
-                if args.roi_second_pass:
-                    retry_indices = {job.page_index for job in pages_to_retry}
-                    roi_jobs = [
-                        roi for roi in roi_jobs if roi.page_index not in retry_indices
-                    ]
-                    for key in list(roi_counters.keys()):
-                        if key[1] in retry_indices:
-                            roi_counters.pop(key, None)
-                for batch in batched(pages_to_retry, args.batch_pages):
-                    results_large = process_batch(
-                        llm, batch, sampling_params, prompt, LARGE_VISION_CONFIG
+                            pages_written += 1
+                            if args.save_images:
+                                stash_page_image(job, assets_root)
+                            logging.debug(
+                                "[%s] detected blank page %d; skipping inference",
+                                pdf_path.name,
+                                job.page_index + 1,
+                            )
+                            continue
+                        working_batch.append(job)
+                    if not working_batch:
+                        continue
+                    results = process_batch(
+                        llm, working_batch, sampling_params, prompt, BASE_VISION_CONFIG
                     )
-                    for job, raw_text, token_count, token_limit_hit in results_large:
+                    for job, raw_text, token_count, token_limit_hit in results:
                         keep_refdet = args.mode == "grounded"
                         cleaned = prepare_page_text(
                             job,
@@ -1120,67 +1064,119 @@ def main() -> None:
                             content_debug=bool(args.content_debug),
                         )
                         aggregated_pages[job.page_index] = cleaned
-                        total_tokens += token_count
                         if args.save_images:
                             stash_page_image(job, assets_root)
-                        if keep_refdet and args.roi_second_pass:
+
+                        total_tokens += token_count
+                        pages_written += 1
+
+                        if keep_refdet:
                             regions = extract_refdet_regions(raw_text)
-                            roi_jobs.extend(
-                                collect_roi_jobs(
-                                    job,
-                                    regions,
-                                    roi_labels,
-                                    args.roi_min_area,
-                                    roi_counters,
+                            label_counts = {label: len(boxes) for label, boxes in regions}
+                            if args.retry_large and any(
+                                label_counts.get(label, 0) == 0 for label in retry_labels
+                            ):
+                                pages_to_retry.append(job)
+                            if args.roi_second_pass:
+                                roi_jobs.extend(
+                                    collect_roi_jobs(
+                                        job,
+                                        regions,
+                                        roi_labels,
+                                        args.roi_min_area,
+                                        roi_counters,
+                                    )
                                 )
-                            )
 
-            if args.roi_second_pass:
-                if args.mode != "grounded":
-                    logging.warning(
-                        "[%s] ROI second pass requires grounded mode; skipping.",
-                        pdf_path.name,
-                    )
-                elif not roi_jobs:
-                    logging.info("[%s] No ROI targets discovered.", pdf_path.name)
-                elif clean_params is None:
-                    logging.warning(
-                        "[%s] Clean sampling params unavailable; skipping ROI.",
-                        pdf_path.name,
-                    )
-                else:
-                    roi_count, roi_tokens = run_roi_second_pass(
-                        llm,
-                        roi_jobs,
-                        clean_params,
-                        args.roi_prompt,
-                        assets_root,
-                        metrics,
-                    )
-                    roi_total_tokens += roi_tokens
+                if args.retry_large and pages_to_retry:
                     logging.info(
-                        "[%s] ROI second pass completed for %d region(s).",
+                        "[%s] retrying %d page(s) in Large vision mode",
                         pdf_path.name,
-                        roi_count,
+                        len(pages_to_retry),
                     )
+                    if args.roi_second_pass:
+                        retry_indices = {job.page_index for job in pages_to_retry}
+                        roi_jobs = [
+                            roi for roi in roi_jobs if roi.page_index not in retry_indices
+                        ]
+                        for key in list(roi_counters.keys()):
+                            if key[1] in retry_indices:
+                                roi_counters.pop(key, None)
+                    for batch in batched(pages_to_retry, args.batch_pages):
+                        results_large = process_batch(
+                            llm, batch, sampling_params, prompt, LARGE_VISION_CONFIG
+                        )
+                        for job, raw_text, token_count, token_limit_hit in results_large:
+                            keep_refdet = args.mode == "grounded"
+                            cleaned = prepare_page_text(
+                                job,
+                                raw_text,
+                                keep_refdet=keep_refdet,
+                                prompt=prompt,
+                                token_limit_hit=token_limit_hit,
+                                token_limit=page_token_limit,
+                                metrics=metrics,
+                                content_debug=bool(args.content_debug),
+                            )
+                            aggregated_pages[job.page_index] = cleaned
+                            total_tokens += token_count
+                            if args.save_images:
+                                stash_page_image(job, assets_root)
+                            if keep_refdet and args.roi_second_pass:
+                                regions = extract_refdet_regions(raw_text)
+                                roi_jobs.extend(
+                                    collect_roi_jobs(
+                                        job,
+                                        regions,
+                                        roi_labels,
+                                        args.roi_min_area,
+                                        roi_counters,
+                                    )
+                                )
 
-            write_combined_markdown(
-                combined_path, aggregated_pages, content_debug=bool(args.content_debug)
-            )
+                if args.roi_second_pass:
+                    if args.mode != "grounded":
+                        logging.warning(
+                            "[%s] ROI second pass requires grounded mode; skipping.",
+                            pdf_path.name,
+                        )
+                    elif not roi_jobs:
+                        logging.info("[%s] No ROI targets discovered.", pdf_path.name)
+                    elif clean_params is None:
+                        logging.warning(
+                            "[%s] Clean sampling params unavailable; skipping ROI.",
+                            pdf_path.name,
+                        )
+                    else:
+                        roi_count, roi_tokens = run_roi_second_pass(
+                            llm,
+                            roi_jobs,
+                            clean_params,
+                            args.roi_prompt,
+                            assets_root,
+                            metrics,
+                        )
+                        roi_total_tokens += roi_tokens
+                        logging.info(
+                            "[%s] ROI second pass completed for %d region(s).",
+                            pdf_path.name,
+                            roi_count,
+                        )
 
-            total_pages += pages_written
-            pdf_elapsed = time.perf_counter() - pdf_start
-            if pages_written:
-                logging.info(
-                    "[%s] processed %d page(s) in %.1fs (%.2f pp/s)",
-                    pdf_path.name,
-                    pages_written,
-                    pdf_elapsed,
-                    pages_written / max(pdf_elapsed, 1e-6),
+                write_combined_markdown(
+                    combined_path, aggregated_pages, content_debug=bool(args.content_debug)
                 )
 
-        finally:
-            executor.shutdown(wait=True)
+                total_pages += pages_written
+                pdf_elapsed = time.perf_counter() - pdf_start
+                if pages_written:
+                    logging.info(
+                        "[%s] processed %d page(s) in %.1fs (%.2f pp/s)",
+                        pdf_path.name,
+                        pages_written,
+                        pdf_elapsed,
+                        pages_written / max(pdf_elapsed, 1e-6),
+                    )
 
         total_elapsed = time.perf_counter() - run_start
         pages_per_sec = total_pages / max(total_elapsed, 1e-6)

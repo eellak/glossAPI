@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
 from contextlib import contextmanager
 from numbers import Number
 from pathlib import Path
@@ -181,7 +182,7 @@ def _write_metadata_parquet(df: pd.DataFrame, parquet_path: Path) -> None:
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     pa_mod, pq_mod = _ensure_pyarrow()
     table = pa_mod.Table.from_pandas(prepared, preserve_index=False)
-    tmp_path = parquet_path.with_suffix(parquet_path.suffix + ".tmp")
+    tmp_path = parquet_path.with_suffix(parquet_path.suffix + f".{uuid.uuid4().hex}.tmp")
     with _parquet_lock(parquet_path):
         try:
             pq_mod.write_table(table, tmp_path)
@@ -588,6 +589,8 @@ class ParquetSchema:
             "url_index": pd.NA,
             "filename_base": "",
             "filter": "ok",
+            "extract_status": "",
+            "extract_error": "",
             "needs_ocr": False,
             "ocr_success": False,
             "processing_stage": "",

@@ -2,6 +2,10 @@
 
 GlossAPI is a staged pipeline. You can enter at any stage and use the same folder for input and output.
 
+## Corpus usage contract
+
+The `Corpus` class is the stable surface of the project. New functionality should plug into the existing phase mixins so callers can stick to the small set of entrypoints (`download()`, `extract()`, `clean()`, `ocr()`, `section()`, `annotate()`, `export/jsonl*()`). The expected usage pattern is a short script that chains these calls; avoid ad-hoc monkeypatches or bypassing the orchestrator when adding features so downstream users retain resumability and consistent artifacts.
+
 ## Stages
 
 - Download (optional): fetch source files from URLs → `downloads/`

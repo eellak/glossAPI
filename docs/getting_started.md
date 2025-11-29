@@ -31,6 +31,20 @@ Use `dependency_setup/setup_glossapi.sh` to build an isolated virtualenv with th
 
 Add `--download-deepseek` if you need the script to fetch weights via Hugging Face; otherwise it searches `${REPO_ROOT}/deepseek-ocr/DeepSeek-OCR` unless you override `--weights-dir`. Inspect `dependency_setup/dependency_notes.md` for the latest pins, caveats, and validation runs. The script installs GlossAPI and its Rust crates in editable mode so source changes are picked up immediately.
 
+**DeepSeek runtime checklist**
+- Run `python -m glossapi.ocr.deepseek.preflight` from the DeepSeek venv to assert the CLI can run (env vars, model dir, flashinfer, cc1plus, libjpeg).
+- Force the real CLI and avoid stub fallback by setting:
+  - `GLOSSAPI_DEEPSEEK_ALLOW_CLI=1`
+  - `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`
+  - `GLOSSAPI_DEEPSEEK_VLLM_SCRIPT=/path/to/deepseek-ocr/run_pdf_ocr_vllm.py`
+  - `GLOSSAPI_DEEPSEEK_TEST_PYTHON=/path/to/deepseek/venv/bin/python`
+  - `GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr/DeepSeek-OCR`
+  - `GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH=/path/to/libjpeg-turbo/lib`
+- Install a CUDA toolkit with `nvcc` and set `CUDA_HOME` / prepend `$CUDA_HOME/bin` to `PATH` (FlashInfer/vLLM JIT expects it).
+- If FlashInfer is unstable on your stack, disable it with `VLLM_USE_FLASHINFER=0` and `FLASHINFER_DISABLE=1`.
+- Avoid FP8 KV cache issues by exporting `GLOSSAPI_DEEPSEEK_NO_FP8_KV=1`; tune VRAM use via `GLOSSAPI_DEEPSEEK_GPU_MEMORY_UTILIZATION=<0.5–0.9>`.
+- Keep `LD_LIBRARY_PATH` pointing at the toolkit lib64 (e.g. `LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH`).
+
 ### Option 1 — pip (evaluate quickly)
 
 ```bash

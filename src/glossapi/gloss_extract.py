@@ -3,6 +3,8 @@ import importlib
 import sys
 import warnings
 
+from ._naming import canonical_stem
+
 from docling.datamodel.base_models import InputFormat, ConversionStatus
 from docling.datamodel.pipeline_options import (
     AcceleratorDevice,
@@ -114,7 +116,6 @@ import ftfy
 import logging
 from contextlib import redirect_stdout
 import os
-import pickle
 import signal
 import time
 import re
@@ -750,60 +751,6 @@ class GlossExtract:
         except Exception:
             self._last_extractor_cfg = None
     
-    def _load_processing_state(self, state_file: Path) -> Dict[str, Set[str]]:
-        """
-        Load the processing state from a pickle file.
-        
-        Args:
-            state_file: Path to the pickle file
-            
-        Returns:
-            Dictionary with 'processed' and 'problematic' sets of filenames
-        """
-        if state_file.exists():
-            try:
-                with open(state_file, 'rb') as f:
-                    return pickle.load(f)
-            except Exception as e:
-                self._log.warning(f"Failed to load processing state: {e}. Starting fresh.")
-        
-        # If no state file or loading failed, check if output directory has existing files
-        output_dir = state_file.parent
-        if output_dir.exists():
-            self._log.info(f"No state file found, checking for existing output files in {output_dir}")
-            # Get all markdown files in the output directory
-            processed_files = set()
-            try:
-                for md_file in output_dir.glob("*.md"):
-                    # Extract the base filename without extension
-                    base_name = md_file.stem
-                    # For each likely input format, add a possible filename to the set
-                    for ext in ['pdf', 'docx', 'xml', 'html', 'pptx', 'csv', 'md']:
-                        processed_files.add(f"{base_name}.{ext}")
-                if processed_files:
-                    self._log.info(f"Found {len(processed_files) // 7} existing markdown files in output directory")
-            except Exception as e:
-                self._log.error(f"Error while scanning existing files: {e}")
-                
-            return {'processed': processed_files, 'problematic': set()}
-                
-        # Default state structure if file doesn't exist or can't be loaded
-        return {'processed': set(), 'problematic': set()}
-    
-    def _save_processing_state(self, state: Dict[str, Set[str]], state_file: Path) -> None:
-        """
-        Save the processing state to a pickle file.
-        
-        Args:
-            state: Dictionary with 'processed' and 'problematic' sets of filenames
-            state_file: Path to the pickle file
-        """
-        try:
-            with open(state_file, 'wb') as f:
-                pickle.dump(state, f)
-        except Exception as e:
-            self._log.error(f"Failed to save processing state: {e}")
-
     def _get_pdf_page_count(self, file_path: Path) -> Optional[int]:
         """
         Lightweight preflight to get total page count for a PDF.
@@ -1034,10 +981,12 @@ class GlossExtract:
             List of unprocessed file paths
         """
         # Create a list of unprocessed files
+        processed_stems = {canonical_stem(p) for p in processed_files}
+        problematic_stems = {canonical_stem(p) for p in problematic_files}
         unprocessed_files = []
         for file_path in input_doc_paths:
-            filename = Path(file_path).name
-            if filename not in processed_files and filename not in problematic_files:
+            stem = canonical_stem(file_path)
+            if stem not in processed_stems and stem not in problematic_stems:
                 unprocessed_files.append(file_path)
                 
         return unprocessed_files
@@ -1477,18 +1426,22 @@ class GlossExtract:
         timeout_dir = output_dir / "timeout_files"
         timeout_dir.mkdir(exist_ok=True)
         
-        # State file for tracking progress
+        # State tracking now uses the pipeline parquet rather than a pickle.
         state_file = output_dir / ".processing_state.pkl"
+        try:
+            from glossapi.corpus.corpus_state import _ProcessingStateManager  # defer import
+        except Exception:
+            _ProcessingStateManager = None  # type: ignore[assignment]
 
-        if self.external_state_updates:
-            processed_files = set()
-            problematic_files = set()
+        can_manage_state = bool(_ProcessingStateManager) and not bool(self.batch_result_callback)
+        if can_manage_state:
+            state_mgr = _ProcessingStateManager(state_file, url_column=getattr(self, "url_column", "url"))
+            if skip_existing:
+                processed_files, problematic_files = state_mgr.load()
+            else:
+                processed_files, problematic_files = set(), set()
         else:
-            state = self._load_processing_state(state_file)
-            if not skip_existing:
-                state = {'processed': set(), 'problematic': set()}
-            processed_files = state.get('processed', set())
-            problematic_files = state.get('problematic', set())
+            processed_files, problematic_files = set(), set()
         
         self._log.info(f"Found {len(processed_files)} already processed files")
         self._log.info(f"Found {len(problematic_files)} problematic files")
@@ -1511,6 +1464,9 @@ class GlossExtract:
             self._log.info("All files have already been processed. Nothing to do.")
             end_time = time.time() - start_time
             self._log.info(f"Document extraction verification complete in {end_time:.2f} seconds.")
+            if can_manage_state:
+                # Persist state to ensure parquet reflects skipped-but-complete runs
+                state_mgr.save(processed_files, problematic_files)  # type: ignore[arg-type]
             return
         
         # Process files in batches
@@ -1560,9 +1516,9 @@ class GlossExtract:
             success_count += len(successful)
             failure_count += len(problematic)
             
-            # Update processed and problematic files
-            processed_files.update(successful)
-            problematic_files.update(problematic)
+            # Update processed and problematic files using canonical stems
+            processed_files.update(canonical_stem(name) for name in successful)
+            problematic_files.update(canonical_stem(name) for name in problematic)
 
             if self.external_state_updates and self.batch_result_callback:
                 try:
@@ -1582,12 +1538,9 @@ class GlossExtract:
                         except Exception as e:
                             self._log.error(f"Failed to copy problematic file {filename}: {e}")
             
-            if not self.external_state_updates:
+            if can_manage_state:
                 # Save the current state after each batch
-                self._save_processing_state({
-                    'processed': processed_files,
-                    'problematic': problematic_files
-                }, state_file)
+                state_mgr.save(processed_files, problematic_files)  # type: ignore[arg-type]
             
             batch_duration = time.time() - batch_start_time
             self._log.info(f"Batch processed in {batch_duration:.2f} seconds")
@@ -1596,9 +1549,9 @@ class GlossExtract:
         # Check if all files have been processed
         if len(processed_files) + len(problematic_files) >= total_files:
             self._log.info("All files have been processed")
-            if not self.external_state_updates:
-                # Keep the state file for resumption capabilities
-                self._log.info("Preserving processing state file for resumption functionality")
+            if can_manage_state:
+                # Keep the parquet-backed state in sync for resumption
+                state_mgr.save(processed_files, problematic_files)  # type: ignore[arg-type]
         
         end_time = time.time() - start_time
         self._log.info(f"Document extraction complete in {end_time:.2f} seconds.")

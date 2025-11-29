@@ -435,7 +435,9 @@ class ExtractPhaseMixin:
                     bool(benchmark_mode),
                 )
 
-                state_mgr = _ProcessingStateManager(self.markdown_dir / ".processing_state.pkl")
+                state_mgr = _ProcessingStateManager(
+                    self.markdown_dir / ".processing_state.pkl", url_column=self.url_column
+                )
                 processed_files, problematic_files = state_mgr.load()
                 if skip_existing and processed_files:
                     self.logger.info(
@@ -444,12 +446,12 @@ class ExtractPhaseMixin:
 
                 pending_files = input_files
                 if skip_existing and processed_files:
-                    processed_names = {Path(name).name for name in processed_files}
-                    pending_files = [p for p in pending_files if p.name not in processed_names]
+                    processed_stems = {canonical_stem(name) for name in processed_files}
+                    pending_files = [p for p in pending_files if canonical_stem(p) not in processed_stems]
                 if problematic_files:
-                    problematic_names = {Path(name).name for name in problematic_files}
+                    problematic_stems = {canonical_stem(name) for name in problematic_files}
                     before_prob = len(pending_files)
-                    pending_files = [p for p in pending_files if p.name not in problematic_names]
+                    pending_files = [p for p in pending_files if canonical_stem(p) not in problematic_stems]
                     removed_prob = before_prob - len(pending_files)
                     if removed_prob:
                         self.logger.warning(

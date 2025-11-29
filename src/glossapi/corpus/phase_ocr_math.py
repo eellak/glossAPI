@@ -621,12 +621,16 @@ class OcrMathPhaseMixin:
                                 df_meta["needs_ocr"] = False
                             if "ocr_success" not in df_meta.columns:
                                 df_meta["ocr_success"] = False
+                            if "extraction_mode" not in df_meta.columns:
+                                df_meta["extraction_mode"] = None
                             for _fname in success_files:
                                 mask = df_meta["filename"].astype(str) == str(_fname)
                                 if mask.any():
                                     df_meta.loc[mask, "filter"] = "ok"
                                     df_meta.loc[mask, "needs_ocr"] = False
                                     df_meta.loc[mask, "ocr_success"] = True
+                                    if backend_norm == "deepseek":
+                                        df_meta.loc[mask, "extraction_mode"] = "deepseek"
                             self._cache_metadata_parquet(parquet_path)
                             parquet_schema.write_metadata_parquet(df_meta, parquet_path)
                     # Keep sectioner in sync with newly recovered files
@@ -660,7 +664,10 @@ class OcrMathPhaseMixin:
                     stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
                 bad_set = {canonical_stem(f) for f in bad_files}
                 if stems:
-                    stems = [s for s in stems if s not in bad_set]
+                    # When OCR was rerun we now want math on all stems (bad_set included).
+                    # Only skip bad_set when no rerun happened.
+                    if not reran_ocr:
+                        stems = [s for s in stems if s not in bad_set]
                 if not reprocess_completed:
                     if math_done_stems:
                         before = len(stems)

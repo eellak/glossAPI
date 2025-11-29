@@ -1,0 +1,9 @@
+{
+  "beta": [
+    "GlossAPI lightweight sample beta with numbers 123 and symbols."
+  ],
+  "alpha": [
+    "GlossAPI lightweight sample alpha.",
+    "Line two."
+  ]
+}
