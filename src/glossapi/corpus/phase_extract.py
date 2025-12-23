@@ -106,8 +106,15 @@ class ExtractPhaseMixin:
 
         # Configure batch/backend policy based on resolved choice
         if backend_choice == "docling":
-            # Keep docling runs conservative: process one document per batch for stability
-            self.extractor.configure_batch_policy("docling", max_batch_files=1, prefer_safe_backend=False)
+            # Docling provides better throughput; warn about potential instability
+            if not getattr(self, "_docling_warning_logged", False):
+                self.logger.warning(
+                    "Using Docling backend (default). Docling may produce core dumps or "
+                    "segmentation faults on certain malformed PDFs. Set phase1_backend='safe' "
+                    "for more stable (but slower) extraction if you encounter crashes."
+                )
+                self._docling_warning_logged = True
+            self.extractor.configure_batch_policy("docling", max_batch_files=5, prefer_safe_backend=False)
         else:
             self.extractor.configure_batch_policy("safe", max_batch_files=1, prefer_safe_backend=True)
 
@@ -138,7 +145,8 @@ class ExtractPhaseMixin:
             )
         needs_gpu = bool(force_ocr or formula_enrichment or code_enrichment)
         if choice == "auto":
-            choice = "docling" if needs_gpu else "safe"
+            #choice = "docling" if needs_gpu else "safe" #Commented this and added line below to use docling on CPUs too.
+            choice = "docling"
         if choice == "safe" and needs_gpu:
             self.logger.info(
                 "Phase-1 backend 'safe' overridden to 'docling' because OCR/math enrichment was requested."

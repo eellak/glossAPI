@@ -29,7 +29,7 @@ output_dir = Path("artifacts/lightweight_pdf_run")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 corpus = Corpus(input_dir, output_dir)
-corpus.extract(input_format="pdf")  # Safe PyPDFium backend by default
+corpus.extract(input_format="pdf", phase1_backend="safe")  # Use safe backend for lightweight test
 PY
 ```
 

@@ -166,7 +166,7 @@ class Corpus(
 
         # Track whether we've already printed the GPU setup banner in this process
         self._gpu_banner_logged = False
-        self._phase1_backend = "safe"
+        self._phase1_backend = "docling" #+++Changed from "safe"+++
 
         os.makedirs(self.markdown_dir, exist_ok=True)
         os.makedirs(self.sections_dir, exist_ok=True)
@@ -553,7 +553,7 @@ def gpu_extract_worker_queue(
         _batch_env = int(str(_os.environ.get("GLOSSAPI_GPU_BATCH_SIZE", "")).strip() or 0)
     except Exception:
         _batch_env = 0
-    default_batch = 5 if not force else 1
+    default_batch = 8 if not force else 2 #increased for multi-GPU use
     try:
         extractor = getattr(c, "extractor", None)
         if extractor is not None:

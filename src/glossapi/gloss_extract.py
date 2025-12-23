@@ -247,9 +247,10 @@ class GlossExtract:
         self.batch_result_callback: Optional[Callable[[List[str], List[str]], None]] = None
         self.external_state_updates: bool = False
         # Phase-1 extraction safety controls
-        self.batch_policy: str = "safe"
-        self.max_batch_files: int = 1
-        self.use_pypdfium_backend: bool = True
+        #self.batch_policy: str = "safe"
+        self.batch_policy: str = "docling"
+        self.max_batch_files: int = 5 #increased from 1 to 5....test and change.
+        self.use_pypdfium_backend: bool = False #was true.
         policy_env = os.getenv("GLOSSAPI_BATCH_POLICY")
         max_env = os.getenv("GLOSSAPI_BATCH_MAX")
         max_override: Optional[int] = None
@@ -269,7 +270,8 @@ class GlossExtract:
                 except Exception:
                     pass
                 max_override = None
-        self.configure_batch_policy(policy_env or "safe", max_batch_files=max_override, prefer_safe_backend=None if (policy_env or max_env) else True)
+        #changes made below:
+        self.configure_batch_policy(policy_env or "docling", max_batch_files=max_override, prefer_safe_backend=None if (policy_env or max_env) else False)
         self._thread_caps_applied: bool = False
 
     def configure_batch_policy(

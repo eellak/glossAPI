@@ -14,7 +14,11 @@ This page lists the main knobs you can use to tune GlossAPI.
 
 ### Batch Policy & PDF Backend
 
-GlossAPI exposes two Phase‑1 profiles. Use `Corpus.extract(..., phase1_backend='docling')` to switch from the default safe backend. The legacy environment variables `GLOSSAPI_BATCH_POLICY` and `GLOSSAPI_BATCH_MAX` are still parsed for backward compatibility but emit a deprecation warning and will be removed in a future release.
+GlossAPI exposes two Phase‑1 profiles. The default is `phase1_backend='docling'` for maximum throughput with GPU acceleration. Use `Corpus.extract(..., phase1_backend='safe')` if you experience crashes or core dumps on certain PDFs.
+
+> **Warning:** The Docling backend may produce core dumps or segmentation faults when processing malformed PDFs. If extraction crashes repeatedly, switch to the safe backend.
+
+The legacy environment variables `GLOSSAPI_BATCH_POLICY` and `GLOSSAPI_BATCH_MAX` are still parsed for backward compatibility but emit a deprecation warning and will be removed in a future release.
 
 Regardless of backend, the extractor clamps OMP/OpenBLAS/MKL pools to one thread per worker so multi‑GPU runs do not explode thread counts.
 

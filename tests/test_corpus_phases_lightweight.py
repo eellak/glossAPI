@@ -41,9 +41,11 @@ def test_phase_extract_safe_backend_matches_expected(
     corpus_paths: tuple[Path, Path],
     expected_outputs: dict[str, list[str]],
 ) -> None:
+    """Test extraction with explicit safe backend (lightweight, no Docling required)."""
     input_dir, output_dir = corpus_paths
     corpus = Corpus(input_dir, output_dir)
 
+    # Explicitly use safe backend for lightweight tests (no Docling required)
     corpus.extract(input_format="pdf", phase1_backend="safe", use_gpus="none")
 
     markdown_dir = output_dir / "markdown"
@@ -57,11 +59,13 @@ def test_phase_extract_safe_backend_matches_expected(
 
 
 def test_phase_clean_populates_clean_markdown(corpus_paths: tuple[Path, Path]) -> None:
+    """Test clean phase with explicit safe backend (lightweight, no Docling required)."""
     pytest.importorskip("glossapi_rs_cleaner")
 
     input_dir, output_dir = corpus_paths
     corpus = Corpus(input_dir, output_dir)
 
+    # Explicitly use safe backend for lightweight tests (no Docling required)
     corpus.extract(input_format="pdf", phase1_backend="safe", use_gpus="none")
     corpus.clean()
 
@@ -77,9 +81,11 @@ def test_phase_clean_populates_clean_markdown(corpus_paths: tuple[Path, Path]) -
 
 
 def test_phase_section_emits_expected_parquet(corpus_paths: tuple[Path, Path]) -> None:
+    """Test section phase with explicit safe backend (lightweight, no Docling required)."""
     input_dir, output_dir = corpus_paths
     corpus = Corpus(input_dir, output_dir)
 
+    # Explicitly use safe backend for lightweight tests (no Docling required)
     corpus.extract(input_format="pdf", phase1_backend="safe", use_gpus="none")
     corpus.section()
 

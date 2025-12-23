@@ -4,7 +4,7 @@ GlossAPI ships 20 single-page PDFs that exercise the extraction pipeline without
 
 - Location: `samples/lightweight_pdf_corpus/`
 - Inputs: `pdfs/` (pre-generated assets) and `manifest.json`
-- Baseline outputs: `expected_outputs.json` (Markdown produced with the safe PyPDFium backend)
+- Baseline outputs: `expected_outputs.json` (Markdown produced with `phase1_backend='safe'` PyPDFium backend)
 
 ## Quick run
 
@@ -18,7 +18,7 @@ output_dir = Path("artifacts/lightweight_pdf_run")
 output_dir.mkdir(parents=True, exist_ok=True)
 
 corpus = Corpus(input_dir, output_dir)
-corpus.extract(input_format="pdf")
+corpus.extract(input_format="pdf", phase1_backend="safe")  # Use safe backend for expected output comparison
 PY
 ```
 

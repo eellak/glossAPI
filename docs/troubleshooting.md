@@ -15,6 +15,17 @@
 
 - The first OCR call might download a visualization font. Ensure egress is allowed; the file is cached afterwards.
 
+## Core dumps / Segmentation faults during extraction
+
+The default Docling backend may crash on malformed PDFs. Try:
+
+- Switch to the safe backend: `corpus.extract(phase1_backend='safe')`
+- Enable core dump collection: `ulimit -c unlimited` to capture crashes for debugging
+- Isolate the problematic PDF and report it as an issue
+- Check worker logs in `logs/` for stack traces
+
+If crashes persist, run with `GLOSSAPI_WORKER_LOG_VERBOSE=1` to capture detailed GPU binding info.
+
 ## Out of memory
 
 - Lower Phase‑2 `batch_size` (e.g., 8) and reduce inline `GLOSSAPI_FORMULA_BATCH`.
