@@ -107,7 +107,8 @@ class ExtractPhaseMixin:
         # Configure batch/backend policy based on resolved choice
         if backend_choice == "docling":
             # Keep docling runs conservative: process one document per batch for stability
-            self.extractor.configure_batch_policy("docling", max_batch_files=1, prefer_safe_backend=False)
+            #changed batching to 5 below:
+            self.extractor.configure_batch_policy("docling", max_batch_files=5, prefer_safe_backend=False)
         else:
             self.extractor.configure_batch_policy("safe", max_batch_files=1, prefer_safe_backend=True)
 
@@ -138,7 +139,7 @@ class ExtractPhaseMixin:
             )
         needs_gpu = bool(force_ocr or formula_enrichment or code_enrichment)
         if choice == "auto":
-            choice = "docling" if needs_gpu else "safe"
+            choice = "docling" #removed safe option
         if choice == "safe" and needs_gpu:
             self.logger.info(
                 "Phase-1 backend 'safe' overridden to 'docling' because OCR/math enrichment was requested."
