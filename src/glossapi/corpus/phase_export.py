@@ -479,7 +479,7 @@ class ExportPhaseMixin:
                 continue
             metadata = _aggregate_metadata(stem, base_metadata, chunk_metadata)
             metadata = {k: _normalize_value(v) for k, v in metadata.items()}
-            original_filename_value = metadata.get("filename")
+
             if chunk_paths:
                 ordered_chunks = sorted(chunk_paths, key=_chunk_sort_key)
                 parts: List[str] = []
@@ -491,12 +491,14 @@ class ExportPhaseMixin:
             else:
                 continue
 
+
             filetype = metadata.get("filetype") or metadata.get("file_ext")
             if not filetype:
-                filename_candidate = original_filename_value or metadata.get("filename")
+                filename_candidate = metadata.get("filename")
                 if isinstance(filename_candidate, str):
                     filetype = Path(filename_candidate).suffix.lstrip(".")
             metadata["filetype"] = filetype or None
+
 
             filename_value = metadata.get("filename")
             filename_base: Optional[str] = None
@@ -508,15 +510,14 @@ class ExportPhaseMixin:
                 filename_base = stem
             metadata["filename"] = filename_base
 
-            filename_label = None
-            if isinstance(original_filename_value, str) and original_filename_value.strip():
-                filename_label = _strip_chunk_from_filename(original_filename_value)
-            if not filename_label and representative_path is not None:
-                filename_label = _strip_chunk_from_filename(representative_path.name)
-            if not filename_label:
-                filename_label = stem
-            doc_id = hashlib.sha256(filename_label.encode("utf-8")).hexdigest()
+            filename_for_id = metadata.get("filename")
+            if filename_for_id and not filename_for_id.lower().endswith((".pdf", ".docx", ".txt")):
+                filename_for_id = f"{filename_for_id}.pdf"
+
+            doc_id = hashlib.sha256(filename_for_id.encode("utf-8")).hexdigest()
             metadata["doc_id"] = doc_id
+
+
 
             metrics_page_count, metrics_formula, metrics_code = _load_metrics(stem)
             if metrics_page_count is not None:
@@ -563,7 +564,8 @@ class ExportPhaseMixin:
             if source_metadata_key:
                 source_entry = source_metadata_by_stem.get(stem)
                 fallback_name = representative_path.name if representative_path is not None else stem
-                source_lookup_label = original_filename_value or metadata.get("filename") or fallback_name
+                source_lookup_label = metadata.get("filename") or fallback_name
+
                 source_lookup_label = _strip_chunk_from_filename(str(source_lookup_label))
                 if source_entry is None:
                     raise KeyError(f"Missing source metadata for filename '{source_lookup_label}'")
