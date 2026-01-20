@@ -1,6 +1,6 @@
 """Phase-1 extraction helpers split from Corpus."""
 from __future__ import annotations
-
+import warnings
 import json
 import logging
 import math
@@ -103,11 +103,23 @@ class ExtractPhaseMixin:
             require_math=bool(formula_enrichment or code_enrichment),
             require_backend_gpu=(backend_choice == "docling"),
         )
+        if backend_choice == "docling" and str(accel_type).lower() == "cuda":
+            warnings.warn(
+                "Docling backend with batching may trigger native crashes "
+                "(e.g. segmentation faults or core dumps), especially in multi-GPU runs. "
+                "If instability occurs, rerun with phase1_backend='safe' or reduce batch size.",
+        RuntimeWarning,
+          )
 
         # Configure batch/backend policy based on resolved choice
         if backend_choice == "docling":
-            # Keep docling runs conservative: process one document per batch for stability
-            self.extractor.configure_batch_policy("docling", max_batch_files=1, prefer_safe_backend=False)
+            max_batch = 4 if not force_ocr else 1
+            self.extractor.configure_batch_policy(
+                "docling",
+                max_batch_files=max_batch,
+                prefer_safe_backend=False,
+            )
+
         else:
             self.extractor.configure_batch_policy("safe", max_batch_files=1, prefer_safe_backend=True)
 
@@ -138,7 +150,13 @@ class ExtractPhaseMixin:
             )
         needs_gpu = bool(force_ocr or formula_enrichment or code_enrichment)
         if choice == "auto":
-            choice = "docling" if needs_gpu else "safe"
+            choice = "docling"
+        if choice == "docling" and not needs_gpu:
+            self.logger.info(
+            "Phase-1 backend 'docling' selected without GPU. "
+            "For CPU-only environments, phase1_backend='safe' may be more stable."
+            )
+
         if choice == "safe" and needs_gpu:
             self.logger.info(
                 "Phase-1 backend 'safe' overridden to 'docling' because OCR/math enrichment was requested."
@@ -249,9 +267,9 @@ class ExtractPhaseMixin:
             accel_type: Acceleration type ("Auto", "CPU", "CUDA", "MPS") (default: "Auto")
             export_doc_json: When True (default), writes Docling layout JSON to `json/<stem>.docling.json(.zst)`
             emit_formula_index: Also emit `json/<stem>.formula_index.jsonl` (default: False)
-            phase1_backend: Selects the Phase-1 backend. ``"auto"`` (default) keeps the safe backend unless
-                OCR/math is requested, ``"safe"`` forces the PyPDFium backend, and ``"docling"`` forces the
-                Docling backend.
+            phase1_backend: Selects the phase1_backend: "auto" (default) selects the Docling backend. Use "safe"
+            to force the PyPDFium backend when stability is preferred.
+
 
         """
         if not file_paths:
@@ -425,7 +443,7 @@ class ExtractPhaseMixin:
                 except Exception:
                     threads_effective = int(num_threads) if isinstance(num_threads, int) else max(2, 2 * max(1, len(devs)))
 
-                batch_hint = 5 if backend_choice == "docling" and not force_ocr else 1
+                batch_hint = 8 if backend_choice == "docling" and not force_ocr else 1
                 self.logger.info(
                     "Phase-1 config: backend=%s batch_size=%s threads=%s skip_existing=%s benchmark=%s",
                     backend_choice,
