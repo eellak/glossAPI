@@ -471,8 +471,6 @@ class ExportPhaseMixin:
             chunk_paths: List[Path] = entry.get("chunk_paths", []) or []
             base_path: Optional[Path] = entry.get("base_path")
             representative_path: Optional[Path] = base_path
-            if representative_path is None and chunk_paths:
-                representative_path = sorted(chunk_paths, key=_chunk_sort_key)[0]
             base_metadata = metadata_by_stem.get(stem)
             chunk_metadata = metadata_chunks_by_stem.get(stem, [])
             if base_metadata is None and not chunk_metadata:
@@ -480,16 +478,10 @@ class ExportPhaseMixin:
             metadata = _aggregate_metadata(stem, base_metadata, chunk_metadata)
             metadata = {k: _normalize_value(v) for k, v in metadata.items()}
             original_filename_value = metadata.get("filename")
-            if chunk_paths:
-                ordered_chunks = sorted(chunk_paths, key=_chunk_sort_key)
-                parts: List[str] = []
-                for path in ordered_chunks:
-                    parts.append(path.read_text(encoding="utf-8"))
-                document_text = "\n".join(parts)
-            elif representative_path is not None:
-                document_text = representative_path.read_text(encoding="utf-8")
-            else:
+            if base_path is None or not base_path.exists():
                 continue
+
+            document_text = base_path.read_text(encoding="utf-8")
 
             filetype = metadata.get("filetype") or metadata.get("file_ext")
             if not filetype:

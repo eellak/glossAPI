@@ -914,6 +914,17 @@ class GlossExtract:
         except Exception as e:
             self._log.error(f"Failed to write chunk manifest for {file_path.name}: {e}")
 
+        # Always attempt to assemble whatever chunks succeeded (best-effort)
+        out_md_path = output_dir / f"{stem}.md"
+        final_md_written = False
+        if all_segments:
+            try:
+                final_md = "\n\n".join(all_segments)
+                out_md_path.write_text(final_md, encoding="utf-8")
+                final_md_written = True
+            except Exception as e:
+                self._log.error(f"Failed to assemble final markdown for {file_path.name}: {e}")
+
         if not completed:
             # Record failure/timeout provenance in parquet
             try:
@@ -928,6 +939,7 @@ class GlossExtract:
                     chunk_size=self.chunk_size,
                     chunk_count=len(manifest.get("entries", [])),
                     chunk_manifest_path=manifest_path,
+                    no_partial_output=not final_md_written,
                 )
             except Exception as e:
                 self._log.warning(f"Failed to record chunked extraction metadata for {file_path.name}: {e}")
@@ -939,14 +951,7 @@ class GlossExtract:
                     self._log.error(f"Failed to copy timeout/failed file {file_path.name}: {e}")
             return False
 
-        # Assemble final markdown
-        try:
-            final_md = "\n\n".join(all_segments)
-            out_md_path = output_dir / f"{stem}.md"
-            with out_md_path.open("w", encoding="utf-8") as fp:
-                fp.write(final_md)
-        except Exception as e:
-            self._log.error(f"Failed to assemble final markdown for {file_path.name}: {e}")
+        if not final_md_written:
             return False
         # Record success provenance in parquet
         try:
