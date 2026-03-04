@@ -1,6 +1,6 @@
 [build-system]
-requires = ["maturin>=1.5,<2.0"]
-build-backend = "maturin"
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "glossapi"
@@ -34,7 +34,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Rust",
-    "License :: OSI Approved :: European Union Public Licence 1.2 (EUPL 1.2)",
 ]
 
 [project.optional-dependencies]
@@ -66,17 +65,16 @@ docs = [
     "mkdocs-material>=9.5",
 ]
 
-[tool.maturin]
-bindings = "pyo3"
-# The crate is located under rust/glossapi_rs_noise
-module-name = "glossapi_rs_noise"
-python-source = "src"
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
 
-manifest-path = "rust/glossapi_rs_noise/Cargo.toml"
-include = ["src/**"]
-python-packages = [
-    "glossapi"
-]
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["glossapi", "glossapi.*"]
+
+[tool.setuptools.package-data]
+glossapi = ["models/**/*"]
 
 [tool.pytest.ini_options]
 markers = [
