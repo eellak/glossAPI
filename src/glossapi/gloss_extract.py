@@ -2,6 +2,9 @@ from typing import Dict, Set, List, Optional, Iterable, Tuple, Any, Union, Calla
 import importlib
 import sys
 import warnings
+from .anonymizer import Anonymizer,NER_masker
+anonymizer=Anonymizer()
+ner_masker=NER_masker()
 
 from ._naming import canonical_stem
 
@@ -1192,6 +1195,8 @@ class GlossExtract:
                     content = text_page.get_text_range()
                     text = content.replace("\r\n", "\n").replace("\r", "\n").strip()
                     if text:
+                        text=anonymizer.mask(text)
+                        text=ner_masker.mask(text)
                         texts.append(text)
                 except Exception as page_exc:
                     self._log.warning(
@@ -1200,7 +1205,7 @@ class GlossExtract:
                         Path(file_path).name,
                         page_exc,
                     )
-            markdown = "\n\n".join(texts)
+            markdown = "\n\n".join(texts)        
             out_md_path.write_text(markdown, encoding="utf-8")
             self._update_extraction_metadata(
                 output_dir=output_dir,
