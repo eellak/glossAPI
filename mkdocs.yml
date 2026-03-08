@@ -13,10 +13,28 @@ nav:
       - Onboarding Guide: getting_started.md
       - Quickstart Recipes: quickstart.md
       - Lightweight PDF Corpus: lightweight_corpus.md
+  - Architecture:
+      - Architecture Overview: architecture/index.md
+      - Core Design Principles: architecture/core_design_principles.md
+      - Docling Throughput and Batching: architecture/docling_throughput_and_batching.md
+      - Failure Recovery and Skiplist: architecture/docling_failure_recovery_and_skiplist.md
+      - Greek Text Validation: architecture/greek_text_validation.md
+      - Metadata, Artifacts, and Run Diagnostics: architecture/metadata_artifacts_and_run_diagnostics.md
+      - Artifact Layout and Stage Handoffs: architecture/artifact_layout_and_stage_handoffs.md
+      - Resumability, Recovery, and Retention: architecture/resumability_recovery_and_retention.md
   - Pipeline:
       - Pipeline Overview: pipeline.md
       - OCR & Math Enrichment: ocr_and_math_enhancement.md
       - Multi-GPU & Scaling: multi_gpu.md
+      - Stage Reference:
+          - Stage Overview: stages/index.md
+          - Download: stages/download.md
+          - Extract: stages/extract.md
+          - Clean: stages/clean.md
+          - OCR: stages/ocr.md
+          - Section: stages/section.md
+          - Annotate: stages/annotate.md
+          - Export: stages/export.md
   - Configuration & Ops:
       - Configuration: configuration.md
       - AWS Job Distribution: aws_job_distribution.md

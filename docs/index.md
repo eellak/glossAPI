@@ -7,10 +7,21 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 - [Quickstart Recipes](quickstart.md) — common extraction/OCR flows in copy-paste form.
 - [Lightweight PDF Corpus](lightweight_corpus.md) — 20 one-page PDFs for smoke testing without Docling or GPUs.
 
+## Understand the architecture
+- [Architecture Overview](architecture/index.md) — the end-to-end staged model and why it exists.
+- [Core Design Principles](architecture/core_design_principles.md) — the design constraints that shape the pipeline.
+- [Docling Throughput and Batching](architecture/docling_throughput_and_batching.md) — how throughput and stability trade off.
+- [Failure Recovery and Skiplist](architecture/docling_failure_recovery_and_skiplist.md) — how the pipeline survives problematic PDFs.
+- [Greek Text Validation](architecture/greek_text_validation.md) — why extraction success is not enough for Greek corpora.
+- [Metadata, Artifacts, and Run Diagnostics](architecture/metadata_artifacts_and_run_diagnostics.md) — how provenance and operational state are retained.
+- [Artifact Layout and Stage Handoffs](architecture/artifact_layout_and_stage_handoffs.md) — how folders, filenames, and metadata glue the stages together.
+- [Resumability, Recovery, and Retention](architecture/resumability_recovery_and_retention.md) — how the current design supports reruns and where storage pressure appears.
+
 ## Learn the pipeline
 - [Pipeline Overview](pipeline.md) explains each stage and the emitted artifacts.
 - [OCR & Math Enrichment](ocr_and_math_enhancement.md) covers Docling + RapidOCR usage.
 - [Multi-GPU & Benchmarking](multi_gpu.md) shares scaling and scheduling tips.
+- [Stage Reference](stages/index.md) breaks down each pipeline stage as a contract.
 
 ## Configure and debug
 - [Configuration](configuration.md) lists all environment knobs.
