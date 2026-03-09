@@ -18,6 +18,7 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 - [Resumability, Recovery, and Retention](architecture/resumability_recovery_and_retention.md) — how the current design supports reruns and where storage pressure appears.
 
 ## Learn the pipeline
+- [Code Map](code_map.md) links the main documentation ideas to the classes and files that implement them.
 - [Pipeline Overview](pipeline.md) explains each stage and the emitted artifacts.
 - [OCR & Math Enrichment](ocr_and_math_enhancement.md) covers Docling + RapidOCR usage.
 - [Multi-GPU & Benchmarking](multi_gpu.md) shares scaling and scheduling tips.
@@ -29,5 +30,5 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 - [AWS Job Distribution](aws_job_distribution.md) describes large-scale scheduling.
 
 ## Reference
-- [Corpus API](api/corpus.md) details public methods and parameters.
-- `docs/divio/` contains placeholder pages for the upcoming Divio restructuring—feel free to open PRs fleshing them out.
+- [Corpus API](api/corpus.md) gives the compact contract view of the main public methods.
+- [Legacy Corpus API Notes](api_corpus_tmp.md) remains available while the docs are being consolidated.

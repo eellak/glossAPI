@@ -85,10 +85,27 @@ Pass `--download-deepseek` if you need the script to fetch weights automatically
 See the refreshed docs (`docs/index.md`) for detailed environment notes, CUDA/ORT combinations, and troubleshooting tips.
 
 ## Repo Landmarks
+- `docs/code_map.md`: fast map from pipeline ideas to implementing classes and files.
+- `docs/pipeline.md`: stage contracts, key parameters, and artifact outputs.
 - `samples/lightweight_pdf_corpus/`: 20 one-page PDFs with manifest + expected Markdown.
 - `src/glossapi/`: Corpus pipeline, cleaners, and orchestration logic.
 - `tests/test_pipeline_smoke.py`: Minimal regression entry point (uses the lightweight corpus).
 - `docs/`: MkDocs site with onboarding, pipeline recipes, and configuration guides.
+
+## Pipeline map
+
+Use this as the shortest path from a documentation concept to the public call that implements it.
+
+| Stage | Main call | Important parameters | Writes |
+| --- | --- | --- | --- |
+| Download | `Corpus.download(...)` | `input_parquet`, `links_column`, `parallelize_by`, downloader kwargs | `downloads/`, `download_results/*.parquet` |
+| Extract (Phase-1) | `Corpus.extract(...)` | `input_format`, `phase1_backend`, `force_ocr`, `use_gpus`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json` |
+| Clean | `Corpus.clean(...)` | `threshold`, `drop_bad`, `empty_char_threshold`, `empty_min_pages` | `clean_markdown/<stem>.md`, updated parquet metrics/flags |
+| OCR / math follow-up | `Corpus.ocr(...)` | `mode`, `fix_bad`, `math_enhance`, `use_gpus`, `devices` | refreshed `markdown/<stem>.md`, optional `json/<stem>.latex_map.jsonl` |
+| Section | `Corpus.section()` | uses cleaner/parquet outputs to choose inputs | `sections/sections_for_annotation.parquet` |
+| Annotate | `Corpus.annotate(...)` | `annotation_type`, `fully_annotate` | `classified_sections.parquet`, `fully_annotated_sections.parquet` |
+| Triage math density | `Corpus.triage_math()` | no required args | updated `download_results/*.parquet` routing columns |
+| JSONL export | `Corpus.jsonl(...)` | `output_path` | merged training/export JSONL |
 
 ## Contributing
 - Run `pytest tests/test_pipeline_smoke.py` for a fast end-to-end check.

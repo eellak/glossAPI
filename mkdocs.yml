@@ -40,14 +40,10 @@ nav:
       - AWS Job Distribution: aws_job_distribution.md
       - Troubleshooting: troubleshooting.md
   - Reference:
+      - Code Map: code_map.md
       - Corpus API: api/corpus.md
+      - Legacy Corpus API Notes: api_corpus_tmp.md
       - Math Enrichment Runtime: math_enrichment_runtime.md
-  - Divio Skeleton:
-      - Overview: divio/overview.md
-      - Tutorials: divio/tutorials.md
-      - How-to Guides: divio/how_to_guides.md
-      - Reference: divio/reference.md
-      - Explanation: divio/explanation.md
 docs_dir: docs
 markdown_extensions:
   - admonition
