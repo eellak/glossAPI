@@ -33,7 +33,7 @@ class OcrMathPhaseMixin:
         *,
         fix_bad: bool = True,
         mode: Optional[str] = None,
-        backend: str = "rapidocr",
+        backend: str = "deepseek",
         device: Optional[str] = None,
         model_dir: Optional[Union[str, Path]] = None,
         max_pages: Optional[int] = None,
@@ -70,8 +70,8 @@ class OcrMathPhaseMixin:
             fix_bad only -> 'ocr_bad';
             math_enhance only -> 'math_only';
             neither -> no‑op.
-        - backend: 'rapidocr' (default) uses the Docling + RapidOCR path via Phase‑1 extract().
-                   'deepseek' uses the DeepSeek‑OCR path (no Docling JSON, math unsupported).
+        - backend: 'deepseek' (default) uses the DeepSeek OCR remediation path.
+                   Docling layout/json remains Phase-1 infrastructure; OCR remediation itself is DeepSeek-only.
         - fix_bad: re-run OCR on documents marked bad by the cleaner (default True).
         - math_enhance: run math/code enrichment after OCR (default True).
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
@@ -82,9 +82,9 @@ class OcrMathPhaseMixin:
           ``reprocess_completed=False``). Prefer the explicit ``reprocess_completed`` toggle.
         """
         # Normalize backend
-        backend_norm = str(backend or "rapidocr").strip().lower()
-        if backend_norm not in {"rapidocr", "deepseek"}:
-            raise ValueError("backend must be 'rapidocr' or 'deepseek'")
+        backend_norm = str(backend or "deepseek").strip().lower()
+        if backend_norm != "deepseek":
+            raise ValueError("backend must be 'deepseek'")
 
         # CONTENT_DEBUG override (preferred uppercase alias)
         # Priority: CONTENT_DEBUG > INTERNAL_DEBUG > content_debug/internal_debug flags
@@ -147,13 +147,21 @@ class OcrMathPhaseMixin:
         reprocess_completed = reprocess_flag
 
         # DeepSeek semantics note
-        if backend_norm == "deepseek":
+        if backend_norm == "deepseek" and mode_norm in {"ocr_bad", "ocr_bad_then_math"}:
             try:
                 self.logger.info(
                     "DeepSeek backend: Phase-2 math is not required; equations are included inline via OCR."
                 )
             except Exception:
                 pass
+            if mode_norm == "ocr_bad_then_math":
+                try:
+                    self.logger.info(
+                        "DeepSeek OCR does not run Phase-2 math; treating mode='ocr_bad_then_math' as 'ocr_bad'."
+                    )
+                except Exception:
+                    pass
+                mode_norm = "ocr_bad"
         # Identify bad documents from parquet (Rust cleaner output)
         bad_files: List[str] = []
         skipped_completed = 0
@@ -578,24 +586,6 @@ class OcrMathPhaseMixin:
                 except Exception as _e:
                     self.logger.error("DeepSeek OCR runner failed: %s", _e)
                     raise
-            else:
-                # RapidOCR/Docling path via Phase-1 extract
-                self.extract(
-                    input_format="pdf",
-                    num_threads=os.cpu_count() or 4,
-                    accel_type="CUDA",
-                    force_ocr=True,
-                    formula_enrichment=False,
-                    code_enrichment=False,
-                    filenames=bad_files,
-                    skip_existing=False,
-                    use_gpus=use_gpus,
-                    devices=devices,
-                    # Do not generate Docling JSON for OCR targets; math will skip them
-                    export_doc_json=False,
-                    emit_formula_index=False,
-                    phase1_backend="docling",
-                )
             reran_ocr = True
             # Update metadata to reflect successful OCR reruns
             try:

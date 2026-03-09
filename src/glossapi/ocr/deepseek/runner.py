@@ -1,4 +1,4 @@
-"""DeepSeek OCR runner with stub and optional CLI dispatch."""
+"""DeepSeek OCR runner."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ except Exception:  # pragma: no cover - optional dependency
     _pypdfium2 = None
 
 LOGGER = logging.getLogger(__name__)
+REPO_ROOT = Path(__file__).resolve().parents[4]
+DEFAULT_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_transformers.py"
 
 
 def _page_count(pdf_path: Path) -> int:
@@ -32,12 +34,13 @@ def _run_cli(
     input_dir: Path,
     output_dir: Path,
     *,
+    files: List[str],
+    model_dir: Path,
     python_bin: Optional[Path],
     script: Path,
     max_pages: Optional[int],
     content_debug: bool,
-    gpu_memory_utilization: Optional[float] = None,
-    disable_fp8_kv: bool = False,
+    device: Optional[str],
 ) -> None:
     python_exe = Path(python_bin) if python_bin else Path(sys.executable)
     cmd: List[str] = [
@@ -47,78 +50,62 @@ def _run_cli(
         str(input_dir),
         "--output-dir",
         str(output_dir),
+        "--model-dir",
+        str(model_dir),
     ]
+    if files:
+        cmd += ["--files", *files]
     if max_pages is not None:
         cmd += ["--max-pages", str(max_pages)]
     if content_debug:
         cmd.append("--content-debug")
-    if gpu_memory_utilization is not None:
-        cmd += ["--gpu-memory-utilization", str(gpu_memory_utilization)]
-    if disable_fp8_kv:
-        cmd.append("--no-fp8-kv")
+    if device:
+        cmd += ["--device", str(device)]
 
     env = os.environ.copy()
     if shutil.which("cc1plus", path=env.get("PATH", "")) is None:
-        # FlashInfer JIT (via vLLM) needs a C++ toolchain; add a known cc1plus location if missing.
         for candidate in sorted(Path("/usr/lib/gcc/x86_64-linux-gnu").glob("*/cc1plus")):
-            env["PATH"] = f"{candidate.parent}:{env.get('PATH','')}"
+            env["PATH"] = f"{candidate.parent}:{env.get('PATH', '')}"
             break
     ld_path = env.get("GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH")
     if ld_path:
-        env["LD_LIBRARY_PATH"] = f"{ld_path}:{env.get('LD_LIBRARY_PATH','')}"
+        env["LD_LIBRARY_PATH"] = f"{ld_path}:{env.get('LD_LIBRARY_PATH', '')}"
 
-    LOGGER.info("Running DeepSeek CLI: %s", " ".join(cmd))
+    LOGGER.info("Running DeepSeek OCR CLI: %s", " ".join(cmd))
     subprocess.run(cmd, check=True, env=env)  # nosec: controlled arguments
-
-
-def _run_one_pdf(pdf_path: Path, md_out: Path, metrics_out: Path, cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Stub processor for a single PDF."""
-    page_count = _page_count(pdf_path)
-    max_pages = cfg.get("max_pages")
-    if max_pages is not None and page_count:
-        page_count = min(page_count, max_pages)
-
-    md_lines = [
-        f"# DeepSeek OCR (stub) — {pdf_path.name}",
-        "",
-        f"Pages: {page_count if page_count else 'unknown'}",
-    ]
-    if cfg.get("content_debug"):
-        md_lines.append("")
-        md_lines.append("<!-- content_debug: stub output -->")
-    md_out.parent.mkdir(parents=True, exist_ok=True)
-    md_out.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
-
-    metrics = {"page_count": page_count}
-    metrics_out.parent.mkdir(parents=True, exist_ok=True)
-    metrics_out.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-    return metrics
 
 
 def run_for_files(
     self_ref: Any,
     files: Iterable[str],
     *,
-    model_dir: Optional[Path] = None,  # kept for API compatibility
+    model_dir: Optional[Path] = None,
     output_dir: Optional[Path] = None,
-    log_dir: Optional[Path] = None,  # unused placeholder to mirror rapidocr
+    log_dir: Optional[Path] = None,  # kept for API compatibility
     max_pages: Optional[int] = None,
-    allow_stub: bool = True,
-    allow_cli: bool = False,
+    allow_stub: bool = False,  # ignored after stub removal; kept for compatibility
+    allow_cli: bool = True,  # ignored after stub removal; kept for compatibility
     python_bin: Optional[Path] = None,
     vllm_script: Optional[Path] = None,
     content_debug: bool = False,
     persist_engine: bool = True,  # placeholder for future session reuse
     precision: Optional[str] = None,  # reserved
-    device: Optional[str] = None,  # reserved
-    gpu_memory_utilization: Optional[float] = None,
-    disable_fp8_kv: bool = False,
+    device: Optional[str] = None,
+    gpu_memory_utilization: Optional[float] = None,  # reserved
+    disable_fp8_kv: bool = False,  # reserved
     **_: Any,
 ) -> Dict[str, Any]:
-    """Run DeepSeek OCR for the provided files.
+    """Run DeepSeek OCR for the provided files."""
 
-    Returns a mapping of stem -> minimal metadata (page_count).
-    """
+    requested_stub = bool(allow_stub)
+    del log_dir, allow_stub, allow_cli, persist_engine, precision
+    del gpu_memory_utilization, disable_fp8_kv
+
+    if requested_stub or os.environ.get("GLOSSAPI_DEEPSEEK_ALLOW_STUB", "0") == "1":
+        raise RuntimeError(
+            "DeepSeek stub execution has been removed. "
+            "Unset GLOSSAPI_DEEPSEEK_ALLOW_STUB and configure the real DeepSeek runtime."
+        )
 
     file_list = [str(f) for f in files or []]
     if not file_list:
@@ -131,67 +118,63 @@ def run_for_files(
     md_dir.mkdir(parents=True, exist_ok=True)
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
-    env_allow_stub = os.environ.get("GLOSSAPI_DEEPSEEK_ALLOW_STUB", "1") == "1"
-    env_allow_cli = os.environ.get("GLOSSAPI_DEEPSEEK_ALLOW_CLI", "0") == "1"
+    model_root = Path(
+        model_dir
+        or os.environ.get("GLOSSAPI_DEEPSEEK_MODEL_DIR", "")
+        or (REPO_ROOT / "deepseek-ocr-2-model" / "DeepSeek-OCR-2")
+    )
+    if not model_root.exists():
+        raise FileNotFoundError(
+            "DeepSeek model directory not found. Set model_dir or GLOSSAPI_DEEPSEEK_MODEL_DIR."
+        )
 
-    use_cli = allow_cli or env_allow_cli
-    use_stub = allow_stub and env_allow_stub
+    script_path = Path(
+        vllm_script
+        or os.environ.get("GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT", "")
+        or DEFAULT_SCRIPT
+    )
+    if not script_path.exists():
+        raise FileNotFoundError(f"DeepSeek OCR runner script not found: {script_path}")
 
-    script_path = Path(vllm_script) if vllm_script else Path.cwd() / "deepseek-ocr" / "run_pdf_ocr_vllm.py"
-    # Optional GPU memory utilization override (env wins over kwarg)
-    env_gpu_mem = os.environ.get("GLOSSAPI_DEEPSEEK_GPU_MEMORY_UTILIZATION")
-    gpu_mem_fraction = gpu_memory_utilization
-    if env_gpu_mem:
-        try:
-            gpu_mem_fraction = float(env_gpu_mem)
-        except Exception:
-            gpu_mem_fraction = gpu_memory_utilization
-        disable_fp8_kv = disable_fp8_kv or os.environ.get("GLOSSAPI_DEEPSEEK_NO_FP8_KV") == "1"
+    python_exe = Path(
+        python_bin
+        or os.environ.get("GLOSSAPI_DEEPSEEK_PYTHON", "")
+        or os.environ.get("GLOSSAPI_DEEPSEEK_TEST_PYTHON", "")
+        or sys.executable
+    )
+    if not python_exe.exists():
+        raise FileNotFoundError(f"DeepSeek Python interpreter not found: {python_exe}")
 
-    if use_cli and script_path.exists():
-        try:
-            _run_cli(
-                input_root,
-                out_root,
-                python_bin=python_bin,
-                script=script_path,
-                max_pages=max_pages,
-                content_debug=content_debug,
-                gpu_memory_utilization=gpu_mem_fraction,
-                disable_fp8_kv=disable_fp8_kv,
-            )
-            results: Dict[str, Any] = {}
-            for name in file_list:
-                pdf_path = (input_root / name).resolve()
-                stem = Path(name).stem
-                md_path = md_dir / f"{stem}.md"
-                metrics_path = metrics_dir / f"{stem}.metrics.json"
-                if not md_path.exists() or not md_path.read_text(encoding="utf-8").strip():
-                    placeholder = [
-                        f"# DeepSeek OCR — {pdf_path.name}",
-                        "",
-                        "[[Blank page]]",
-                    ]
-                    md_path.parent.mkdir(parents=True, exist_ok=True)
-                    md_path.write_text("\n".join(placeholder) + "\n", encoding="utf-8")
-                page_count = _page_count(pdf_path)
-                if not metrics_path.exists():
-                    metrics_path.parent.mkdir(parents=True, exist_ok=True)
-                    metrics_path.write_text(json.dumps({"page_count": page_count}, indent=2), encoding="utf-8")
-                results[stem] = {"page_count": page_count}
-            return results
-        except Exception as exc:
-            if not use_stub:
-                raise
-            LOGGER.warning("DeepSeek CLI failed (%s); falling back to stub output", exc)
+    _run_cli(
+        input_dir=input_root,
+        output_dir=out_root,
+        files=file_list,
+        model_dir=model_root,
+        python_bin=python_exe,
+        script=script_path,
+        max_pages=max_pages,
+        content_debug=content_debug,
+        device=device,
+    )
 
-    cfg = {"max_pages": max_pages, "content_debug": content_debug}
     results: Dict[str, Any] = {}
     for name in file_list:
         pdf_path = (input_root / name).resolve()
         stem = Path(name).stem
         md_path = md_dir / f"{stem}.md"
         metrics_path = metrics_dir / f"{stem}.metrics.json"
-        results[stem] = _run_one_pdf(pdf_path, md_path, metrics_path, cfg)
+        if not md_path.exists():
+            raise FileNotFoundError(f"DeepSeek OCR did not produce markdown for {name}: {md_path}")
+        if not md_path.read_text(encoding="utf-8").strip():
+            raise RuntimeError(f"DeepSeek OCR produced empty markdown for {name}: {md_path}")
+        page_count = _page_count(pdf_path)
+        if metrics_path.exists():
+            try:
+                results[stem] = json.loads(metrics_path.read_text(encoding="utf-8"))
+                continue
+            except Exception:
+                pass
+        results[stem] = {"page_count": page_count}
+        metrics_path.write_text(json.dumps(results[stem], indent=2), encoding="utf-8")
 
     return results

@@ -20,28 +20,22 @@ Regardless of backend, the extractor clamps OMP/OpenBLAS/MKL pools to one thread
 
 ### DeepSeek optional dependencies
 
-Install DeepSeek backend extras to enable the DeepSeek OCR path (imports remain lazy, so the package is optional). Use the CUDA 12.1 wheels for both vLLM and Torch:
+Install DeepSeek backend extras to enable the DeepSeek OCR path. The recommended path is the dedicated `uv` environment:
 
 ```bash
-pip install '.[deepseek]'
-
-# Install Torch CUDA 12.1 wheels (required by the DeepSeek script)
-pip install --extra-index-url https://download.pytorch.org/whl/cu121 \
-  'torch==2.5.1+cu121' 'torchvision==0.20.1+cu121'
-
-# Alternatively, use the requirements file (edit to uncomment torch lines):
-pip install -r deepseek-ocr/requirements-deepseek.txt
+./dependency_setup/setup_deepseek_uv.sh --venv dependency_setup/.venvs/deepseek
 ```
 
 When using `backend='deepseek'`, equations are included inline in the OCR output; Phase‑2 math flags are accepted but skipped.
 
 ### DeepSeek runtime controls
 
-- `GLOSSAPI_DEEPSEEK_ALLOW_STUB` (`1` by default): allow the builtin stub runner for tests and lightweight environments.
-- `GLOSSAPI_DEEPSEEK_ALLOW_CLI` (`0` by default): flip to `1` to force the real vLLM CLI even when the stub is allowed.
-- `GLOSSAPI_DEEPSEEK_PYTHON`: absolute path to the Python interpreter that runs `run_pdf_ocr_vllm.py` (defaults to the current interpreter).
-- `GLOSSAPI_DEEPSEEK_VLLM_SCRIPT`: override path to the DeepSeek CLI script (defaults to `deepseek-ocr/run_pdf_ocr_vllm.py` under the repo).
-- `GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH`: prepend extra library search paths (e.g., for `libjpeg-turbo`) when launching the CLI.
+- `GLOSSAPI_DEEPSEEK_ALLOW_STUB`: must remain `0`; stub execution is rejected.
+- `GLOSSAPI_DEEPSEEK_ALLOW_CLI`: keep at `1` to require the real runtime.
+- `GLOSSAPI_DEEPSEEK_PYTHON`: absolute path to the Python interpreter that runs the DeepSeek OCR runner.
+- `GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT`: override path to the OCR runner script (defaults to `src/glossapi/ocr/deepseek/run_pdf_ocr_transformers.py`).
+- `GLOSSAPI_DEEPSEEK_MODEL_DIR`: path to the downloaded `DeepSeek-OCR-2` snapshot.
+- `GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH`: prepend extra library search paths when launching the OCR runner.
 
 ## Math Enrichment (Phase‑2)
 
@@ -70,10 +64,6 @@ All LaTeX policy knobs are loaded via `glossapi.text_sanitize.load_latex_policy(
 
 - `GLOSSAPI_WORKER_LOG_DIR`: override the directory used for per-worker logs and `gpu<N>.current` markers (defaults to `logs/ocr_workers/` or `logs/math_workers/` under the output directory).
 - `GLOSSAPI_WORKER_LOG_VERBOSE` = `1|0` (default `1`): emit (or suppress) the GPU binding banner each worker prints on startup.
-
-## RapidOCR Model Paths
-
-- `GLOSSAPI_RAPIDOCR_ONNX_DIR`: directory containing `det/rec/cls` ONNX models and keys.
 
 ## Triage & Parquet
 

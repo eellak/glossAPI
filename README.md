@@ -4,7 +4,7 @@ GlossAPI is a GPU-ready document processing pipeline from [GFOSS](https://gfoss.
 
 ## Why GlossAPI
 - Handles download → extraction → cleaning → sectioning in one pipeline.
-- Ships safe PyPDFium extraction plus Docling/RapidOCR for high-throughput OCR.
+- Ships safe PyPDFium extraction plus Docling for structured extraction and DeepSeek-OCR-2 for OCR remediation.
 - Rust-powered cleaner/noise metrics keep Markdown quality predictable.
 - Greek-first metadata and section classification tuned for academic corpora.
 - Modular Corpus API lets you resume from any stage or plug into existing flows.
@@ -40,45 +40,40 @@ PY
 
 ## Automated Environment Profiles
 
-Use `dependency_setup/setup_glossapi.sh` to provision a virtualenv with the right dependency stack for the three supported modes:
+Use `dependency_setup/setup_glossapi.sh` for the Docling environment, or `dependency_setup/setup_deepseek_uv.sh` for the dedicated DeepSeek OCR runtime:
 
 ```bash
-# Vanilla pipeline (no GPU OCR extras)
-./dependency_setup/setup_glossapi.sh --mode vanilla --venv dependency_setup/.venvs/vanilla --run-tests
+# Docling / main GlossAPI environment
+./dependency_setup/setup_glossapi.sh --mode docling --venv dependency_setup/.venvs/docling --run-tests
 
-# Docling + RapidOCR mode
-./dependency_setup/setup_glossapi.sh --mode rapidocr --venv dependency_setup/.venvs/rapidocr --run-tests
-
-# DeepSeek OCR mode (requires weights under /path/to/deepseek-ocr/DeepSeek-OCR)
-./dependency_setup/setup_glossapi.sh \
-  --mode deepseek \
+# DeepSeek OCR runtime (uv-managed)
+./dependency_setup/setup_deepseek_uv.sh \
   --venv dependency_setup/.venvs/deepseek \
-  --weights-dir /path/to/deepseek-ocr \
+  --model-root /path/to/deepseek-ocr-2-model \
+  --download-model \
   --run-tests --smoke-test
 ```
 
-Pass `--download-deepseek` if you need the script to fetch weights automatically; otherwise it looks for `${REPO_ROOT}/deepseek-ocr/DeepSeek-OCR` unless you override `--weights-dir`. Check `dependency_setup/dependency_notes.md` for the latest pins, caveats, and validation history. The script also installs the Rust extensions in editable mode so local changes are picked up immediately.
+`setup_glossapi.sh --mode deepseek` now delegates to the same uv-based installer. `setup_deepseek_uv.sh` uses `uv venv` + `uv sync`, installs the Rust extensions in editable mode, and can download `deepseek-ai/DeepSeek-OCR-2` with `huggingface_hub`.
 
 **DeepSeek runtime checklist**
-- Run `python -m glossapi.ocr.deepseek.preflight` (from your DeepSeek venv) to fail fast if the CLI would fall back to the stub.
-- Export these to force the real CLI and avoid silent stub output:
+- Run `python -m glossapi.ocr.deepseek.preflight` from the DeepSeek venv to fail fast before OCR.
+- Export these to force the real runtime and avoid silent stub output:
   - `GLOSSAPI_DEEPSEEK_ALLOW_CLI=1`
   - `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`
-  - `GLOSSAPI_DEEPSEEK_VLLM_SCRIPT=/path/to/deepseek-ocr/run_pdf_ocr_vllm.py`
-  - `GLOSSAPI_DEEPSEEK_TEST_PYTHON=/path/to/deepseek/venv/bin/python`
-  - `GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr/DeepSeek-OCR`
-  - `GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH=/path/to/libjpeg-turbo/lib`
-- CUDA toolkit with `nvcc` available (FlashInfer/vLLM JIT falls back poorly without it); set `CUDA_HOME` and prepend `$CUDA_HOME/bin` to `PATH`.
-- If FlashInfer is problematic, disable with `VLLM_USE_FLASHINFER=0` and `FLASHINFER_DISABLE=1`.
-- To avoid FP8 KV cache issues, export `GLOSSAPI_DEEPSEEK_NO_FP8_KV=1` (propagates `--no-fp8-kv`).
-- Tune VRAM use via `GLOSSAPI_DEEPSEEK_GPU_MEMORY_UTILIZATION=<0.5–0.9>`.
+  - `GLOSSAPI_DEEPSEEK_PYTHON=/path/to/deepseek/venv/bin/python`
+  - `GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT=/path/to/glossAPI/src/glossapi/ocr/deepseek/run_pdf_ocr_transformers.py`
+  - `GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr-2-model/DeepSeek-OCR-2`
+- The default fallback locations already point at the in-repo Transformers runner and `${REPO_ROOT}/deepseek-ocr-2-model/DeepSeek-OCR-2`.
+- `flash-attn` is optional. The runner uses `flash_attention_2` when available and falls back to `eager` otherwise.
 
 ## Choose Your Install Path
 
 | Scenario | Commands | Notes |
 | --- | --- | --- |
 | Pip users | `pip install glossapi` | Fast vanilla evaluation with minimal dependencies. |
-| Mode automation (recommended) | `./dependency_setup/setup_glossapi.sh --mode {vanilla\|rapidocr\|deepseek}` | Creates an isolated venv per mode, installs Rust crates, and can run the relevant pytest subset. |
+| Docling environment | `./dependency_setup/setup_glossapi.sh --mode docling` | Creates the main GlossAPI venv for extraction, cleaning, sectioning, and enrichment. |
+| DeepSeek environment | `./dependency_setup/setup_deepseek_uv.sh` | Creates a separate uv-managed OCR runtime pinned to the tested Transformers/Torch stack. |
 | Manual editable install | `pip install -e .` after cloning | Keep this if you prefer to manage dependencies by hand. |
 | Conda-based stacks | `scripts/setup_conda.sh` | Provisions Python 3.10 env + Rust + editable install for Amazon Linux/SageMaker. |
 

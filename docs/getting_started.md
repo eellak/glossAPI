@@ -4,46 +4,39 @@ This guide gets a new GlossAPI contributor from clone → first extraction with 
 
 ## Checklist
 
-- Python 3.8+ (3.10 recommended)
+- Python 3.10+ (`3.12` recommended for the DeepSeek runtime)
 - Recent `pip` (or `uv`) and a C/C++ toolchain for Rust wheels
-- Optional: NVIDIA GPU with CUDA 12.x drivers for Docling/RapidOCR acceleration
+- Optional: NVIDIA GPU with CUDA drivers for Docling/DeepSeek acceleration
 
 ## Install GlossAPI
 
-### Recommended — mode-aware setup script
+### Recommended setup
 
-Use `dependency_setup/setup_glossapi.sh` to build an isolated virtualenv with the correct dependency set for vanilla, RapidOCR, or DeepSeek runs. Examples:
+Use `dependency_setup/setup_glossapi.sh` for the main Docling environment and `dependency_setup/setup_deepseek_uv.sh` for the OCR runtime. Examples:
 
 ```bash
-# Vanilla pipeline (CPU-only OCR)
-./dependency_setup/setup_glossapi.sh --mode vanilla --venv dependency_setup/.venvs/vanilla --run-tests
+# Main GlossAPI environment
+./dependency_setup/setup_glossapi.sh --mode docling --venv dependency_setup/.venvs/docling --run-tests
 
-# RapidOCR GPU stack
-./dependency_setup/setup_glossapi.sh --mode rapidocr --venv dependency_setup/.venvs/rapidocr --run-tests
-
-# DeepSeek OCR on GPU (expects weights under /path/to/deepseek-ocr/DeepSeek-OCR)
-./dependency_setup/setup_glossapi.sh \
-  --mode deepseek \
+# DeepSeek OCR on GPU (uv-managed, downloads DeepSeek-OCR-2 if requested)
+./dependency_setup/setup_deepseek_uv.sh \
   --venv dependency_setup/.venvs/deepseek \
-  --weights-dir /path/to/deepseek-ocr \
+  --model-root /path/to/deepseek-ocr-2-model \
+  --download-model \
   --run-tests --smoke-test
 ```
 
-Add `--download-deepseek` if you need the script to fetch weights via Hugging Face; otherwise it searches `${REPO_ROOT}/deepseek-ocr/DeepSeek-OCR` unless you override `--weights-dir`. Inspect `dependency_setup/dependency_notes.md` for the latest pins, caveats, and validation runs. The script installs GlossAPI and its Rust crates in editable mode so source changes are picked up immediately.
+`setup_glossapi.sh --mode deepseek` delegates to the same uv-based installer. Inspect `dependency_setup/dependency_notes.md` for the current pins and validation runs. Both setup paths install GlossAPI and its Rust crates in editable mode so source changes are picked up immediately.
 
 **DeepSeek runtime checklist**
-- Run `python -m glossapi.ocr.deepseek.preflight` from the DeepSeek venv to assert the CLI can run (env vars, model dir, flashinfer, cc1plus, libjpeg).
-- Force the real CLI and avoid stub fallback by setting:
+- Run `python -m glossapi.ocr.deepseek.preflight` from the DeepSeek venv to assert the real runtime is reachable.
+- Force the real runtime and avoid stub fallback by setting:
   - `GLOSSAPI_DEEPSEEK_ALLOW_CLI=1`
   - `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`
-  - `GLOSSAPI_DEEPSEEK_VLLM_SCRIPT=/path/to/deepseek-ocr/run_pdf_ocr_vllm.py`
-  - `GLOSSAPI_DEEPSEEK_TEST_PYTHON=/path/to/deepseek/venv/bin/python`
-  - `GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr/DeepSeek-OCR`
-  - `GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH=/path/to/libjpeg-turbo/lib`
-- Install a CUDA toolkit with `nvcc` and set `CUDA_HOME` / prepend `$CUDA_HOME/bin` to `PATH` (FlashInfer/vLLM JIT expects it).
-- If FlashInfer is unstable on your stack, disable it with `VLLM_USE_FLASHINFER=0` and `FLASHINFER_DISABLE=1`.
-- Avoid FP8 KV cache issues by exporting `GLOSSAPI_DEEPSEEK_NO_FP8_KV=1`; tune VRAM use via `GLOSSAPI_DEEPSEEK_GPU_MEMORY_UTILIZATION=<0.5–0.9>`.
-- Keep `LD_LIBRARY_PATH` pointing at the toolkit lib64 (e.g. `LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH`).
+  - `GLOSSAPI_DEEPSEEK_PYTHON=/path/to/deepseek/venv/bin/python`
+  - `GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT=/path/to/glossAPI/src/glossapi/ocr/deepseek/run_pdf_ocr_transformers.py`
+  - `GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr-2-model/DeepSeek-OCR-2`
+- `flash-attn` is optional. The runner uses it when available and otherwise falls back to the Transformers `eager` attention implementation.
 
 ### Option 1 — pip (evaluate quickly)
 
@@ -74,29 +67,18 @@ chmod +x scripts/setup_conda.sh
 conda activate glossapi
 ```
 
-The helper script provisions Python 3.10, installs Rust + `maturin`, performs an editable install, and applies the Docling RapidOCR patch automatically.
+The helper script provisions Python 3.10, installs Rust + `maturin`, and performs an editable install.
 
 ## GPU prerequisites (optional but recommended)
 
-`setup_glossapi.sh` pulls the right CUDA/Torch/ONNX wheels for the RapidOCR and DeepSeek profiles. If you are curating dependencies manually, make sure you:
+`setup_glossapi.sh` and `setup_deepseek_uv.sh` pull the required Torch wheels for the supported Docling and DeepSeek flows. If you are curating dependencies manually, make sure you:
 
-- Install the GPU build of ONNX Runtime (`onnxruntime-gpu`) and uninstall the CPU wheel.
-- Select the PyTorch build that matches your driver/toolkit (the repository currently targets CUDA 12.8 for DeepSeek).
+- Select the PyTorch build that matches your driver/toolkit.
 - Verify the providers with:
 
   ```bash
-  python -c "import onnxruntime as ort; print(ort.get_available_providers())"
   python -c "import torch; print(torch.cuda.is_available())"
   ```
-
-## RapidOCR models & keys
-
-GlossAPI ships the required ONNX models and Greek keys under `glossapi/models/rapidocr/{onnx,keys}`. To override them, set `GLOSSAPI_RAPIDOCR_ONNX_DIR` to a directory containing:
-
-- `det/inference.onnx`
-- `rec/inference.onnx`
-- `cls/ch_ppocr_mobile_v2.0_cls_infer.onnx`
-- `greek_ppocrv5_keys.txt`
 
 ## First run (lightweight corpus)
 

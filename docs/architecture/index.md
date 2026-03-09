@@ -103,7 +103,7 @@ Purpose:
 
 Important characteristics:
 
-- can use RapidOCR via Docling or DeepSeek OCR
+- uses DeepSeek OCR for remediation while keeping Docling in the surrounding extraction/layout flow
 - reads metadata to find OCR candidates
 - skiplist-aware
 - designed as a corrective stage, not the default for every document

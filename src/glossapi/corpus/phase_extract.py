@@ -96,6 +96,12 @@ class ExtractPhaseMixin:
         except Exception:
             images_scale_env = "1.25"
 
+        if force_ocr:
+            self.logger.warning(
+                "Phase-1 Docling OCR is deprecated and no longer executes OCR. "
+                "Use Corpus.ocr(backend='deepseek') for OCR remediation."
+            )
+
         # Hard GPU preflight before we attempt to build OCR/enrichment pipelines
         self._gpu_preflight(
             accel_type=accel_type,
@@ -154,12 +160,12 @@ class ExtractPhaseMixin:
         require_math: bool,
         require_backend_gpu: bool = False,
     ) -> None:
-        """Abort early when GPU OCR/math is requested but CUDA is unavailable."""
+        """Abort early when GPU-backed Docling work is requested but CUDA is unavailable."""
         if not (require_ocr or require_math or require_backend_gpu):
             return
 
         instructions = (
-            "GPU OCR and math enrichment require CUDA-enabled torch and onnxruntime-gpu. "
+            "GPU-backed Docling extraction and math enrichment require CUDA-enabled torch. "
             "Install the CUDA wheels and ensure NVIDIA drivers expose the desired devices."
         )
 
@@ -167,30 +173,15 @@ class ExtractPhaseMixin:
         accel_lower = str(accel_type or "").strip().lower()
         if accel_lower.startswith("cpu"):
             raise RuntimeError(
-                "GPU OCR was requested (force_ocr/math) but accel_type='CPU'. "
+                "GPU-backed Docling extraction was requested but accel_type='CPU'. "
                 f"{instructions}"
-            )
-
-        try:
-            import onnxruntime as _ort  # type: ignore
-            providers = _ort.get_available_providers()
-        except Exception as exc:
-            raise RuntimeError(
-                "onnxruntime not available while attempting GPU OCR. "
-                "Install onnxruntime-gpu and rerun."
-            ) from exc
-
-        if "CUDAExecutionProvider" not in providers:
-            raise RuntimeError(
-                "CUDAExecutionProvider missing from onnxruntime providers. "
-                f"Detected providers={providers}. {instructions}"
             )
 
         torch_mod = _maybe_import_torch(force=True)
         if torch_mod is None or not getattr(torch_mod, "cuda", None) or not torch_mod.cuda.is_available():
             raise RuntimeError(
-                "Torch CUDA is not available but GPU OCR/math was requested. "
-                "Install the CUDA wheel (e.g. torch==2.5.1+cu121) and ensure CUDA drivers/devices are visible."
+                "Torch CUDA is not available but GPU-backed Docling extraction/math was requested. "
+                "Install the CUDA wheel and ensure CUDA drivers/devices are visible."
             )
 
         device_count = torch_mod.cuda.device_count()
@@ -208,13 +199,12 @@ class ExtractPhaseMixin:
 
         if not self._gpu_banner_logged:
             self.logger.info(
-                "GPU preflight: using torch + onnxruntime GPU backends; ensure CUDA drivers are available."
+                "GPU preflight: using torch-backed Docling extraction; ensure CUDA drivers are available."
             )
             self._gpu_banner_logged = True
 
         self.logger.info(
-            "GPU preflight OK: providers=%s torch_devices=%s",
-            ",".join(providers),
+            "GPU preflight OK: torch_devices=%s",
             ", ".join(device_names) or "<none>",
         )
 

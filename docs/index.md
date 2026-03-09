@@ -16,10 +16,11 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 - [Metadata, Artifacts, and Run Diagnostics](architecture/metadata_artifacts_and_run_diagnostics.md) — how provenance and operational state are retained.
 - [Artifact Layout and Stage Handoffs](architecture/artifact_layout_and_stage_handoffs.md) — how folders, filenames, and metadata glue the stages together.
 - [Resumability, Recovery, and Retention](architecture/resumability_recovery_and_retention.md) — how the current design supports reruns and where storage pressure appears.
+- [DeepSeek-Only Upgrade Roadmap](architecture/deepseek_only_upgrade_roadmap.md) — the staged simplification plan for OCR and dependency upgrades.
 
 ## Learn the pipeline
 - [Pipeline Overview](pipeline.md) explains each stage and the emitted artifacts.
-- [OCR & Math Enrichment](ocr_and_math_enhancement.md) covers Docling + RapidOCR usage.
+- [OCR & Math Enrichment](ocr_and_math_enhancement.md) covers DeepSeek OCR remediation and Docling-based enrichment.
 - [Multi-GPU & Benchmarking](multi_gpu.md) shares scaling and scheduling tips.
 - [Stage Reference](stages/index.md) breaks down each pipeline stage as a contract.
 
@@ -27,6 +28,7 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 - [Configuration](configuration.md) lists all environment knobs.
 - [Troubleshooting](troubleshooting.md) captures the most common pitfalls.
 - [AWS Job Distribution](aws_job_distribution.md) describes large-scale scheduling.
+- [Compatibility And Regression Matrix](testing/compatibility_matrix.md) defines the release-validation gates for the migration and upgrades.
 
 ## Reference
 - [Corpus API](api/corpus.md) details public methods and parameters.

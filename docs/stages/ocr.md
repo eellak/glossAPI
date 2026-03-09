@@ -25,12 +25,9 @@ The OCR stage repairs documents whose extracted text is considered unreliable, a
 
 ## Backend choices
 
-The pipeline supports at least two OCR-oriented modes:
-
-- RapidOCR through the Docling path
-- DeepSeek OCR for environments configured for that backend
-
-These are operationally different and should not be treated as interchangeable implementation details.
+The supported OCR remediation backend is DeepSeek OCR. Docling remains part of
+the surrounding extraction and layout flow, but OCR reruns themselves are now
+expected to use the DeepSeek runtime.
 
 ## Selection model
 

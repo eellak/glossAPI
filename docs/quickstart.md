@@ -38,14 +38,13 @@ Workers report per-batch summaries and extraction progress is persisted into
 `download_results/download_results.parquet`, so you can restart multi-GPU runs
 without losing progress (no extra checkpoint files required).
 
-## GPU OCR (opt-in)
+## OCR remediation (opt-in)
 
 ```python
 from glossapi import Corpus
 c = Corpus('IN', 'OUT')
-c.extract(input_format='pdf', accel_type='CUDA', force_ocr=True)
-# or reuse multi-GPU batching
-c.extract(input_format='pdf', use_gpus='multi', force_ocr=True)
+c.clean()
+c.ocr(backend='deepseek', fix_bad=True, math_enhance=False)
 ```
 
 ## Phase‑2 Math Enrichment (from JSON)
@@ -76,7 +75,7 @@ c.section()                          # to parquet
 c.annotate()                         # classify/annotate sections
 ```
 
-See ocr_and_math_enhancement.md for GPU details, batch sizes, and artifact locations.
+See `ocr_and_math_enhancement.md` for OCR runtime details, batch sizes, and artifact locations.
 
 ### DeepSeek OCR
 
@@ -89,12 +88,11 @@ c.ocr(backend='deepseek', fix_bad=True, math_enhance=True, mode='ocr_bad_then_ma
 # → OCR only for bad files; math is included inline in the Markdown
 ```
 
-To avoid stub output, set `GLOSSAPI_DEEPSEEK_ALLOW_CLI=1` and `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`, and ensure the CLI bits are reachable:
+To avoid stub output, set `GLOSSAPI_DEEPSEEK_ALLOW_CLI=1` and `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`, and ensure the runtime is reachable:
 
 ```bash
-export GLOSSAPI_DEEPSEEK_VLLM_SCRIPT=/path/to/deepseek-ocr/run_pdf_ocr_vllm.py
-export GLOSSAPI_DEEPSEEK_TEST_PYTHON=/path/to/deepseek-venv/bin/python
-export GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr/DeepSeek-OCR
-export GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH=/path/to/libjpeg-turbo/lib
+export GLOSSAPI_DEEPSEEK_PYTHON=/path/to/deepseek-venv/bin/python
+export GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT=/path/to/glossAPI/src/glossapi/ocr/deepseek/run_pdf_ocr_transformers.py
+export GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr-2-model/DeepSeek-OCR-2
 python -m glossapi.ocr.deepseek.preflight  # optional: validates env without running OCR
 ```

@@ -68,9 +68,8 @@ c.ocr(math_targets=targets, math_batch_size=4)
 
 ## OCR/Model Constraints (recap)
 
-- ORT GPU only: uninstall `onnxruntime` CPU; use `onnxruntime-gpu`.
-- RapidOCR keys: Docling 2.48.0 needs `Rec.rec_keys_path` patch (see README).
-- Model discovery: set `GLOSSAPI_RAPIDOCR_ONNX_DIR` or package models under `glossapi/models/rapidocr/`.
+- DeepSeek OCR runs in its own pinned runtime; set `GLOSSAPI_DEEPSEEK_PYTHON`, `GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT`, and `GLOSSAPI_DEEPSEEK_MODEL_DIR`.
+- Keep `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0` and `GLOSSAPI_DEEPSEEK_ALLOW_CLI=1`.
 - Optional Torch CUDA: needed for GPU layout/enrichment; see README for the CUDA wheels.
 
 ## Multi‑GPU

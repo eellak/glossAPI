@@ -50,12 +50,6 @@ def make_corpus(tmp_path):
     return Corpus(input_dir=input_dir, output_dir=output_dir)
 
 
-def set_onnx_providers(monkeypatch, providers):
-    stub = SimpleNamespace(get_available_providers=lambda: providers)
-    monkeypatch.setitem(sys.modules, "onnxruntime", stub)
-    return stub
-
-
 def set_torch_stub(monkeypatch, *, available: bool, device_count: int):
     cuda_ns = SimpleNamespace(
         is_available=lambda: available,
@@ -70,8 +64,7 @@ def test_prime_extractor_requires_cuda_for_ocr(tmp_path, monkeypatch):
     corpus = make_corpus(tmp_path)
     corpus.extractor = DummyExtractor()
 
-    set_torch_stub(monkeypatch, available=True, device_count=1)
-    set_onnx_providers(monkeypatch, ["CPUExecutionProvider"])
+    set_torch_stub(monkeypatch, available=False, device_count=0)
 
     with pytest.raises(RuntimeError) as exc:
         corpus.prime_extractor(
@@ -81,7 +74,7 @@ def test_prime_extractor_requires_cuda_for_ocr(tmp_path, monkeypatch):
             phase1_backend="docling",
         )
 
-    assert "CUDAExecutionProvider" in str(exc.value)
+    assert "Torch CUDA is not available" in str(exc.value)
 
 
 def test_prime_extractor_requires_cuda_for_docling_backend(tmp_path, monkeypatch):
@@ -89,8 +82,6 @@ def test_prime_extractor_requires_cuda_for_docling_backend(tmp_path, monkeypatch
     corpus.extractor = DummyExtractor()
 
     set_torch_stub(monkeypatch, available=False, device_count=0)
-    set_onnx_providers(monkeypatch, ["CUDAExecutionProvider"])
-
     with pytest.raises(RuntimeError) as exc:
         corpus.prime_extractor(
             input_format="pdf",
@@ -106,8 +97,6 @@ def test_prime_extractor_configures_safe_backend_for_text_layer(tmp_path, monkey
     corpus.extractor = DummyExtractor()
 
     set_torch_stub(monkeypatch, available=True, device_count=1)
-    set_onnx_providers(monkeypatch, ["CUDAExecutionProvider"])
-
     corpus.prime_extractor(
         input_format="pdf",
         accel_type="CPU",
@@ -125,8 +114,6 @@ def test_prime_extractor_configures_docling_backend_for_ocr(tmp_path, monkeypatc
     corpus.extractor = DummyExtractor()
 
     set_torch_stub(monkeypatch, available=True, device_count=2)
-    set_onnx_providers(monkeypatch, ["CUDAExecutionProvider"])
-
     corpus.prime_extractor(
         input_format="pdf",
         accel_type="CUDA",
@@ -147,8 +134,6 @@ def test_prime_extractor_requires_cuda_for_formula_enrichment(tmp_path, monkeypa
     corpus.extractor = DummyExtractor()
 
     set_torch_stub(monkeypatch, available=False, device_count=0)
-    set_onnx_providers(monkeypatch, ["CUDAExecutionProvider"])
-
     with pytest.raises(RuntimeError) as exc:
         corpus.prime_extractor(
             input_format="pdf",

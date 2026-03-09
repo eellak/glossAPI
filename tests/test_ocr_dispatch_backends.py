@@ -51,29 +51,7 @@ def test_deepseek_backend_ignores_math_flags_and_runs_ocr_only(tmp_path, monkeyp
     assert calls.get("files") == [fname]
 
 
-def test_rapidocr_backend_routes_to_extract_with_docling(tmp_path, monkeypatch):
+def test_invalid_backend_is_rejected(tmp_path):
     corpus = _mk_corpus(tmp_path)
-
-    # Seed minimal metadata parquet that flags a single file for OCR
-    dl_dir = corpus.output_dir / "download_results"
-    dl_dir.mkdir(parents=True, exist_ok=True)
-    df = pd.DataFrame([
-        {"filename": "doc.pdf", corpus.url_column: "", "needs_ocr": True, "ocr_success": False}
-    ])
-    df.to_parquet(dl_dir / "download_results.parquet", index=False)
-
-    captured = {}
-
-    def fake_extract(**kwargs):
-        captured.update(kwargs)
-        return None
-
-    monkeypatch.setattr(corpus, "extract", fake_extract)
-
-    corpus.ocr(backend="rapidocr", fix_bad=True, math_enhance=False, use_gpus="single", devices=[0])
-
-    assert captured, "Expected extract() to be called for rapidocr backend"
-    assert captured.get("force_ocr") is True
-    assert captured.get("phase1_backend") == "docling"
-    files = captured.get("filenames") or []
-    assert files and files[0] == "doc.pdf"
+    with pytest.raises(ValueError, match="backend must be 'deepseek'"):
+        corpus.ocr(backend="rapidocr", fix_bad=True, math_enhance=False)

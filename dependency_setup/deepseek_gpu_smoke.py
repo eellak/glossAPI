@@ -3,9 +3,9 @@
 Minimal DeepSeek OCR integration smoke test.
 
 This script runs the GlossAPI DeepSeek backend on a tiny sample PDF and
-verifies that real Markdown output is produced. It requires the DeepSeek-OCR
-weights to be available under ``../deepseek-ocr/DeepSeek-OCR`` relative to
-the repository root (override via ``DEEPSEEK_MODEL_DIR``).
+verifies that real Markdown output is produced. It requires the DeepSeek-OCR-2
+weights to be available under ``../deepseek-ocr-2-model/DeepSeek-OCR-2`` relative to the
+repository root (override via ``DEEPSEEK_MODEL_DIR``).
 """
 from __future__ import annotations
 
@@ -20,15 +20,16 @@ import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SAMPLES_DIR = REPO_ROOT / "samples" / "lightweight_pdf_corpus" / "pdfs"
-DEFAULT_MODEL_ROOT = (REPO_ROOT / ".." / "deepseek-ocr").resolve()
+DEFAULT_MODEL_ROOT = (REPO_ROOT / "deepseek-ocr-2-model").resolve()
 
 
 def ensure_model_available(model_root: Path) -> None:
-    expected = model_root / "DeepSeek-OCR" / "model-00001-of-000001.safetensors"
+    direct_root = model_root if (model_root / "config.json").exists() else (model_root / "DeepSeek-OCR-2")
+    expected = direct_root / "model-00001-of-000001.safetensors"
     if not expected.exists() or expected.stat().st_size < 1_000_000:
         raise FileNotFoundError(
-            f"Expected DeepSeek-OCR weights at {expected}. "
-            "Download the checkpoint (huggingface.co/deepseek-ai/DeepSeek-OCR) "
+            f"Expected DeepSeek-OCR-2 weights at {expected}. "
+            "Download the checkpoint (huggingface.co/deepseek-ai/DeepSeek-OCR-2) "
             "or set DEEPSEEK_MODEL_DIR to the directory that contains them."
         )
 
@@ -37,7 +38,8 @@ def run_smoke(model_root: Path) -> None:
     from glossapi import Corpus
 
     ensure_model_available(model_root)
-    sample_pdf = SAMPLES_DIR / "sample01_plain.pdf"
+    model_dir = model_root if (model_root / "config.json").exists() else (model_root / "DeepSeek-OCR-2")
+    sample_pdf = SAMPLES_DIR / "alpha.pdf"
     if not sample_pdf.exists():
         raise FileNotFoundError(f"Sample PDF not found: {sample_pdf}")
 
@@ -67,22 +69,17 @@ def run_smoke(model_root: Path) -> None:
         parquet_path = dl_dir / "download_results.parquet"
         df.to_parquet(parquet_path, index=False)
 
+        os.environ.setdefault("GLOSSAPI_DEEPSEEK_ALLOW_CLI", "1")
         os.environ.setdefault("GLOSSAPI_DEEPSEEK_ALLOW_STUB", "0")
         os.environ.setdefault(
-            "GLOSSAPI_DEEPSEEK_VLLM_SCRIPT",
-            str(model_root / "run_pdf_ocr_vllm.py"),
+            "GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT",
+            str(REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_transformers.py"),
         )
         os.environ.setdefault(
             "GLOSSAPI_DEEPSEEK_PYTHON",
             sys.executable,
         )
-        ld_extra = os.environ.get("GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH") or str(
-            model_root / "libjpeg-turbo" / "lib"
-        )
-        os.environ["GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH"] = ld_extra
-        os.environ["LD_LIBRARY_PATH"] = (
-            f"{ld_extra}:{os.environ.get('LD_LIBRARY_PATH','')}".rstrip(":")
-        )
+        os.environ.setdefault("GLOSSAPI_DEEPSEEK_MODEL_DIR", str(model_dir))
 
         corpus = Corpus(input_dir=input_dir, output_dir=output_dir)
         corpus.ocr(
@@ -100,7 +97,7 @@ def run_smoke(model_root: Path) -> None:
 
 
 def main() -> None:
-    model_dir_env = os.environ.get("DEEPSEEK_MODEL_DIR")
+    model_dir_env = os.environ.get("DEEPSEEK_MODEL_DIR") or os.environ.get("GLOSSAPI_DEEPSEEK_MODEL_DIR")
     if model_dir_env:
         model_root = Path(model_dir_env).expanduser().resolve()
     else:

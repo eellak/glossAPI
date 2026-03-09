@@ -58,10 +58,13 @@ htmlcov/
 # OCR test outputs
 test_ocr_*_output/
 *_demo_output/
+artifacts/
 
 # OCR model weights (if downloaded locally)
 nanonets/
 ocr_models/
+deepseek-ocr-2-model/
+models/
 
 # Noise analysis reports
 glossapi_noise_analysis_report.md
@@ -78,4 +81,5 @@ dependency_setup/.venvs/
 deepseek-ocr/DeepSeek-OCR-empty/
 # Local DeepSeek checkout and repro scripts (keep out of master)
 deepseek-ocr/
+deepseek-ocr-2/
 repro_rapidocr_onnx/

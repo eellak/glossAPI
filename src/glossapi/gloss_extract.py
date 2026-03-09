@@ -10,7 +10,6 @@ from docling.datamodel.pipeline_options import (
     AcceleratorDevice,
     AcceleratorOptions,
     PdfPipelineOptions,
-    RapidOcrOptions,
     LayoutOptions,
     TableStructureOptions,
     TableFormerMode,
@@ -106,11 +105,8 @@ def _ensure_docling_pipeline_loaded() -> None:
 
 
 from docling.pipeline.simple_pipeline import SimplePipeline
-# Ensure RapidOCR plugin is registered for factory-based OCR construction
-import docling.models.rapid_ocr_model  # noqa: F401
-from .ocr.rapidocr._paths import resolve_packaged_onnx_and_keys
-from .ocr.rapidocr.pool import GLOBAL_RAPID_OCR_POOL
 import inspect
+from .ocr.docling_pipeline import build_layout_pipeline
 
 import ftfy
 import logging
@@ -328,7 +324,7 @@ class GlossExtract:
         self._thread_caps_applied = True
 
     def release_resources(self) -> None:
-        """Release Docling converters, pooled RapidOCR engines, and GPU caches."""
+        """Release Docling converters and GPU caches."""
         try:
             self.converter = None
         except Exception:
@@ -343,10 +339,6 @@ class GlossExtract:
                 setattr(self, attr, None)
             except Exception:
                 pass
-        try:
-            GLOBAL_RAPID_OCR_POOL.clear()
-        except Exception:
-            pass
         torch_mod = _maybe_import_torch()
         if torch_mod is not None and getattr(torch_mod, "cuda", None):
             try:
@@ -553,12 +545,7 @@ class GlossExtract:
         ocr_langs: list[str] | None = None,
         profile_timings: bool = True,
     ):
-        """Create a document converter with configured options using the canonical builder.
-
-        Delegates PDF pipeline construction to `glossapi.ocr.rapidocr.pipeline.build_rapidocr_pipeline`
-        to avoid duplicated provider checks and option wiring. Falls back to the legacy
-        inline path if the canonical builder is unavailable.
-        """
+        """Create a Docling document converter for Phase-1 extraction."""
         _ensure_docling_converter_loaded()
         _ensure_docling_pipeline_loaded()
         # Enable/disable Docling pipeline timings collection (for benchmarks)
@@ -574,171 +561,83 @@ class GlossExtract:
 
         # Best-effort Torch preflight only if Phase‑1 is asked to do enrichment
         try:
-            if formula_enrichment:
+            if formula_enrichment or code_enrichment:
                 torch_mod = _maybe_import_torch(force=True)
                 if torch_mod is None:
-                    raise RuntimeError("Torch not available but formula enrichment requested.")
+                    raise RuntimeError("Torch not available but Docling GPU enrichment was requested.")
                 if hasattr(torch_mod, "cuda") and isinstance(getattr(self, "pipeline_options", None), PdfPipelineOptions):
                     dev = getattr(self.pipeline_options, "accelerator_options", None)
                     dv = getattr(dev, "device", None)
                     if (isinstance(dv, str) and dv.lower().startswith("cuda")) and not torch_mod.cuda.is_available():
-                        raise RuntimeError("Torch CUDA not available but formula enrichment requested.")
+                        raise RuntimeError("Torch CUDA not available but Docling GPU enrichment was requested.")
         except Exception as e:
             raise RuntimeError(f"Torch CUDA preflight failed: {e}")
 
-        # Build PDF pipeline via the canonical builder (preferred)
-        opts = None
-        active_backend = DoclingParseV2DocumentBackend
-        try:
-            from .ocr.rapidocr.pipeline import build_layout_pipeline, build_rapidocr_pipeline  # type: ignore
-        except Exception:  # pragma: no cover - adapter fallback
-            from ._pipeline import build_layout_pipeline, build_rapidocr_pipeline  # type: ignore
-
-        device_str = self._current_device_str() or "cuda:0"
-        builder = build_rapidocr_pipeline if enable_ocr else build_layout_pipeline
-
-        try:
-            _, opts = builder(
-                device=device_str,
-                images_scale=float(images_scale),
-                formula_enrichment=bool(formula_enrichment),
-                code_enrichment=bool(code_enrichment),
-                **({"text_score": float(text_score)} if enable_ocr else {}),
-            )
-
-            if enable_ocr and hasattr(opts, "ocr_options") and getattr(opts, "ocr_options", None) is not None:
-                if use_cls is not None:
-                    setattr(opts.ocr_options, "use_cls", bool(use_cls))  # type: ignore[attr-defined]
-                if ocr_langs:
-                    setattr(opts.ocr_options, "lang", list(ocr_langs))  # type: ignore[attr-defined]
-                if force_full_page_ocr is not None:
-                    setattr(opts.ocr_options, "force_full_page_ocr", bool(force_full_page_ocr))  # type: ignore[attr-defined]
-
+        if enable_ocr:
             try:
-                setattr(opts, "images_scale", float(images_scale))
-            except Exception:
-                pass
-
-            self._active_pdf_options = opts
-            self._current_ocr_enabled = bool(enable_ocr)
-
-            # Create a multi-format DocumentConverter using the built PDF options
-            pdf_backend = DoclingParseV2DocumentBackend
-            if not enable_ocr:
-                try:
-                    if getattr(self, "use_pypdfium_backend", False):
-                        pdf_backend = PyPdfiumDocumentBackend
-                        self.pdf_backend_name = "pypdfium"
-                except Exception:
-                    pdf_backend = DoclingParseV2DocumentBackend
-            if opts is None:
-                opts = self.pipeline_options
-            active_backend = pdf_backend
-
-            self.converter = DocumentConverter(
-                allowed_formats=[
-                    InputFormat.PDF,
-                    InputFormat.DOCX,
-                    InputFormat.XML_JATS,
-                    InputFormat.HTML,
-                    InputFormat.PPTX,
-                    InputFormat.CSV,
-                    InputFormat.MD,
-                ],
-                format_options={
-                    InputFormat.PDF: PdfFormatOption(
-                        pipeline_options=opts,
-                        pipeline_cls=StandardPdfPipeline,
-                        backend=active_backend,
-                    ),
-                    InputFormat.DOCX: WordFormatOption(pipeline_cls=SimplePipeline),
-                    InputFormat.XML_JATS: XMLJatsFormatOption(),
-                    InputFormat.HTML: HTMLFormatOption(),
-                    InputFormat.PPTX: PowerpointFormatOption(),
-                    InputFormat.CSV: CsvFormatOption(),
-                    InputFormat.MD: MarkdownFormatOption(),
-                },
-            )
-            self._active_pdf_backend = active_backend
-        except Exception:
-            # Fallback to legacy inline configuration path
-            if enable_ocr:
-                r = resolve_packaged_onnx_and_keys()
-                if not (r.det and r.rec and r.cls and r.keys):
-                    raise FileNotFoundError(
-                        "RapidOCR ONNX models/keys not found. Ensure models exist under glossapi.models/rapidocr or set GLOSSAPI_RAPIDOCR_ONNX_DIR."
-                    )
-                langs = ocr_langs or ["el", "en"]
-                ocr_opts = RapidOcrOptions(
-                    backend="onnxruntime",
-                    lang=langs,
-                    force_full_page_ocr=bool(force_full_page_ocr),
-                    use_det=True,
-                    use_cls=bool(use_cls),
-                    use_rec=True,
-                    text_score=float(text_score),
-                    det_model_path=r.det,
-                    rec_model_path=r.rec,
-                    cls_model_path=r.cls,
-                    print_verbose=False,
+                self._log.warning(
+                    "Docling Phase-1 OCR is no longer supported. "
+                    "Ignoring enable_ocr/force_full_page_ocr; use Corpus.ocr(backend='deepseek') instead."
                 )
-                ocr_opts.rec_keys_path = r.keys
-                self.pipeline_options.ocr_options = ocr_opts
-            # Attach core toggles to existing pipeline_options
-            try:
-                self.pipeline_options.do_ocr = bool(enable_ocr)
-                self.pipeline_options.do_formula_enrichment = bool(formula_enrichment)
-                self.pipeline_options.do_code_enrichment = bool(code_enrichment)
-                try:
-                    setattr(self.pipeline_options, "images_scale", float(images_scale))
-                except Exception:
-                    pass
             except Exception:
                 pass
-            if not enable_ocr:
-                try:
-                    setattr(self.pipeline_options, "ocr_options", None)
-                except Exception:
-                    pass
 
+        active_backend = DoclingParseV2DocumentBackend
+        device_str = self._current_device_str() or "cuda:0"
+        _, opts = build_layout_pipeline(
+            device=device_str,
+            images_scale=float(images_scale),
+            formula_enrichment=bool(formula_enrichment),
+            code_enrichment=bool(code_enrichment),
+        )
+        try:
+            opts.do_ocr = False
+            setattr(opts, "images_scale", float(images_scale))
+        except Exception:
+            pass
+
+        self._active_pdf_options = opts
+        self._current_ocr_enabled = False
+
+        pdf_backend = DoclingParseV2DocumentBackend
+        try:
+            if getattr(self, "use_pypdfium_backend", False):
+                pdf_backend = PyPdfiumDocumentBackend
+                self.pdf_backend_name = "pypdfium"
+        except Exception:
             pdf_backend = DoclingParseV2DocumentBackend
-            if not enable_ocr:
-                try:
-                    if getattr(self, "use_pypdfium_backend", False):
-                        pdf_backend = PyPdfiumDocumentBackend
-                        self.pdf_backend_name = "pypdfium"
-                except Exception:
-                    pdf_backend = DoclingParseV2DocumentBackend
+        active_backend = pdf_backend
 
-            active_backend = pdf_backend
-
-            self.converter = DocumentConverter(
-                allowed_formats=[
-                    InputFormat.PDF,
-                    InputFormat.DOCX,
-                    InputFormat.XML_JATS,
-                    InputFormat.HTML,
-                    InputFormat.PPTX,
-                    InputFormat.CSV,
-                    InputFormat.MD,
-                ],
-                format_options={
-                    InputFormat.PDF: PdfFormatOption(
-                        pipeline_options=self.pipeline_options,
-                        pipeline_cls=StandardPdfPipeline,
-                        backend=active_backend,
-                    ),
-                },
-            )
-
-            self._active_pdf_options = self.pipeline_options
-            self._current_ocr_enabled = bool(enable_ocr)
-            self._active_pdf_backend = active_backend
+        self.converter = DocumentConverter(
+            allowed_formats=[
+                InputFormat.PDF,
+                InputFormat.DOCX,
+                InputFormat.XML_JATS,
+                InputFormat.HTML,
+                InputFormat.PPTX,
+                InputFormat.CSV,
+                InputFormat.MD,
+            ],
+            format_options={
+                InputFormat.PDF: PdfFormatOption(
+                    pipeline_options=opts,
+                    pipeline_cls=StandardPdfPipeline,
+                    backend=active_backend,
+                ),
+                InputFormat.DOCX: WordFormatOption(pipeline_cls=SimplePipeline),
+                InputFormat.XML_JATS: XMLJatsFormatOption(),
+                InputFormat.HTML: HTMLFormatOption(),
+                InputFormat.PPTX: PowerpointFormatOption(),
+                InputFormat.CSV: CsvFormatOption(),
+                InputFormat.MD: MarkdownFormatOption(),
+            },
+        )
+        self._active_pdf_backend = active_backend
 
         # Record last configuration for reuse
         try:
             self._last_extractor_cfg = self._cfg_signature(
-                enable_ocr=enable_ocr,
+                enable_ocr=False,
                 force_full_page_ocr=force_full_page_ocr,
                 text_score=text_score,
                 images_scale=images_scale,

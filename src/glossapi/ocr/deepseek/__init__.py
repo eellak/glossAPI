@@ -1,4 +1,4 @@
-"""DeepSeek OCR backend with a lightweight stub fallback."""
+"""DeepSeek OCR backend."""
 
 from .runner import run_for_files
 from . import preflight

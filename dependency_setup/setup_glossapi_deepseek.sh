@@ -3,4 +3,4 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-exec "${SCRIPT_DIR}/setup_glossapi.sh" --mode deepseek "$@"
+exec "${SCRIPT_DIR}/setup_deepseek_uv.sh" "$@"

@@ -11,7 +11,7 @@ def _mk_corpus(tmp_path: Path):
     return Corpus(input_dir=root, output_dir=root)
 
 
-def test_cross_backend_smoke_with_stubs(tmp_path, monkeypatch):
+def test_deepseek_ocr_then_math_only_smoke(tmp_path, monkeypatch):
     corpus = _mk_corpus(tmp_path)
 
     # Two PDFs: one needs OCR, one does not (for math-only later)
@@ -28,7 +28,7 @@ def test_cross_backend_smoke_with_stubs(tmp_path, monkeypatch):
     parquet_path = dl_dir / "download_results.parquet"
     df.to_parquet(parquet_path, index=False)
 
-    # DeepSeek stub for OCR
+    # DeepSeek runner is stubbed here only to avoid the heavy model during unit tests.
     from glossapi.ocr.deepseek import runner
 
     def fake_run_for_files(self_ref, files, **kwargs):
@@ -45,7 +45,7 @@ def test_cross_backend_smoke_with_stubs(tmp_path, monkeypatch):
     # Run DeepSeek OCR for bad files
     corpus.ocr(backend="deepseek", fix_bad=True, math_enhance=True, mode="ocr_bad_then_math")
 
-    # RapidOCR math-only pass: ensure JSON for clean.pdf and run math
+    # Math-only pass: ensure JSON for clean.pdf and run math
     json_dir = corpus.output_dir / "json"
     json_dir.mkdir(parents=True, exist_ok=True)
     (json_dir / "clean.docling.json").write_text("{}", encoding="utf-8")
@@ -58,7 +58,7 @@ def test_cross_backend_smoke_with_stubs(tmp_path, monkeypatch):
 
     monkeypatch.setattr(corpus, "formula_enrich_from_json", fake_enrich)
 
-    corpus.ocr(backend="rapidocr", fix_bad=False, math_enhance=True, mode="math_only")
+    corpus.ocr(backend="deepseek", fix_bad=False, math_enhance=True, mode="math_only")
 
     # Verify
     updated = pd.read_parquet(parquet_path).set_index("filename")

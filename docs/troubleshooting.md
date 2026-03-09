@@ -2,18 +2,14 @@
 
 ## OCR runs on CPU
 
-- Verify ONNXRuntime GPU: `python -c "import onnxruntime as ort; print(ort.get_available_providers())"` — must include `CUDAExecutionProvider`.
-- Ensure CPU ORT wheel is not installed: `pip uninstall -y onnxruntime`.
-- Make sure you pass `accel_type='CUDA'` (or `use_gpus='multi'`).
+- Verify Torch CUDA: `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"`.
+- Make sure the DeepSeek runtime is the one configured in `GLOSSAPI_DEEPSEEK_PYTHON`.
+- Run `python -m glossapi.ocr.deepseek.preflight` in the DeepSeek env before large OCR jobs.
 
 ## Torch doesn’t see the GPU
 
 - Check `nvidia-smi` and driver installation.
 - Match Torch CUDA build to your driver; see getting_started.md for the recommended wheel.
-
-## RapidOCR font download failure
-
-- The first OCR call might download a visualization font. Ensure egress is allowed; the file is cached afterwards.
 
 ## Out of memory
 

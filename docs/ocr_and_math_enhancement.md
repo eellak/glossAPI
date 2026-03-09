@@ -1,15 +1,14 @@
 # GPU OCR and Math Enrichment
 
-This document summarizes how GlossAPI uses the GPU for OCR and formula/code enrichment, how to run each phase efficiently, and where artifacts are written.
+This document summarizes how GlossAPI uses the GPU for OCR remediation and formula/code enrichment, how to run each phase efficiently, and where artifacts are written.
 
 ## Overview
 
-- Phase‑1 (Extract): PDF → Markdown via Docling; optional GPU OCR via RapidOCR (ONNXRuntime). Optionally emit JSON + formula index for Phase‑2.
+- Phase‑1 (Extract): PDF → Markdown via Docling or the safe backend. Optionally emit JSON + formula index for Phase‑2.
 - Phase‑2 (Enrich): From Docling JSON, decode math/code on the GPU (CodeFormula) and re‑emit enriched Markdown.
 
 Backends
-- `backend='rapidocr'` (default): Docling + RapidOCR; Phase‑2 math runs from Docling JSON.
-- `backend='deepseek'`: DeepSeek‑OCR; equations are included inline in OCR output, so Phase‑2 math is not required and is treated as a no‑op.
+- `backend='deepseek'`: DeepSeek-OCR-2; equations are included inline in OCR output, so Phase‑2 math is not required and is treated as a no‑op.
 
 Policy: never OCR and math on the same file
 - If a file needs OCR, GlossAPI runs OCR only (no Phase‑2 on that file in the same pass).
@@ -18,24 +17,20 @@ Policy: never OCR and math on the same file
 ### Python API layout
 
 - DeepSeek entry point: `glossapi.ocr.deepseek.runner.run_for_files(...)`
-- RapidOCR dispatcher: `glossapi.ocr.rapidocr.dispatch.run_via_extract(...)`
 - Math enrichment: `glossapi.ocr.math.enrich.enrich_from_docling_json(...)`
 - Utility helpers (Docling JSON / cleaning): `glossapi.ocr.utils.*`
 
 ## Prerequisites
 
-- RapidOCR/Docling stack: `pip install '.[rapidocr]'`
-- DeepSeek CLI stack (in a dedicated venv recommended): `pip install '.[deepseek]'`
-- ONNXRuntime GPU installed (no CPU ORT): `onnxruntime-gpu==1.18.1`
-- Torch CUDA installed: e.g., `torch==2.5.1+cu121`
-- Packaged RapidOCR models/keys found under `glossapi/models/rapidocr/{onnx,keys}` or via `GLOSSAPI_RAPIDOCR_ONNX_DIR`.
+- Main GlossAPI stack: `./dependency_setup/setup_glossapi.sh --mode docling`
+- DeepSeek runtime: `./dependency_setup/setup_deepseek_uv.sh --venv dependency_setup/.venvs/deepseek`
+- Torch CUDA installed in the DeepSeek env (the uv setup pins the tested stack).
 - Optional helpers for Phase‑2 JSON: `pypdfium2`, `zstandard`.
 
 Verify GPU readiness before forcing OCR or math:
 
 ```bash
 python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"  # expects True, >=1
-python -c "import onnxruntime as ort; print(ort.get_available_providers())"            # must include CUDAExecutionProvider
 ```
 
 ## Running Phase‑1 (Extract)
@@ -44,16 +39,13 @@ python -c "import onnxruntime as ort; print(ort.get_available_providers())"     
 from glossapi import Corpus
 c = Corpus('IN','OUT')
 
-# GPU OCR on PDFs; emit JSON + formula index for Phase‑2
+# Emit JSON + formula index for Phase‑2
 c.extract(
     input_format='pdf',
-    accel_type='CUDA',           # or use_gpus='multi' for multi‑GPU
-    force_ocr=True,              # OCR always on for PDFs
+    accel_type='CUDA',
     emit_formula_index=True,     # request json/<stem>.formula_index.jsonl alongside the default JSON
 )
 ```
-
-When `force_ocr=True` (or when math/code enrichment is enabled), GlossAPI automatically switches to the Docling backend and aborts if CUDA‑enabled torch/ONNXRuntime providers are not available.
 
 Outputs:
 - `markdown/<stem>.md`
@@ -88,12 +80,7 @@ c.ocr(backend='deepseek', fix_bad=True, math_enhance=True, mode='ocr_bad_then_ma
 # → runs OCR only for bad files; equations are included inline; Phase‑2 is skipped
 ```
 
-If you need Phase‑2 math on files that do not require OCR, use RapidOCR/Docling and math‑only (expects Docling JSON from Phase‑1):
-
-```python
-c.ocr(backend='rapidocr', fix_bad=False, math_enhance=True, mode='math_only')
-# → runs Phase‑2 on non‑OCR files only (requires Docling JSON)
-```
+If you need Phase‑2 math on files that do not require OCR, run `math_only` after Docling extraction with JSON enabled.
 
 ## Multi‑GPU
 
@@ -101,7 +88,7 @@ Phase‑1 (extract):
 ```python
 c.extract(input_format='pdf', use_gpus='multi', force_ocr=True)
 ```
-Workers set `CUDA_VISIBLE_DEVICES` per process; Docling runs on `cuda:0` relative to each worker. OCR uses ORT GPU under the same process.
+Workers set `CUDA_VISIBLE_DEVICES` per process; Docling runs on `cuda:0` relative to each worker.
 
 Phase‑2 (enrich):
 ```python
@@ -119,7 +106,7 @@ Spawns math workers; each binds to its GPU using `CUDA_VISIBLE_DEVICES` and runs
 ## Performance & Tuning
 
 - Batch sizes
-  - Inline (Phase‑1): `GLOSSAPI_FORMULA_BATCH` (default 16) sets CodeFormula docling side throughput.
+  - Inline (Phase‑1): `GLOSSAPI_FORMULA_BATCH` (default 16) sets CodeFormula throughput.
   - Phase‑2: `batch_size` / `math_batch_size` parameter (typ. 8–16) balances VRAM and speed.
 - Images scale for OCR: `GLOSSAPI_IMAGES_SCALE` (~1.1–1.25) can improve detection on thin glyphs.
 - CPU threads: cap `OMP_NUM_THREADS` / `MKL_NUM_THREADS` to avoid CPU oversubscription on multi‑GPU nodes.
@@ -159,11 +146,7 @@ OUT/
 
 ## Troubleshooting
 
-- Missing CUDAExecutionProvider
-  - Ensure `onnxruntime-gpu` is installed and `onnxruntime` CPU is uninstalled.
 - Torch reports no CUDA
   - Check `nvidia-smi` and match Torch CUDA build to your driver.
-- OCR is slow or falls back to CPU
-  - Confirm ORT providers include CUDAExecutionProvider and that `accel_type='CUDA'` is used.
 - Out of memory
   - Lower `batch_size` for Phase‑2, reduce `GLOSSAPI_IMAGES_SCALE`, or split inputs.

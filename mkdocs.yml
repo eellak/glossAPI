@@ -1,5 +1,5 @@
 site_name: GlossAPI
-site_description: Academic document processing pipeline (Docling + RapidOCR + Rust)
+site_description: Academic document processing pipeline (Docling + DeepSeek + Rust)
 repo_url: https://github.com/eellak/glossAPI
 theme:
   name: material
@@ -22,6 +22,7 @@ nav:
       - Metadata, Artifacts, and Run Diagnostics: architecture/metadata_artifacts_and_run_diagnostics.md
       - Artifact Layout and Stage Handoffs: architecture/artifact_layout_and_stage_handoffs.md
       - Resumability, Recovery, and Retention: architecture/resumability_recovery_and_retention.md
+      - DeepSeek-Only Upgrade Roadmap: architecture/deepseek_only_upgrade_roadmap.md
   - Pipeline:
       - Pipeline Overview: pipeline.md
       - OCR & Math Enrichment: ocr_and_math_enhancement.md
@@ -39,6 +40,7 @@ nav:
       - Configuration: configuration.md
       - AWS Job Distribution: aws_job_distribution.md
       - Troubleshooting: troubleshooting.md
+      - Compatibility And Regression Matrix: testing/compatibility_matrix.md
   - Reference:
       - Corpus API: api/corpus.md
       - Math Enrichment Runtime: math_enrichment_runtime.md
