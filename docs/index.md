@@ -8,6 +8,7 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 - [Lightweight PDF Corpus](lightweight_corpus.md) — 20 one-page PDFs for smoke testing without Docling or GPUs.
 
 ## Learn the pipeline
+- [Code Map](code_map.md) links the main documentation ideas to the classes and files that implement them.
 - [Pipeline Overview](pipeline.md) explains each stage and the emitted artifacts.
 - [OCR & Math Enrichment](ocr_and_math_enhancement.md) covers DeepSeek OCR remediation and Docling-based enrichment.
 - [Multi-GPU & Benchmarking](multi_gpu.md) shares scaling and scheduling tips.
@@ -18,4 +19,5 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 - [AWS Job Distribution](aws_job_distribution.md) describes large-scale scheduling.
 
 ## Reference
-- [Corpus API](api_corpus_tmp.md) details public methods and parameters.
+- [Corpus API](api/corpus.md) gives the compact contract view of the main public methods.
+- [Legacy Corpus API Notes](api_corpus_tmp.md) remains available while the docs are being consolidated.

@@ -42,7 +42,9 @@ nav:
       - Troubleshooting: troubleshooting.md
       - Compatibility And Regression Matrix: testing/compatibility_matrix.md
   - Reference:
-      - Corpus API: api_corpus_tmp.md
+      - Code Map: code_map.md
+      - Corpus API: api/corpus.md
+      - Legacy Corpus API Notes: api_corpus_tmp.md
       - Math Enrichment Runtime: math_enrichment_runtime.md
 docs_dir: docs
 markdown_extensions:
