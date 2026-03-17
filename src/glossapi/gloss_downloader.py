@@ -765,6 +765,77 @@ class GlossDownloader:
 
         # 5) Fall back to URL ext if any, otherwise 'bin'
         return url_ext if url_ext else 'bin'
+
+    def _url_looks_like_file_endpoint(self, url: str) -> bool:
+        """Return True when the URL shape suggests a direct file download endpoint."""
+        try:
+            lowered = str(url or "").lower()
+        except Exception:
+            return False
+        hints = (
+            ".pdf",
+            ".docx",
+            ".pptx",
+            ".xml",
+            ".csv",
+            "/pdf",
+            "format=pdf",
+            "type=pdf",
+            "download",
+            "attachment",
+            "/file",
+            "getfile.php",
+        )
+        return any(token in lowered for token in hints)
+
+    def _detect_html_interstitial(self, url: str, headers: Dict[str, str], content: bytes) -> Optional[str]:
+        """
+        Detect HTML challenge/viewer pages that should not count as successful downloads.
+
+        We still allow regular HTML documents, but fail fast on common interstitials
+        such as WAF challenge pages and JavaScript-only document viewers.
+        """
+        try:
+            lower_headers = {str(k).lower(): str(v).lower() for k, v in (headers or {}).items()}
+            lower_body = (content or b"")[: 1 << 17].decode("utf-8", errors="ignore").lower()
+        except Exception:
+            lower_headers = {}
+            lower_body = ""
+
+        if not lower_body:
+            return None
+
+        if (
+            "x-amzn-waf-action" in lower_headers
+            or "awswafintegration" in lower_body
+            or "challenge.js" in lower_body
+            or "verify that you're not a robot" in lower_body
+        ):
+            return (
+                "HTML challenge page returned instead of a document; "
+                "browser automation or cookie bootstrap is required"
+            )
+
+        viewer_markers = (
+            "fliphtml5_pages",
+            "monitor:player:html5",
+            "javascript/loadingjs.js",
+            "javascript/main.js",
+            "bookconfig.totalpagecount",
+            "getfile.php?lib=",
+        )
+        viewer_hits = sum(1 for marker in viewer_markers if marker in lower_body)
+        if viewer_hits >= 2:
+            return (
+                "HTML document viewer returned instead of a downloadable file; "
+                "a source-specific fetcher with persisted cookies/redirect handling is required"
+            )
+
+        content_type = lower_headers.get("content-type", "")
+        if self._url_looks_like_file_endpoint(url) and "text/html" in content_type:
+            return "Expected a file-like response but received HTML instead"
+
+        return None
     
     async def download_file(self, row_index: int, url: str, semaphore: Optional[asyncio.Semaphore], 
                            rate_limiter: RateLimiter, retry_count: int = 0,
@@ -916,6 +987,15 @@ class GlossDownloader:
                                                         await f.write(chunk)
                                             # Infer extension using URL, headers and first bytes
                                             file_ext = self.infer_file_extension(url, resp_headers, bytes(head))
+                                            if file_ext == 'html':
+                                                html_issue = self._detect_html_interstitial(url, resp_headers, bytes(head))
+                                                if html_issue:
+                                                    try:
+                                                        os.remove(tmp_path)
+                                                    except Exception:
+                                                        pass
+                                                    self.logger.warning(f"HTML interstitial detected for {url}: {html_issue}")
+                                                    return False, "", file_ext, html_issue, retry_count
                                             if not self.is_supported_format(file_ext):
                                                 # Clean up temp and report
                                                 try:
@@ -946,6 +1026,11 @@ class GlossDownloader:
                                     session, requester, url, headers, timeout
                                 )
                                 file_ext = self.infer_file_extension(url, resp_headers, content)
+                                if file_ext == 'html':
+                                    html_issue = self._detect_html_interstitial(url, resp_headers, content)
+                                    if html_issue:
+                                        self.logger.warning(f"HTML interstitial detected for {url}: {html_issue}")
+                                        return False, "", file_ext, html_issue, retry_count
                                 if not self.is_supported_format(file_ext):
                                     self.logger.warning(f"Unsupported file format after inference: {file_ext}. Supported formats: {', '.join(self.supported_formats)}")
                                     return False, "", file_ext or "", f"Unsupported file format: {file_ext}", retry_count
