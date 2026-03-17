@@ -141,6 +141,8 @@ class GlossDownloader:
         error_burst_window: int = 20,
         error_burst_threshold: float = 0.5,
         park_403_seconds: float = 600.0,
+        download_policy_file: Optional[Union[str, Path]] = None,
+        download_policy: Optional[Any] = None,
         _used_filename_bases: Optional[Set[str]] = None,
     ):
         """
@@ -241,6 +243,8 @@ class GlossDownloader:
         self.checkpoint_seconds = float(checkpoint_seconds) if checkpoint_seconds else None
         # Warnings JSON path
         self.domain_warnings_path = self.output_dir / 'domain_scheduler_warnings.json'
+        self.download_policy_file = Path(download_policy_file).expanduser().resolve() if download_policy_file else None
+        self.download_policy = download_policy
 
         # Progress logger (separate file; default to output logs dir)
         self.progress_logger = self.logger
@@ -836,6 +840,300 @@ class GlossDownloader:
             return "Expected a file-like response but received HTML instead"
 
         return None
+
+    async def _recover_html_interstitial(
+        self,
+        *,
+        row_index: int,
+        url: str,
+        headers: Dict[str, str],
+        content: bytes,
+        html_issue: str,
+        retry_count: int,
+        filename_base: Optional[str],
+        referer: Optional[str],
+    ) -> Optional[Tuple[bool, str, str, str, int]]:
+        """Allow subclasses to recover from HTML interstitials via alternate fetch modes."""
+        return None
+
+    async def _preflight_download(
+        self,
+        *,
+        row_index: int,
+        url: str,
+        retry_count: int,
+        filename_base: Optional[str],
+        referer: Optional[str],
+    ) -> Optional[Tuple[bool, str, str, str, int]]:
+        """Allow subclasses to short-circuit the direct HTTP path for known routes."""
+        return None
+
+    def _normalize_request_url(self, url: str) -> str:
+        if not url.startswith(("http://", "https://")):
+            return f"https://{url}"
+        return url
+
+    def _build_request_headers(self, url: str, user_agent: str, referer: Optional[str]) -> Dict[str, str]:
+        domain = urlparse(url).netloc
+        base_url = self.get_base_url(url)
+        referer_value = (referer or '').strip()
+        return {
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            # Avoid brotli to prevent dependency errors
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'cross-site',
+            'Pragma': 'no-cache',
+            'Cache-Control': 'no-cache',
+            'TE': 'trailers',
+            'Referer': referer_value if referer_value else f"https://www.google.com/search?q={domain}",
+            'Origin': base_url,
+            'DNT': '1'
+        }
+
+    def _resolve_request_cookies(self, url: str) -> Dict[str, str]:
+        cookies: Dict[str, str] = {}
+        for domain_pattern, domain_cookies in self.domain_cookies.items():
+            if domain_pattern in url:
+                cookies.update(domain_cookies)
+                # If the domain needs dynamic values like random IDs
+                for key, value in list(cookies.items()):
+                    if 'random.randint' in str(value):
+                        # Replace with an actual random value (only supporting this pattern for now)
+                        if 'session-id' in str(value):
+                            cookies[key] = f"session-id-{random.randint(100000000, 999999999)}"
+        return cookies
+
+    def _build_request_timeout(self, retry_count: int) -> aiohttp.ClientTimeout:
+        return aiohttp.ClientTimeout(
+            total=min(self.request_timeout * (1.5 ** retry_count), 180),  # Cap at 3 minutes
+            connect=min(30 * (1.2 ** retry_count), 60),  # Cap connect timeout at 1 minute
+            sock_connect=min(30 * (1.2 ** retry_count), 60),  # Cap socket connect at 1 minute
+            sock_read=min(60 * (1.2 ** retry_count), 120)  # Cap socket read at 2 minutes
+        )
+
+    def _build_session_connector(self, url: str) -> Optional[aiohttp.TCPConnector]:
+        connector = None
+        url_base = self._extract_base_domain(url)
+        force_insecure = url_base in getattr(self, '_domains_ssl_insecure', set())
+        if (not self.ssl_verify) or force_insecure:
+            connector = aiohttp.TCPConnector(ssl=False)
+        elif self.ssl_cafile:
+            import ssl as _ssl
+            ctx = _ssl.create_default_context(cafile=self.ssl_cafile)
+            connector = aiohttp.TCPConnector(ssl=ctx)
+        return connector
+
+    async def _bootstrap_download_session(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        headers: Dict[str, str],
+    ) -> Dict[str, str]:
+        headers = await self.setup_session(session, url, headers)
+
+        # Set a shorter timeout for the initial connection attempt
+        base_timeout = aiohttp.ClientTimeout(total=10)
+        try:
+            # Visit the base domain to establish cookies if needed
+            base_domain = urlparse(url).netloc
+            if any(domain in base_domain for domain in self.domain_cookies.keys()):
+                base_url = f"https://{base_domain}"
+                async with session.get(base_url, headers=headers, timeout=base_timeout):
+                    pass
+        except Exception as e:
+            # Non-fatal error, just log and continue
+            self.logger.debug(f"Initial base URL visit failed: {str(e)}")
+        return headers
+
+    def _best_effort_url_extension(self, url: str) -> str:
+        try:
+            return self.get_file_extension_from_url(url)
+        except Exception:
+            return ""
+
+    def _build_output_filename(self, row_index: int, file_ext: str, filename_base: Optional[str]) -> str:
+        if filename_base and str(filename_base).strip():
+            return f"{filename_base}.{file_ext}"
+        return self.generate_filename(row_index, file_ext)
+
+    def _cleanup_temp_file(self, tmp_path: Optional[Path]) -> None:
+        if not tmp_path:
+            return
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+
+    def _move_temp_file_to_final(self, tmp_path: Path, filename: str) -> None:
+        final_path = Path(self.downloads_dir) / filename
+        try:
+            os.replace(tmp_path, final_path)
+        except Exception:
+            try:
+                os.rename(tmp_path, final_path)
+            except Exception:
+                pass
+
+    async def _finalize_download_result(
+        self,
+        *,
+        row_index: int,
+        url: str,
+        resp_headers: Dict[str, str],
+        content: bytes,
+        retry_count: int,
+        filename_base: Optional[str],
+        referer: Optional[str],
+        tmp_path: Optional[Path] = None,
+    ) -> Tuple[bool, str, str, str, int]:
+        file_ext = self.infer_file_extension(url, resp_headers, content)
+        if file_ext == 'html':
+            html_issue = self._detect_html_interstitial(url, resp_headers, content)
+            if html_issue:
+                self._cleanup_temp_file(tmp_path)
+                recovered = await self._recover_html_interstitial(
+                    row_index=row_index,
+                    url=url,
+                    headers=resp_headers,
+                    content=content,
+                    html_issue=html_issue,
+                    retry_count=retry_count,
+                    filename_base=filename_base,
+                    referer=referer,
+                )
+                if recovered is not None:
+                    return recovered
+                self.logger.warning(f"HTML interstitial detected for {url}: {html_issue}")
+                return False, "", file_ext, html_issue, retry_count
+        if not self.is_supported_format(file_ext):
+            self._cleanup_temp_file(tmp_path)
+            self.logger.warning(
+                f"Unsupported file format after inference: {file_ext}. Supported formats: {', '.join(self.supported_formats)}"
+            )
+            return False, "", file_ext or "", f"Unsupported file format: {file_ext}", retry_count
+
+        filename = self._build_output_filename(row_index, file_ext, filename_base)
+        if tmp_path is not None:
+            self._move_temp_file_to_final(tmp_path, filename)
+        else:
+            await self.write_file(filename, content, self.downloads_dir)
+        self.logger.info(f"Successfully downloaded {filename} from {url}")
+        return True, filename, file_ext, "", retry_count
+
+    async def _download_via_streaming_get(
+        self,
+        *,
+        session: aiohttp.ClientSession,
+        row_index: int,
+        url: str,
+        headers: Dict[str, str],
+        timeout: aiohttp.ClientTimeout,
+        retry_count: int,
+        filename_base: Optional[str],
+        referer: Optional[str],
+    ) -> Tuple[bool, str, str, str, int]:
+        from tenacity import AsyncRetrying
+
+        head = bytearray()
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(max(1, int(self.max_retries))),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=(retry_if_exception_type(aiohttp.ClientError) |
+                   retry_if_exception_type(asyncio.TimeoutError)),
+            before_sleep=before_sleep_log(logging.getLogger(__name__), logging.INFO),
+            reraise=True,
+        ):
+            with attempt:
+                async with session.get(url, headers=headers, timeout=timeout) as response:
+                    response.raise_for_status()
+                    resp_headers = dict(response.headers or {})
+                    tmp_path = Path(self.downloads_dir) / f".part_{row_index}"
+                    async with aiofiles.open(tmp_path, 'wb') as f:
+                        async for chunk in response.content.iter_chunked(1 << 16):
+                            if chunk:
+                                if len(head) < (1 << 16):
+                                    need = (1 << 16) - len(head)
+                                    head.extend(chunk[:need])
+                                await f.write(chunk)
+                    return await self._finalize_download_result(
+                        row_index=row_index,
+                        url=url,
+                        resp_headers=resp_headers,
+                        content=bytes(head),
+                        retry_count=retry_count,
+                        filename_base=filename_base,
+                        referer=referer,
+                        tmp_path=tmp_path,
+                    )
+        return False, "", "", "Retry exhaustion", retry_count + 1
+
+    async def _download_via_buffered_request(
+        self,
+        *,
+        session: aiohttp.ClientSession,
+        requester: str,
+        row_index: int,
+        url: str,
+        headers: Dict[str, str],
+        timeout: aiohttp.ClientTimeout,
+        retry_count: int,
+        filename_base: Optional[str],
+        referer: Optional[str],
+    ) -> Tuple[bool, str, str, str, int]:
+        content, status, resp_headers = await self.make_request(
+            session, requester, url, headers, timeout
+        )
+        return await self._finalize_download_result(
+            row_index=row_index,
+            url=url,
+            resp_headers=resp_headers,
+            content=content,
+            retry_count=retry_count,
+            filename_base=filename_base,
+            referer=referer,
+        )
+
+    def _build_http_error_result(
+        self,
+        url: str,
+        error: aiohttp.ClientResponseError,
+        retry_count: int,
+    ) -> Tuple[bool, str, str, str, int]:
+        status = error.status
+        self.logger.warning(f"Received {status} for {url}")
+
+        if self.verbose:
+            self.logger.debug(f"HTTP Error Details - Status: {error.status}, Message: {error.message}")
+            self.logger.debug(f"Headers: {error.headers if hasattr(error, 'headers') else 'No headers available'}")
+            self.logger.debug(f"Request info: {error.request_info if hasattr(error, 'request_info') else 'No request info available'}")
+
+        retry_after = None
+        try:
+            hdrs = dict(getattr(error, 'headers', {}) or {})
+            for k, v in hdrs.items():
+                if k.lower() == 'retry-after':
+                    val = str(v).strip()
+                    if val.isdigit():
+                        retry_after = int(val)
+                    else:
+                        try:
+                            dt = parsedate_to_datetime(val)
+                            retry_after = max(0, int((dt.timestamp() - time.time())))
+                        except Exception:
+                            retry_after = None
+                    break
+        except Exception:
+            retry_after = None
+        error_msg = f"HTTP {status}: {str(error)}"
+        if status in (429, 503) and retry_after is not None:
+            error_msg += f" retry_after={retry_after}"
+        return False, "", self._best_effort_url_extension(url), error_msg, retry_count + 1
     
     async def download_file(self, row_index: int, url: str, semaphore: Optional[asyncio.Semaphore], 
                            rate_limiter: RateLimiter, retry_count: int = 0,
@@ -855,103 +1153,34 @@ class GlossDownloader:
         """
         if not url or pd.isna(url):
             return False, "", "", "Empty URL", retry_count
-        
-        # Get a new user-agent for each request
+
+        url = self._normalize_request_url(url)
         user_agent = next(self.user_agents)
-        domain = urlparse(url).netloc
-        
-        # Ensure URL has scheme
-        if not url.startswith(("http://", "https://")):
-            url = f"https://{url}"
-        
-        # Get base URL for referer header
-        base_url = self.get_base_url(url)
-        
-        # Enhanced headers with common browser-like attributes to bypass 403 errors
-        # Prefer caller-provided referer (e.g., the external_link page)
-        _referer = (referer or '').strip()
-        headers = {
-            'User-Agent': user_agent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            # Avoid brotli to prevent dependency errors
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'cross-site',
-            'Pragma': 'no-cache',
-            'Cache-Control': 'no-cache',
-            'TE': 'trailers',
-            'Referer': _referer if _referer else f"https://www.google.com/search?q={domain}",
-            'Origin': base_url,
-            'DNT': '1'
-        }
-        
-        # Check for domain-specific cookies
-        cookies = {}
-        for domain_pattern, domain_cookies in self.domain_cookies.items():
-            if domain_pattern in url:
-                cookies.update(domain_cookies)
-                # If the domain needs dynamic values like random IDs
-                for key, value in cookies.items():
-                    if 'random.randint' in str(value):
-                        # Replace with an actual random value (only supporting this pattern for now)
-                        if 'session-id' in value:
-                            cookies[key] = f"session-id-{random.randint(100000000, 999999999)}"
+        headers = self._build_request_headers(url, user_agent, referer)
+        cookies = self._resolve_request_cookies(url)
         
         if semaphore:
             await semaphore.acquire()
         try:
-            # Apply rate limiting
             await rate_limiter.acquire()
-            
-            # Implement exponential backoff
             sleep_time = self.sleep * (2 ** retry_count)
             await asyncio.sleep(random.uniform(sleep_time, sleep_time * 1.5))
-            
-            # Set up timeout with exponential backoff
-            timeout = aiohttp.ClientTimeout(
-                total=min(self.request_timeout * (1.5 ** retry_count), 180),  # Cap at 3 minutes
-                connect=min(30 * (1.2 ** retry_count), 60),  # Cap connect timeout at 1 minute
-                sock_connect=min(30 * (1.2 ** retry_count), 60),  # Cap socket connect at 1 minute
-                sock_read=min(60 * (1.2 ** retry_count), 120)  # Cap socket read at 2 minutes
+            preflight = await self._preflight_download(
+                row_index=row_index,
+                url=url,
+                retry_count=retry_count,
+                filename_base=filename_base,
+                referer=referer,
             )
-            
+            if preflight is not None:
+                return preflight
+            timeout = self._build_request_timeout(retry_count)
+
             try:
-                # Prepare optional SSL connector
-                connector = None
-                # Domain-specific insecure override (discovered via ping)
-                url_base = self._extract_base_domain(url)
-                _force_insecure = url_base in getattr(self, '_domains_ssl_insecure', set())
-                if (not self.ssl_verify) or _force_insecure:
-                    connector = aiohttp.TCPConnector(ssl=False)
-                elif self.ssl_cafile:
-                    import ssl as _ssl
-                    ctx = _ssl.create_default_context(cafile=self.ssl_cafile)
-                    connector = aiohttp.TCPConnector(ssl=ctx)
-                # Create a new session for each download to avoid cookie contamination
+                connector = self._build_session_connector(url)
                 async with aiohttp.ClientSession(cookies=cookies, connector=connector) as session:
                     try:
-                        # Try to access the base domain first to establish cookies
-                        headers = await self.setup_session(session, url, headers)
-                        
-                        # Set a shorter timeout for the initial connection attempt
-                        base_timeout = aiohttp.ClientTimeout(total=10)
-                        try:
-                            # Visit the base domain to establish cookies if needed
-                            base_domain = urlparse(url).netloc
-                            if any(domain in base_domain for domain in self.domain_cookies.keys()):
-                                base_url = f"https://{base_domain}"
-                                async with session.get(base_url, headers=headers, timeout=base_timeout):
-                                    pass
-                        except Exception as e:
-                            # Non-fatal error, just log and continue
-                            self.logger.debug(f"Initial base URL visit failed: {str(e)}")
-                            pass
-                        
-                        # Choose request method and perform streaming for GET
+                        headers = await self._bootstrap_download_session(session, url, headers)
                         requester = self.request_method.lower()
 
                         try:
@@ -960,126 +1189,30 @@ class GlossDownloader:
                             self.verbose_log(f"Headers: {headers}")
 
                             if requester == 'get':
-                                # Streaming GET with retries
-                                from tenacity import AsyncRetrying
-                                head = bytearray()
-                                resp_headers = {}
-                                async for attempt in AsyncRetrying(
-                                    stop=stop_after_attempt(max(1, int(self.max_retries))),
-                                    wait=wait_exponential(multiplier=1, min=1, max=10),
-                                    retry=(retry_if_exception_type(aiohttp.ClientError) |
-                                           retry_if_exception_type(asyncio.TimeoutError)),
-                                    before_sleep=before_sleep_log(logging.getLogger(__name__), logging.INFO),
-                                    reraise=True,
-                                ):
-                                    with attempt:
-                                        async with session.get(url, headers=headers, timeout=timeout) as response:
-                                            response.raise_for_status()
-                                            resp_headers = dict(response.headers or {})
-                                            # Write to a temp file first
-                                            tmp_path = Path(self.downloads_dir) / f".part_{row_index}"
-                                            async with aiofiles.open(tmp_path, 'wb') as f:
-                                                async for chunk in response.content.iter_chunked(1 << 16):
-                                                    if chunk:
-                                                        if len(head) < (1 << 16):
-                                                            need = (1 << 16) - len(head)
-                                                            head.extend(chunk[:need])
-                                                        await f.write(chunk)
-                                            # Infer extension using URL, headers and first bytes
-                                            file_ext = self.infer_file_extension(url, resp_headers, bytes(head))
-                                            if file_ext == 'html':
-                                                html_issue = self._detect_html_interstitial(url, resp_headers, bytes(head))
-                                                if html_issue:
-                                                    try:
-                                                        os.remove(tmp_path)
-                                                    except Exception:
-                                                        pass
-                                                    self.logger.warning(f"HTML interstitial detected for {url}: {html_issue}")
-                                                    return False, "", file_ext, html_issue, retry_count
-                                            if not self.is_supported_format(file_ext):
-                                                # Clean up temp and report
-                                                try:
-                                                    os.remove(tmp_path)
-                                                except Exception:
-                                                    pass
-                                                self.logger.warning(f"Unsupported file format after inference: {file_ext}. Supported formats: {', '.join(self.supported_formats)}")
-                                                return False, "", file_ext or "", f"Unsupported file format: {file_ext}", retry_count
-                                            # Decide final filename
-                                            if filename_base and str(filename_base).strip():
-                                                filename = f"{filename_base}.{file_ext}"
-                                            else:
-                                                filename = self.generate_filename(row_index, file_ext)
-                                            final_path = Path(self.downloads_dir) / filename
-                                            try:
-                                                os.replace(tmp_path, final_path)
-                                            except Exception:
-                                                # Fallback to copy/rename
-                                                try:
-                                                    os.rename(tmp_path, final_path)
-                                                except Exception:
-                                                    pass
-                                            self.logger.info(f"Successfully downloaded {filename} from {url}")
-                                            return True, filename, file_ext, "", retry_count
-                            else:
-                                # Fallback to non-streaming POST
-                                content, status, resp_headers = await self.make_request(
-                                    session, requester, url, headers, timeout
+                                return await self._download_via_streaming_get(
+                                    session=session,
+                                    row_index=row_index,
+                                    url=url,
+                                    headers=headers,
+                                    timeout=timeout,
+                                    retry_count=retry_count,
+                                    filename_base=filename_base,
+                                    referer=referer,
                                 )
-                                file_ext = self.infer_file_extension(url, resp_headers, content)
-                                if file_ext == 'html':
-                                    html_issue = self._detect_html_interstitial(url, resp_headers, content)
-                                    if html_issue:
-                                        self.logger.warning(f"HTML interstitial detected for {url}: {html_issue}")
-                                        return False, "", file_ext, html_issue, retry_count
-                                if not self.is_supported_format(file_ext):
-                                    self.logger.warning(f"Unsupported file format after inference: {file_ext}. Supported formats: {', '.join(self.supported_formats)}")
-                                    return False, "", file_ext or "", f"Unsupported file format: {file_ext}", retry_count
-                                if filename_base and str(filename_base).strip():
-                                    filename = f"{filename_base}.{file_ext}"
-                                else:
-                                    filename = self.generate_filename(row_index, file_ext)
-                                await self.write_file(filename, content, self.downloads_dir)
-                                self.logger.info(f"Successfully downloaded {filename} from {url}")
-                                return True, filename, file_ext, "", retry_count
+                            return await self._download_via_buffered_request(
+                                session=session,
+                                requester=requester,
+                                row_index=row_index,
+                                url=url,
+                                headers=headers,
+                                timeout=timeout,
+                                retry_count=retry_count,
+                                filename_base=filename_base,
+                                referer=referer,
+                            )
 
                         except aiohttp.ClientResponseError as e:
-                            # Handle HTTP errors
-                            status = e.status
-                            self.logger.warning(f"Received {status} for {url}")
-                            
-                            # Detailed verbose logging for HTTP errors
-                            if self.verbose:
-                                self.logger.debug(f"HTTP Error Details - Status: {e.status}, Message: {e.message}")
-                                self.logger.debug(f"Headers: {e.headers if hasattr(e, 'headers') else 'No headers available'}")
-                                self.logger.debug(f"Request info: {e.request_info if hasattr(e, 'request_info') else 'No request info available'}")
-                            
-                            # Build error with optional Retry-After info
-                            retry_after = None
-                            try:
-                                hdrs = dict(getattr(e, 'headers', {}) or {})
-                                for k, v in hdrs.items():
-                                    if k.lower() == 'retry-after':
-                                        val = str(v).strip()
-                                        if val.isdigit():
-                                            retry_after = int(val)
-                                        else:
-                                            try:
-                                                dt = parsedate_to_datetime(val)
-                                                retry_after = max(0, int((dt.timestamp() - time.time())))
-                                            except Exception:
-                                                retry_after = None
-                                        break
-                            except Exception:
-                                retry_after = None
-                            error_msg = f"HTTP {status}: {str(e)}"
-                            if status in (429, 503) and retry_after is not None:
-                                error_msg += f" retry_after={retry_after}"
-                            # Best-effort ext from URL if possible
-                            try:
-                                url_ext = self.get_file_extension_from_url(url)
-                            except Exception:
-                                url_ext = ""
-                            return False, "", url_ext, error_msg, retry_count + 1
+                            return self._build_http_error_result(url, e, retry_count)
                             
                         except Exception as e:
                             error_msg = str(e)
@@ -1092,11 +1225,7 @@ class GlossDownloader:
                                 import traceback
                                 self.logger.debug(f"Traceback: {traceback.format_exc()}")
                             
-                            try:
-                                url_ext = self.get_file_extension_from_url(url)
-                            except Exception:
-                                url_ext = ""
-                            return False, "", url_ext, error_msg, retry_count + 1
+                            return False, "", self._best_effort_url_extension(url), error_msg, retry_count + 1
                             
                     except asyncio.TimeoutError:
                         self.logger.error(f"Overall timeout exceeded for {url}")
@@ -1108,22 +1237,14 @@ class GlossDownloader:
             except aiohttp.ClientError as e:
                 error_msg = str(e)
                 self.logger.error(f"ClientError while downloading {url}: {error_msg}")
-                try:
-                    url_ext = self.get_file_extension_from_url(url)
-                except Exception:
-                    url_ext = ""
-                return False, "", url_ext, error_msg, retry_count + 1
+                return False, "", self._best_effort_url_extension(url), error_msg, retry_count + 1
             except asyncio.TimeoutError:
                 self.logger.error(f"Timeout while downloading {url}")
                 return False, "", "", "Timeout", retry_count + 1
             except Exception as e:
                 error_msg = str(e)
                 self.logger.error(f"Error while downloading {url}: {error_msg}")
-                try:
-                    url_ext = self.get_file_extension_from_url(url)
-                except Exception:
-                    url_ext = ""
-                return False, "", url_ext, error_msg, retry_count + 1
+                return False, "", self._best_effort_url_extension(url), error_msg, retry_count + 1
         finally:
             if semaphore:
                 try:

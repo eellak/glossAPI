@@ -187,11 +187,34 @@ download(
 - Important parameters:
   - `links_column`: override URL column name
   - `parallelize_by`: choose grouping for the scheduler
+  - `download_mode`: one of `standard`, `auto`, or `browser`
+  - `browser_mode=True`: alias for `download_mode="browser"`
+  - `download_policy_file`: route specific domains/URL patterns to `standard`, `auto`, or `browser`
   - downloader kwargs via `**kwargs` for concurrency, SSL, cookies, retries, checkpoints, etc.
 - Main outputs:
   - downloaded files in `downloads/`
   - partial/final results in `download_results/`
   - returned `pd.DataFrame` with download status and metadata
+
+Browser-capable download mode is intended for browser-gated file endpoints where a real file still exists behind session/bootstrap checks. It is not a general viewer extractor. Viewer-only sources should still fail cleanly with a recorded error and no local file artifact.
+
+Example:
+
+```python
+corpus.download(
+    input_parquet="input_urls.parquet",
+    download_mode="browser",
+)
+```
+
+Policy-routed example:
+
+```python
+corpus.download(
+    input_parquet="input_urls.parquet",
+    download_policy_file="download_policy.yml",
+)
+```
 
 ## triage_math()
 

@@ -9,6 +9,7 @@ __all__ = [
     'Sampler',
     'Section',
     'GlossDownloader',
+    'BrowserGlossDownloader',
 ]
 
 def __getattr__(name: str):
@@ -31,6 +32,9 @@ def __getattr__(name: str):
     if name == 'GlossDownloader':
         from .gloss_downloader import GlossDownloader  # type: ignore
         return GlossDownloader
+    if name == 'BrowserGlossDownloader':
+        from .gloss_browser_downloader import BrowserGlossDownloader  # type: ignore
+        return BrowserGlossDownloader
     raise AttributeError(name)
 
 try:

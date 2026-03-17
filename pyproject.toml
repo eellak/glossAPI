@@ -37,6 +37,10 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+# Browser automation fallback for browser-gated file endpoints
+browser = [
+    "playwright>=1.52,<2",
+]
 # Docling extraction/layout stack
 docling = [
     "docling==2.48.0",
