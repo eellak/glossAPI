@@ -53,16 +53,21 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
 ### 3. Clean
 
 - Main code: `Corpus.clean()`
-- Purpose: run the Rust cleaner, compute quality/noise signals, and decide what should continue downstream.
+- Purpose: run the Rust cleaner, remove low-quality or noisy markdown,
+  and mark documents that may need OCR retry before moving on.
 - Typical inputs:
   - `markdown/*.md`
-  - metadata parquet if one exists
+  - metadata parquet, if available
 - Important parameters:
   - `threshold` and `drop_bad`
   - `empty_char_threshold` and `empty_min_pages` for OCR fallback decisions
 - Main outputs:
   - cleaned markdown in `clean_markdown/`
-  - merged parquet metadata including OCR-related flags
+  - updated parquet metadata with quality and OCR-related flags
+- Runtime/debug artifacts:
+  - `.processing_state.pkl` keeps track of progress so interrupted runs can resume
+  - `problematic_files/` keeps files that could not be cleaned successfully
+  - `timeout_files/` keeps files that exceeded the cleaning time limit
 
 ### 4. OCR Retry and Phase‑2 Enrichment
 
@@ -91,26 +96,40 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
 
 ## Artifact Layout
 
-```
+The tree below shows the main folders and files GlossAPI can create under
+the output directory.
+
+To make the layout easier to follow, artifacts are grouped by the role they
+play in the pipeline:
+
+- canonical — the main outputs a stage is expected to produce, and the
+  files later stages usually depend on
+- runtime — state files used to resume work safely if a run is interrupted
+- debug — extra files kept around when something fails or needs a closer look
+
 OUT/
-├── downloads/
-│   └── problematic_math/
-├── download_results/
-├── markdown/
+├── downloads/                                  (canonical)
+│   └── problematic_math/                       (debug)
+├── download_results/                           (canonical)
+├── markdown/                                   (canonical)
 │   └── <stem>.md
-├── json/
+├── clean_markdown/                             (canonical)
+│   └── <stem>.md
+├── json/                                       (canonical)
 │   ├── <stem>.docling.json(.zst)
 │   ├── <stem>.formula_index.jsonl
 │   ├── <stem>.latex_map.jsonl
 │   ├── metrics/
-│       ├── <stem>.metrics.json
-│       └── <stem>.per_page.metrics.json
-│   └── problematic_math/
-├── sections/
+│   │   ├── <stem>.metrics.json
+│   │   └── <stem>.per_page.metrics.json
+│   └── problematic_math/                       (debug)
+├── sections/                                   (canonical)
 │   └── sections_for_annotation.parquet
-├── classified_sections.parquet
-└── fully_annotated_sections.parquet
-```
+├── classified_sections.parquet                 (canonical)
+├── fully_annotated_sections.parquet            (canonical)
+├── .processing_state.pkl                       (runtime)
+├── problematic_files/                          (debug)
+└── timeout_files/                              (debug)
 
 Notes:
 - Enriched Markdown replaces the plain Markdown (single canonical location).
