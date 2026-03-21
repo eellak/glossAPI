@@ -1402,7 +1402,7 @@ class GlossExtract:
 
         return successful, problematic
         
-    def extract_path(self, input_doc_paths, output_dir, batch_size: int = 5, *, skip_existing: bool = True):
+    def extract_path(self, input_doc_paths, output_dir, batch_size: int = 5, *, skip_existing: bool = True, show_progress: bool = True):
         """
         Extract all documents in the input paths to Markdown with robust batch processing and resumption.
         
@@ -1410,6 +1410,8 @@ class GlossExtract:
             input_doc_paths (List[Path]): List of paths to documents (PDF, DOCX, XML, etc.)
             output_dir (Path): Directory to save the extracted Markdown files
             batch_size (int): Number of files to process in each batch
+            skip_existing (bool): Skip files already processed or marked problematic
+            show_progress (bool): Whether to show a tqdm progress bar
         """
         start_time = time.time()
         output_dir = Path(output_dir)
@@ -1477,8 +1479,14 @@ class GlossExtract:
         
         backend_name = getattr(self, "pdf_backend_name", "unknown")
 
+        # Create progress bar if requested
+        pbar = None
+        if show_progress:
+            pbar = tqdm(total=remaining_files, desc="Extracting documents")
+            
         for i in range(0, len(unprocessed_files), batch_size):
             batch = unprocessed_files[i:i + batch_size]
+            current_batch_size = len(batch)
             batch_start_time = time.time()
             
             self._log.info(f"Processing batch {i//batch_size + 1}/{batch_count} ({len(batch)} files)")
@@ -1545,6 +1553,11 @@ class GlossExtract:
             batch_duration = time.time() - batch_start_time
             self._log.info(f"Batch processed in {batch_duration:.2f} seconds")
             self._log.info(f"Progress: {len(processed_files)}/{total_files} files ({len(problematic_files)} problematic)")
+            if pbar is not None:
+                pbar.update(current_batch_size)
+        
+        if pbar is not None:
+            pbar.close()
         
         # Check if all files have been processed
         if len(processed_files) + len(problematic_files) >= total_files:
@@ -1554,12 +1567,11 @@ class GlossExtract:
                 state_mgr.save(processed_files, problematic_files)  # type: ignore[arg-type]
         
         end_time = time.time() - start_time
-        self._log.info(f"Document extraction complete in {end_time:.2f} seconds.")
-        self._log.info(f"Successfully extracted: {success_count}")
-        self._log.info(f"Partially extracted: {partial_success_count}")
-
-        if failure_count > 0:
-            self._log.warning(f"Failed to extract {failure_count} out of {total_files} documents.")
+        success_rate = (success_count / remaining_files * 100) if remaining_files > 0 else 0
+        self._log.info(f"Extraction complete: {success_count} success, {partial_success_count} partial, {failure_count} failed ({success_rate:.1f}% success rate)")
+        self._log.info(f"Total time elapsed: {end_time:.2f} seconds.")
+        
+        return success_count, failure_count
             
     def _fix_greek_text(self, text):
         """Fix Unicode issues in text, particularly for Greek characters."""

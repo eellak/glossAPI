@@ -234,9 +234,10 @@ class ExtractPhaseMixin:
         devices: Optional[List[int]] = None,
         use_cls: bool = False,
         benchmark_mode: bool = False,
-        export_doc_json: bool = True,
         emit_formula_index: bool = False,
+        export_doc_json: bool = True,
         phase1_backend: str = "auto",
+        show_progress: bool = True,
         _prepared: bool = False,
     ) -> None:
         """
@@ -252,6 +253,7 @@ class ExtractPhaseMixin:
             phase1_backend: Selects the Phase-1 backend. ``"auto"`` (default) keeps the safe backend unless
                 OCR/math is requested, ``"safe"`` forces the PyPDFium backend, and ``"docling"`` forces the
                 Docling backend.
+            show_progress: Whether to show a tqdm progress bar (default: True)
 
         """
         if not file_paths:
@@ -798,8 +800,7 @@ class ExtractPhaseMixin:
             pass
         # Extract files to markdown
         os.makedirs(self.markdown_dir, exist_ok=True)
-        self.extractor.extract_path(input_files, self.markdown_dir, skip_existing=skip_existing)
-        self.logger.info(f"Extraction complete. Markdown files saved to {self.markdown_dir}")
+        self.extractor.extract_path(input_files, self.markdown_dir, skip_existing=skip_existing, show_progress=show_progress)
         try:
             release = getattr(self.extractor, "release_resources", None)
             if callable(release):

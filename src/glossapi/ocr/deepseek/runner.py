@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from tqdm import tqdm
 from typing import Any, Dict, Iterable, List, Optional
 
 try:
@@ -113,6 +114,7 @@ def run_for_files(
     device: Optional[str] = None,  # reserved
     gpu_memory_utilization: Optional[float] = None,
     disable_fp8_kv: bool = False,
+    show_progress: bool = True,
     **_: Any,
 ) -> Dict[str, Any]:
     """Run DeepSeek OCR for the provided files.
@@ -187,7 +189,12 @@ def run_for_files(
 
     cfg = {"max_pages": max_pages, "content_debug": content_debug}
     results: Dict[str, Any] = {}
-    for name in file_list:
+    
+    items = file_list
+    if show_progress:
+        items = tqdm(file_list, desc="DeepSeek OCR", total=len(file_list))
+
+    for name in items:
         pdf_path = (input_root / name).resolve()
         stem = Path(name).stem
         md_path = md_dir / f"{stem}.md"

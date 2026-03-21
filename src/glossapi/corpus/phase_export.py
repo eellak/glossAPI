@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from tqdm import tqdm
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import numpy as np
@@ -608,6 +609,7 @@ class ExportPhaseMixin:
         source_metadata_key: Optional[str] = None,
         source_metadata_fields: Optional[Iterable[str]] = None,
         source_metadata_path: Optional[Union[str, Path]] = None,
+        show_progress: bool = True,
     ) -> Path:
         """Export cleaned markdown and metadata into a JSONL corpus.
 
@@ -629,6 +631,7 @@ class ExportPhaseMixin:
             source_metadata_fields: Optional iterable of source metadata column names
                 to include under ``source_metadata_key``.
             source_metadata_path: Optional parquet file that holds the source metadata.
+            show_progress: Whether to show a tqdm progress bar (default True).
         """
 
         if source_metadata_key and source_metadata_path is None:
@@ -643,17 +646,21 @@ class ExportPhaseMixin:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         records_written = 0
+        items = self._iter_jsonl_records(
+            text_key=text_key,
+            metadata_key=metadata_key,
+            metadata_fields=metadata_fields,
+            include_remaining_metadata=include_remaining_metadata,
+            metadata_path=metadata_path,
+            source_metadata_key=source_metadata_key,
+            source_metadata_fields=source_metadata_fields,
+            source_metadata_path=source_metadata_path,
+        )
+        if show_progress:
+            items = tqdm(items, desc="Exporting JSONL")
+
         with output_path.open("w", encoding="utf-8") as fp:
-            for record in self._iter_jsonl_records(
-                text_key=text_key,
-                metadata_key=metadata_key,
-                metadata_fields=metadata_fields,
-                include_remaining_metadata=include_remaining_metadata,
-                metadata_path=metadata_path,
-                source_metadata_key=source_metadata_key,
-                source_metadata_fields=source_metadata_fields,
-                source_metadata_path=source_metadata_path,
-            ):
+            for record in items:
                 fp.write(json.dumps(record, ensure_ascii=False) + "\n")
                 records_written += 1
 
@@ -677,6 +684,7 @@ class ExportPhaseMixin:
         source_metadata_key: Optional[str] = None,
         source_metadata_fields: Optional[Iterable[str]] = None,
         source_metadata_path: Optional[Union[str, Path]] = None,
+        show_progress: bool = True,
     ) -> List[Path]:
         """Export sharded JSONL files with optional compression."""
 
@@ -702,7 +710,7 @@ class ExportPhaseMixin:
             writer.close()
             writer = None
 
-        for record in self._iter_jsonl_records(
+        items = self._iter_jsonl_records(
             text_key=text_key,
             metadata_key=metadata_key,
             metadata_fields=metadata_fields,
@@ -711,7 +719,11 @@ class ExportPhaseMixin:
             source_metadata_key=source_metadata_key,
             source_metadata_fields=source_metadata_fields,
             source_metadata_path=source_metadata_path,
-        ):
+        )
+        if show_progress:
+            items = tqdm(items, desc="Exporting sharded JSONL")
+
+        for record in items:
             line = json.dumps(record, ensure_ascii=False) + "\n"
             encoded = line.encode("utf-8")
             if writer is None or bytes_written + len(encoded) > shard_size_bytes:
@@ -734,7 +746,7 @@ class ExportPhaseMixin:
         _close_writer()
         return shard_paths
 
-    def process_all(self, input_format: str = "pdf", fully_annotate: bool = True, annotation_type: str = "auto", download_first: bool = False) -> None:
+    def process_all(self, input_format: str = "pdf", fully_annotate: bool = True, annotation_type: str = "auto", download_first: bool = False, show_progress: bool = True) -> None:
         """
         Run the complete processing pipeline: extract, section, and annotate.
 
@@ -743,17 +755,18 @@ class ExportPhaseMixin:
             fully_annotate: Whether to perform full annotation after classification (default: True)
             annotation_type: Annotation method to use (default: "auto")
             download_first: Whether to run the downloader before extraction (default: False)
+            show_progress: Whether to show a tqdm progress bar (default True).
         """
         if download_first:
             try:
-                self.download()
+                self.download(show_progress=show_progress)
                 self.logger.info("Download step completed, proceeding with extraction...")
             except Exception as e:
                 self.logger.error(f"Error during download step: {e}")
                 self.logger.warning("Continuing with extraction of already downloaded files...")
 
-        self.extract(input_format=input_format)
-        self.section()
-        self.annotate(fully_annotate=fully_annotate, annotation_type=annotation_type)
+        self.extract(input_format=input_format, show_progress=show_progress)
+        self.section(show_progress=show_progress)
+        self.annotate(fully_annotate=fully_annotate, annotation_type=annotation_type, show_progress=show_progress)
 
         self.logger.info("Complete processing pipeline finished successfully.")

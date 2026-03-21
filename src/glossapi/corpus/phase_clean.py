@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from tqdm import tqdm
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import numpy as np
@@ -127,6 +128,7 @@ class CleanPhaseMixin:
         force_ocr_fallback: bool = False,
         empty_char_threshold: int = 0,
         empty_min_pages: int = 0,
+        show_progress: bool = True,
     ) -> None:
         """Clean markdown files and evaluate badness using the Rust extension.
 
@@ -140,6 +142,7 @@ class CleanPhaseMixin:
             force_ocr_fallback: [DEPRECATED – no effect] Use Corpus.ocr(fix_bad=True) instead.
             empty_char_threshold: Character threshold (after stripping comments and whitespace) that flags markdown as nearly empty. Default 0 only enforces the zero-character safeguard.
             empty_min_pages: Minimum page count for a low-character document to trigger an OCR rerun recommendation.
+            show_progress: Whether to show a tqdm progress bar (default: True)
         """
         from pathlib import Path
         import shutil
@@ -232,11 +235,17 @@ class CleanPhaseMixin:
         )
 
         class _CleanerProgress:
-            def __init__(self, logger: logging.Logger, total: int) -> None:
+            def __init__(self, logger: logging.Logger, total: int, show_progress: bool = True) -> None:
                 self.logger = logger
                 self.total = total
+                self.show_progress = show_progress
                 self.processed: set[str] = set()
                 self.buffer = ""
+                
+                self.pbar = None
+                if self.show_progress and total > 0:
+                    self.pbar = tqdm(total=total, desc="Cleaning documents (Rust)")
+                
                 if total > 0:
                     step = max(1, math.ceil(total * 0.02))
                 else:
@@ -282,6 +291,9 @@ class CleanPhaseMixin:
                             self.total = total_reported
                             self.step = max(1, math.ceil(self.total * 0.02))
                             self.next_target = self.step
+                    if self.pbar:
+                        self.pbar.n = processed
+                        self.pbar.refresh()
                     self.direct_updates = True
                     self.last_processed = processed
                     self.logger.info(
@@ -312,6 +324,9 @@ class CleanPhaseMixin:
                 if self.total <= 0:
                     return
                 processed = len(self.processed)
+                if self.pbar:
+                    self.pbar.n = processed
+                    self.pbar.refresh()
                 while self.next_target <= self.total and processed >= self.next_target:
                     percent = min(100, int(round(self.next_target * 100 / self.total)))
                     self.logger.info(
@@ -322,6 +337,8 @@ class CleanPhaseMixin:
                     self.next_target += self.step
 
             def finalize(self) -> None:
+                if self.pbar:
+                    self.pbar.close()
                 if self.total == 0:
                     self.logger.info("Rust cleaning progress: 100%% (0/0)")
                 elif not self.logged_full:
@@ -332,7 +349,7 @@ class CleanPhaseMixin:
                 if self.last_message:
                     self.logger.debug(self.last_message)
 
-        progress = _CleanerProgress(self.logger, total_files)
+        progress = _CleanerProgress(self.logger, total_files, show_progress=show_progress)
         cmd = (
             "import glossapi_rs_cleaner\n"
             f"glossapi_rs_cleaner.run_complete_pipeline({repr(str(input_dir))}, "

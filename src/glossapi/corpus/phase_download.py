@@ -35,6 +35,7 @@ class DownloadPhaseMixin:
         *,
         parallelize_by: Optional[str] = None,
         links_column: Optional[str] = None,
+        show_progress: bool = True,
         **kwargs
     ) -> pd.DataFrame:
         """
@@ -242,8 +243,7 @@ class DownloadPhaseMixin:
         )
 
         # Download files
-        self.logger.info(f"Downloading files from URLs in {input_parquet}...")
-        new_results = downloader.download_files(input_parquet=str(input_parquet))
+        new_results = downloader.download_files(input_parquet=str(input_parquet), show_progress=show_progress)
 
         # Merge with existing results
         if not existing_results.empty:

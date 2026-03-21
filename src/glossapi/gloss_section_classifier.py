@@ -7,6 +7,7 @@ import pandas as pd
 import joblib
 import dask.dataframe as dd
 from dask.diagnostics import ProgressBar
+from tqdm import tqdm
 from sklearn.pipeline import Pipeline
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.compose import ColumnTransformer
@@ -536,7 +537,7 @@ class GlossSectionClassifier:
 
         return 0, numbers
 
-    def fully_annotate(self, input_parquet: str, output_parquet: str, document_types: Dict[str, str] = None, annotation_type: str = "text") -> None:
+    def fully_annotate(self, input_parquet: str, output_parquet: str, document_types: Dict[str, str] = None, annotation_type: str = "text", show_progress: bool = True) -> None:
         """
         Fully annotate sections in a parquet file using the specified annotation type.
         
@@ -548,8 +549,7 @@ class GlossSectionClassifier:
             output_parquet: Path to save fully annotated parquet file
             document_types: Dict mapping filename to document_type (optional)
             annotation_type: Annotation method to use ('text' or 'chapter')
-                            - 'text': Use fully_annotate_text for all documents (default)
-                            - 'chapter': Use fully_annotate_chapter for all documents
+            show_progress: Whether to show a tqdm progress bar
         """
         self.logger.info(f"Reading parquet file from {input_parquet}...")
         # Read all columns to ensure we preserve everything
@@ -569,11 +569,11 @@ class GlossSectionClassifier:
         if annotation_type == "chapter":
             # Use chapter annotation for all documents
             self.logger.info("Using chapter annotation for all documents")
-            df_updated = self.fully_annotate_chapter(df)
+            df_updated = self.fully_annotate_chapter(df, show_progress=show_progress)
         else:  # annotation_type == "text"
             # Use text annotation for all documents
             self.logger.info("Using text annotation for all documents")
-            df_updated = self.fully_annotate_text(df)
+            df_updated = self.fully_annotate_text(df, show_progress=show_progress)
         
         # Save to output parquet file
         self.logger.info(f"Saving fully annotated parquet to {output_parquet}...")
@@ -581,12 +581,13 @@ class GlossSectionClassifier:
         
         self.logger.info("Processing complete.")
         
-    def fully_annotate_text(self, df: pd.DataFrame) -> pd.DataFrame:
+    def fully_annotate_text(self, df: pd.DataFrame, show_progress: bool = True) -> pd.DataFrame:
         """
         Fully annotate sections in a DataFrame based on π and β boundaries.
         
         Args:
             df: DataFrame with predicted sections
+            show_progress: Whether to show a tqdm progress bar
             
         Returns:
             DataFrame with fully annotated sections
@@ -595,7 +596,11 @@ class GlossSectionClassifier:
         updated_groups = []  # To collect processed groups
         
         self.logger.info("Processing each file group for text annotation...")
-        for filename, group in df.groupby('filename'):
+        groups = df.groupby('filename')
+        if show_progress:
+            groups = tqdm(groups, desc="Annotating (text)", total=df['filename'].nunique())
+
+        for filename, group in groups:
             updated_group = self.fully_annotate_text_group(group)
             if updated_group is None:
                 files_missing_boundaries += 1
@@ -666,12 +671,13 @@ class GlossSectionClassifier:
                 
             return group  # Return with original labels
     
-    def fully_annotate_chapter(self, df: pd.DataFrame) -> pd.DataFrame:
+    def fully_annotate_chapter(self, df: pd.DataFrame, show_progress: bool = True) -> pd.DataFrame:
         """
         Fully annotate sections in a DataFrame as chapter content.
         
         Args:
             df: DataFrame with predicted sections
+            show_progress: Whether to show a tqdm progress bar
             
         Returns:
             DataFrame with fully annotated sections as chapters
@@ -679,7 +685,11 @@ class GlossSectionClassifier:
         updated_groups = []  # To collect processed groups
         
         self.logger.info("Processing each file group for chapter annotation...")
-        for filename, group in df.groupby('filename'):
+        groups = df.groupby('filename')
+        if show_progress:
+            groups = tqdm(groups, desc="Annotating (chapter)", total=df['filename'].nunique())
+
+        for filename, group in groups:
             updated_groups.append(self.fully_annotate_chapter_group(group))
         
         # Concatenate updated groups back into a single DataFrame

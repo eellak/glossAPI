@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from tqdm import tqdm
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import numpy as np
@@ -29,7 +30,7 @@ from .corpus_utils import _maybe_import_torch
 
 
 class AnnotatePhaseMixin:
-    def annotate(self, annotation_type: str = "text", fully_annotate: bool = True) -> None:
+    def annotate(self, annotation_type: str = "text", fully_annotate: bool = True, show_progress: bool = True) -> None:
         """
         Annotate extracted sections with classification information.
 
@@ -38,6 +39,7 @@ class AnnotatePhaseMixin:
                            - 'text': Use text-based annotation with section titles (default)
                            - 'chapter': Use chapter-based annotation with chapter numbers
             fully_annotate: Whether to perform full annotation of sections (default: True)
+            show_progress: Whether to show a tqdm progress bar (default: True)
         """
         self.logger.info("Running section classification...")
 
@@ -94,7 +96,11 @@ class AnnotatePhaseMixin:
                 # Group by filename and process each document according to its annotation type
                 updated_groups = []
 
-                for filename, group in df.groupby('filename'):
+                groups = df.groupby('filename')
+                if show_progress:
+                    groups = tqdm(groups, desc="Auto-annotating", total=df['filename'].nunique())
+
+                for filename, group in groups:
                     # Determine annotation type for this file
                     doc_annotation = filename_to_annotation.get(filename, 'text')
 
@@ -121,7 +127,8 @@ class AnnotatePhaseMixin:
                     input_parquet=str(self.classified_parquet),
                     output_parquet=str(self.fully_annotated_parquet),
                     document_types=self.filename_to_doctype if self.filename_to_doctype else None,
-                    annotation_type=annotation_type
+                    annotation_type=annotation_type,
+                    show_progress=show_progress
                 )
 
             # Use the fully annotated output for adding document types

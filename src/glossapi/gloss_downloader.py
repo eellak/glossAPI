@@ -23,6 +23,7 @@ import os
 import time
 import random
 import logging
+from tqdm import tqdm
 import re
 import string
 import aiofiles
@@ -1048,7 +1049,8 @@ class GlossDownloader:
 
     async def _download_files_async(self, df: pd.DataFrame, semaphore: asyncio.Semaphore, 
                                    rate_limiter: RateLimiter,
-                                   *, checkpoint_path: Optional[Path] = None) -> pd.DataFrame:
+                                   *, checkpoint_path: Optional[Path] = None,
+                                   show_progress: bool = True) -> pd.DataFrame:
         """
         Core async function to download files from URLs in a DataFrame
         
@@ -1056,6 +1058,8 @@ class GlossDownloader:
             df: DataFrame with URLs
             semaphore: Semaphore for concurrency control
             rate_limiter: Rate limiter for API throttling
+            checkpoint_path: Optional path to save progress
+            show_progress: Whether to show a tqdm progress bar
             
         Returns:
             pd.DataFrame: Updated DataFrame with download results
@@ -1174,9 +1178,15 @@ class GlossDownloader:
                 tasks.append((row_idx, task))
             
             # Process tasks as they complete
+            pbar = None
+            if show_progress:
+                pbar = tqdm(total=len(tasks), desc="Downloading files")
+
             for row_idx, task in tasks:
                 try:
                     success, filename, file_ext, error, retry_count = await task
+                    if pbar:
+                        pbar.update(1)
                     
                     # Update DataFrame with results
                     df.loc[row_idx, 'download_success'] = success
@@ -1223,14 +1233,19 @@ class GlossDownloader:
             _write_checkpoint()
         except Exception:
             pass
+            
+        if pbar:
+            pbar.close()
+            
         return df
     
-    def download_files(self, input_parquet: str, **kwargs) -> pd.DataFrame:
+    def download_files(self, input_parquet: str, show_progress: bool = True, **kwargs) -> pd.DataFrame:
         """
         Download files from URLs in a parquet file
         
         Args:
             input_parquet: Path to input parquet file
+            show_progress: Whether to show a tqdm progress bar
             
         Returns:
             pd.DataFrame: DataFrame with download results
@@ -1285,14 +1300,14 @@ class GlossDownloader:
                     f"Starting per-domain scheduler: global_concurrency={self.concurrency}, "
                     f"per_domain_concurrency={self.per_domain_concurrency}"
                 )
-                return await self._download_files_async_per_domain(df, rate_limiter, checkpoint_path=checkpoint_path)
+                return await self._download_files_async_per_domain(df, rate_limiter, checkpoint_path=checkpoint_path, show_progress=show_progress)
             else:
                 semaphore = asyncio.Semaphore(self.concurrency)
                 self.logger.info(
                     f"Starting download (global) with concurrency={self.concurrency}, "
                     f"rate_limit={rate_limiter.rate_limit}/{rate_limiter.time_period}s"
                 )
-                return await self._download_files_async(df, semaphore, rate_limiter, checkpoint_path=checkpoint_path)
+                return await self._download_files_async(df, semaphore, rate_limiter, checkpoint_path=checkpoint_path, show_progress=show_progress)
 
         try:
             running = asyncio.get_running_loop()
@@ -1315,8 +1330,8 @@ class GlossDownloader:
         
         return updated_df
 
-    async def _download_files_async_per_domain(self, df: pd.DataFrame, rate_limiter: RateLimiter, *, checkpoint_path: Optional[Path] = None) -> pd.DataFrame:
-        """Per-domain round-robin scheduler with dynamic concurrency and ETA tracking."""
+    async def _download_files_async_per_domain(self, df: pd.DataFrame, rate_limiter: RateLimiter, *, checkpoint_path: Optional[Path] = None, show_progress: bool = True) -> pd.DataFrame:
+        """Per-domain round-robin scheduler with dynamic concurrency and tqdm progress bar."""
         df = df.copy()
         completed_since_ckpt = 0
         last_ckpt_ts = time.time()
@@ -1771,6 +1786,11 @@ class GlossDownloader:
                 "Per-domain mode: single active domain will use up to 5 concurrent requests via asyncio."
             )
 
+        total_rows = len(row_indices)
+        pbar = None
+        if show_progress:
+            pbar = tqdm(total=total_rows, desc="Downloading files (per-domain)")
+            
         # Main loop
         while tasks or any(domains[d].queue or domains[d].active for d in list(active_order) + list(pending_domains)):
             # Try to dispatch initially
@@ -1880,6 +1900,8 @@ class GlossDownloader:
                     continue
                 state.active = max(0, state.active - 1)
                 global_in_flight = max(0, global_in_flight - 1)
+                if pbar:
+                    pbar.update(1)
 
                 try:
                     success, filename, file_ext, error, retry_count = await task
@@ -2046,6 +2068,8 @@ class GlossDownloader:
             maybe_log_and_write_progress(force=True)
         except Exception:
             pass
+        if pbar:
+            pbar.close()
         return df
 
     def _expand_and_mark_duplicates(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -2199,7 +2223,7 @@ class GlossDownloader:
 
         return df
 
-    async def adownload_files(self, input_parquet: str, **kwargs) -> pd.DataFrame:
+    async def adownload_files(self, input_parquet: str, show_progress: bool = True, **kwargs) -> pd.DataFrame:
         """Async variant of download_files for notebook/async contexts."""
         self.logger.info(f"Loading parquet file: {input_parquet}")
         df = pd.read_parquet(input_parquet)
@@ -2232,13 +2256,13 @@ class GlossDownloader:
             self.logger.info(
                 f"Starting per-domain scheduler: global_concurrency={self.concurrency}, per_domain_concurrency={self.per_domain_concurrency}"
             )
-            updated_df = await self._download_files_async_per_domain(df, rate_limiter, checkpoint_path=checkpoint_path)
+            updated_df = await self._download_files_async_per_domain(df, rate_limiter, checkpoint_path=checkpoint_path, show_progress=show_progress)
         else:
             semaphore = asyncio.Semaphore(self.concurrency)
             self.logger.info(
                 f"Starting download (global) with concurrency={self.concurrency}, rate_limit={rate_limiter.rate_limit}/{rate_limiter.time_period}s"
             )
-            updated_df = await self._download_files_async(df, semaphore, rate_limiter, checkpoint_path=checkpoint_path)
+            updated_df = await self._download_files_async(df, semaphore, rate_limiter, checkpoint_path=checkpoint_path, show_progress=show_progress)
         if '__url_norm' in updated_df.columns:
             try:
                 updated_df = updated_df.drop(columns=['__url_norm'])

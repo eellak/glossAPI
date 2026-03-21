@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from tqdm import tqdm
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import numpy as np
@@ -57,6 +58,7 @@ class OcrMathPhaseMixin:
         # Back-compat aliases (deprecated):
         internal_debug: bool = False,
         INTERNAL_DEBUG: Optional[bool] = None,
+        show_progress: bool = True,
     ) -> None:
         """OCR and/or math enrichment with explicit mode control.
 
@@ -510,6 +512,7 @@ class OcrMathPhaseMixin:
                 batch_size=int(math_batch_size),
                 dpi_base=int(math_dpi_base),
                 targets_by_stem=local_targets,
+                show_progress=show_progress,
             )
 
         # Branches
@@ -574,6 +577,7 @@ class OcrMathPhaseMixin:
                         bad_files,
                         model_dir=Path(model_dir) if model_dir else None,
                         content_debug=bool(content_debug),
+                        show_progress=show_progress,
                     )
                 except Exception as _e:
                     self.logger.error("DeepSeek OCR runner failed: %s", _e)
@@ -595,6 +599,7 @@ class OcrMathPhaseMixin:
                     export_doc_json=False,
                     emit_formula_index=False,
                     phase1_backend="docling",
+                    show_progress=show_progress,
                 )
             reran_ocr = True
             # Update metadata to reflect successful OCR reruns
@@ -728,6 +733,7 @@ class OcrMathPhaseMixin:
         batch_size: int = 8,
         dpi_base: int = 220,
         targets_by_stem: Optional[Dict[str, List[Tuple[int, int]]]] = None,
+        show_progress: bool = True,
     ) -> None:
         """Phase‑2: Enrich math/code from Docling JSON without re‑running layout.
 
@@ -736,6 +742,8 @@ class OcrMathPhaseMixin:
             device: 'cuda'|'cpu'
             batch_size: batch size for recognizer
             dpi_base: base DPI for crops; actual DPI adapts per ROI size
+            targets_by_stem: optional ROIs to process per stem
+            show_progress: whether to show a tqdm progress bar (default True).
         """
         from ..ocr import math as _math_pkg  # type: ignore
 
@@ -822,7 +830,11 @@ class OcrMathPhaseMixin:
                         pass
         except Exception:
             pass
-        for stem in stems:
+        items = stems
+        if show_progress:
+            items = tqdm(stems, desc="Math enrichment", total=len(stems))
+            
+        for stem in items:
             try:
                 try:
                     self.logger.info("Phase-2: processing stem=%s", stem)

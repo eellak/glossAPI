@@ -594,6 +594,7 @@ def gpu_extract_worker_queue(
                             emit_formula_index=bool(emit_index),
                             phase1_backend=backend,
                             _prepared=True,
+                            show_progress=False,
                         )
                         processed += len(batch)
                         _clear_current()
@@ -642,6 +643,7 @@ def gpu_extract_worker_queue(
                         emit_formula_index=bool(emit_index),
                         phase1_backend=backend,
                         _prepared=True,
+                        show_progress=False,
                     )
                     processed += len(batch)
                     _clear_current()

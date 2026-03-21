@@ -28,7 +28,7 @@ from .corpus_utils import _maybe_import_torch
 
 
 class SectionPhaseMixin:
-    def section(self) -> None:
+    def section(self, show_progress: bool = True) -> None:
         """
         Extract sections from markdown files and save to Parquet format.
 
@@ -112,7 +112,8 @@ class SectionPhaseMixin:
         self.sectioner.to_parquet(
             input_dir=str(self.markdown_dir),  # Use the markdown directory directly
             output_dir=str(self.sections_dir),
-            filenames_to_process=good_filenames  # Pass the list of good filenames
+            filenames_to_process=good_filenames,  # Pass the list of good filenames
+            show_progress=show_progress
         )
 
         self.logger.info(f"Finished sectioning {len(good_filenames)} good quality files")

@@ -2,6 +2,7 @@ import re
 import os
 import json
 from typing import List, Tuple, Dict, Any
+from tqdm import tqdm
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -493,7 +494,7 @@ class GlossSection:
             
         return rows
     
-    def to_parquet(self, input_dir, output_dir, filenames_to_process):
+    def to_parquet(self, input_dir, output_dir, filenames_to_process, show_progress: bool = True):
         """
         Process Markdown files from input_dir and write structured data to a Parquet file.
         
@@ -502,7 +503,7 @@ class GlossSection:
             output_dir (str): Directory where the output Parquet file will be written
             filenames_to_process (list): List of filenames (without extensions) to process.
                 Only files matching these names will be processed.
-                This should be a list of base filenames without extensions.
+            show_progress (bool): Whether to show a tqdm progress bar
             
         The output Parquet file will contain structured data about sections from all documents,
         including information about tables, lists, footnotes, and regular text.
@@ -532,17 +533,17 @@ class GlossSection:
         # Process each Markdown file individually to keep memory usage low.
         processed_files_count = 0
         skipped_files = []
-        print(f"\n===== SECTIONING PHASE =====")
-        print(f"Input directory: {input_dir}")
-        print(f"Output directory: {output_dir}")
-        print(f"Good files list (length {len(filenames_to_process)}): {filenames_to_process}")
-        print(f"Available files in directory:")
         md_files = [f for f in os.listdir(input_dir) if f.endswith(".md")]
-        for i, md_file in enumerate(md_files):
-            print(f"  {i+1}. {md_file} (basename: {os.path.splitext(md_file)[0]})")
         
+        # Create progress bar if requested
+        pbar = None
+        if show_progress:
+            pbar = tqdm(total=len(md_files), desc="Sectioning documents")
+            
         for filename in os.listdir(input_dir):
             if filename.endswith(".md"):
+                if pbar:
+                    pbar.update(1)
                 # Get the base name without extension for filtering
                 base_name = os.path.splitext(filename)[0]
                 
@@ -591,10 +592,5 @@ class GlossSection:
         
         writer.close()
         
-        # More informative logging
-        print(f"\nSection processing summary:")
-        print(f"  - Good files list contained {len(filenames_to_process)} files: {filenames_to_process}")
-        print(f"  - Found {processed_files_count} markdown files matching good files list")
-        if skipped_files:
-            print(f"  - Skipped {len(skipped_files)} files that weren't in good list: {skipped_files}")
-        print(f"  - Saved {row_counter - 1} total sections to {parquet_path}")
+        if pbar:
+            pbar.close()
