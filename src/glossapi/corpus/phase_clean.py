@@ -52,7 +52,7 @@ class CleanPhaseMixin:
             manifest = root_dir / manifest_relative
             if not manifest.exists():
                 raise RuntimeError(
-                    f"Cannot locate Cargo manifest for {module_name} at {manifest}"
+                    f"[Clean Phase] Cannot locate Cargo manifest for {module_name} at {manifest}"
                 )
             try:
                 subprocess.run(
@@ -74,7 +74,7 @@ class CleanPhaseMixin:
                 return importlib.import_module(module_name)
             except Exception as build_err:
                 raise RuntimeError(
-                    f"Automatic build of {module_name} failed: {build_err}"
+                    f"[Clean Phase] Automatic build of {module_name} failed | Error: {build_err}"
                 )
 
     def _load_metrics_dataframe(
@@ -367,7 +367,7 @@ class CleanPhaseMixin:
             # Do not abort the entire cleaning pass – proceed to evaluate gates
             # using existing metrics on disk. If the Rust report is available,
             # it will be merged below as usual.
-            self.logger.error("Rust cleaning pipeline failed (code=%s); proceeding with existing metrics", return_code)
+            self.logger.error("[Clean Phase] Rust cleaning pipeline failed (code=%s); proceeding with existing metrics", return_code)
 
         # ----- Parse metrics Parquet produced by Rust -----
         if report_parquet_path.exists():
@@ -385,7 +385,7 @@ class CleanPhaseMixin:
                         }
                     )
             except Exception as e:
-                self.logger.warning("Failed to parse cleaning report %s: %s", report_parquet_path, e)
+                self.logger.warning("[Clean Phase] Failed to parse cleaning report %s | Error: %s", report_parquet_path, e)
         else:
             self.logger.warning("Cleaning report Parquet not found: %s", report_parquet_path)
 

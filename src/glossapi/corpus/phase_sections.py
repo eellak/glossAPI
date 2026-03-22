@@ -85,9 +85,9 @@ class SectionPhaseMixin:
                             self._cache_metadata_parquet(parquet_path)
                             parquet_schema.write_metadata_parquet(df_meta, parquet_path)
                         except Exception as e:
-                            self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
+                            self.logger.warning(f"[Section Phase] Failed to update processing_stage in {parquet_path} | Error: {e}")
                 except Exception as e:
-                    self.logger.warning(f"Error reading parquet file {parquet_path}: {e}")
+                    self.logger.warning(f"[Section Phase] Error reading parquet file {parquet_path} | Error: {e}")
             else:
                 self.logger.info("No metadata parquet found for section selection; will fall back to all markdown files")
 
@@ -102,7 +102,7 @@ class SectionPhaseMixin:
                 for p in Path(self.markdown_dir).glob("*.md")
             ]
             if not good_filenames:
-                error_msg = "No markdown files found to section. Extraction might have failed."
+                error_msg = "[Section Phase] No markdown files found to section. Extraction might have failed."
                 self.logger.error(error_msg)
                 raise ValueError(error_msg)
 

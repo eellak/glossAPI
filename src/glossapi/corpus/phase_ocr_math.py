@@ -84,7 +84,7 @@ class OcrMathPhaseMixin:
         # Normalize backend
         backend_norm = str(backend or "deepseek").strip().lower()
         if backend_norm != "deepseek":
-            raise ValueError("backend must be 'deepseek'")
+            raise ValueError("[OCR Phase] backend must be 'deepseek'")
 
         # CONTENT_DEBUG override (preferred uppercase alias)
         # Priority: CONTENT_DEBUG > INTERNAL_DEBUG > content_debug/internal_debug flags
@@ -300,7 +300,7 @@ class OcrMathPhaseMixin:
                         except Exception:
                             pass
                 if not devs:
-                    msg = "Multi-GPU math requested but no GPUs detected; aborting math enhancement"
+                    msg = "[Math Phase] Multi-GPU math requested but no GPUs detected; aborting math enhancement"
                     self.logger.error(msg)
                     raise RuntimeError(msg)
                 else:
@@ -584,7 +584,7 @@ class OcrMathPhaseMixin:
                         content_debug=bool(content_debug),
                     )
                 except Exception as _e:
-                    self.logger.error("DeepSeek OCR runner failed: %s", _e)
+                    self.logger.error("[OCR Phase] DeepSeek OCR runner failed | Error: %s", _e)
                     raise
             reran_ocr = True
             # Update metadata to reflect successful OCR reruns
@@ -633,7 +633,7 @@ class OcrMathPhaseMixin:
                     except Exception:
                         pass
             except Exception as _e:
-                self.logger.warning("Failed to update OCR success metadata: %s", _e)
+                self.logger.warning("[OCR Phase] Failed to update OCR success metadata | Error: %s", _e)
 
         if reran_ocr:
             try:
@@ -643,7 +643,7 @@ class OcrMathPhaseMixin:
                     drop_bad=False,
                 )
             except Exception as _e:
-                self.logger.warning("Cleaner refresh after OCR failed: %s", _e)
+                self.logger.warning("[OCR Phase] Cleaner refresh after OCR failed | Error: %s", _e)
 
         if mode_norm == "ocr_bad_then_math":
             try:
@@ -708,7 +708,7 @@ class OcrMathPhaseMixin:
                 except Exception:
                     pass
             except Exception as _e:
-                self.logger.warning("Phase‑2 enrichment after OCR failed: %s", _e)
+                self.logger.warning("[Math Phase] Phase‑2 enrichment after OCR failed | Error: %s", _e)
 
     def formula_enrich_from_json(
         self,
@@ -732,9 +732,9 @@ class OcrMathPhaseMixin:
         try:
             enrich_from_docling_json = getattr(_math_pkg, "enrich_from_docling_json")
         except AttributeError as exc:
-            raise RuntimeError("Math enrichment backend unavailable") from exc
+            raise RuntimeError("[Math Phase] Math enrichment backend unavailable") from exc
         if not callable(enrich_from_docling_json):
-            raise RuntimeError("Math enrichment backend missing 'enrich_from_docling_json'")
+            raise RuntimeError("[Math Phase] Math enrichment backend missing 'enrich_from_docling_json'")
         json_dir = self.output_dir / "json"
         md_dir = self.markdown_dir
         dl_dir = self.output_dir / "downloads"

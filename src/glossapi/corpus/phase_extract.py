@@ -66,7 +66,8 @@ class ExtractPhaseMixin:
         try:
             setattr(self.extractor, "export_doc_json", bool(export_doc_json))
             setattr(self.extractor, "emit_formula_index", bool(emit_formula_index))
-        except Exception:
+        except Exception as e:
+            self.logger.debug(f"[Extract Phase] Failed to propagate extractor toggles: {e}")
             pass
         # Resolve backend preference (safe vs docling)
         backend_choice = self._resolve_phase1_backend(
@@ -298,7 +299,7 @@ class ExtractPhaseMixin:
             try:
                 input_files = [Path(p) for p in file_paths]
             except Exception as exc:
-                raise ValueError(f"Invalid file path supplied to extract(): {exc}")
+                raise ValueError(f"[Extract Phase] Invalid file path supplied to extract(): {exc}")
             self.logger.info(f"[Worker Batch] Processing {len(input_files)} direct file paths")
         elif input_format.lower() == "all":
             input_files = []
@@ -722,7 +723,7 @@ class ExtractPhaseMixin:
                 from ..gloss_extract import GlossExtract  # local import to avoid import-time heavy deps
                 self.extractor = GlossExtract(url_column=self.url_column)
             except Exception as e:
-                self.logger.error(f"Failed to initialize GlossExtract: {e}")
+                self.logger.error(f"[Extract Phase] Failed to initialize GlossExtract: {e}")
                 raise
         # Configure Phase-1 helpers on extractor
         try:
