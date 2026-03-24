@@ -18,6 +18,17 @@ GlossAPI exposes two Phase‑1 profiles. Use `Corpus.extract(..., phase1_backend
 
 Regardless of backend, the extractor clamps OMP/OpenBLAS/MKL pools to one thread per worker so multi‑GPU runs do not explode thread counts.
 
+### Docling Runtime Tuning
+
+These optional knobs map directly to current Docling `PdfPipelineOptions` fields and are mainly useful for benchmarking on strong GPUs:
+
+- `GLOSSAPI_DOCLING_LAYOUT_BATCH_SIZE`: override Docling `layout_batch_size`.
+- `GLOSSAPI_DOCLING_TABLE_BATCH_SIZE`: override Docling `table_batch_size`.
+- `GLOSSAPI_DOCLING_OCR_BATCH_SIZE`: override Docling `ocr_batch_size` even though Phase‑1 OCR stays disabled.
+- `GLOSSAPI_DOCLING_QUEUE_MAX_SIZE`: override Docling `queue_max_size`.
+- `GLOSSAPI_DOCLING_DOCUMENT_TIMEOUT`: override Docling `document_timeout`.
+- `GLOSSAPI_DOCLING_BATCH_POLL_INTERVAL`: override Docling `batch_polling_interval_seconds`.
+
 ### DeepSeek optional dependencies
 
 Install DeepSeek backend extras to enable the DeepSeek OCR path. The recommended path is the dedicated `uv` environment:
@@ -27,6 +38,7 @@ Install DeepSeek backend extras to enable the DeepSeek OCR path. The recommended
 ```
 
 When using `backend='deepseek'`, equations are included inline in the OCR output; Phase‑2 math flags are accepted but skipped.
+The dedicated uv profile is OCR-only and does not install the Docling extraction stack.
 
 ### DeepSeek runtime controls
 

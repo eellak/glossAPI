@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "UV-managed runtime for GlossAPI DeepSeek-OCR-2 execution"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "glossapi[docling,deepseek]",
+    "glossapi[deepseek]",
     "torch==2.6.0",
     "torchvision==0.21.0",
     "torchaudio==2.6.0",

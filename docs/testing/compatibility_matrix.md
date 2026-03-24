@@ -97,8 +97,8 @@ The following must remain true unless a change explicitly revises the contract a
 
 | ID | Level | Contract | Input | Run | Pass criteria | Negative assertions |
 | --- | --- | --- | --- | --- | --- | --- |
-| `ENV-001` | L0 | Python and packaging | Fresh environment | install supported profile(s) | install completes on supported Python floor | no reference to removed RapidOCR profile |
-| `ENV-002` | L0 | Dependency simplification | Fresh environment | import `glossapi`, `glossapi.ocr.deepseek`, extract-path modules | imports succeed | no runtime import of removed RapidOCR modules |
+| `ENV-001` | L0 | Python and packaging | Fresh environment | install supported profile(s) | install completes on supported Python floor | no reference to removed legacy OCR install modes |
+| `ENV-002` | L0 | Dependency simplification | Fresh environment | import `glossapi`, `glossapi.ocr.deepseek`, extract-path modules | imports succeed | no dead imports from removed OCR integrations |
 | `EXT-001` | L1 | Safe Phase-1 extraction | lightweight corpus | `Corpus.extract(input_format="pdf")` | canonical Markdown produced | extraction must not depend on OCR extras |
 | `EXT-002` | L2 | Docling Phase-1 extraction | real PDFs | `Corpus.extract(..., phase1_backend="docling", export_doc_json=True)` | Markdown, Docling JSON, metrics written to documented locations | artifact layout must not drift |
 | `CLN-001` | L1/L2 | Cleaner metadata contract | extracted docs | `clean(drop_bad=False)` | metadata parquet updated with routing-relevant fields | no collapse of `needs_ocr` behavior |
@@ -129,7 +129,7 @@ Critical checks:
 
 - packaging metadata uses a supported Python minimum
 - setup docs expose only supported install paths
-- removal of RapidOCR does not leave dead imports or entrypoints
+- removal of the old OCR integration does not leave dead GlossAPI imports or entrypoints
 
 ## Extraction contract
 
@@ -256,7 +256,7 @@ This keeps low-level compatibility failures from being confused with downstream 
 
 - DeepSeek-only OCR path works on real PDFs
 - no-stub enforcement verified
-- no remaining release dependency on RapidOCR
+- no supported GlossAPI OCR backend remains besides DeepSeek
 
 ### Stage 2 exit criteria
 

@@ -112,6 +112,7 @@ def run_for_files(
         return {}
 
     input_root = Path(getattr(self_ref, "input_dir", ".")).resolve()
+    pdf_root = (input_root / "downloads") if (input_root / "downloads").exists() else input_root
     out_root = Path(output_dir) if output_dir else Path(getattr(self_ref, "output_dir", input_root))
     md_dir = out_root / "markdown"
     metrics_dir = out_root / "json" / "metrics"
@@ -146,7 +147,7 @@ def run_for_files(
         raise FileNotFoundError(f"DeepSeek Python interpreter not found: {python_exe}")
 
     _run_cli(
-        input_dir=input_root,
+        input_dir=pdf_root,
         output_dir=out_root,
         files=file_list,
         model_dir=model_root,
@@ -159,7 +160,7 @@ def run_for_files(
 
     results: Dict[str, Any] = {}
     for name in file_list:
-        pdf_path = (input_root / name).resolve()
+        pdf_path = (pdf_root / name).resolve()
         stem = Path(name).stem
         md_path = md_dir / f"{stem}.md"
         metrics_path = metrics_dir / f"{stem}.metrics.json"

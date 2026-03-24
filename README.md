@@ -55,6 +55,7 @@ Use `dependency_setup/setup_glossapi.sh` for the Docling environment, or `depend
 ```
 
 `setup_glossapi.sh --mode deepseek` now delegates to the same uv-based installer. `setup_deepseek_uv.sh` uses `uv venv` + `uv sync`, installs the Rust extensions in editable mode, and can download `deepseek-ai/DeepSeek-OCR-2` with `huggingface_hub`.
+The uv-managed DeepSeek runtime is OCR-only on purpose: it installs `glossapi[deepseek]` and does not carry the Docling layout stack.
 
 If you want a guided install that asks which phases you plan to use, run:
 
@@ -153,7 +154,7 @@ Use this as the shortest path from a documentation concept to the public call th
 | Stage | Main call | Important parameters | Writes |
 | --- | --- | --- | --- |
 | Download | `Corpus.download(...)` | `input_parquet`, `links_column`, `parallelize_by`, `download_mode="standard"|"auto"|"browser"`, `download_policy_file`, downloader kwargs | `downloads/`, `download_results/*.parquet` |
-| Extract (Phase-1) | `Corpus.extract(...)` | `input_format`, `phase1_backend`, `force_ocr`, `use_gpus`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json` |
+| Extract (Phase-1) | `Corpus.extract(...)` | `input_format`, `phase1_backend`, `use_gpus`, `workers_per_device`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json` |
 | Clean | `Corpus.clean(...)` | `threshold`, `drop_bad`, `empty_char_threshold`, `empty_min_pages` | `clean_markdown/<stem>.md`, updated parquet metrics/flags |
 | OCR / math follow-up | `Corpus.ocr(...)` | `mode`, `fix_bad`, `math_enhance`, `use_gpus`, `devices` | refreshed `markdown/<stem>.md`, optional `json/<stem>.latex_map.jsonl` |
 | Section | `Corpus.section()` | uses cleaner/parquet outputs to choose inputs | `sections/sections_for_annotation.parquet` |

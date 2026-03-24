@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Tuple
 
 from docling.datamodel.pipeline_options import (
@@ -66,7 +67,53 @@ def _apply_common_pdf_options(
         setattr(opts, "images_scale", images_scale)
     except Exception:
         pass
+    _apply_runtime_overrides(opts)
     return opts
+
+
+def _apply_runtime_overrides(opts: PdfPipelineOptions) -> None:
+    """Apply optional runtime tuning knobs exposed by newer Docling releases."""
+
+    int_env_map = {
+        "GLOSSAPI_DOCLING_LAYOUT_BATCH_SIZE": "layout_batch_size",
+        "GLOSSAPI_DOCLING_TABLE_BATCH_SIZE": "table_batch_size",
+        "GLOSSAPI_DOCLING_OCR_BATCH_SIZE": "ocr_batch_size",
+        "GLOSSAPI_DOCLING_QUEUE_MAX_SIZE": "queue_max_size",
+        "GLOSSAPI_DOCLING_DOCUMENT_TIMEOUT": "document_timeout",
+    }
+    float_env_map = {
+        "GLOSSAPI_DOCLING_BATCH_POLL_INTERVAL": "batch_polling_interval_seconds",
+    }
+
+    for env_name, attr_name in int_env_map.items():
+        raw = os.getenv(env_name)
+        if not raw:
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if value <= 0 or not hasattr(opts, attr_name):
+            continue
+        try:
+            setattr(opts, attr_name, value)
+        except Exception:
+            pass
+
+    for env_name, attr_name in float_env_map.items():
+        raw = os.getenv(env_name)
+        if not raw:
+            continue
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        if value <= 0 or not hasattr(opts, attr_name):
+            continue
+        try:
+            setattr(opts, attr_name, value)
+        except Exception:
+            pass
 
 
 def build_layout_pipeline(

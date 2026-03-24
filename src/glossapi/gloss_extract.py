@@ -46,9 +46,9 @@ PowerpointFormatOption = None
 MarkdownFormatOption = None
 CsvFormatOption = None
 StandardPdfPipeline = None
-DoclingParseV2DocumentBackend = None
 DoclingParseDocumentBackend = None
 PyPdfiumDocumentBackend = None
+_DOCLING_PARSE_BACKEND_NAME = "docling_parse"
 
 
 class _NoOpOption:  # minimal stand-ins for optional helpers
@@ -83,19 +83,23 @@ def _ensure_docling_converter_loaded() -> None:
 
 def _ensure_docling_pipeline_loaded() -> None:
     global _DOC_PIPELINE_LOADED, StandardPdfPipeline
-    global DoclingParseV2DocumentBackend, DoclingParseDocumentBackend, PyPdfiumDocumentBackend
+    global DoclingParseDocumentBackend, PyPdfiumDocumentBackend, _DOCLING_PARSE_BACKEND_NAME
     if _DOC_PIPELINE_LOADED:
         return
     try:
         StandardPdfPipeline = importlib.import_module(
             "docling.pipeline.standard_pdf_pipeline"
         ).StandardPdfPipeline
-        DoclingParseV2DocumentBackend = importlib.import_module(
-            "docling.backend.docling_parse_v2_backend"
-        ).DoclingParseV2DocumentBackend
-        DoclingParseDocumentBackend = importlib.import_module(
-            "docling.backend.docling_parse_backend"
-        ).DoclingParseDocumentBackend
+        try:
+            DoclingParseDocumentBackend = importlib.import_module(
+                "docling.backend.docling_parse_backend"
+            ).DoclingParseDocumentBackend
+            _DOCLING_PARSE_BACKEND_NAME = "docling_parse"
+        except Exception:
+            DoclingParseDocumentBackend = importlib.import_module(
+                "docling.backend.docling_parse_v2_backend"
+            ).DoclingParseV2DocumentBackend
+            _DOCLING_PARSE_BACKEND_NAME = "docling_parse_v2"
         PyPdfiumDocumentBackend = importlib.import_module(
             "docling.backend.pypdfium2_backend"
         ).PyPdfiumDocumentBackend
@@ -382,7 +386,7 @@ class GlossExtract:
             timeout_kw = None
 
         backend_cls = getattr(self, "_active_pdf_backend", None)
-        is_native_backend = backend_cls is DoclingParseV2DocumentBackend if backend_cls else False
+        is_native_backend = backend_cls is DoclingParseDocumentBackend if backend_cls else False
 
         if timeout_kw and not is_native_backend and len(set(budgets)) == 1:
             kw = dict(raises_on_error=False)
@@ -556,8 +560,8 @@ class GlossExtract:
             pass
 
         # Record the PDF backend name for provenance (default to native backend)
-        self.pdf_backend_name = "docling_parse_v2"
-        self._active_pdf_backend = DoclingParseV2DocumentBackend
+        self.pdf_backend_name = _DOCLING_PARSE_BACKEND_NAME
+        self._active_pdf_backend = DoclingParseDocumentBackend
 
         # Best-effort Torch preflight only if Phase‑1 is asked to do enrichment
         try:
@@ -582,7 +586,7 @@ class GlossExtract:
             except Exception:
                 pass
 
-        active_backend = DoclingParseV2DocumentBackend
+        active_backend = DoclingParseDocumentBackend
         device_str = self._current_device_str() or "cuda:0"
         _, opts = build_layout_pipeline(
             device=device_str,
@@ -599,13 +603,13 @@ class GlossExtract:
         self._active_pdf_options = opts
         self._current_ocr_enabled = False
 
-        pdf_backend = DoclingParseV2DocumentBackend
+        pdf_backend = DoclingParseDocumentBackend
         try:
             if getattr(self, "use_pypdfium_backend", False):
                 pdf_backend = PyPdfiumDocumentBackend
                 self.pdf_backend_name = "pypdfium"
         except Exception:
-            pdf_backend = DoclingParseV2DocumentBackend
+            pdf_backend = DoclingParseDocumentBackend
         active_backend = pdf_backend
 
         self.converter = DocumentConverter(
@@ -1198,7 +1202,7 @@ class GlossExtract:
                 if chunk_manifest_path is not None:
                     data["chunk_manifest_path"] = str(chunk_manifest_path)
             # Backend and failure
-            backend_name = getattr(self, "pdf_backend_name", None) or ("docling_parse_v2" if getattr(self, "USE_V2", True) else "docling_parse")
+            backend_name = getattr(self, "pdf_backend_name", None) or _DOCLING_PARSE_BACKEND_NAME
             data["extraction_backend"] = backend_name
             if status in ("timeout", "error", "failure"):
                 data["failure_mode"] = status

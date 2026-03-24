@@ -98,14 +98,14 @@ class ExtractPhaseMixin:
 
         if force_ocr:
             self.logger.warning(
-                "Phase-1 Docling OCR is deprecated and no longer executes OCR. "
+                "Corpus.extract(force_ocr=True) is deprecated and no longer executes OCR. "
                 "Use Corpus.ocr(backend='deepseek') for OCR remediation."
             )
 
         # Hard GPU preflight before we attempt to build OCR/enrichment pipelines
         self._gpu_preflight(
             accel_type=accel_type,
-            require_ocr=bool(force_ocr),
+            require_ocr=False,
             require_math=bool(formula_enrichment or code_enrichment),
             require_backend_gpu=(backend_choice == "docling"),
         )
@@ -119,8 +119,8 @@ class ExtractPhaseMixin:
 
         # Ensure converter exists (reuse when unchanged)
         self.extractor.ensure_extractor(
-            enable_ocr=bool(force_ocr),
-            force_full_page_ocr=bool(force_ocr),
+            enable_ocr=False,
+            force_full_page_ocr=False,
             formula_enrichment=bool(formula_enrichment),
             code_enrichment=bool(code_enrichment),
             images_scale=float(images_scale_env),
@@ -142,12 +142,12 @@ class ExtractPhaseMixin:
             raise ValueError(
                 f"Invalid phase1_backend='{requested}'. Expected one of: 'auto', 'safe', 'docling'."
             )
-        needs_gpu = bool(force_ocr or formula_enrichment or code_enrichment)
+        needs_gpu = bool(formula_enrichment or code_enrichment)
         if choice == "auto":
             choice = "docling" if needs_gpu else "safe"
         if choice == "safe" and needs_gpu:
             self.logger.info(
-                "Phase-1 backend 'safe' overridden to 'docling' because OCR/math enrichment was requested."
+                "Phase-1 backend 'safe' overridden to 'docling' because math/code enrichment was requested."
             )
             choice = "docling"
         return choice
@@ -227,6 +227,7 @@ class ExtractPhaseMixin:
         export_doc_json: bool = True,
         emit_formula_index: bool = False,
         phase1_backend: str = "auto",
+        workers_per_device: int = 1,
         _prepared: bool = False,
     ) -> None:
         """
@@ -240,8 +241,9 @@ class ExtractPhaseMixin:
             export_doc_json: When True (default), writes Docling layout JSON to `json/<stem>.docling.json(.zst)`
             emit_formula_index: Also emit `json/<stem>.formula_index.jsonl` (default: False)
             phase1_backend: Selects the Phase-1 backend. ``"auto"`` (default) keeps the safe backend unless
-                OCR/math is requested, ``"safe"`` forces the PyPDFium backend, and ``"docling"`` forces the
-                Docling backend.
+                math/code enrichment is requested, ``"safe"`` forces the PyPDFium backend, and ``"docling"``
+                forces the Docling backend.
+            workers_per_device: Number of extraction workers to bind to each visible GPU when ``use_gpus='multi'``.
 
         """
         if not file_paths:
@@ -415,12 +417,14 @@ class ExtractPhaseMixin:
                 except Exception:
                     threads_effective = int(num_threads) if isinstance(num_threads, int) else max(2, 2 * max(1, len(devs)))
 
-                batch_hint = 5 if backend_choice == "docling" and not force_ocr else 1
+                workers_per_device = max(1, int(workers_per_device or 1))
+                batch_hint = 1
                 self.logger.info(
-                    "Phase-1 config: backend=%s batch_size=%s threads=%s skip_existing=%s benchmark=%s",
+                    "Phase-1 config: backend=%s batch_size=%s threads=%s workers_per_device=%s skip_existing=%s benchmark=%s",
                     backend_choice,
                     batch_hint,
                     threads_effective,
+                    workers_per_device,
                     bool(skip_existing),
                     bool(benchmark_mode),
                 )
@@ -454,6 +458,7 @@ class ExtractPhaseMixin:
                     return
 
                 # Dynamic work queue across GPUs
+                from .corpus_orchestrator import gpu_extract_worker_queue
                 from multiprocessing import get_context
                 ctx = get_context("spawn")
                 manager = ctx.Manager()
@@ -484,14 +489,29 @@ class ExtractPhaseMixin:
                     marker_base.mkdir(parents=True, exist_ok=True)
                 except Exception as exc:
                     self.logger.debug("Unable to prepare marker directory %s: %s", marker_base, exc)
-                procs: List[Any] = []
-                proc_gpu: Dict[int, int] = {}
-                marker_files: Dict[int, Path] = {dev_id: marker_base / f"gpu{dev_id}.current" for dev_id in devs}
+                worker_specs: List[Dict[str, Any]] = []
                 for dev_id in devs:
+                    for worker_slot in range(workers_per_device):
+                        worker_specs.append(
+                            {
+                                "device_id": int(dev_id),
+                                "worker_slot": int(worker_slot),
+                                "worker_key": f"gpu{dev_id}-w{worker_slot}",
+                            }
+                        )
+                procs: List[Any] = []
+                proc_specs: Dict[int, Dict[str, Any]] = {}
+                marker_files: Dict[str, Path] = {
+                    spec["worker_key"]: marker_base / f"{spec['worker_key']}.current"
+                    for spec in worker_specs
+                }
+                for spec in worker_specs:
                     p = ctx.Process(
                         target=gpu_extract_worker_queue,
                         args=(
-                            dev_id,
+                            spec["device_id"],
+                            spec["worker_slot"],
+                            spec["worker_key"],
                             str(self.input_dir),
                             str(self.output_dir),
                             task_q,
@@ -514,7 +534,7 @@ class ExtractPhaseMixin:
                     p.start()
                     procs.append(p)
                     if p.pid is not None:
-                        proc_gpu[p.pid] = dev_id
+                        proc_specs[p.pid] = dict(spec)
                 active = list(procs)
                 any_fail = False
                 last_summary = time.time()
@@ -531,20 +551,21 @@ class ExtractPhaseMixin:
                                 procs.remove(p)
                             pid = p.pid or -1
                             heartbeat[pid] = time.time()
-                            gpu_id = proc_gpu.pop(pid, None)
+                            worker_spec = proc_specs.pop(pid, None)
+                            worker_key = worker_spec["worker_key"] if worker_spec else None
                             if p.exitcode not in (0, None):
                                 any_fail = True
                                 self.logger.warning("GPU worker pid=%s exited with code %s", p.pid, p.exitcode)
                                 current_paths: List[str] = []
                                 stems_for_skip: List[str] = []
-                                if gpu_id is not None:
-                                    current_entry = status_map.pop(gpu_id, None)
+                                if worker_key is not None:
+                                    current_entry = status_map.pop(worker_key, None)
                                     if current_entry:
                                         if not isinstance(current_entry, (list, tuple, set)):
                                             current_entry = [current_entry]
                                         current_paths = [str(x) for x in current_entry]
                                         stems_for_skip = [canonical_stem(path) for path in current_paths]
-                                    marker_path = marker_files.get(gpu_id)
+                                    marker_path = marker_files.get(worker_key)
                                     if marker_path:
                                         try:
                                             marker_path.unlink(missing_ok=True)
@@ -555,12 +576,17 @@ class ExtractPhaseMixin:
                                     state_mgr.save(processed_files, problematic_files)
                                 if stems_for_skip:
                                     skip_mgr.add(stems_for_skip)
-                                if gpu_id is not None:
-                                    self.logger.info("Respawning GPU%s worker after crash.", gpu_id)
+                                if worker_spec is not None:
+                                    self.logger.info(
+                                        "Respawning %s after crash.",
+                                        worker_spec["worker_key"],
+                                    )
                                     replacement = ctx.Process(
                                         target=gpu_extract_worker_queue,
                                         args=(
-                                            gpu_id,
+                                            worker_spec["device_id"],
+                                            worker_spec["worker_slot"],
+                                            worker_spec["worker_key"],
                                             str(self.input_dir),
                                             str(self.output_dir),
                                             task_q,
@@ -584,13 +610,13 @@ class ExtractPhaseMixin:
                                     procs.append(replacement)
                                     active.append(replacement)
                                     if replacement.pid is not None:
-                                        proc_gpu[replacement.pid] = gpu_id
+                                        proc_specs[replacement.pid] = dict(worker_spec)
                                         heartbeat[replacement.pid] = time.time()
                                 continue
                             else:
-                                if gpu_id is not None:
-                                    status_map.pop(gpu_id, None)
-                                    marker_path = marker_files.get(gpu_id)
+                                if worker_key is not None:
+                                    status_map.pop(worker_key, None)
+                                    marker_path = marker_files.get(worker_key)
                                     if marker_path:
                                         try:
                                             marker_path.unlink(missing_ok=True)
@@ -618,7 +644,7 @@ class ExtractPhaseMixin:
                                     skip_mgr.add(bad_stems)
                                 state_mgr.save(processed_files, problematic_files)
                                 self.logger.info(
-                                    "GPU%s batch complete: +%d processed, +%d problematic (totals: %d processed, %d problematic)",
+                                    "%s batch complete: +%d processed, +%d problematic (totals: %d processed, %d problematic)",
                                     result.get("worker"),
                                     len(ok_stems),
                                     len(bad_stems),
@@ -632,25 +658,20 @@ class ExtractPhaseMixin:
                                 if result.get("exitcode", 0) not in (0, None):
                                     any_fail = True
                                     self.logger.warning(
-                                        "GPU%s reported non-zero exit: %s", result.get("worker"), result.get("exitcode")
+                                        "%s reported non-zero exit: %s", result.get("worker"), result.get("exitcode")
                                     )
                                 worker_pid = result.get("pid")
                                 if worker_pid is not None:
                                     heartbeat[worker_pid] = time.time()
-                                worker_gpu = result.get("worker")
-                                if worker_gpu is not None:
-                                    try:
-                                        worker_gpu_int = int(worker_gpu)
-                                    except Exception:
-                                        worker_gpu_int = None
-                                    else:
-                                        status_map.pop(worker_gpu_int, None)
-                                        marker_path = marker_files.get(worker_gpu_int)
-                                        if marker_path:
-                                            try:
-                                                marker_path.unlink(missing_ok=True)
-                                            except Exception:
-                                                pass
+                                worker_key = result.get("worker")
+                                if worker_key is not None:
+                                    status_map.pop(worker_key, None)
+                                    marker_path = marker_files.get(str(worker_key))
+                                    if marker_path:
+                                        try:
+                                            marker_path.unlink(missing_ok=True)
+                                        except Exception:
+                                            pass
 
                         now = time.time()
                         if now - last_summary > 30:

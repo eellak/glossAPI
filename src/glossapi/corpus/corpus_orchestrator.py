@@ -350,6 +350,8 @@ class Corpus(
 # Top-level worker function for multi-GPU extraction (picklable by multiprocessing)
 def gpu_extract_worker_queue(
     device_id: int,
+    worker_slot: int,
+    worker_key: str,
     in_dir: str,
     out_dir: str,
     work_q,  # multiprocessing Queue of filename strings
@@ -392,12 +394,13 @@ def gpu_extract_worker_queue(
 
     _ensure_thread_caps()
     _status_proxy = status_map
-    _marker_path = _Path(marker_dir).expanduser() / f"gpu{device_id}.current" if marker_dir else None
+    _worker_label = worker_key or f"gpu{device_id}-w{worker_slot}"
+    _marker_path = _Path(marker_dir).expanduser() / f"{_worker_label}.current" if marker_dir else None
 
     def _update_current(batch_items: List[str]) -> None:
         if _status_proxy is not None:
             try:
-                _status_proxy[device_id] = list(batch_items)
+                _status_proxy[_worker_label] = list(batch_items)
             except Exception:
                 pass
         if _marker_path is not None:
@@ -409,7 +412,7 @@ def gpu_extract_worker_queue(
     def _clear_current() -> None:
         if _status_proxy is not None:
             try:
-                _status_proxy.pop(device_id, None)
+                _status_proxy.pop(_worker_label, None)
             except Exception:
                 pass
         if _marker_path is not None:
@@ -423,7 +426,7 @@ def gpu_extract_worker_queue(
         if _log_dir:
             _log_path = _Path(_log_dir).expanduser()
             _log_path.mkdir(parents=True, exist_ok=True)
-            _worker_log_file = _log_path / f"gpu{device_id}_{_os.getpid()}.log"
+            _worker_log_file = _log_path / f"{_worker_label}_{_os.getpid()}.log"
             _worker_log_handle = open(_worker_log_file, "a", encoding="utf-8", buffering=1)
             _sys.stdout = _worker_log_handle
             _sys.stderr = _worker_log_handle
@@ -458,9 +461,13 @@ def gpu_extract_worker_queue(
             except Exception:
                 _phys = ""
             try:
-                print(f"[GPU{device_id}] bound: CUDA_VISIBLE_DEVICES={_os.environ.get('CUDA_VISIBLE_DEVICES','')} pid={_os.getpid()} torch={_torch_name} ORT={_ort_prov}")
+                print(
+                    f"[GPU{device_id}/W{worker_slot}] bound: "
+                    f"CUDA_VISIBLE_DEVICES={_os.environ.get('CUDA_VISIBLE_DEVICES','')} "
+                    f"pid={_os.getpid()} torch={_torch_name} ORT={_ort_prov}"
+                )
                 if _phys:
-                    print(f"[GPU{device_id}] physical: {_phys}")
+                    print(f"[GPU{device_id}/W{worker_slot}] physical: {_phys}")
             except Exception:
                 pass
     except Exception:
@@ -475,13 +482,15 @@ def gpu_extract_worker_queue(
             _ensure_thread_caps()
             from glossapi import Corpus as _Corpus  # type: ignore
         except Exception as _e:
-            print(f"[GPU{device_id}] Cannot import glossapi in worker: {_e}")
+            print(f"[{_worker_label}] Cannot import glossapi in worker: {_e}")
             if result_q is not None:
                 try:
                     result_q.put(
                         {
                             "event": "exit",
-                            "worker": device_id,
+                            "worker": _worker_label,
+                            "device_id": device_id,
+                            "worker_slot": worker_slot,
                             "exitcode": 1,
                             "pid": _os.getpid(),
                             "error": str(_e),
@@ -507,14 +516,16 @@ def gpu_extract_worker_queue(
             phase1_backend=backend,
         )
     except Exception as _e:
-        msg = f"[GPU{device_id}] Prime failed: {_e}"
+        msg = f"[{_worker_label}] Prime failed: {_e}"
         print(msg)
         if result_q is not None:
             try:
                 result_q.put(
                     {
                         "event": "exit",
-                        "worker": device_id,
+                        "worker": _worker_label,
+                        "device_id": device_id,
+                        "worker_slot": worker_slot,
                         "exitcode": 1,
                         "pid": _os.getpid(),
                         "error": str(_e),
@@ -534,7 +545,9 @@ def gpu_extract_worker_queue(
                         result_q.put(
                             {
                                 "event": "batch",
-                                "worker": device_id,
+                                "worker": _worker_label,
+                                "device_id": device_id,
+                                "worker_slot": worker_slot,
                                 "processed": [str(x) for x in ok_list],
                                 "problematic": [str(x) for x in bad_list],
                                 "pid": _os.getpid(),
@@ -553,15 +566,12 @@ def gpu_extract_worker_queue(
         _batch_env = int(str(_os.environ.get("GLOSSAPI_GPU_BATCH_SIZE", "")).strip() or 0)
     except Exception:
         _batch_env = 0
-    default_batch = 5 if not force else 1
+    default_batch = 5
     try:
         extractor = getattr(c, "extractor", None)
         if extractor is not None:
             configured = int(getattr(extractor, "max_batch_files", default_batch))
-            if force:
-                default_batch = 1
-            else:
-                default_batch = max(1, configured)
+            default_batch = max(1, configured)
     except Exception:
         pass
     BATCH_SIZE = max(1, _batch_env) if _batch_env else max(1, default_batch)
@@ -605,7 +615,9 @@ def gpu_extract_worker_queue(
                                 result_q.put(
                                     {
                                         "event": "batch",
-                                        "worker": device_id,
+                                        "worker": _worker_label,
+                                        "device_id": device_id,
+                                        "worker_slot": worker_slot,
                                         "processed": [],
                                         "problematic": list(batch),
                                         "pid": _os.getpid(),
@@ -653,7 +665,9 @@ def gpu_extract_worker_queue(
                             result_q.put(
                                 {
                                     "event": "batch",
-                                    "worker": device_id,
+                                    "worker": _worker_label,
+                                    "device_id": device_id,
+                                    "worker_slot": worker_slot,
                                     "processed": [],
                                     "problematic": list(batch),
                                     "pid": _os.getpid(),
@@ -667,7 +681,7 @@ def gpu_extract_worker_queue(
             # Occasional heartbeat
             if _time.time() - last_progress > 30:
                 try:
-                    print(f"[GPU{device_id}] processed ~{processed} files…")
+                    print(f"[{_worker_label}] processed ~{processed} files...")
                 except Exception:
                     pass
                 last_progress = _time.time()
@@ -692,7 +706,9 @@ def gpu_extract_worker_queue(
         try:
             result_q.put({
                 "event": "exit",
-                "worker": device_id,
+                "worker": _worker_label,
+                "device_id": device_id,
+                "worker_slot": worker_slot,
                 "exitcode": exit_code,
                 "pid": _os.getpid(),
             })

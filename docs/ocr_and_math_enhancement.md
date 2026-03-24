@@ -86,7 +86,7 @@ If you need Phase‑2 math on files that do not require OCR, run `math_only` aft
 
 Phase‑1 (extract):
 ```python
-c.extract(input_format='pdf', use_gpus='multi', force_ocr=True)
+c.extract(input_format='pdf', use_gpus='multi', phase1_backend='docling', workers_per_device=2)
 ```
 Workers set `CUDA_VISIBLE_DEVICES` per process; Docling runs on `cuda:0` relative to each worker.
 

@@ -8,10 +8,11 @@ file paths**, so no worker rescans directories.
 ```python
 from glossapi import Corpus
 c = Corpus('IN', 'OUT')
-c.extract(input_format='pdf', use_gpus='multi', force_ocr=True)
+c.extract(input_format='pdf', use_gpus='multi', phase1_backend='docling', workers_per_device=2)
 ```
 
 - Workers are bound using `CUDA_VISIBLE_DEVICES=<id>` and run Docling on `cuda:0` relative to each worker.
+- `workers_per_device` defaults to `1`; raise it only when benchmarking a strong GPU such as an A100.
 - Threads auto‑tune when `num_threads=None` (roughly `min(cpu_count, 2 * #GPUs)`). Override explicitly if needed.
 - The controller persists extraction progress in `download_results/download_results.parquet` after each reported
   batch, so interrupted runs can resume cleanly without ad-hoc checkpoint files.
