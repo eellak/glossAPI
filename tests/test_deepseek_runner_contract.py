@@ -175,6 +175,8 @@ def test_deepseek_runner_builds_speed_control_flags(tmp_path):
         crop_mode=True,
         render_dpi=120,
         max_new_tokens=2048,
+        repetition_penalty=1.05,
+        no_repeat_ngram_size=8,
     )
 
     assert "--ocr-profile" in cmd
@@ -190,6 +192,10 @@ def test_deepseek_runner_builds_speed_control_flags(tmp_path):
     assert cmd[cmd.index("--render-dpi") + 1] == "120"
     assert "--max-new-tokens" in cmd
     assert cmd[cmd.index("--max-new-tokens") + 1] == "2048"
+    assert "--repetition-penalty" in cmd
+    assert cmd[cmd.index("--repetition-penalty") + 1] == "1.05"
+    assert "--no-repeat-ngram-size" in cmd
+    assert cmd[cmd.index("--no-repeat-ngram-size") + 1] == "8"
 
 
 def test_deepseek_model_load_falls_back_to_eager_when_sdpa_is_unsupported(tmp_path, monkeypatch):
@@ -222,13 +228,13 @@ def test_deepseek_model_load_falls_back_to_eager_when_sdpa_is_unsupported(tmp_pa
 
     monkeypatch.setattr(cli.AutoModel, "from_pretrained", fake_from_pretrained)
 
-    _tokenizer, _model, attn_impl = cli._load_model(tmp_path, "cpu", "auto", None)
+    _tokenizer, _model, attn_impl = cli._load_model(tmp_path, "cpu", "auto", None, None, None)
 
     assert calls == ["sdpa", "eager"]
     assert attn_impl == "eager"
 
 
-def test_deepseek_generate_cap_applies_max_new_tokens():
+def test_deepseek_generate_controls_apply():
     from glossapi.ocr.deepseek import run_pdf_ocr_transformers as cli
 
     seen = {}
@@ -239,7 +245,30 @@ def test_deepseek_generate_cap_applies_max_new_tokens():
             return "ok"
 
     model = DummyModel()
-    cli._cap_generate_tokens(model, 2048)
+    cli._configure_generate(
+        model,
+        max_new_tokens=2048,
+        repetition_penalty=1.08,
+        no_repeat_ngram_size=12,
+    )
     model.generate(max_new_tokens=8192, foo="bar")
     assert seen["kwargs"]["max_new_tokens"] == 2048
+    assert seen["kwargs"]["repetition_penalty"] == 1.08
+    assert seen["kwargs"]["no_repeat_ngram_size"] == 12
     assert seen["kwargs"]["foo"] == "bar"
+
+
+def test_postprocess_page_text_strips_prompt_and_truncates_repetition():
+    from glossapi.ocr.deepseek import run_pdf_ocr_transformers as cli
+
+    prompt = cli.PROMPT_PLAIN_OCR
+    raw = (
+        "<image>\nExtract the text from the document page in reading order.\n"
+        "Γραμμή 1\n"
+        + "\n".join(["ΕΠΑΝΑΛΗΨΗ"] * 12)
+    )
+    cleaned, metrics = cli._postprocess_page_text(raw, prompt=prompt, content_debug=False)
+
+    assert "Extract the text from the document page in reading order." not in cleaned
+    assert cleaned.splitlines().count("ΕΠΑΝΑΛΗΨΗ") <= 10
+    assert metrics["early_stops"] == 1

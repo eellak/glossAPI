@@ -6,7 +6,9 @@ import argparse
 import json
 import logging
 import re
+import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Iterable, List
 
@@ -14,6 +16,17 @@ import fitz
 import torch
 from PIL import Image
 from transformers import AutoModel, AutoTokenizer
+
+SRC_ROOT = Path(__file__).resolve().parents[3]
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from glossapi.ocr.utils.cleaning import (  # noqa: E402
+    apply_early_stop,
+    canonicalize_markdown,
+    clean_output,
+    strip_prompt_echo,
+)
 
 LOGGER = logging.getLogger(__name__)
 PROMPT_GROUNDED_MARKDOWN = "<image>\n<|grounding|>Convert the document to markdown. "
@@ -52,6 +65,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--image-size", type=int, default=None)
     parser.add_argument("--render-dpi", type=int, default=144)
     parser.add_argument("--max-new-tokens", type=int, default=None)
+    parser.add_argument("--repetition-penalty", type=float, default=None)
+    parser.add_argument("--no-repeat-ngram-size", type=int, default=None)
     parser.add_argument("--crop-mode", dest="crop_mode", action="store_true")
     parser.add_argument("--no-crop-mode", dest="crop_mode", action="store_false")
     parser.set_defaults(crop_mode=None)
@@ -94,6 +109,21 @@ def _clean_markdown(text: str) -> str:
     return text.replace("\\coloneqq", ":=").replace("\\eqqcolon", "=:").strip()
 
 
+def _postprocess_page_text(
+    text: str,
+    *,
+    prompt: str,
+    content_debug: bool,
+) -> tuple[str, dict]:
+    metrics: dict = {}
+    cleaned = _clean_markdown(text)
+    cleaned = strip_prompt_echo(cleaned, prompt)
+    cleaned = clean_output(cleaned, keep_refdet=False, metrics=metrics)
+    cleaned = canonicalize_markdown(cleaned)
+    cleaned = apply_early_stop(cleaned, content_debug=content_debug, metrics=metrics)
+    return cleaned.strip(), metrics
+
+
 def _resolve_attn_backend(attn_backend: str) -> str:
     requested = str(attn_backend or "auto").strip().lower()
     if requested != "auto":
@@ -116,26 +146,60 @@ def _supports_retry_with_eager(exc: Exception, attn_impl: str) -> bool:
     return any(marker in message for marker in markers)
 
 
-def _cap_generate_tokens(model, max_new_tokens: int | None):
-    if max_new_tokens is None:
+def _configure_generate(
+    model,
+    *,
+    max_new_tokens: int | None,
+    repetition_penalty: float | None,
+    no_repeat_ngram_size: int | None,
+):
+    if (
+        max_new_tokens is None
+        and repetition_penalty is None
+        and no_repeat_ngram_size is None
+    ):
         return
-    capped = int(max_new_tokens)
-    if capped <= 0:
-        raise ValueError("max_new_tokens must be > 0")
+    capped = None
+    if max_new_tokens is not None:
+        capped = int(max_new_tokens)
+        if capped <= 0:
+            raise ValueError("max_new_tokens must be > 0")
+    repetition_penalty_value = None
+    if repetition_penalty is not None:
+        repetition_penalty_value = float(repetition_penalty)
+        if repetition_penalty_value <= 0:
+            raise ValueError("repetition_penalty must be > 0")
+    no_repeat_ngram_value = None
+    if no_repeat_ngram_size is not None:
+        no_repeat_ngram_value = int(no_repeat_ngram_size)
+        if no_repeat_ngram_value <= 0:
+            raise ValueError("no_repeat_ngram_size must be > 0")
     original_generate = model.generate
 
     def _wrapped_generate(*args, **kwargs):
-        current = kwargs.get("max_new_tokens")
-        if current is None:
-            kwargs["max_new_tokens"] = capped
-        else:
-            kwargs["max_new_tokens"] = min(int(current), capped)
+        if capped is not None:
+            current = kwargs.get("max_new_tokens")
+            if current is None:
+                kwargs["max_new_tokens"] = capped
+            else:
+                kwargs["max_new_tokens"] = min(int(current), capped)
+        if repetition_penalty_value is not None and kwargs.get("repetition_penalty") is None:
+            kwargs["repetition_penalty"] = repetition_penalty_value
+        if no_repeat_ngram_value is not None and kwargs.get("no_repeat_ngram_size") is None:
+            kwargs["no_repeat_ngram_size"] = no_repeat_ngram_value
         return original_generate(*args, **kwargs)
 
     model.generate = _wrapped_generate
 
 
-def _load_model(model_dir: Path, device: str, attn_backend: str, max_new_tokens: int | None):
+def _load_model(
+    model_dir: Path,
+    device: str,
+    attn_backend: str,
+    max_new_tokens: int | None,
+    repetition_penalty: float | None,
+    no_repeat_ngram_size: int | None,
+):
     attn_impl = _resolve_attn_backend(attn_backend)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
     try:
@@ -164,7 +228,12 @@ def _load_model(model_dir: Path, device: str, attn_backend: str, max_new_tokens:
         model = model.eval().to(device).to(torch.bfloat16)
     else:
         model = model.eval().to(device)
-    _cap_generate_tokens(model, max_new_tokens)
+    _configure_generate(
+        model,
+        max_new_tokens=max_new_tokens,
+        repetition_penalty=repetition_penalty,
+        no_repeat_ngram_size=no_repeat_ngram_size,
+    )
     return tokenizer, model, attn_impl
 
 
@@ -193,7 +262,13 @@ def _infer_page(
     return _clean_markdown(str(result))
 
 
-def _write_outputs(output_dir: Path, stem: str, markdown: str, page_count: int) -> None:
+def _write_outputs(
+    output_dir: Path,
+    stem: str,
+    markdown: str,
+    page_count: int,
+    extra_metrics: dict | None = None,
+) -> None:
     md_dir = output_dir / "markdown"
     metrics_dir = output_dir / "json" / "metrics"
     progress_dir = output_dir / "sidecars" / "ocr_progress"
@@ -205,6 +280,8 @@ def _write_outputs(output_dir: Path, stem: str, markdown: str, page_count: int) 
         "page_count": page_count,
         "model": "deepseek-ai/DeepSeek-OCR-2",
     }
+    if extra_metrics:
+        metrics.update(extra_metrics)
     (metrics_dir / f"{stem}.metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     partial_path = progress_dir / f"{stem}.partial.md"
     if partial_path.exists():
@@ -259,11 +336,17 @@ def main() -> int:
         args.device,
         args.attn_backend,
         args.max_new_tokens,
+        args.repetition_penalty,
+        args.no_repeat_ngram_size,
     )
 
     for pdf_path in pdfs:
+        doc_start = time.perf_counter()
+        render_start = time.perf_counter()
         images = _render_pages(pdf_path, args.max_pages, args.render_dpi)
+        render_sec = time.perf_counter() - render_start
         page_outputs: List[str] = []
+        page_metrics: List[dict] = []
         total_pages = len(images)
         _write_progress(output_dir, pdf_path.stem, page_outputs, total_pages, 0)
         with tempfile.TemporaryDirectory(prefix=f"{pdf_path.stem}_deepseek_") as tmp_dir_str:
@@ -271,7 +354,8 @@ def main() -> int:
             for idx, image in enumerate(images):
                 page_png = tmp_dir / f"page_{idx + 1:04d}.png"
                 image.save(page_png, format="PNG")
-                page_text = _infer_page(
+                infer_start = time.perf_counter()
+                raw_page_text = _infer_page(
                     model,
                     tokenizer,
                     page_png,
@@ -281,9 +365,24 @@ def main() -> int:
                     image_size=image_size,
                     crop_mode=crop_mode,
                 )
+                infer_sec = time.perf_counter() - infer_start
+                page_text, postprocess_metrics = _postprocess_page_text(
+                    raw_page_text,
+                    prompt=prompt,
+                    content_debug=bool(args.content_debug),
+                )
                 if args.content_debug:
                     page_text = f"<!-- page:{idx + 1} -->\n{page_text}".strip()
                 page_outputs.append(page_text)
+                page_metrics.append(
+                    {
+                        "page_number": int(idx + 1),
+                        "infer_sec": float(infer_sec),
+                        "raw_chars": int(len(str(raw_page_text or "").strip())),
+                        "final_chars": int(len(page_text.strip())),
+                        **postprocess_metrics,
+                    }
+                )
                 _write_progress(
                     output_dir,
                     pdf_path.stem,
@@ -292,24 +391,27 @@ def main() -> int:
                     idx + 1,
                 )
         markdown = PAGE_SPLIT.join(page_outputs) if page_outputs else "[[Blank page]]"
-        _write_outputs(output_dir, pdf_path.stem, markdown, len(images))
-        metrics_path = output_dir / "json" / "metrics" / f"{pdf_path.stem}.metrics.json"
-        if metrics_path.exists():
-            try:
-                metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-                metrics.update(
-                    {
-                        "ocr_profile": args.ocr_profile,
-                        "attn_backend": attn_impl,
-                        "base_size": base_size,
-                        "image_size": image_size,
-                        "crop_mode": crop_mode,
-                        "render_dpi": int(args.render_dpi),
-                    }
-                )
-                metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-            except Exception:
-                pass
+        _write_outputs(
+            output_dir,
+            pdf_path.stem,
+            markdown,
+            len(images),
+            extra_metrics={
+                "ocr_profile": args.ocr_profile,
+                "attn_backend": attn_impl,
+                "base_size": base_size,
+                "image_size": image_size,
+                "crop_mode": crop_mode,
+                "render_dpi": int(args.render_dpi),
+                "max_new_tokens": args.max_new_tokens,
+                "repetition_penalty": args.repetition_penalty,
+                "no_repeat_ngram_size": args.no_repeat_ngram_size,
+                "render_sec": float(render_sec),
+                "infer_sec_total": float(sum(item["infer_sec"] for item in page_metrics)),
+                "wall_time_sec": float(time.perf_counter() - doc_start),
+                "page_metrics": page_metrics,
+            },
+        )
 
     return 0
 

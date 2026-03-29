@@ -56,6 +56,8 @@ class OcrMathPhaseMixin:
         crop_mode: Optional[bool] = None,
         render_dpi: Optional[int] = None,
         max_new_tokens: Optional[int] = None,
+        repetition_penalty: Optional[float] = None,
+        no_repeat_ngram_size: Optional[int] = None,
         force: Optional[bool] = None,
         reprocess_completed: Optional[bool] = None,
         skip_existing: Optional[bool] = None,
@@ -92,6 +94,9 @@ class OcrMathPhaseMixin:
         - max_new_tokens: optional cap for DeepSeek generation per page. Useful
           for benchmarking and for containing long-tail pages with pathological
           output lengths.
+        - repetition_penalty/no_repeat_ngram_size: optional generation guards
+          for DeepSeek. These are useful when OCR runs fall into repeated or
+          looping output on difficult pages.
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
         - reprocess_completed: when False, skip documents already flagged as successfully
           OCRed or math-enriched in metadata. Set True to force reprocessing. Defaults to False
@@ -610,6 +615,8 @@ class OcrMathPhaseMixin:
                         crop_mode=crop_mode,
                         render_dpi=render_dpi,
                         max_new_tokens=max_new_tokens,
+                        repetition_penalty=repetition_penalty,
+                        no_repeat_ngram_size=no_repeat_ngram_size,
                         use_gpus=use_gpus,
                         devices=devices,
                         workers_per_gpu=workers_per_gpu,

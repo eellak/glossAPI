@@ -49,6 +49,8 @@ def _build_cli_command(
     crop_mode: Optional[bool],
     render_dpi: Optional[int],
     max_new_tokens: Optional[int],
+    repetition_penalty: Optional[float],
+    no_repeat_ngram_size: Optional[int],
 ) -> List[str]:
     python_exe = Path(python_bin) if python_bin else Path(sys.executable)
     cmd: List[str] = [
@@ -85,6 +87,10 @@ def _build_cli_command(
         cmd += ["--render-dpi", str(int(render_dpi))]
     if max_new_tokens is not None:
         cmd += ["--max-new-tokens", str(int(max_new_tokens))]
+    if repetition_penalty is not None:
+        cmd += ["--repetition-penalty", str(float(repetition_penalty))]
+    if no_repeat_ngram_size is not None:
+        cmd += ["--no-repeat-ngram-size", str(int(no_repeat_ngram_size))]
     return cmd
 
 
@@ -126,6 +132,8 @@ def _run_cli(
     crop_mode: Optional[bool],
     render_dpi: Optional[int],
     max_new_tokens: Optional[int],
+    repetition_penalty: Optional[float],
+    no_repeat_ngram_size: Optional[int],
     visible_device: Optional[int] = None,
 ) -> None:
     cmd = _build_cli_command(
@@ -145,6 +153,8 @@ def _run_cli(
         crop_mode=crop_mode,
         render_dpi=render_dpi,
         max_new_tokens=max_new_tokens,
+        repetition_penalty=repetition_penalty,
+        no_repeat_ngram_size=no_repeat_ngram_size,
     )
     env = _build_env(python_bin=python_bin, visible_device=visible_device)
 
@@ -293,6 +303,8 @@ def _run_multi_cli(
     crop_mode: Optional[bool],
     render_dpi: Optional[int],
     max_new_tokens: Optional[int],
+    repetition_penalty: Optional[float],
+    no_repeat_ngram_size: Optional[int],
 ) -> None:
     lanes = _plan_lanes(
         file_list=file_list,
@@ -332,6 +344,8 @@ def _run_multi_cli(
                 crop_mode=crop_mode,
                 render_dpi=render_dpi,
                 max_new_tokens=max_new_tokens,
+                repetition_penalty=repetition_penalty,
+                no_repeat_ngram_size=no_repeat_ngram_size,
             )
             env = _build_env(python_bin=python_exe, visible_device=visible_device)
             LOGGER.info(
@@ -378,6 +392,8 @@ def run_for_files(
     crop_mode: Optional[bool] = None,
     render_dpi: Optional[int] = None,
     max_new_tokens: Optional[int] = None,
+    repetition_penalty: Optional[float] = None,
+    no_repeat_ngram_size: Optional[int] = None,
     use_gpus: Optional[str] = None,
     devices: Optional[List[int]] = None,
     workers_per_gpu: int = 1,
@@ -462,6 +478,8 @@ def run_for_files(
             crop_mode=crop_mode,
             render_dpi=render_dpi,
             max_new_tokens=max_new_tokens,
+            repetition_penalty=repetition_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
         )
     else:
         _run_cli(
@@ -481,6 +499,8 @@ def run_for_files(
             crop_mode=crop_mode,
             render_dpi=render_dpi,
             max_new_tokens=max_new_tokens,
+            repetition_penalty=repetition_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
         )
 
     results: Dict[str, Any] = {}
