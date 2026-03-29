@@ -90,7 +90,7 @@ def test_deepseek_backend_forwards_parallelism_controls(tmp_path, monkeypatch):
         attn_backend="sdpa",
         base_size=640,
         image_size=448,
-        crop_mode=False,
+        crop_mode=True,
         render_dpi=120,
         max_pages=7,
     )
@@ -103,6 +103,6 @@ def test_deepseek_backend_forwards_parallelism_controls(tmp_path, monkeypatch):
     assert calls["kwargs"]["attn_backend"] == "sdpa"
     assert calls["kwargs"]["base_size"] == 640
     assert calls["kwargs"]["image_size"] == 448
-    assert calls["kwargs"]["crop_mode"] is False
+    assert calls["kwargs"]["crop_mode"] is True
     assert calls["kwargs"]["render_dpi"] == 120
     assert calls["kwargs"]["max_pages"] == 7

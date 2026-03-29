@@ -172,7 +172,7 @@ def test_deepseek_runner_builds_speed_control_flags(tmp_path):
         attn_backend="sdpa",
         base_size=640,
         image_size=448,
-        crop_mode=False,
+        crop_mode=True,
         render_dpi=120,
     )
 
@@ -184,7 +184,7 @@ def test_deepseek_runner_builds_speed_control_flags(tmp_path):
     assert cmd[cmd.index("--base-size") + 1] == "640"
     assert "--image-size" in cmd
     assert cmd[cmd.index("--image-size") + 1] == "448"
-    assert "--no-crop-mode" in cmd
+    assert "--crop-mode" in cmd
     assert "--render-dpi" in cmd
     assert cmd[cmd.index("--render-dpi") + 1] == "120"
 

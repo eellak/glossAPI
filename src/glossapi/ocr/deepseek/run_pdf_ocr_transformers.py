@@ -28,7 +28,7 @@ def _profile_defaults(profile: str) -> dict:
             "prompt": PROMPT_PLAIN_OCR,
             "base_size": 768,
             "image_size": 512,
-            "crop_mode": False,
+            "crop_mode": True,
         }
     return {
         "prompt": PROMPT_GROUNDED_MARKDOWN,
