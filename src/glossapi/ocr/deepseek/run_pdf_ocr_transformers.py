@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import tempfile
 from pathlib import Path
@@ -14,6 +15,7 @@ import torch
 from PIL import Image
 from transformers import AutoModel, AutoTokenizer
 
+LOGGER = logging.getLogger(__name__)
 PROMPT_GROUNDED_MARKDOWN = "<image>\n<|grounding|>Convert the document to markdown. "
 PROMPT_PLAIN_OCR = "<image>\nExtract the text from the document page in reading order."
 PAGE_SPLIT = "\n<--- Page Split --->\n"
@@ -102,15 +104,42 @@ def _resolve_attn_backend(attn_backend: str) -> str:
         return "sdpa"
 
 
+def _supports_retry_with_eager(exc: Exception, attn_impl: str) -> bool:
+    if str(attn_impl) == "eager":
+        return False
+    message = str(exc)
+    markers = (
+        "does not support an attention implementation through torch.nn.functional.scaled_dot_product_attention",
+        'load your model with the argument `attn_implementation="eager"` meanwhile',
+    )
+    return any(marker in message for marker in markers)
+
+
 def _load_model(model_dir: Path, device: str, attn_backend: str):
     attn_impl = _resolve_attn_backend(attn_backend)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-    model = AutoModel.from_pretrained(
-        model_dir,
-        _attn_implementation=attn_impl,
-        trust_remote_code=True,
-        use_safetensors=True,
-    )
+    try:
+        model = AutoModel.from_pretrained(
+            model_dir,
+            _attn_implementation=attn_impl,
+            trust_remote_code=True,
+            use_safetensors=True,
+        )
+    except ValueError as exc:
+        if not _supports_retry_with_eager(exc, attn_impl):
+            raise
+        LOGGER.warning(
+            "DeepSeek model rejected attention backend `%s`; retrying with eager attention: %s",
+            attn_impl,
+            exc,
+        )
+        attn_impl = "eager"
+        model = AutoModel.from_pretrained(
+            model_dir,
+            _attn_implementation=attn_impl,
+            trust_remote_code=True,
+            use_safetensors=True,
+        )
     if device.startswith("cuda"):
         model = model.eval().to(device).to(torch.bfloat16)
     else:

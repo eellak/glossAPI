@@ -187,3 +187,39 @@ def test_deepseek_runner_builds_speed_control_flags(tmp_path):
     assert "--no-crop-mode" in cmd
     assert "--render-dpi" in cmd
     assert cmd[cmd.index("--render-dpi") + 1] == "120"
+
+
+def test_deepseek_model_load_falls_back_to_eager_when_sdpa_is_unsupported(tmp_path, monkeypatch):
+    from glossapi.ocr.deepseek import run_pdf_ocr_transformers as cli
+
+    class DummyModel:
+        def eval(self):
+            return self
+
+        def to(self, *_args, **_kwargs):
+            return self
+
+    monkeypatch.setattr(
+        cli.AutoTokenizer,
+        "from_pretrained",
+        lambda *args, **kwargs: "tokenizer",
+    )
+
+    calls: list[str] = []
+
+    def fake_from_pretrained(*_args, **kwargs):
+        attn = kwargs.get("_attn_implementation")
+        calls.append(attn)
+        if attn == "sdpa":
+            raise ValueError(
+                "DeepseekOCR2ForCausalLM does not support an attention implementation through "
+                "torch.nn.functional.scaled_dot_product_attention yet."
+            )
+        return DummyModel()
+
+    monkeypatch.setattr(cli.AutoModel, "from_pretrained", fake_from_pretrained)
+
+    _tokenizer, _model, attn_impl = cli._load_model(tmp_path, "cpu", "auto")
+
+    assert calls == ["sdpa", "eager"]
+    assert attn_impl == "eager"
