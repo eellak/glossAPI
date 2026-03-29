@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -60,3 +61,90 @@ def test_progress_artifacts_stay_out_of_canonical_markdown(tmp_path):
     assert canonical_markdown.exists()
     assert canonical_markdown.read_text(encoding="utf-8") == "final\n"
     assert not progress_markdown.exists()
+
+
+def test_deepseek_runner_multi_uses_visible_device_isolation(tmp_path, monkeypatch):
+    from glossapi.ocr.deepseek import runner
+
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    output_dir.mkdir()
+
+    files = ["a.pdf", "b.pdf", "c.pdf", "d.pdf"]
+    weights = {"a.pdf": 40, "b.pdf": 30, "c.pdf": 20, "d.pdf": 10}
+    for name in files:
+        (input_dir / name).write_bytes(b"%PDF-1.4\n%stub\n")
+
+    class DummyCorpus:
+        def __init__(self, input_dir: Path, output_dir: Path):
+            self.input_dir = input_dir
+            self.output_dir = output_dir
+
+    class FakePopen:
+        calls = []
+
+        def __init__(self, cmd, stdout=None, stderr=None, env=None):
+            self.cmd = list(cmd)
+            self.env = dict(env or {})
+            self.returncode = 0
+            FakePopen.calls.append(self)
+
+            args = list(cmd)
+            out_root = Path(args[args.index("--output-dir") + 1])
+            lane_files = []
+            idx = args.index("--files") + 1
+            while idx < len(args) and not args[idx].startswith("--"):
+                lane_files.append(args[idx])
+                idx += 1
+            md_dir = out_root / "markdown"
+            metrics_dir = out_root / "json" / "metrics"
+            md_dir.mkdir(parents=True, exist_ok=True)
+            metrics_dir.mkdir(parents=True, exist_ok=True)
+            for name in lane_files:
+                stem = Path(name).stem
+                (md_dir / f"{stem}.md").write_text("ok\n", encoding="utf-8")
+                (metrics_dir / f"{stem}.metrics.json").write_text(
+                    "{\n  \"page_count\": 1\n}\n",
+                    encoding="utf-8",
+                )
+
+        def wait(self):
+            return self.returncode
+
+    script = tmp_path / "run_pdf_ocr_transformers.py"
+    script.write_text("# stub\n", encoding="utf-8")
+    model_dir = tmp_path / "DeepSeek-OCR-2"
+    model_dir.mkdir()
+
+    monkeypatch.setattr(runner, "_page_count", lambda path: weights[path.name])
+    monkeypatch.setattr(runner.subprocess, "Popen", FakePopen)
+
+    results = runner.run_for_files(
+        DummyCorpus(input_dir, output_dir),
+        files,
+        model_dir=model_dir,
+        python_bin=Path(sys.executable),
+        vllm_script=script,
+        use_gpus="multi",
+        devices=[2, 5],
+        workers_per_gpu=2,
+    )
+
+    assert sorted(results) == ["a", "b", "c", "d"]
+    assert len(FakePopen.calls) == 4
+
+    seen_files = []
+    seen_visible_devices = []
+    for call in FakePopen.calls:
+        args = call.cmd
+        assert "--device" in args
+        assert args[args.index("--device") + 1] == "cuda"
+        seen_visible_devices.append(call.env.get("CUDA_VISIBLE_DEVICES"))
+        idx = args.index("--files") + 1
+        while idx < len(args) and not args[idx].startswith("--"):
+            seen_files.append(args[idx])
+            idx += 1
+
+    assert sorted(seen_files) == sorted(files)
+    assert sorted(seen_visible_devices) == ["2", "2", "5", "5"]

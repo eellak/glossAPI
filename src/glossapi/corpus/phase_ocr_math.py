@@ -48,6 +48,7 @@ class OcrMathPhaseMixin:
         math_dpi_base: int = 220,
         use_gpus: str = "single",
         devices: Optional[List[int]] = None,
+        workers_per_gpu: int = 1,
         force: Optional[bool] = None,
         reprocess_completed: Optional[bool] = None,
         skip_existing: Optional[bool] = None,
@@ -74,6 +75,10 @@ class OcrMathPhaseMixin:
                    Docling layout/json remains Phase-1 infrastructure; OCR remediation itself is DeepSeek-only.
         - fix_bad: re-run OCR on documents marked bad by the cleaner (default True).
         - math_enhance: run math/code enrichment after OCR (default True).
+        - use_gpus/devices/workers_per_gpu: DeepSeek multi-worker controls. Use
+          ``use_gpus="multi"`` to shard OCR across detected or specified GPUs.
+          Increase ``workers_per_gpu`` above ``1`` to run multiple OCR workers
+          per visible GPU.
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
         - reprocess_completed: when False, skip documents already flagged as successfully
           OCRed or math-enriched in metadata. Set True to force reprocessing. Defaults to False
@@ -581,6 +586,13 @@ class OcrMathPhaseMixin:
                         self,
                         bad_files,
                         model_dir=Path(model_dir) if model_dir else None,
+                        max_pages=max_pages,
+                        persist_engine=persist_engine,
+                        precision=precision,
+                        device=device,
+                        use_gpus=use_gpus,
+                        devices=devices,
+                        workers_per_gpu=workers_per_gpu,
                         content_debug=bool(content_debug),
                     )
                 except Exception as _e:

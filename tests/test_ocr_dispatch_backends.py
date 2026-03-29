@@ -55,3 +55,42 @@ def test_invalid_backend_is_rejected(tmp_path):
     corpus = _mk_corpus(tmp_path)
     with pytest.raises(ValueError, match="backend must be 'deepseek'"):
         corpus.ocr(backend="rapidocr", fix_bad=True, math_enhance=False)
+
+
+def test_deepseek_backend_forwards_parallelism_controls(tmp_path, monkeypatch):
+    corpus = _mk_corpus(tmp_path)
+
+    dl_dir = corpus.output_dir / "download_results"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    fname = "doc.pdf"
+    pd.DataFrame(
+        [{"filename": fname, corpus.url_column: "", "needs_ocr": True, "ocr_success": False}]
+    ).to_parquet(dl_dir / "download_results.parquet", index=False)
+    (corpus.input_dir / fname).write_bytes(b"%PDF-1.4\n%stub\n")
+
+    from glossapi.ocr.deepseek import runner
+
+    calls = {}
+
+    def fake_run_for_files(self_ref, files, **kwargs):
+        calls["files"] = list(files)
+        calls["kwargs"] = dict(kwargs)
+        return {"doc": {"page_count": 1}}
+
+    monkeypatch.setattr(runner, "run_for_files", fake_run_for_files)
+
+    corpus.ocr(
+        backend="deepseek",
+        fix_bad=True,
+        math_enhance=False,
+        use_gpus="multi",
+        devices=[1, 3],
+        workers_per_gpu=2,
+        max_pages=7,
+    )
+
+    assert calls["files"] == [fname]
+    assert calls["kwargs"]["use_gpus"] == "multi"
+    assert calls["kwargs"]["devices"] == [1, 3]
+    assert calls["kwargs"]["workers_per_gpu"] == 2
+    assert calls["kwargs"]["max_pages"] == 7
