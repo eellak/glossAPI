@@ -55,6 +55,7 @@ class OcrMathPhaseMixin:
         image_size: Optional[int] = None,
         crop_mode: Optional[bool] = None,
         render_dpi: Optional[int] = None,
+        max_new_tokens: Optional[int] = None,
         force: Optional[bool] = None,
         reprocess_completed: Optional[bool] = None,
         skip_existing: Optional[bool] = None,
@@ -88,6 +89,9 @@ class OcrMathPhaseMixin:
         - ocr_profile/attn_backend/base_size/image_size/crop_mode/render_dpi:
           DeepSeek throughput and quality controls for benchmarking lighter OCR
           modes and more efficient attention backends.
+        - max_new_tokens: optional cap for DeepSeek generation per page. Useful
+          for benchmarking and for containing long-tail pages with pathological
+          output lengths.
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
         - reprocess_completed: when False, skip documents already flagged as successfully
           OCRed or math-enriched in metadata. Set True to force reprocessing. Defaults to False
@@ -605,6 +609,7 @@ class OcrMathPhaseMixin:
                         image_size=image_size,
                         crop_mode=crop_mode,
                         render_dpi=render_dpi,
+                        max_new_tokens=max_new_tokens,
                         use_gpus=use_gpus,
                         devices=devices,
                         workers_per_gpu=workers_per_gpu,

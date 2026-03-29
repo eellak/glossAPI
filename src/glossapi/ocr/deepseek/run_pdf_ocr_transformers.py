@@ -51,6 +51,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--base-size", type=int, default=None)
     parser.add_argument("--image-size", type=int, default=None)
     parser.add_argument("--render-dpi", type=int, default=144)
+    parser.add_argument("--max-new-tokens", type=int, default=None)
     parser.add_argument("--crop-mode", dest="crop_mode", action="store_true")
     parser.add_argument("--no-crop-mode", dest="crop_mode", action="store_false")
     parser.set_defaults(crop_mode=None)
@@ -115,7 +116,26 @@ def _supports_retry_with_eager(exc: Exception, attn_impl: str) -> bool:
     return any(marker in message for marker in markers)
 
 
-def _load_model(model_dir: Path, device: str, attn_backend: str):
+def _cap_generate_tokens(model, max_new_tokens: int | None):
+    if max_new_tokens is None:
+        return
+    capped = int(max_new_tokens)
+    if capped <= 0:
+        raise ValueError("max_new_tokens must be > 0")
+    original_generate = model.generate
+
+    def _wrapped_generate(*args, **kwargs):
+        current = kwargs.get("max_new_tokens")
+        if current is None:
+            kwargs["max_new_tokens"] = capped
+        else:
+            kwargs["max_new_tokens"] = min(int(current), capped)
+        return original_generate(*args, **kwargs)
+
+    model.generate = _wrapped_generate
+
+
+def _load_model(model_dir: Path, device: str, attn_backend: str, max_new_tokens: int | None):
     attn_impl = _resolve_attn_backend(attn_backend)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
     try:
@@ -144,6 +164,7 @@ def _load_model(model_dir: Path, device: str, attn_backend: str):
         model = model.eval().to(device).to(torch.bfloat16)
     else:
         model = model.eval().to(device)
+    _cap_generate_tokens(model, max_new_tokens)
     return tokenizer, model, attn_impl
 
 
@@ -233,7 +254,12 @@ def main() -> int:
     image_size = int(args.image_size) if args.image_size is not None else int(profile_defaults["image_size"])
     crop_mode = bool(args.crop_mode) if args.crop_mode is not None else bool(profile_defaults["crop_mode"])
 
-    tokenizer, model, attn_impl = _load_model(model_dir, args.device, args.attn_backend)
+    tokenizer, model, attn_impl = _load_model(
+        model_dir,
+        args.device,
+        args.attn_backend,
+        args.max_new_tokens,
+    )
 
     for pdf_path in pdfs:
         images = _render_pages(pdf_path, args.max_pages, args.render_dpi)

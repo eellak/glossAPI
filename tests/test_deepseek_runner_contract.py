@@ -174,6 +174,7 @@ def test_deepseek_runner_builds_speed_control_flags(tmp_path):
         image_size=448,
         crop_mode=True,
         render_dpi=120,
+        max_new_tokens=2048,
     )
 
     assert "--ocr-profile" in cmd
@@ -187,6 +188,8 @@ def test_deepseek_runner_builds_speed_control_flags(tmp_path):
     assert "--crop-mode" in cmd
     assert "--render-dpi" in cmd
     assert cmd[cmd.index("--render-dpi") + 1] == "120"
+    assert "--max-new-tokens" in cmd
+    assert cmd[cmd.index("--max-new-tokens") + 1] == "2048"
 
 
 def test_deepseek_model_load_falls_back_to_eager_when_sdpa_is_unsupported(tmp_path, monkeypatch):
@@ -219,7 +222,24 @@ def test_deepseek_model_load_falls_back_to_eager_when_sdpa_is_unsupported(tmp_pa
 
     monkeypatch.setattr(cli.AutoModel, "from_pretrained", fake_from_pretrained)
 
-    _tokenizer, _model, attn_impl = cli._load_model(tmp_path, "cpu", "auto")
+    _tokenizer, _model, attn_impl = cli._load_model(tmp_path, "cpu", "auto", None)
 
     assert calls == ["sdpa", "eager"]
     assert attn_impl == "eager"
+
+
+def test_deepseek_generate_cap_applies_max_new_tokens():
+    from glossapi.ocr.deepseek import run_pdf_ocr_transformers as cli
+
+    seen = {}
+
+    class DummyModel:
+        def generate(self, *args, **kwargs):
+            seen["kwargs"] = dict(kwargs)
+            return "ok"
+
+    model = DummyModel()
+    cli._cap_generate_tokens(model, 2048)
+    model.generate(max_new_tokens=8192, foo="bar")
+    assert seen["kwargs"]["max_new_tokens"] == 2048
+    assert seen["kwargs"]["foo"] == "bar"

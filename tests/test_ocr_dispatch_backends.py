@@ -93,6 +93,7 @@ def test_deepseek_backend_forwards_parallelism_controls(tmp_path, monkeypatch):
         crop_mode=True,
         render_dpi=120,
         max_pages=7,
+        max_new_tokens=2048,
     )
 
     assert calls["files"] == [fname]
@@ -106,3 +107,4 @@ def test_deepseek_backend_forwards_parallelism_controls(tmp_path, monkeypatch):
     assert calls["kwargs"]["crop_mode"] is True
     assert calls["kwargs"]["render_dpi"] == 120
     assert calls["kwargs"]["max_pages"] == 7
+    assert calls["kwargs"]["max_new_tokens"] == 2048

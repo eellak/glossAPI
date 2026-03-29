@@ -48,6 +48,7 @@ def _build_cli_command(
     image_size: Optional[int],
     crop_mode: Optional[bool],
     render_dpi: Optional[int],
+    max_new_tokens: Optional[int],
 ) -> List[str]:
     python_exe = Path(python_bin) if python_bin else Path(sys.executable)
     cmd: List[str] = [
@@ -82,6 +83,8 @@ def _build_cli_command(
         cmd.append("--no-crop-mode")
     if render_dpi is not None:
         cmd += ["--render-dpi", str(int(render_dpi))]
+    if max_new_tokens is not None:
+        cmd += ["--max-new-tokens", str(int(max_new_tokens))]
     return cmd
 
 
@@ -122,6 +125,7 @@ def _run_cli(
     image_size: Optional[int],
     crop_mode: Optional[bool],
     render_dpi: Optional[int],
+    max_new_tokens: Optional[int],
     visible_device: Optional[int] = None,
 ) -> None:
     cmd = _build_cli_command(
@@ -140,6 +144,7 @@ def _run_cli(
         image_size=image_size,
         crop_mode=crop_mode,
         render_dpi=render_dpi,
+        max_new_tokens=max_new_tokens,
     )
     env = _build_env(python_bin=python_bin, visible_device=visible_device)
 
@@ -287,6 +292,7 @@ def _run_multi_cli(
     image_size: Optional[int],
     crop_mode: Optional[bool],
     render_dpi: Optional[int],
+    max_new_tokens: Optional[int],
 ) -> None:
     lanes = _plan_lanes(
         file_list=file_list,
@@ -325,6 +331,7 @@ def _run_multi_cli(
                 image_size=image_size,
                 crop_mode=crop_mode,
                 render_dpi=render_dpi,
+                max_new_tokens=max_new_tokens,
             )
             env = _build_env(python_bin=python_exe, visible_device=visible_device)
             LOGGER.info(
@@ -370,6 +377,7 @@ def run_for_files(
     image_size: Optional[int] = None,
     crop_mode: Optional[bool] = None,
     render_dpi: Optional[int] = None,
+    max_new_tokens: Optional[int] = None,
     use_gpus: Optional[str] = None,
     devices: Optional[List[int]] = None,
     workers_per_gpu: int = 1,
@@ -453,6 +461,7 @@ def run_for_files(
             image_size=image_size,
             crop_mode=crop_mode,
             render_dpi=render_dpi,
+            max_new_tokens=max_new_tokens,
         )
     else:
         _run_cli(
@@ -471,6 +480,7 @@ def run_for_files(
             image_size=image_size,
             crop_mode=crop_mode,
             render_dpi=render_dpi,
+            max_new_tokens=max_new_tokens,
         )
 
     results: Dict[str, Any] = {}
