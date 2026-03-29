@@ -49,6 +49,12 @@ class OcrMathPhaseMixin:
         use_gpus: str = "single",
         devices: Optional[List[int]] = None,
         workers_per_gpu: int = 1,
+        ocr_profile: str = "markdown_grounded",
+        attn_backend: str = "auto",
+        base_size: Optional[int] = None,
+        image_size: Optional[int] = None,
+        crop_mode: Optional[bool] = None,
+        render_dpi: Optional[int] = None,
         force: Optional[bool] = None,
         reprocess_completed: Optional[bool] = None,
         skip_existing: Optional[bool] = None,
@@ -79,6 +85,9 @@ class OcrMathPhaseMixin:
           ``use_gpus="multi"`` to shard OCR across detected or specified GPUs.
           Increase ``workers_per_gpu`` above ``1`` to run multiple OCR workers
           per visible GPU.
+        - ocr_profile/attn_backend/base_size/image_size/crop_mode/render_dpi:
+          DeepSeek throughput and quality controls for benchmarking lighter OCR
+          modes and more efficient attention backends.
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
         - reprocess_completed: when False, skip documents already flagged as successfully
           OCRed or math-enriched in metadata. Set True to force reprocessing. Defaults to False
@@ -590,6 +599,12 @@ class OcrMathPhaseMixin:
                         persist_engine=persist_engine,
                         precision=precision,
                         device=device,
+                        ocr_profile=ocr_profile,
+                        attn_backend=attn_backend,
+                        base_size=base_size,
+                        image_size=image_size,
+                        crop_mode=crop_mode,
+                        render_dpi=render_dpi,
                         use_gpus=use_gpus,
                         devices=devices,
                         workers_per_gpu=workers_per_gpu,

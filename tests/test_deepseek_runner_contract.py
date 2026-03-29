@@ -148,3 +148,42 @@ def test_deepseek_runner_multi_uses_visible_device_isolation(tmp_path, monkeypat
 
     assert sorted(seen_files) == sorted(files)
     assert sorted(seen_visible_devices) == ["2", "2", "5", "5"]
+
+
+def test_deepseek_runner_builds_speed_control_flags(tmp_path):
+    from glossapi.ocr.deepseek import runner
+
+    script = tmp_path / "run_pdf_ocr_transformers.py"
+    script.write_text("# stub\n", encoding="utf-8")
+    model_dir = tmp_path / "DeepSeek-OCR-2"
+    model_dir.mkdir()
+
+    cmd = runner._build_cli_command(
+        input_dir=tmp_path / "input",
+        output_dir=tmp_path / "output",
+        files=["doc.pdf"],
+        model_dir=model_dir,
+        python_bin=Path(sys.executable),
+        script=script,
+        max_pages=3,
+        content_debug=False,
+        device="cuda",
+        ocr_profile="plain_ocr",
+        attn_backend="sdpa",
+        base_size=640,
+        image_size=448,
+        crop_mode=False,
+        render_dpi=120,
+    )
+
+    assert "--ocr-profile" in cmd
+    assert cmd[cmd.index("--ocr-profile") + 1] == "plain_ocr"
+    assert "--attn-backend" in cmd
+    assert cmd[cmd.index("--attn-backend") + 1] == "sdpa"
+    assert "--base-size" in cmd
+    assert cmd[cmd.index("--base-size") + 1] == "640"
+    assert "--image-size" in cmd
+    assert cmd[cmd.index("--image-size") + 1] == "448"
+    assert "--no-crop-mode" in cmd
+    assert "--render-dpi" in cmd
+    assert cmd[cmd.index("--render-dpi") + 1] == "120"

@@ -14,8 +14,26 @@ import torch
 from PIL import Image
 from transformers import AutoModel, AutoTokenizer
 
-PROMPT = "<image>\n<|grounding|>Convert the document to markdown. "
+PROMPT_GROUNDED_MARKDOWN = "<image>\n<|grounding|>Convert the document to markdown. "
+PROMPT_PLAIN_OCR = "<image>\nExtract the text from the document page in reading order."
 PAGE_SPLIT = "\n<--- Page Split --->\n"
+
+
+def _profile_defaults(profile: str) -> dict:
+    profile_norm = str(profile or "markdown_grounded").strip().lower()
+    if profile_norm == "plain_ocr":
+        return {
+            "prompt": PROMPT_PLAIN_OCR,
+            "base_size": 768,
+            "image_size": 512,
+            "crop_mode": False,
+        }
+    return {
+        "prompt": PROMPT_GROUNDED_MARKDOWN,
+        "base_size": 1024,
+        "image_size": 768,
+        "crop_mode": True,
+    }
 
 
 def _parse_args() -> argparse.Namespace:
@@ -26,6 +44,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--files", nargs="*", default=[])
     parser.add_argument("--max-pages", type=int, default=None)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--ocr-profile", default="markdown_grounded", choices=["markdown_grounded", "plain_ocr"])
+    parser.add_argument("--attn-backend", default="auto", choices=["auto", "flash_attention_2", "sdpa", "eager"])
+    parser.add_argument("--base-size", type=int, default=None)
+    parser.add_argument("--image-size", type=int, default=None)
+    parser.add_argument("--render-dpi", type=int, default=144)
+    parser.add_argument("--crop-mode", dest="crop_mode", action="store_true")
+    parser.add_argument("--no-crop-mode", dest="crop_mode", action="store_false")
+    parser.set_defaults(crop_mode=None)
     parser.add_argument("--content-debug", action="store_true")
     return parser.parse_args()
 
@@ -36,12 +62,12 @@ def _iter_pdfs(input_dir: Path, files: List[str]) -> List[Path]:
     return sorted(input_dir.glob("*.pdf"))
 
 
-def _render_pages(pdf_path: Path, max_pages: int | None) -> List[Image.Image]:
+def _render_pages(pdf_path: Path, max_pages: int | None, render_dpi: int) -> List[Image.Image]:
     images: List[Image.Image] = []
     doc = fitz.open(pdf_path)
     try:
         page_count = doc.page_count if max_pages is None else min(doc.page_count, max_pages)
-        zoom = 144 / 72.0
+        zoom = float(render_dpi) / 72.0
         matrix = fitz.Matrix(zoom, zoom)
         for idx in range(page_count):
             page = doc[idx]
@@ -65,12 +91,19 @@ def _clean_markdown(text: str) -> str:
     return text.replace("\\coloneqq", ":=").replace("\\eqqcolon", "=:").strip()
 
 
-def _load_model(model_dir: Path, device: str):
-    attn_impl = "flash_attention_2"
+def _resolve_attn_backend(attn_backend: str) -> str:
+    requested = str(attn_backend or "auto").strip().lower()
+    if requested != "auto":
+        return requested
     try:
         import flash_attn  # noqa: F401
+        return "flash_attention_2"
     except Exception:
-        attn_impl = "eager"
+        return "sdpa"
+
+
+def _load_model(model_dir: Path, device: str, attn_backend: str):
+    attn_impl = _resolve_attn_backend(attn_backend)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
     model = AutoModel.from_pretrained(
         model_dir,
@@ -82,18 +115,28 @@ def _load_model(model_dir: Path, device: str):
         model = model.eval().to(device).to(torch.bfloat16)
     else:
         model = model.eval().to(device)
-    return tokenizer, model
+    return tokenizer, model, attn_impl
 
 
-def _infer_page(model, tokenizer, image_path: Path, output_dir: Path) -> str:
+def _infer_page(
+    model,
+    tokenizer,
+    image_path: Path,
+    output_dir: Path,
+    *,
+    prompt: str,
+    base_size: int,
+    image_size: int,
+    crop_mode: bool,
+) -> str:
     result = model.infer(
         tokenizer,
-        prompt=PROMPT,
+        prompt=prompt,
         image_file=str(image_path),
         output_path=str(output_dir),
-        base_size=1024,
-        image_size=768,
-        crop_mode=True,
+        base_size=base_size,
+        image_size=image_size,
+        crop_mode=crop_mode,
         save_results=False,
         eval_mode=True,
     )
@@ -155,10 +198,16 @@ def main() -> int:
     if not pdfs:
         return 0
 
-    tokenizer, model = _load_model(model_dir, args.device)
+    profile_defaults = _profile_defaults(args.ocr_profile)
+    prompt = profile_defaults["prompt"]
+    base_size = int(args.base_size) if args.base_size is not None else int(profile_defaults["base_size"])
+    image_size = int(args.image_size) if args.image_size is not None else int(profile_defaults["image_size"])
+    crop_mode = bool(args.crop_mode) if args.crop_mode is not None else bool(profile_defaults["crop_mode"])
+
+    tokenizer, model, attn_impl = _load_model(model_dir, args.device, args.attn_backend)
 
     for pdf_path in pdfs:
-        images = _render_pages(pdf_path, args.max_pages)
+        images = _render_pages(pdf_path, args.max_pages, args.render_dpi)
         page_outputs: List[str] = []
         total_pages = len(images)
         _write_progress(output_dir, pdf_path.stem, page_outputs, total_pages, 0)
@@ -167,7 +216,16 @@ def main() -> int:
             for idx, image in enumerate(images):
                 page_png = tmp_dir / f"page_{idx + 1:04d}.png"
                 image.save(page_png, format="PNG")
-                page_text = _infer_page(model, tokenizer, page_png, tmp_dir / f"page_{idx + 1:04d}")
+                page_text = _infer_page(
+                    model,
+                    tokenizer,
+                    page_png,
+                    tmp_dir / f"page_{idx + 1:04d}",
+                    prompt=prompt,
+                    base_size=base_size,
+                    image_size=image_size,
+                    crop_mode=crop_mode,
+                )
                 if args.content_debug:
                     page_text = f"<!-- page:{idx + 1} -->\n{page_text}".strip()
                 page_outputs.append(page_text)
@@ -180,6 +238,23 @@ def main() -> int:
                 )
         markdown = PAGE_SPLIT.join(page_outputs) if page_outputs else "[[Blank page]]"
         _write_outputs(output_dir, pdf_path.stem, markdown, len(images))
+        metrics_path = output_dir / "json" / "metrics" / f"{pdf_path.stem}.metrics.json"
+        if metrics_path.exists():
+            try:
+                metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+                metrics.update(
+                    {
+                        "ocr_profile": args.ocr_profile,
+                        "attn_backend": attn_impl,
+                        "base_size": base_size,
+                        "image_size": image_size,
+                        "crop_mode": crop_mode,
+                        "render_dpi": int(args.render_dpi),
+                    }
+                )
+                metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+            except Exception:
+                pass
 
     return 0
 

@@ -42,6 +42,12 @@ def _build_cli_command(
     max_pages: Optional[int],
     content_debug: bool,
     device: Optional[str],
+    ocr_profile: str,
+    attn_backend: str,
+    base_size: Optional[int],
+    image_size: Optional[int],
+    crop_mode: Optional[bool],
+    render_dpi: Optional[int],
 ) -> List[str]:
     python_exe = Path(python_bin) if python_bin else Path(sys.executable)
     cmd: List[str] = [
@@ -62,6 +68,20 @@ def _build_cli_command(
         cmd.append("--content-debug")
     if device:
         cmd += ["--device", str(device)]
+    if ocr_profile:
+        cmd += ["--ocr-profile", str(ocr_profile)]
+    if attn_backend:
+        cmd += ["--attn-backend", str(attn_backend)]
+    if base_size is not None:
+        cmd += ["--base-size", str(int(base_size))]
+    if image_size is not None:
+        cmd += ["--image-size", str(int(image_size))]
+    if crop_mode is True:
+        cmd.append("--crop-mode")
+    elif crop_mode is False:
+        cmd.append("--no-crop-mode")
+    if render_dpi is not None:
+        cmd += ["--render-dpi", str(int(render_dpi))]
     return cmd
 
 
@@ -96,6 +116,12 @@ def _run_cli(
     max_pages: Optional[int],
     content_debug: bool,
     device: Optional[str],
+    ocr_profile: str,
+    attn_backend: str,
+    base_size: Optional[int],
+    image_size: Optional[int],
+    crop_mode: Optional[bool],
+    render_dpi: Optional[int],
     visible_device: Optional[int] = None,
 ) -> None:
     cmd = _build_cli_command(
@@ -108,6 +134,12 @@ def _run_cli(
         max_pages=max_pages,
         content_debug=content_debug,
         device=device,
+        ocr_profile=ocr_profile,
+        attn_backend=attn_backend,
+        base_size=base_size,
+        image_size=image_size,
+        crop_mode=crop_mode,
+        render_dpi=render_dpi,
     )
     env = _build_env(python_bin=python_bin, visible_device=visible_device)
 
@@ -249,6 +281,12 @@ def _run_multi_cli(
     max_pages: Optional[int],
     content_debug: bool,
     log_dir: Path,
+    ocr_profile: str,
+    attn_backend: str,
+    base_size: Optional[int],
+    image_size: Optional[int],
+    crop_mode: Optional[bool],
+    render_dpi: Optional[int],
 ) -> None:
     lanes = _plan_lanes(
         file_list=file_list,
@@ -281,6 +319,12 @@ def _run_multi_cli(
                 max_pages=max_pages,
                 content_debug=content_debug,
                 device="cuda",
+                ocr_profile=ocr_profile,
+                attn_backend=attn_backend,
+                base_size=base_size,
+                image_size=image_size,
+                crop_mode=crop_mode,
+                render_dpi=render_dpi,
             )
             env = _build_env(python_bin=python_exe, visible_device=visible_device)
             LOGGER.info(
@@ -320,6 +364,12 @@ def run_for_files(
     persist_engine: bool = True,  # placeholder for future session reuse
     precision: Optional[str] = None,  # reserved
     device: Optional[str] = None,
+    ocr_profile: str = "markdown_grounded",
+    attn_backend: str = "auto",
+    base_size: Optional[int] = None,
+    image_size: Optional[int] = None,
+    crop_mode: Optional[bool] = None,
+    render_dpi: Optional[int] = None,
     use_gpus: Optional[str] = None,
     devices: Optional[List[int]] = None,
     workers_per_gpu: int = 1,
@@ -397,6 +447,12 @@ def run_for_files(
             max_pages=max_pages,
             content_debug=content_debug,
             log_dir=Path(log_dir) if log_dir else (out_root / "logs" / "deepseek_workers"),
+            ocr_profile=ocr_profile,
+            attn_backend=attn_backend,
+            base_size=base_size,
+            image_size=image_size,
+            crop_mode=crop_mode,
+            render_dpi=render_dpi,
         )
     else:
         _run_cli(
@@ -409,6 +465,12 @@ def run_for_files(
             max_pages=max_pages,
             content_debug=content_debug,
             device=device,
+            ocr_profile=ocr_profile,
+            attn_backend=attn_backend,
+            base_size=base_size,
+            image_size=image_size,
+            crop_mode=crop_mode,
+            render_dpi=render_dpi,
         )
 
     results: Dict[str, Any] = {}
