@@ -160,7 +160,7 @@ Production markdown+repair benchmark on the same host:
 - Repair mode: `auto`
 - Max new tokens: `2048`
 - GPUs: `8`
-- Static sharding (`1` shard/GPU): `574.87s` wall, `0.0754 sec/page` overall, `0.4971` to `0.5484 sec/page/GPU`
+- Static sharding (`1` shard/GPU), validated rerun after classifier hardening: `558.88s` wall, `0.0733 sec/page` overall, `0.4912` to `0.5475 sec/page/GPU`
 - Streaming admission (`stream_batch_pages=160`): `928.81s` wall, `0.1218 sec/page` overall, `0.5469` to `0.6856 sec/page/GPU`
 - Peak VRAM in both runs stayed at about `88,953 MiB` per active GPU
 - Static active-lane GPU utilization averaged about `65%` to `75%`; streaming active-lane utilization stayed similar while whole-run occupancy got worse because more lanes sat idle between batches
