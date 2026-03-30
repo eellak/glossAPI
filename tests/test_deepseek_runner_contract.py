@@ -134,6 +134,10 @@ def test_build_cli_command_includes_speed_flags(tmp_path):
         max_new_tokens=1024,
         repetition_penalty=1.05,
         no_repeat_ngram_size=12,
+        runtime_backend="transformers",
+        vllm_batch_size=None,
+        gpu_memory_utilization=None,
+        disable_fp8_kv=False,
     )
 
     assert "--ocr-profile" in cmd and "plain_ocr" in cmd
@@ -143,3 +147,65 @@ def test_build_cli_command_includes_speed_flags(tmp_path):
     assert "--crop-mode" in cmd
     assert "--render-dpi" in cmd and "144" in cmd
     assert "--max-new-tokens" in cmd and "1024" in cmd
+
+
+def test_build_cli_command_includes_vllm_flags(tmp_path):
+    from glossapi.ocr.deepseek.runner import _build_cli_command
+
+    cmd = _build_cli_command(
+        input_dir=tmp_path / "in",
+        output_dir=tmp_path / "out",
+        files=["a.pdf"],
+        model_dir=tmp_path / "model",
+        python_bin=Path("/usr/bin/python3"),
+        script=tmp_path / "run_vllm.py",
+        max_pages=1,
+        content_debug=False,
+        device="cuda",
+        ocr_profile="markdown_grounded",
+        attn_backend="auto",
+        base_size=None,
+        image_size=None,
+        crop_mode=None,
+        render_dpi=110,
+        max_new_tokens=768,
+        repetition_penalty=None,
+        no_repeat_ngram_size=None,
+        runtime_backend="vllm",
+        vllm_batch_size=16,
+        gpu_memory_utilization=0.92,
+        disable_fp8_kv=True,
+    )
+
+    assert "--batch-size" in cmd and "16" in cmd
+    assert "--gpu-memory-utilization" in cmd and "0.92" in cmd
+    assert "--disable-fp8-kv" in cmd
+
+
+def test_runner_selects_vllm_script_when_requested(tmp_path, monkeypatch):
+    from glossapi.ocr.deepseek import runner
+
+    corpus = _mk_corpus(tmp_path)
+    (corpus.input_dir / "doc.pdf").write_bytes(b"%PDF-1.4\n%real\n")
+
+    calls = {}
+
+    def fake_run_cli(input_dir, output_dir, **kwargs):
+        calls["script"] = kwargs["script"]
+        calls["runtime_backend"] = kwargs["runtime_backend"]
+        md_dir = output_dir / "markdown"
+        metrics_dir = output_dir / "json" / "metrics"
+        md_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        (md_dir / "doc.md").write_text("ok\n", encoding="utf-8")
+        (metrics_dir / "doc.metrics.json").write_text('{"page_count": 1}', encoding="utf-8")
+
+    monkeypatch.setattr(runner, "_run_cli", fake_run_cli)
+    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_MODEL_DIR", str(tmp_path))
+    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_PYTHON", sys.executable)
+
+    result = runner.run_for_files(corpus, ["doc.pdf"], runtime_backend="vllm")
+
+    assert calls["runtime_backend"] == "vllm"
+    assert Path(calls["script"]).name == "run_pdf_ocr_vllm.py"
+    assert result["doc"]["page_count"] == 1

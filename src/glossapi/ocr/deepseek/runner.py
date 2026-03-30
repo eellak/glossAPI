@@ -20,6 +20,7 @@ except Exception:  # pragma: no cover - optional dependency
 LOGGER = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_transformers.py"
+DEFAULT_VLLM_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_vllm.py"
 
 
 def _page_count(pdf_path: Path) -> int:
@@ -51,6 +52,10 @@ def _build_cli_command(
     max_new_tokens: Optional[int],
     repetition_penalty: Optional[float],
     no_repeat_ngram_size: Optional[int],
+    runtime_backend: str,
+    vllm_batch_size: Optional[int],
+    gpu_memory_utilization: Optional[float],
+    disable_fp8_kv: bool,
 ) -> List[str]:
     python_exe = Path(python_bin) if python_bin else Path(sys.executable)
     cmd: List[str] = [
@@ -91,6 +96,14 @@ def _build_cli_command(
         cmd += ["--repetition-penalty", str(float(repetition_penalty))]
     if no_repeat_ngram_size is not None:
         cmd += ["--no-repeat-ngram-size", str(int(no_repeat_ngram_size))]
+    runtime_backend_norm = str(runtime_backend or "transformers").strip().lower()
+    if runtime_backend_norm == "vllm":
+        if vllm_batch_size is not None:
+            cmd += ["--batch-size", str(int(vllm_batch_size))]
+        if gpu_memory_utilization is not None:
+            cmd += ["--gpu-memory-utilization", str(float(gpu_memory_utilization))]
+        if disable_fp8_kv:
+            cmd.append("--disable-fp8-kv")
     return cmd
 
 
@@ -134,6 +147,10 @@ def _run_cli(
     max_new_tokens: Optional[int],
     repetition_penalty: Optional[float],
     no_repeat_ngram_size: Optional[int],
+    runtime_backend: str,
+    vllm_batch_size: Optional[int],
+    gpu_memory_utilization: Optional[float],
+    disable_fp8_kv: bool,
     visible_device: Optional[int] = None,
 ) -> None:
     cmd = _build_cli_command(
@@ -155,6 +172,10 @@ def _run_cli(
         max_new_tokens=max_new_tokens,
         repetition_penalty=repetition_penalty,
         no_repeat_ngram_size=no_repeat_ngram_size,
+        runtime_backend=runtime_backend,
+        vllm_batch_size=vllm_batch_size,
+        gpu_memory_utilization=gpu_memory_utilization,
+        disable_fp8_kv=disable_fp8_kv,
     )
     env = _build_env(python_bin=python_bin, visible_device=visible_device)
 
@@ -305,6 +326,10 @@ def _run_multi_cli(
     max_new_tokens: Optional[int],
     repetition_penalty: Optional[float],
     no_repeat_ngram_size: Optional[int],
+    runtime_backend: str,
+    vllm_batch_size: Optional[int],
+    gpu_memory_utilization: Optional[float],
+    disable_fp8_kv: bool,
 ) -> None:
     lanes = _plan_lanes(
         file_list=file_list,
@@ -346,6 +371,10 @@ def _run_multi_cli(
                 max_new_tokens=max_new_tokens,
                 repetition_penalty=repetition_penalty,
                 no_repeat_ngram_size=no_repeat_ngram_size,
+                runtime_backend=runtime_backend,
+                vllm_batch_size=vllm_batch_size,
+                gpu_memory_utilization=gpu_memory_utilization,
+                disable_fp8_kv=disable_fp8_kv,
             )
             env = _build_env(python_bin=python_exe, visible_device=visible_device)
             LOGGER.info(
@@ -385,6 +414,7 @@ def run_for_files(
     persist_engine: bool = True,  # placeholder for future session reuse
     precision: Optional[str] = None,  # reserved
     device: Optional[str] = None,
+    runtime_backend: str = "transformers",
     ocr_profile: str = "markdown_grounded",
     attn_backend: str = "auto",
     base_size: Optional[int] = None,
@@ -397,21 +427,26 @@ def run_for_files(
     use_gpus: Optional[str] = None,
     devices: Optional[List[int]] = None,
     workers_per_gpu: int = 1,
-    gpu_memory_utilization: Optional[float] = None,  # reserved
-    disable_fp8_kv: bool = False,  # reserved
+    gpu_memory_utilization: Optional[float] = None,
+    disable_fp8_kv: bool = False,
+    vllm_batch_size: Optional[int] = None,
     **_: Any,
 ) -> Dict[str, Any]:
     """Run DeepSeek OCR for the provided files."""
 
     requested_stub = bool(allow_stub)
     del allow_stub, allow_cli, persist_engine, precision
-    del gpu_memory_utilization, disable_fp8_kv
-
     if requested_stub or os.environ.get("GLOSSAPI_DEEPSEEK_ALLOW_STUB", "0") == "1":
         raise RuntimeError(
             "DeepSeek stub execution has been removed. "
             "Unset GLOSSAPI_DEEPSEEK_ALLOW_STUB and configure the real DeepSeek runtime."
         )
+
+    runtime_backend_norm = str(
+        runtime_backend or os.environ.get("GLOSSAPI_DEEPSEEK_RUNTIME_BACKEND", "transformers")
+    ).strip().lower()
+    if runtime_backend_norm not in {"transformers", "vllm"}:
+        raise ValueError("runtime_backend must be 'transformers' or 'vllm'")
 
     file_list = [str(f) for f in files or []]
     if not file_list:
@@ -435,10 +470,11 @@ def run_for_files(
             "DeepSeek model directory not found. Set model_dir or GLOSSAPI_DEEPSEEK_MODEL_DIR."
         )
 
+    default_script = DEFAULT_VLLM_SCRIPT if runtime_backend_norm == "vllm" else DEFAULT_SCRIPT
     script_path = Path(
         vllm_script
         or os.environ.get("GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT", "")
-        or DEFAULT_SCRIPT
+        or default_script
     )
     if not script_path.exists():
         raise FileNotFoundError(f"DeepSeek OCR runner script not found: {script_path}")
@@ -481,6 +517,10 @@ def run_for_files(
             max_new_tokens=max_new_tokens,
             repetition_penalty=repetition_penalty,
             no_repeat_ngram_size=no_repeat_ngram_size,
+            runtime_backend=runtime_backend_norm,
+            vllm_batch_size=vllm_batch_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            disable_fp8_kv=disable_fp8_kv,
         )
     else:
         _run_cli(
@@ -502,6 +542,10 @@ def run_for_files(
             max_new_tokens=max_new_tokens,
             repetition_penalty=repetition_penalty,
             no_repeat_ngram_size=no_repeat_ngram_size,
+            runtime_backend=runtime_backend_norm,
+            vllm_batch_size=vllm_batch_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            disable_fp8_kv=disable_fp8_kv,
         )
 
     results: Dict[str, Any] = {}
