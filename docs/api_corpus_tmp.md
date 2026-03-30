@@ -44,7 +44,7 @@ extract(
 ) -> None
 ```
 
-- Phase‑1 extraction; set `force_ocr=True` for OCR.
+- Phase‑1 extraction; `force_ocr` is deprecated and ignored.
 - Docling layout JSON now writes by default (`json/<stem>.docling.json(.zst)`); set `emit_formula_index=True` to also produce `json/<stem>.formula_index.jsonl`.
 - Set `use_gpus='multi'` to use all visible GPUs (shared queue).
 
@@ -85,7 +85,7 @@ ocr(
 ) -> None
 ```
 
-- Convenience shim that re‑runs `extract(force_ocr=True)` on cleaner-flagged documents and, by default, performs math/code enrichment unless `math_enhance=False`.
+- Convenience shim that re-runs OCR on cleaner-flagged documents and, by default, performs math/code enrichment unless `math_enhance=False`.
 
 ## formula_enrich_from_json()
 

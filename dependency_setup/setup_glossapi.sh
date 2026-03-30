@@ -77,9 +77,6 @@ case "${MODE}" in
     warn "Mode 'vanilla' is deprecated; using 'docling' instead."
     MODE="docling"
     ;;
-  rapidocr)
-    error "RapidOCR setup has been removed. Use --mode docling or --mode deepseek."
-    ;;
   docling|deepseek) ;;
   *)
     echo "Invalid mode '${MODE}'. Expected docling or deepseek." >&2

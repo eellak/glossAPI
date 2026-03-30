@@ -1,8 +1,8 @@
-### GlossAPI runtime requirements (aligned with repro_rapidocr_onnx)
+### GlossAPI runtime requirements
 
 # Core pipeline deps
 pandas>=1.3.0
-numpy<2
+numpy>=1.26,<3
 python-dateutil>=2.8.2
 pytz>=2021.1
 scikit-learn==1.6.1
@@ -15,17 +15,12 @@ ftfy>=6.0.0
 tenacity>=8.0.0
 tqdm>=4.67.0
 
-# Docling + RapidOCR ONNX stack
-docling==2.48.0
-# Prefer RapidOCR core package; it works with the GPU ORT wheel without pulling
-# the CPU-only 'onnxruntime' dependency.
-rapidocr>=3.3.0
-onnxruntime-gpu==1.18.1
+# Docling extraction/layout stack
+docling==2.81.0
 pyyaml>=6.0
 
 # Enrichment & JSON compression (required for Phase-2 math/code and JSON zstd)
 pypdfium2>=4.0.0
 zstandard>=0.22.0
 
-# Optional: install Torch CUDA for GPU layout (not required for OCR)
-# pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1
+# Optional: install Torch CUDA for GPU-backed Docling layout / enrichment

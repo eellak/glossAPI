@@ -27,6 +27,7 @@ Use `dependency_setup/setup_glossapi.sh` for the main Docling environment and `d
 ```
 
 `setup_glossapi.sh --mode deepseek` delegates to the same uv-based installer. Inspect `dependency_setup/dependency_notes.md` for the current pins and validation runs. Both setup paths install GlossAPI and its Rust crates in editable mode so source changes are picked up immediately.
+The dedicated DeepSeek uv environment is intentionally OCR-only: it installs `glossapi[deepseek]` and leaves Docling in the main environment.
 
 **DeepSeek runtime checklist**
 - Run `python -m glossapi.ocr.deepseek.preflight` from the DeepSeek venv to assert the real runtime is reachable.

@@ -11,7 +11,7 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
 | Stage | Main code | Typical inputs | Important parameters | Main outputs |
 | --- | --- | --- | --- | --- |
 | Download | `Corpus.download()`, `GlossDownloader.download_files()` | metadata parquet with a URL column | `input_parquet`, `links_column`, `parallelize_by`, downloader kwargs | `downloads/`, `download_results/*.parquet` |
-| Extract (Phase‑1) | `Corpus.prime_extractor()`, `Corpus.extract()`, `GlossExtract.extract_path()` | files in `downloads/` or explicit paths | `input_format`, `phase1_backend`, `force_ocr`, `use_gpus`, `devices`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json` |
+| Extract (Phase‑1) | `Corpus.prime_extractor()`, `Corpus.extract()`, `GlossExtract.extract_path()` | files in `downloads/` or explicit paths | `input_format`, `phase1_backend`, `use_gpus`, `devices`, `workers_per_device`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json` |
 | Clean | `Corpus.clean()` | `markdown/*.md` | `threshold`, `drop_bad`, `empty_char_threshold`, `empty_min_pages` | `clean_markdown/<stem>.md`, cleaner report parquet, parquet flags such as `filter` and `needs_ocr` |
 | OCR retry | `Corpus.ocr(mode='ocr_bad'...)` | parquet rows flagged by cleaner | `mode`, `fix_bad`, `use_gpus`, `devices` | refreshed `markdown/<stem>.md`, refreshed cleaner/parquet metadata |
 | Phase‑2 enrich | `Corpus.ocr(mode='math_only'...)`, `Corpus.formula_enrich_from_json()` | `json/<stem>.docling.json(.zst)` and optional formula index | `math_enhance`, `math_batch_size`, `math_dpi_base`, `targets_by_stem` | updated `markdown/<stem>.md`, `json/<stem>.latex_map.jsonl` |
@@ -42,9 +42,11 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
   - or explicit `file_paths`
 - Important parameters:
   - `phase1_backend='safe'|'docling'|'auto'`
-  - `force_ocr=True` to turn on OCR during extraction
   - `use_gpus='single'|'multi'`
+  - `workers_per_device` to fan out more than one extraction worker onto each GPU
   - `export_doc_json` and `emit_formula_index` for later Phase‑2 work
+- Operational note:
+  - `force_ocr` is deprecated and ignored in Phase‑1; use `Corpus.ocr(backend='deepseek')` after `clean()` for OCR remediation
 - Main outputs:
   - canonical markdown in `markdown/<stem>.md`
   - optional Docling JSON and index artifacts in `json/`

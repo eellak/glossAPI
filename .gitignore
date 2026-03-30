@@ -82,4 +82,3 @@ deepseek-ocr/DeepSeek-OCR-empty/
 # Local DeepSeek checkout and repro scripts (keep out of master)
 deepseek-ocr/
 deepseek-ocr-2/
-repro_rapidocr_onnx/

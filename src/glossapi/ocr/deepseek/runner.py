@@ -20,6 +20,8 @@ except Exception:  # pragma: no cover - optional dependency
 LOGGER = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_transformers.py"
+DEFAULT_VLLM_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_vllm.py"
+AUTO_VLLM_BATCH_PAGE_CAP = 160
 
 
 def _page_count(pdf_path: Path) -> int:
@@ -43,6 +45,7 @@ def _build_cli_command(
     content_debug: bool,
     device: Optional[str],
     ocr_profile: str,
+    prompt_override: Optional[str],
     attn_backend: str,
     base_size: Optional[int],
     image_size: Optional[int],
@@ -51,6 +54,11 @@ def _build_cli_command(
     max_new_tokens: Optional[int],
     repetition_penalty: Optional[float],
     no_repeat_ngram_size: Optional[int],
+    runtime_backend: str,
+    vllm_batch_size: Optional[int],
+    gpu_memory_utilization: Optional[float],
+    disable_fp8_kv: bool,
+    repair_mode: Optional[str],
 ) -> List[str]:
     python_exe = Path(python_bin) if python_bin else Path(sys.executable)
     cmd: List[str] = [
@@ -73,6 +81,8 @@ def _build_cli_command(
         cmd += ["--device", str(device)]
     if ocr_profile:
         cmd += ["--ocr-profile", str(ocr_profile)]
+    if prompt_override:
+        cmd += ["--prompt-override", str(prompt_override)]
     if attn_backend:
         cmd += ["--attn-backend", str(attn_backend)]
     if base_size is not None:
@@ -91,6 +101,16 @@ def _build_cli_command(
         cmd += ["--repetition-penalty", str(float(repetition_penalty))]
     if no_repeat_ngram_size is not None:
         cmd += ["--no-repeat-ngram-size", str(int(no_repeat_ngram_size))]
+    runtime_backend_norm = str(runtime_backend or "transformers").strip().lower()
+    if runtime_backend_norm == "vllm":
+        if vllm_batch_size is not None:
+            cmd += ["--batch-size", str(int(vllm_batch_size))]
+        if gpu_memory_utilization is not None:
+            cmd += ["--gpu-memory-utilization", str(float(gpu_memory_utilization))]
+        if disable_fp8_kv:
+            cmd.append("--disable-fp8-kv")
+        if repair_mode:
+            cmd += ["--repair-mode", str(repair_mode)]
     return cmd
 
 
@@ -126,6 +146,7 @@ def _run_cli(
     content_debug: bool,
     device: Optional[str],
     ocr_profile: str,
+    prompt_override: Optional[str],
     attn_backend: str,
     base_size: Optional[int],
     image_size: Optional[int],
@@ -134,6 +155,11 @@ def _run_cli(
     max_new_tokens: Optional[int],
     repetition_penalty: Optional[float],
     no_repeat_ngram_size: Optional[int],
+    runtime_backend: str,
+    vllm_batch_size: Optional[int],
+    gpu_memory_utilization: Optional[float],
+    disable_fp8_kv: bool,
+    repair_mode: Optional[str],
     visible_device: Optional[int] = None,
 ) -> None:
     cmd = _build_cli_command(
@@ -147,6 +173,7 @@ def _run_cli(
         content_debug=content_debug,
         device=device,
         ocr_profile=ocr_profile,
+        prompt_override=prompt_override,
         attn_backend=attn_backend,
         base_size=base_size,
         image_size=image_size,
@@ -155,6 +182,11 @@ def _run_cli(
         max_new_tokens=max_new_tokens,
         repetition_penalty=repetition_penalty,
         no_repeat_ngram_size=no_repeat_ngram_size,
+        runtime_backend=runtime_backend,
+        vllm_batch_size=vllm_batch_size,
+        gpu_memory_utilization=gpu_memory_utilization,
+        disable_fp8_kv=disable_fp8_kv,
+        repair_mode=repair_mode,
     )
     env = _build_env(python_bin=python_bin, visible_device=visible_device)
 
@@ -283,6 +315,24 @@ def _plan_lanes(
     return lanes
 
 
+def _auto_vllm_batch_size(
+    *,
+    runtime_backend: str,
+    file_list: List[str],
+    input_root: Path,
+    max_pages: Optional[int],
+) -> Optional[int]:
+    if str(runtime_backend or "").strip().lower() != "vllm":
+        return None
+    total_pages = 0
+    for name in file_list:
+        pdf_path = (input_root / name).resolve()
+        total_pages += int(_effective_page_count(pdf_path, max_pages))
+    if total_pages <= 0:
+        return 1
+    return min(int(total_pages), int(AUTO_VLLM_BATCH_PAGE_CAP))
+
+
 def _run_multi_cli(
     *,
     input_root: Path,
@@ -297,6 +347,7 @@ def _run_multi_cli(
     content_debug: bool,
     log_dir: Path,
     ocr_profile: str,
+    prompt_override: Optional[str],
     attn_backend: str,
     base_size: Optional[int],
     image_size: Optional[int],
@@ -305,6 +356,11 @@ def _run_multi_cli(
     max_new_tokens: Optional[int],
     repetition_penalty: Optional[float],
     no_repeat_ngram_size: Optional[int],
+    runtime_backend: str,
+    vllm_batch_size: Optional[int],
+    gpu_memory_utilization: Optional[float],
+    disable_fp8_kv: bool,
+    repair_mode: Optional[str],
 ) -> None:
     lanes = _plan_lanes(
         file_list=file_list,
@@ -325,6 +381,16 @@ def _run_multi_cli(
             if not lane_files:
                 continue
             visible_device = int(lane["visible_device"])
+            resolved_vllm_batch_size = (
+                int(vllm_batch_size)
+                if vllm_batch_size is not None
+                else _auto_vllm_batch_size(
+                    runtime_backend=runtime_backend,
+                    file_list=lane_files,
+                    input_root=input_root,
+                    max_pages=max_pages,
+                )
+            )
             log_path = log_dir / f"lane_{lane['lane_id']}_gpu{visible_device}.log"
             fh = stack.enter_context(log_path.open("w", encoding="utf-8"))
             cmd = _build_cli_command(
@@ -338,6 +404,7 @@ def _run_multi_cli(
                 content_debug=content_debug,
                 device="cuda",
                 ocr_profile=ocr_profile,
+                prompt_override=prompt_override,
                 attn_backend=attn_backend,
                 base_size=base_size,
                 image_size=image_size,
@@ -346,6 +413,11 @@ def _run_multi_cli(
                 max_new_tokens=max_new_tokens,
                 repetition_penalty=repetition_penalty,
                 no_repeat_ngram_size=no_repeat_ngram_size,
+                runtime_backend=runtime_backend,
+                vllm_batch_size=resolved_vllm_batch_size,
+                gpu_memory_utilization=gpu_memory_utilization,
+                disable_fp8_kv=disable_fp8_kv,
+                repair_mode=repair_mode,
             )
             env = _build_env(python_bin=python_exe, visible_device=visible_device)
             LOGGER.info(
@@ -385,7 +457,9 @@ def run_for_files(
     persist_engine: bool = True,  # placeholder for future session reuse
     precision: Optional[str] = None,  # reserved
     device: Optional[str] = None,
+    runtime_backend: str = "transformers",
     ocr_profile: str = "markdown_grounded",
+    prompt_override: Optional[str] = None,
     attn_backend: str = "auto",
     base_size: Optional[int] = None,
     image_size: Optional[int] = None,
@@ -397,27 +471,34 @@ def run_for_files(
     use_gpus: Optional[str] = None,
     devices: Optional[List[int]] = None,
     workers_per_gpu: int = 1,
-    gpu_memory_utilization: Optional[float] = None,  # reserved
-    disable_fp8_kv: bool = False,  # reserved
+    gpu_memory_utilization: Optional[float] = None,
+    disable_fp8_kv: bool = False,
+    vllm_batch_size: Optional[int] = None,
+    repair_mode: str = "auto",
     **_: Any,
 ) -> Dict[str, Any]:
     """Run DeepSeek OCR for the provided files."""
 
     requested_stub = bool(allow_stub)
     del allow_stub, allow_cli, persist_engine, precision
-    del gpu_memory_utilization, disable_fp8_kv
-
     if requested_stub or os.environ.get("GLOSSAPI_DEEPSEEK_ALLOW_STUB", "0") == "1":
         raise RuntimeError(
             "DeepSeek stub execution has been removed. "
             "Unset GLOSSAPI_DEEPSEEK_ALLOW_STUB and configure the real DeepSeek runtime."
         )
 
+    runtime_backend_norm = str(
+        runtime_backend or os.environ.get("GLOSSAPI_DEEPSEEK_RUNTIME_BACKEND", "transformers")
+    ).strip().lower()
+    if runtime_backend_norm not in {"transformers", "vllm"}:
+        raise ValueError("runtime_backend must be 'transformers' or 'vllm'")
+
     file_list = [str(f) for f in files or []]
     if not file_list:
         return {}
 
     input_root = Path(getattr(self_ref, "input_dir", ".")).resolve()
+    pdf_root = (input_root / "downloads") if (input_root / "downloads").exists() else input_root
     out_root = Path(output_dir) if output_dir else Path(getattr(self_ref, "output_dir", input_root))
     md_dir = out_root / "markdown"
     metrics_dir = out_root / "json" / "metrics"
@@ -434,10 +515,11 @@ def run_for_files(
             "DeepSeek model directory not found. Set model_dir or GLOSSAPI_DEEPSEEK_MODEL_DIR."
         )
 
+    default_script = DEFAULT_VLLM_SCRIPT if runtime_backend_norm == "vllm" else DEFAULT_SCRIPT
     script_path = Path(
         vllm_script
         or os.environ.get("GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT", "")
-        or DEFAULT_SCRIPT
+        or default_script
     )
     if not script_path.exists():
         raise FileNotFoundError(f"DeepSeek OCR runner script not found: {script_path}")
@@ -460,7 +542,7 @@ def run_for_files(
     multi_requested = str(use_gpus or "single").strip().lower() == "multi" or int(max(1, workers_per_gpu)) > 1
     if multi_requested and lane_devices:
         _run_multi_cli(
-            input_root=input_root,
+            input_root=pdf_root,
             out_root=out_root,
             file_list=file_list,
             lane_devices=lane_devices,
@@ -472,6 +554,7 @@ def run_for_files(
             content_debug=content_debug,
             log_dir=Path(log_dir) if log_dir else (out_root / "logs" / "deepseek_workers"),
             ocr_profile=ocr_profile,
+            prompt_override=prompt_override,
             attn_backend=attn_backend,
             base_size=base_size,
             image_size=image_size,
@@ -480,10 +563,25 @@ def run_for_files(
             max_new_tokens=max_new_tokens,
             repetition_penalty=repetition_penalty,
             no_repeat_ngram_size=no_repeat_ngram_size,
+            runtime_backend=runtime_backend_norm,
+            vllm_batch_size=vllm_batch_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            disable_fp8_kv=disable_fp8_kv,
+            repair_mode=repair_mode,
         )
     else:
+        resolved_vllm_batch_size = (
+            int(vllm_batch_size)
+            if vllm_batch_size is not None
+            else _auto_vllm_batch_size(
+                runtime_backend=runtime_backend_norm,
+                file_list=file_list,
+                input_root=pdf_root,
+                max_pages=max_pages,
+            )
+        )
         _run_cli(
-            input_dir=input_root,
+            input_dir=pdf_root,
             output_dir=out_root,
             files=file_list,
             model_dir=model_root,
@@ -493,6 +591,7 @@ def run_for_files(
             content_debug=content_debug,
             device=device,
             ocr_profile=ocr_profile,
+            prompt_override=prompt_override,
             attn_backend=attn_backend,
             base_size=base_size,
             image_size=image_size,
@@ -501,11 +600,16 @@ def run_for_files(
             max_new_tokens=max_new_tokens,
             repetition_penalty=repetition_penalty,
             no_repeat_ngram_size=no_repeat_ngram_size,
+            runtime_backend=runtime_backend_norm,
+            vllm_batch_size=resolved_vllm_batch_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            disable_fp8_kv=disable_fp8_kv,
+            repair_mode=repair_mode,
         )
 
     results: Dict[str, Any] = {}
     for name in file_list:
-        pdf_path = (input_root / name).resolve()
+        pdf_path = (pdf_root / name).resolve()
         stem = Path(name).stem
         md_path = md_dir / f"{stem}.md"
         metrics_path = metrics_dir / f"{stem}.metrics.json"

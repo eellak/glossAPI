@@ -8,8 +8,8 @@ without reading the entire repo.
 
 | Area | Main code | Responsibility |
 | --- | --- | --- |
-| Public package entry | `src/glossapi/__init__.py` | Applies the RapidOCR patch on import and exports `Corpus`, `GlossSectionClassifier`, `GlossDownloader`, and related classes. |
-| High-level orchestration | `src/glossapi/corpus.py` | Coordinates the end-to-end pipeline and owns the main folder/artifact conventions. |
+| Public package entry | `src/glossapi/__init__.py` | Lazy-exports `Corpus`, `GlossSectionClassifier`, `GlossDownloader`, and related classes without pulling heavy runtime dependencies at import time. |
+| High-level orchestration | `src/glossapi/corpus/corpus_orchestrator.py` | Coordinates the end-to-end pipeline and owns the main folder/artifact conventions. |
 | Phase-1 extraction engine | `src/glossapi/gloss_extract.py` | Builds/reuses Docling converters, handles safe vs Docling backend selection, batching, timeouts, resumption, and artifact export. |
 
 ## Pipeline Stages
@@ -28,12 +28,11 @@ without reading the entire repo.
 
 | File | Responsibility |
 | --- | --- |
-| `src/glossapi/_pipeline.py` | Canonical builders for layout-only and RapidOCR-backed Docling pipelines. |
-| `src/glossapi/rapidocr_safe.py` | Monkey-patch/shim for Docling 2.48.x so problematic OCR crops do not crash whole documents. |
-| `src/glossapi/_rapidocr_paths.py` | Resolves packaged RapidOCR ONNX models and Greek keys, with env-var override support. |
-| `src/glossapi/ocr_pool.py` | Reuses RapidOCR model instances where possible. |
-| `src/glossapi/json_io.py` | Writes and reads compressed Docling JSON artifacts. |
-| `src/glossapi/triage.py` | Summarizes per-page formula density and updates parquet routing metadata. |
+| `src/glossapi/ocr/docling/pipeline.py` | Canonical builder for the layout-only Docling Phase-1 pipeline, including runtime tuning knobs for the current Docling API. |
+| `src/glossapi/ocr/docling_pipeline.py` | Compatibility re-export for the canonical Docling pipeline builder. |
+| `src/glossapi/ocr/deepseek/runner.py` | Launches the DeepSeek OCR remediation path from `Corpus.ocr()`. |
+| `src/glossapi/ocr/utils/json_io.py` | Writes and reads compressed Docling JSON artifacts. |
+| `src/glossapi/corpus/phase_ocr_math.py` | Runs DeepSeek OCR remediation, math/code enrichment, and parquet status updates. |
 | `src/glossapi/metrics.py` | Computes per-page parse/OCR/formula metrics from Docling conversions. |
 
 ## Rust Extensions
@@ -50,12 +49,12 @@ without reading the entire repo.
 | `tests/test_pipeline_smoke.py` | Best high-level example of the intended artifact flow through extract -> clean -> OCR -> section. |
 | `tests/test_corpus_guards.py` | Shows the contract around backend selection and GPU preflight. |
 | `tests/test_jsonl_export.py` | Shows how final JSONL export merges cleaned markdown, parquet metadata, and math metrics. |
-| `tests/test_rapidocr_patch.py` | Covers the Docling/RapidOCR compatibility patch and fallback paths. |
+| `tests/test_ocr_dispatch_backends.py` | Covers the DeepSeek-only OCR dispatch contract and backend validation. |
 
 ## If You Need To Change...
 
 - Download scheduling or resume behavior: start in `src/glossapi/gloss_downloader.py`.
-- Phase-1 parsing, OCR selection, or artifact generation: start in `src/glossapi/corpus.py` and `src/glossapi/gloss_extract.py`.
-- Docling/RapidOCR wiring or provider issues: start in `src/glossapi/_pipeline.py`, `src/glossapi/rapidocr_safe.py`, and `src/glossapi/_rapidocr_paths.py`.
+- Phase-1 parsing, worker fanout, or artifact generation: start in `src/glossapi/corpus/phase_extract.py`, `src/glossapi/corpus/corpus_orchestrator.py`, and `src/glossapi/gloss_extract.py`.
+- Docling pipeline wiring or runtime tuning: start in `src/glossapi/ocr/docling/pipeline.py` and `src/glossapi/gloss_extract.py`.
 - Section labels or section-annotation rules: start in `src/glossapi/gloss_section_classifier.py`.
-- Output folder contracts or stage sequencing: start in `src/glossapi/corpus.py`.
+- Output folder contracts or stage sequencing: start in `src/glossapi/corpus/corpus_orchestrator.py`.

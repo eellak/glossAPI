@@ -41,15 +41,10 @@ class OcrMathPhaseMixin:
         limit: Optional[int] = None,
         dpi: Optional[int] = None,        # reserved for future use
         precision: Optional[str] = None,  # reserved for future use ("fp16","bf16")
-        # Integrated math enrichment controls
-        math_enhance: bool = True,
-        math_targets: Optional[Dict[str, List[Tuple[int, int]]]] = None,
-        math_batch_size: int = 8,
-        math_dpi_base: int = 220,
-        use_gpus: str = "single",
-        devices: Optional[List[int]] = None,
         workers_per_gpu: int = 1,
+        runtime_backend: str = "transformers",
         ocr_profile: str = "markdown_grounded",
+        prompt_override: Optional[str] = None,
         attn_backend: str = "auto",
         base_size: Optional[int] = None,
         image_size: Optional[int] = None,
@@ -58,6 +53,17 @@ class OcrMathPhaseMixin:
         max_new_tokens: Optional[int] = None,
         repetition_penalty: Optional[float] = None,
         no_repeat_ngram_size: Optional[int] = None,
+        vllm_batch_size: Optional[int] = None,
+        gpu_memory_utilization: Optional[float] = None,
+        disable_fp8_kv: bool = False,
+        repair_mode: str = "auto",
+        # Integrated math enrichment controls
+        math_enhance: bool = True,
+        math_targets: Optional[Dict[str, List[Tuple[int, int]]]] = None,
+        math_batch_size: int = 8,
+        math_dpi_base: int = 220,
+        use_gpus: str = "single",
+        devices: Optional[List[int]] = None,
         force: Optional[bool] = None,
         reprocess_completed: Optional[bool] = None,
         skip_existing: Optional[bool] = None,
@@ -88,15 +94,19 @@ class OcrMathPhaseMixin:
           ``use_gpus="multi"`` to shard OCR across detected or specified GPUs.
           Increase ``workers_per_gpu`` above ``1`` to run multiple OCR workers
           per visible GPU.
-        - ocr_profile/attn_backend/base_size/image_size/crop_mode/render_dpi:
-          DeepSeek throughput and quality controls for benchmarking lighter OCR
-          modes and more efficient attention backends.
-        - max_new_tokens: optional cap for DeepSeek generation per page. Useful
-          for benchmarking and for containing long-tail pages with pathological
-          output lengths.
-        - repetition_penalty/no_repeat_ngram_size: optional generation guards
-          for DeepSeek. These are useful when OCR runs fall into repeated or
-          looping output on difficult pages.
+        - runtime_backend: ``transformers`` (default) or ``vllm``.
+        - ocr_profile/prompt_override/attn_backend/base_size/image_size/crop_mode/render_dpi:
+          DeepSeek rendering and attention controls used for throughput/quality
+          benchmarking.
+        - max_new_tokens/repetition_penalty/no_repeat_ngram_size:
+          Optional generation controls forwarded to DeepSeek. These are exposed
+          for runtime experiments; leave them unset unless a benchmark calls for
+          them explicitly.
+        - vllm_batch_size/gpu_memory_utilization/disable_fp8_kv/repair_mode:
+          Optional vLLM controls. ``repair_mode='auto'`` enables the markdown-first
+          repair pipeline (plain fallback for garbage pages, tiled fallback for
+          short coverage failures). These are ignored by the transformers runtime
+          except for ``prompt_override``.
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
         - reprocess_completed: when False, skip documents already flagged as successfully
           OCRed or math-enriched in metadata. Set True to force reprocessing. Defaults to False
@@ -605,10 +615,15 @@ class OcrMathPhaseMixin:
                         bad_files,
                         model_dir=Path(model_dir) if model_dir else None,
                         max_pages=max_pages,
-                        persist_engine=persist_engine,
+                        persist_engine=bool(persist_engine),
                         precision=precision,
                         device=device,
+                        use_gpus=use_gpus,
+                        devices=devices,
+                        workers_per_gpu=int(max(1, workers_per_gpu)),
+                        runtime_backend=runtime_backend,
                         ocr_profile=ocr_profile,
+                        prompt_override=prompt_override,
                         attn_backend=attn_backend,
                         base_size=base_size,
                         image_size=image_size,
@@ -617,9 +632,10 @@ class OcrMathPhaseMixin:
                         max_new_tokens=max_new_tokens,
                         repetition_penalty=repetition_penalty,
                         no_repeat_ngram_size=no_repeat_ngram_size,
-                        use_gpus=use_gpus,
-                        devices=devices,
-                        workers_per_gpu=workers_per_gpu,
+                        vllm_batch_size=vllm_batch_size,
+                        gpu_memory_utilization=gpu_memory_utilization,
+                        disable_fp8_kv=disable_fp8_kv,
+                        repair_mode=repair_mode,
                         content_debug=bool(content_debug),
                     )
                 except Exception as _e:

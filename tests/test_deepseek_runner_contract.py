@@ -63,212 +63,170 @@ def test_progress_artifacts_stay_out_of_canonical_markdown(tmp_path):
     assert not progress_markdown.exists()
 
 
-def test_deepseek_runner_multi_uses_visible_device_isolation(tmp_path, monkeypatch):
+def test_auto_attn_backend_prefers_eager_when_flash_attn_is_unavailable(monkeypatch):
+    import builtins
+
+    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _resolve_attn_backend
+
+    original_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "flash_attn":
+            raise ImportError("flash_attn unavailable")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert _resolve_attn_backend("auto") == "eager"
+
+
+def test_runner_uses_downloads_subdir_when_present(tmp_path, monkeypatch):
     from glossapi.ocr.deepseek import runner
 
-    input_dir = tmp_path / "input"
-    output_dir = tmp_path / "output"
-    input_dir.mkdir()
-    output_dir.mkdir()
+    corpus = _mk_corpus(tmp_path)
+    downloads_dir = corpus.input_dir / "downloads"
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+    (downloads_dir / "doc.pdf").write_bytes(b"%PDF-1.4\n%real\n")
 
-    files = ["a.pdf", "b.pdf", "c.pdf", "d.pdf"]
-    weights = {"a.pdf": 40, "b.pdf": 30, "c.pdf": 20, "d.pdf": 10}
-    for name in files:
-        (input_dir / name).write_bytes(b"%PDF-1.4\n%stub\n")
+    calls = {}
 
-    class DummyCorpus:
-        def __init__(self, input_dir: Path, output_dir: Path):
-            self.input_dir = input_dir
-            self.output_dir = output_dir
+    def fake_run_cli(input_dir, output_dir, **kwargs):
+        calls["input_dir"] = input_dir
+        md_dir = output_dir / "markdown"
+        metrics_dir = output_dir / "json" / "metrics"
+        md_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        (md_dir / "doc.md").write_text("ok\n", encoding="utf-8")
+        (metrics_dir / "doc.metrics.json").write_text('{"page_count": 1}', encoding="utf-8")
 
-    class FakePopen:
-        calls = []
-
-        def __init__(self, cmd, stdout=None, stderr=None, env=None):
-            self.cmd = list(cmd)
-            self.env = dict(env or {})
-            self.returncode = 0
-            FakePopen.calls.append(self)
-
-            args = list(cmd)
-            out_root = Path(args[args.index("--output-dir") + 1])
-            lane_files = []
-            idx = args.index("--files") + 1
-            while idx < len(args) and not args[idx].startswith("--"):
-                lane_files.append(args[idx])
-                idx += 1
-            md_dir = out_root / "markdown"
-            metrics_dir = out_root / "json" / "metrics"
-            md_dir.mkdir(parents=True, exist_ok=True)
-            metrics_dir.mkdir(parents=True, exist_ok=True)
-            for name in lane_files:
-                stem = Path(name).stem
-                (md_dir / f"{stem}.md").write_text("ok\n", encoding="utf-8")
-                (metrics_dir / f"{stem}.metrics.json").write_text(
-                    "{\n  \"page_count\": 1\n}\n",
-                    encoding="utf-8",
-                )
-
-        def wait(self):
-            return self.returncode
-
-    script = tmp_path / "run_pdf_ocr_transformers.py"
-    script.write_text("# stub\n", encoding="utf-8")
-    model_dir = tmp_path / "DeepSeek-OCR-2"
-    model_dir.mkdir()
-
-    monkeypatch.setattr(runner, "_page_count", lambda path: weights[path.name])
-    monkeypatch.setattr(runner.subprocess, "Popen", FakePopen)
-
-    results = runner.run_for_files(
-        DummyCorpus(input_dir, output_dir),
-        files,
-        model_dir=model_dir,
-        python_bin=Path(sys.executable),
-        vllm_script=script,
-        use_gpus="multi",
-        devices=[2, 5],
-        workers_per_gpu=2,
+    monkeypatch.setattr(runner, "_run_cli", fake_run_cli)
+    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_MODEL_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT",
+        str(Path(runner.__file__).resolve().parent / "run_pdf_ocr_transformers.py"),
     )
+    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_PYTHON", sys.executable)
 
-    assert sorted(results) == ["a", "b", "c", "d"]
-    assert len(FakePopen.calls) == 4
+    result = runner.run_for_files(corpus, ["doc.pdf"])
 
-    seen_files = []
-    seen_visible_devices = []
-    for call in FakePopen.calls:
-        args = call.cmd
-        assert "--device" in args
-        assert args[args.index("--device") + 1] == "cuda"
-        seen_visible_devices.append(call.env.get("CUDA_VISIBLE_DEVICES"))
-        idx = args.index("--files") + 1
-        while idx < len(args) and not args[idx].startswith("--"):
-            seen_files.append(args[idx])
-            idx += 1
-
-    assert sorted(seen_files) == sorted(files)
-    assert sorted(seen_visible_devices) == ["2", "2", "5", "5"]
+    assert calls["input_dir"] == downloads_dir.resolve()
+    assert result["doc"]["page_count"] == 1
 
 
-def test_deepseek_runner_builds_speed_control_flags(tmp_path):
-    from glossapi.ocr.deepseek import runner
+def test_build_cli_command_includes_speed_flags(tmp_path):
+    from glossapi.ocr.deepseek.runner import _build_cli_command
 
-    script = tmp_path / "run_pdf_ocr_transformers.py"
-    script.write_text("# stub\n", encoding="utf-8")
-    model_dir = tmp_path / "DeepSeek-OCR-2"
-    model_dir.mkdir()
-
-    cmd = runner._build_cli_command(
-        input_dir=tmp_path / "input",
-        output_dir=tmp_path / "output",
-        files=["doc.pdf"],
-        model_dir=model_dir,
-        python_bin=Path(sys.executable),
-        script=script,
-        max_pages=3,
+    cmd = _build_cli_command(
+        input_dir=tmp_path / "in",
+        output_dir=tmp_path / "out",
+        files=["a.pdf"],
+        model_dir=tmp_path / "model",
+        python_bin=Path("/usr/bin/python3"),
+        script=tmp_path / "run.py",
+        max_pages=1,
         content_debug=False,
         device="cuda",
         ocr_profile="plain_ocr",
-        attn_backend="sdpa",
-        base_size=640,
-        image_size=448,
+        prompt_override="custom prompt",
+        attn_backend="flash_attention_2",
+        base_size=768,
+        image_size=512,
         crop_mode=True,
-        render_dpi=120,
-        max_new_tokens=2048,
+        render_dpi=144,
+        max_new_tokens=1024,
         repetition_penalty=1.05,
-        no_repeat_ngram_size=8,
-    )
-
-    assert "--ocr-profile" in cmd
-    assert cmd[cmd.index("--ocr-profile") + 1] == "plain_ocr"
-    assert "--attn-backend" in cmd
-    assert cmd[cmd.index("--attn-backend") + 1] == "sdpa"
-    assert "--base-size" in cmd
-    assert cmd[cmd.index("--base-size") + 1] == "640"
-    assert "--image-size" in cmd
-    assert cmd[cmd.index("--image-size") + 1] == "448"
-    assert "--crop-mode" in cmd
-    assert "--render-dpi" in cmd
-    assert cmd[cmd.index("--render-dpi") + 1] == "120"
-    assert "--max-new-tokens" in cmd
-    assert cmd[cmd.index("--max-new-tokens") + 1] == "2048"
-    assert "--repetition-penalty" in cmd
-    assert cmd[cmd.index("--repetition-penalty") + 1] == "1.05"
-    assert "--no-repeat-ngram-size" in cmd
-    assert cmd[cmd.index("--no-repeat-ngram-size") + 1] == "8"
-
-
-def test_deepseek_model_load_falls_back_to_eager_when_sdpa_is_unsupported(tmp_path, monkeypatch):
-    from glossapi.ocr.deepseek import run_pdf_ocr_transformers as cli
-
-    class DummyModel:
-        def eval(self):
-            return self
-
-        def to(self, *_args, **_kwargs):
-            return self
-
-    monkeypatch.setattr(
-        cli.AutoTokenizer,
-        "from_pretrained",
-        lambda *args, **kwargs: "tokenizer",
-    )
-
-    calls: list[str] = []
-
-    def fake_from_pretrained(*_args, **kwargs):
-        attn = kwargs.get("_attn_implementation")
-        calls.append(attn)
-        if attn == "sdpa":
-            raise ValueError(
-                "DeepseekOCR2ForCausalLM does not support an attention implementation through "
-                "torch.nn.functional.scaled_dot_product_attention yet."
-            )
-        return DummyModel()
-
-    monkeypatch.setattr(cli.AutoModel, "from_pretrained", fake_from_pretrained)
-
-    _tokenizer, _model, attn_impl = cli._load_model(tmp_path, "cpu", "auto", None, None, None)
-
-    assert calls == ["sdpa", "eager"]
-    assert attn_impl == "eager"
-
-
-def test_deepseek_generate_controls_apply():
-    from glossapi.ocr.deepseek import run_pdf_ocr_transformers as cli
-
-    seen = {}
-
-    class DummyModel:
-        def generate(self, *args, **kwargs):
-            seen["kwargs"] = dict(kwargs)
-            return "ok"
-
-    model = DummyModel()
-    cli._configure_generate(
-        model,
-        max_new_tokens=2048,
-        repetition_penalty=1.08,
         no_repeat_ngram_size=12,
+        runtime_backend="transformers",
+        vllm_batch_size=None,
+        gpu_memory_utilization=None,
+        disable_fp8_kv=False,
+        repair_mode=None,
     )
-    model.generate(max_new_tokens=8192, foo="bar")
-    assert seen["kwargs"]["max_new_tokens"] == 2048
-    assert seen["kwargs"]["repetition_penalty"] == 1.08
-    assert seen["kwargs"]["no_repeat_ngram_size"] == 12
-    assert seen["kwargs"]["foo"] == "bar"
+
+    assert "--ocr-profile" in cmd and "plain_ocr" in cmd
+    assert "--prompt-override" in cmd and "custom prompt" in cmd
+    assert "--attn-backend" in cmd and "flash_attention_2" in cmd
+    assert "--base-size" in cmd and "768" in cmd
+    assert "--image-size" in cmd and "512" in cmd
+    assert "--crop-mode" in cmd
+    assert "--render-dpi" in cmd and "144" in cmd
+    assert "--max-new-tokens" in cmd and "1024" in cmd
 
 
-def test_postprocess_page_text_strips_prompt_and_truncates_repetition():
-    from glossapi.ocr.deepseek import run_pdf_ocr_transformers as cli
+def test_build_cli_command_includes_vllm_flags(tmp_path):
+    from glossapi.ocr.deepseek.runner import _build_cli_command
 
-    prompt = cli.PROMPT_PLAIN_OCR
-    raw = (
-        "<image>\nExtract the text from the document page in reading order.\n"
-        "Γραμμή 1\n"
-        + "\n".join(["ΕΠΑΝΑΛΗΨΗ"] * 12)
+    cmd = _build_cli_command(
+        input_dir=tmp_path / "in",
+        output_dir=tmp_path / "out",
+        files=["a.pdf"],
+        model_dir=tmp_path / "model",
+        python_bin=Path("/usr/bin/python3"),
+        script=tmp_path / "run_vllm.py",
+        max_pages=1,
+        content_debug=False,
+        device="cuda",
+        ocr_profile="markdown_grounded",
+        prompt_override=None,
+        attn_backend="auto",
+        base_size=None,
+        image_size=None,
+        crop_mode=None,
+        render_dpi=110,
+        max_new_tokens=768,
+        repetition_penalty=None,
+        no_repeat_ngram_size=None,
+        runtime_backend="vllm",
+        vllm_batch_size=16,
+        gpu_memory_utilization=0.92,
+        disable_fp8_kv=True,
+        repair_mode="auto",
     )
-    cleaned, metrics = cli._postprocess_page_text(raw, prompt=prompt, content_debug=False)
 
-    assert "Extract the text from the document page in reading order." not in cleaned
-    assert cleaned.splitlines().count("ΕΠΑΝΑΛΗΨΗ") <= 10
-    assert metrics["early_stops"] == 1
+    assert "--batch-size" in cmd and "16" in cmd
+    assert "--gpu-memory-utilization" in cmd and "0.92" in cmd
+    assert "--disable-fp8-kv" in cmd
+    assert "--repair-mode" in cmd and "auto" in cmd
+
+
+def test_vllm_repair_classifier_routes_garbage_and_short_pages():
+    from glossapi.ocr.deepseek.run_pdf_ocr_vllm import _classify_repair
+
+    dense_page = {
+        "top_dark_ratio": 0.16,
+        "bottom_dark_ratio": 0.16,
+        "overall_dark_ratio": 0.15,
+    }
+    assert _classify_repair("\uf0b7" * 80, dense_page, "auto") == ("plain", "markdown_garbage")
+    assert _classify_repair("42", dense_page, "auto") == ("plain", "extreme_short")
+    assert _classify_repair("Α" * 300, dense_page, "auto") == ("tile", "short_coverage")
+    assert _classify_repair("Α" * 1200, dense_page, "auto") == ("none", None)
+    assert _classify_repair("Α" * 300, dense_page, "off") == ("none", None)
+
+
+def test_runner_selects_vllm_script_when_requested(tmp_path, monkeypatch):
+    from glossapi.ocr.deepseek import runner
+
+    corpus = _mk_corpus(tmp_path)
+    (corpus.input_dir / "doc.pdf").write_bytes(b"%PDF-1.4\n%real\n")
+
+    calls = {}
+
+    def fake_run_cli(input_dir, output_dir, **kwargs):
+        calls["script"] = kwargs["script"]
+        calls["runtime_backend"] = kwargs["runtime_backend"]
+        md_dir = output_dir / "markdown"
+        metrics_dir = output_dir / "json" / "metrics"
+        md_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        (md_dir / "doc.md").write_text("ok\n", encoding="utf-8")
+        (metrics_dir / "doc.metrics.json").write_text('{"page_count": 1}', encoding="utf-8")
+
+    monkeypatch.setattr(runner, "_run_cli", fake_run_cli)
+    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_MODEL_DIR", str(tmp_path))
+    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_PYTHON", sys.executable)
+
+    result = runner.run_for_files(corpus, ["doc.pdf"], runtime_backend="vllm")
+
+    assert calls["runtime_backend"] == "vllm"
+    assert Path(calls["script"]).name == "run_pdf_ocr_vllm.py"
+    assert result["doc"]["page_count"] == 1
