@@ -60,6 +60,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-pages", type=int, default=None)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--ocr-profile", default="markdown_grounded", choices=["markdown_grounded", "plain_ocr"])
+    parser.add_argument("--prompt-override", default=None)
     parser.add_argument("--attn-backend", default="auto", choices=["auto", "flash_attention_2", "sdpa", "eager"])
     parser.add_argument("--base-size", type=int, default=None)
     parser.add_argument("--image-size", type=int, default=None)
@@ -329,7 +330,7 @@ def main() -> int:
         return 0
 
     profile_defaults = _profile_defaults(args.ocr_profile)
-    prompt = profile_defaults["prompt"]
+    prompt = str(args.prompt_override) if args.prompt_override else profile_defaults["prompt"]
     base_size = int(args.base_size) if args.base_size is not None else int(profile_defaults["base_size"])
     image_size = int(args.image_size) if args.image_size is not None else int(profile_defaults["image_size"])
     crop_mode = bool(args.crop_mode) if args.crop_mode is not None else bool(profile_defaults["crop_mode"])

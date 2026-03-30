@@ -44,6 +44,7 @@ class OcrMathPhaseMixin:
         workers_per_gpu: int = 1,
         runtime_backend: str = "transformers",
         ocr_profile: str = "markdown_grounded",
+        prompt_override: Optional[str] = None,
         attn_backend: str = "auto",
         base_size: Optional[int] = None,
         image_size: Optional[int] = None,
@@ -55,6 +56,7 @@ class OcrMathPhaseMixin:
         vllm_batch_size: Optional[int] = None,
         gpu_memory_utilization: Optional[float] = None,
         disable_fp8_kv: bool = False,
+        repair_mode: str = "auto",
         # Integrated math enrichment controls
         math_enhance: bool = True,
         math_targets: Optional[Dict[str, List[Tuple[int, int]]]] = None,
@@ -93,15 +95,18 @@ class OcrMathPhaseMixin:
           Increase ``workers_per_gpu`` above ``1`` to run multiple OCR workers
           per visible GPU.
         - runtime_backend: ``transformers`` (default) or ``vllm``.
-        - ocr_profile/attn_backend/base_size/image_size/crop_mode/render_dpi:
+        - ocr_profile/prompt_override/attn_backend/base_size/image_size/crop_mode/render_dpi:
           DeepSeek rendering and attention controls used for throughput/quality
           benchmarking.
         - max_new_tokens/repetition_penalty/no_repeat_ngram_size:
           Optional generation controls forwarded to DeepSeek. These are exposed
           for runtime experiments; leave them unset unless a benchmark calls for
           them explicitly.
-        - vllm_batch_size/gpu_memory_utilization/disable_fp8_kv:
-          Optional vLLM controls. These are ignored by the transformers runtime.
+        - vllm_batch_size/gpu_memory_utilization/disable_fp8_kv/repair_mode:
+          Optional vLLM controls. ``repair_mode='auto'`` enables the markdown-first
+          repair pipeline (plain fallback for garbage pages, tiled fallback for
+          short coverage failures). These are ignored by the transformers runtime
+          except for ``prompt_override``.
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
         - reprocess_completed: when False, skip documents already flagged as successfully
           OCRed or math-enriched in metadata. Set True to force reprocessing. Defaults to False
@@ -618,6 +623,7 @@ class OcrMathPhaseMixin:
                         workers_per_gpu=int(max(1, workers_per_gpu)),
                         runtime_backend=runtime_backend,
                         ocr_profile=ocr_profile,
+                        prompt_override=prompt_override,
                         attn_backend=attn_backend,
                         base_size=base_size,
                         image_size=image_size,
@@ -629,6 +635,7 @@ class OcrMathPhaseMixin:
                         vllm_batch_size=vllm_batch_size,
                         gpu_memory_utilization=gpu_memory_utilization,
                         disable_fp8_kv=disable_fp8_kv,
+                        repair_mode=repair_mode,
                         content_debug=bool(content_debug),
                     )
                 except Exception as _e:

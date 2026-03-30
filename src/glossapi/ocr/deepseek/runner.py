@@ -44,6 +44,7 @@ def _build_cli_command(
     content_debug: bool,
     device: Optional[str],
     ocr_profile: str,
+    prompt_override: Optional[str],
     attn_backend: str,
     base_size: Optional[int],
     image_size: Optional[int],
@@ -56,6 +57,7 @@ def _build_cli_command(
     vllm_batch_size: Optional[int],
     gpu_memory_utilization: Optional[float],
     disable_fp8_kv: bool,
+    repair_mode: Optional[str],
 ) -> List[str]:
     python_exe = Path(python_bin) if python_bin else Path(sys.executable)
     cmd: List[str] = [
@@ -78,6 +80,8 @@ def _build_cli_command(
         cmd += ["--device", str(device)]
     if ocr_profile:
         cmd += ["--ocr-profile", str(ocr_profile)]
+    if prompt_override:
+        cmd += ["--prompt-override", str(prompt_override)]
     if attn_backend:
         cmd += ["--attn-backend", str(attn_backend)]
     if base_size is not None:
@@ -104,6 +108,8 @@ def _build_cli_command(
             cmd += ["--gpu-memory-utilization", str(float(gpu_memory_utilization))]
         if disable_fp8_kv:
             cmd.append("--disable-fp8-kv")
+        if repair_mode:
+            cmd += ["--repair-mode", str(repair_mode)]
     return cmd
 
 
@@ -139,6 +145,7 @@ def _run_cli(
     content_debug: bool,
     device: Optional[str],
     ocr_profile: str,
+    prompt_override: Optional[str],
     attn_backend: str,
     base_size: Optional[int],
     image_size: Optional[int],
@@ -151,6 +158,7 @@ def _run_cli(
     vllm_batch_size: Optional[int],
     gpu_memory_utilization: Optional[float],
     disable_fp8_kv: bool,
+    repair_mode: Optional[str],
     visible_device: Optional[int] = None,
 ) -> None:
     cmd = _build_cli_command(
@@ -164,6 +172,7 @@ def _run_cli(
         content_debug=content_debug,
         device=device,
         ocr_profile=ocr_profile,
+        prompt_override=prompt_override,
         attn_backend=attn_backend,
         base_size=base_size,
         image_size=image_size,
@@ -176,6 +185,7 @@ def _run_cli(
         vllm_batch_size=vllm_batch_size,
         gpu_memory_utilization=gpu_memory_utilization,
         disable_fp8_kv=disable_fp8_kv,
+        repair_mode=repair_mode,
     )
     env = _build_env(python_bin=python_bin, visible_device=visible_device)
 
@@ -318,6 +328,7 @@ def _run_multi_cli(
     content_debug: bool,
     log_dir: Path,
     ocr_profile: str,
+    prompt_override: Optional[str],
     attn_backend: str,
     base_size: Optional[int],
     image_size: Optional[int],
@@ -330,6 +341,7 @@ def _run_multi_cli(
     vllm_batch_size: Optional[int],
     gpu_memory_utilization: Optional[float],
     disable_fp8_kv: bool,
+    repair_mode: Optional[str],
 ) -> None:
     lanes = _plan_lanes(
         file_list=file_list,
@@ -363,6 +375,7 @@ def _run_multi_cli(
                 content_debug=content_debug,
                 device="cuda",
                 ocr_profile=ocr_profile,
+                prompt_override=prompt_override,
                 attn_backend=attn_backend,
                 base_size=base_size,
                 image_size=image_size,
@@ -375,6 +388,7 @@ def _run_multi_cli(
                 vllm_batch_size=vllm_batch_size,
                 gpu_memory_utilization=gpu_memory_utilization,
                 disable_fp8_kv=disable_fp8_kv,
+                repair_mode=repair_mode,
             )
             env = _build_env(python_bin=python_exe, visible_device=visible_device)
             LOGGER.info(
@@ -416,6 +430,7 @@ def run_for_files(
     device: Optional[str] = None,
     runtime_backend: str = "transformers",
     ocr_profile: str = "markdown_grounded",
+    prompt_override: Optional[str] = None,
     attn_backend: str = "auto",
     base_size: Optional[int] = None,
     image_size: Optional[int] = None,
@@ -430,6 +445,7 @@ def run_for_files(
     gpu_memory_utilization: Optional[float] = None,
     disable_fp8_kv: bool = False,
     vllm_batch_size: Optional[int] = None,
+    repair_mode: str = "auto",
     **_: Any,
 ) -> Dict[str, Any]:
     """Run DeepSeek OCR for the provided files."""
@@ -509,6 +525,7 @@ def run_for_files(
             content_debug=content_debug,
             log_dir=Path(log_dir) if log_dir else (out_root / "logs" / "deepseek_workers"),
             ocr_profile=ocr_profile,
+            prompt_override=prompt_override,
             attn_backend=attn_backend,
             base_size=base_size,
             image_size=image_size,
@@ -521,6 +538,7 @@ def run_for_files(
             vllm_batch_size=vllm_batch_size,
             gpu_memory_utilization=gpu_memory_utilization,
             disable_fp8_kv=disable_fp8_kv,
+            repair_mode=repair_mode,
         )
     else:
         _run_cli(
@@ -534,6 +552,7 @@ def run_for_files(
             content_debug=content_debug,
             device=device,
             ocr_profile=ocr_profile,
+            prompt_override=prompt_override,
             attn_backend=attn_backend,
             base_size=base_size,
             image_size=image_size,
@@ -546,6 +565,7 @@ def run_for_files(
             vllm_batch_size=vllm_batch_size,
             gpu_memory_utilization=gpu_memory_utilization,
             disable_fp8_kv=disable_fp8_kv,
+            repair_mode=repair_mode,
         )
 
     results: Dict[str, Any] = {}

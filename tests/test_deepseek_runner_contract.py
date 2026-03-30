@@ -126,6 +126,7 @@ def test_build_cli_command_includes_speed_flags(tmp_path):
         content_debug=False,
         device="cuda",
         ocr_profile="plain_ocr",
+        prompt_override="custom prompt",
         attn_backend="flash_attention_2",
         base_size=768,
         image_size=512,
@@ -138,9 +139,11 @@ def test_build_cli_command_includes_speed_flags(tmp_path):
         vllm_batch_size=None,
         gpu_memory_utilization=None,
         disable_fp8_kv=False,
+        repair_mode=None,
     )
 
     assert "--ocr-profile" in cmd and "plain_ocr" in cmd
+    assert "--prompt-override" in cmd and "custom prompt" in cmd
     assert "--attn-backend" in cmd and "flash_attention_2" in cmd
     assert "--base-size" in cmd and "768" in cmd
     assert "--image-size" in cmd and "512" in cmd
@@ -163,6 +166,7 @@ def test_build_cli_command_includes_vllm_flags(tmp_path):
         content_debug=False,
         device="cuda",
         ocr_profile="markdown_grounded",
+        prompt_override=None,
         attn_backend="auto",
         base_size=None,
         image_size=None,
@@ -175,11 +179,28 @@ def test_build_cli_command_includes_vllm_flags(tmp_path):
         vllm_batch_size=16,
         gpu_memory_utilization=0.92,
         disable_fp8_kv=True,
+        repair_mode="auto",
     )
 
     assert "--batch-size" in cmd and "16" in cmd
     assert "--gpu-memory-utilization" in cmd and "0.92" in cmd
     assert "--disable-fp8-kv" in cmd
+    assert "--repair-mode" in cmd and "auto" in cmd
+
+
+def test_vllm_repair_classifier_routes_garbage_and_short_pages():
+    from glossapi.ocr.deepseek.run_pdf_ocr_vllm import _classify_repair
+
+    dense_page = {
+        "top_dark_ratio": 0.16,
+        "bottom_dark_ratio": 0.16,
+        "overall_dark_ratio": 0.15,
+    }
+    assert _classify_repair("\uf0b7" * 80, dense_page, "auto") == ("plain", "markdown_garbage")
+    assert _classify_repair("42", dense_page, "auto") == ("plain", "extreme_short")
+    assert _classify_repair("Α" * 300, dense_page, "auto") == ("tile", "short_coverage")
+    assert _classify_repair("Α" * 1200, dense_page, "auto") == ("none", None)
+    assert _classify_repair("Α" * 300, dense_page, "off") == ("none", None)
 
 
 def test_runner_selects_vllm_script_when_requested(tmp_path, monkeypatch):

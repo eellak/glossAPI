@@ -82,6 +82,40 @@ c.ocr(backend='deepseek', fix_bad=True, math_enhance=True, mode='ocr_bad_then_ma
 
 If you need Phase‑2 math on files that do not require OCR, run `math_only` after Docling extraction with JSON enabled.
 
+### DeepSeek fast path
+
+The current recommended high-throughput DeepSeek configuration is:
+
+- `runtime_backend='vllm'`
+- `ocr_profile='markdown_grounded'`
+- `repair_mode='auto'` to keep markdown as the primary output while selectively rerunning suspicious pages
+- large `vllm_batch_size` chosen to keep `sec/page/GPU` at or below the best validated floor for the target hardware
+
+Example:
+
+```python
+c.ocr(
+    backend='deepseek',
+    fix_bad=True,
+    math_enhance=False,
+    runtime_backend='vllm',
+    ocr_profile='markdown_grounded',
+    vllm_batch_size=160,
+    gpu_memory_utilization=0.9,
+    repair_mode='auto',
+    use_gpus='multi',
+)
+```
+
+`repair_mode='auto'` runs the pipeline in distinct phases inside the vLLM runner:
+
+1. markdown first pass over all rendered pages
+2. cheap per-page triage using output quality plus simple image density statistics
+3. plain-text rerun bucket for garbage markdown pages
+4. tiled markdown rerun bucket for short coverage failures
+
+This keeps the fast path batched while avoiding per-page sequential fallback overhead.
+
 ## Multi‑GPU
 
 Phase‑1 (extract):
@@ -105,9 +139,25 @@ Spawns math workers; each binds to its GPU using `CUDA_VISIBLE_DEVICES` and runs
 
 ## Performance & Tuning
 
+### Validated benchmark floor
+
+The current non-regression metric is `sec/page/GPU`.
+
+Validated on 2026-03-30:
+
+- Host: AWS `g7e.48xlarge`
+- Runtime: `vllm`
+- Profile: `markdown_grounded`
+- Render DPI: `144`
+- GPU memory utilization: `0.9`
+- Best large-batch single-GPU floor observed: `0.3109 sec/page/GPU`
+
+That number is the floor to preserve or beat when tuning the full markdown pipeline. Faster raw runs that change the effective output mode or bypass repair logic do not replace it as the production baseline.
+
 - Batch sizes
   - Inline (Phase‑1): `GLOSSAPI_FORMULA_BATCH` (default 16) sets CodeFormula throughput.
   - Phase‑2: `batch_size` / `math_batch_size` parameter (typ. 8–16) balances VRAM and speed.
+  - DeepSeek vLLM: push `vllm_batch_size` as high as the hardware allows while tracking `sec/page/GPU`; on the validated `g7e.48xlarge` path, larger batches continued improving throughput through `batch_size=160`.
 - Images scale for OCR: `GLOSSAPI_IMAGES_SCALE` (~1.1–1.25) can improve detection on thin glyphs.
 - CPU threads: cap `OMP_NUM_THREADS` / `MKL_NUM_THREADS` to avoid CPU oversubscription on multi‑GPU nodes.
 
