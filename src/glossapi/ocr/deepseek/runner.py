@@ -21,6 +21,7 @@ LOGGER = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_transformers.py"
 DEFAULT_VLLM_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_vllm.py"
+AUTO_VLLM_BATCH_PAGE_CAP = 160
 
 
 def _page_count(pdf_path: Path) -> int:
@@ -314,6 +315,24 @@ def _plan_lanes(
     return lanes
 
 
+def _auto_vllm_batch_size(
+    *,
+    runtime_backend: str,
+    file_list: List[str],
+    input_root: Path,
+    max_pages: Optional[int],
+) -> Optional[int]:
+    if str(runtime_backend or "").strip().lower() != "vllm":
+        return None
+    total_pages = 0
+    for name in file_list:
+        pdf_path = (input_root / name).resolve()
+        total_pages += int(_effective_page_count(pdf_path, max_pages))
+    if total_pages <= 0:
+        return 1
+    return min(int(total_pages), int(AUTO_VLLM_BATCH_PAGE_CAP))
+
+
 def _run_multi_cli(
     *,
     input_root: Path,
@@ -362,6 +381,16 @@ def _run_multi_cli(
             if not lane_files:
                 continue
             visible_device = int(lane["visible_device"])
+            resolved_vllm_batch_size = (
+                int(vllm_batch_size)
+                if vllm_batch_size is not None
+                else _auto_vllm_batch_size(
+                    runtime_backend=runtime_backend,
+                    file_list=lane_files,
+                    input_root=input_root,
+                    max_pages=max_pages,
+                )
+            )
             log_path = log_dir / f"lane_{lane['lane_id']}_gpu{visible_device}.log"
             fh = stack.enter_context(log_path.open("w", encoding="utf-8"))
             cmd = _build_cli_command(
@@ -385,7 +414,7 @@ def _run_multi_cli(
                 repetition_penalty=repetition_penalty,
                 no_repeat_ngram_size=no_repeat_ngram_size,
                 runtime_backend=runtime_backend,
-                vllm_batch_size=vllm_batch_size,
+                vllm_batch_size=resolved_vllm_batch_size,
                 gpu_memory_utilization=gpu_memory_utilization,
                 disable_fp8_kv=disable_fp8_kv,
                 repair_mode=repair_mode,
@@ -541,6 +570,16 @@ def run_for_files(
             repair_mode=repair_mode,
         )
     else:
+        resolved_vllm_batch_size = (
+            int(vllm_batch_size)
+            if vllm_batch_size is not None
+            else _auto_vllm_batch_size(
+                runtime_backend=runtime_backend_norm,
+                file_list=file_list,
+                input_root=pdf_root,
+                max_pages=max_pages,
+            )
+        )
         _run_cli(
             input_dir=pdf_root,
             output_dir=out_root,
@@ -562,7 +601,7 @@ def run_for_files(
             repetition_penalty=repetition_penalty,
             no_repeat_ngram_size=no_repeat_ngram_size,
             runtime_backend=runtime_backend_norm,
-            vllm_batch_size=vllm_batch_size,
+            vllm_batch_size=resolved_vllm_batch_size,
             gpu_memory_utilization=gpu_memory_utilization,
             disable_fp8_kv=disable_fp8_kv,
             repair_mode=repair_mode,
