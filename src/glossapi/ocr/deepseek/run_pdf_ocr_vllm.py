@@ -32,8 +32,12 @@ REPAIR_SHORT_CHARS = 700
 REPAIR_EXTREME_SHORT_CHARS = 120
 REPAIR_PUA_THRESHOLD = 64
 REPAIR_MIN_HALF_DARK = 0.08
+REPAIR_MIN_THIRD_DARK = 0.07
 REPAIR_MAX_OVERALL_DARK = 0.25
 REPAIR_MIN_OVERALL_DARK = 0.04
+REPAIR_FOOTNOTE_SHORT_CHARS = 1100
+REPAIR_MIN_FOOTNOTE_LINES = 2
+REPAIR_FOOTNOTE_RATIO = 0.40
 
 
 def _parse_args() -> argparse.Namespace:
@@ -130,10 +134,16 @@ def _image_content_stats(image: Image.Image) -> dict:
         return float(dark) / float(total)
 
     half = max(1, height // 2)
+    third = max(1, height // 3)
+    top_third_end = min(height, third)
+    middle_third_end = min(height, third * 2)
     dark_total = sum(1 for value in pixels if value < REPAIR_DARK_THRESHOLD)
     return {
         "top_dark_ratio": _dark_ratio(0, half),
         "bottom_dark_ratio": _dark_ratio(half, height),
+        "top_third_dark_ratio": _dark_ratio(0, top_third_end),
+        "middle_third_dark_ratio": _dark_ratio(top_third_end, middle_third_end),
+        "bottom_third_dark_ratio": _dark_ratio(middle_third_end, height),
         "overall_dark_ratio": float(dark_total) / float(max(1, len(pixels))),
     }
 
@@ -153,14 +163,36 @@ def _text_quality_metrics(text: str) -> dict:
     letters = sum(1 for ch in stripped if ch.isalpha())
     digits = sum(1 for ch in stripped if ch.isdigit())
     pua_chars = _count_private_use_chars(stripped)
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    footnote_like_lines = sum(1 for line in lines if _is_footnote_like_line(line))
+    avg_line_length = (sum(len(line) for line in lines) / float(len(lines))) if lines else 0.0
     score = float(letters) + (0.10 * float(len(stripped))) + (0.05 * float(digits)) - (20.0 * float(pua_chars))
     return {
         "chars": int(len(stripped)),
         "letters": int(letters),
         "digits": int(digits),
         "pua_chars": int(pua_chars),
+        "line_count": int(len(lines)),
+        "footnote_like_lines": int(footnote_like_lines),
+        "avg_line_length": float(avg_line_length),
         "quality_score": float(score),
     }
+
+
+def _is_footnote_like_line(line: str) -> bool:
+    stripped = str(line or "").strip()
+    if not stripped:
+        return False
+    if len(stripped) <= 2:
+        return False
+    if stripped[0].isdigit():
+        if len(stripped) > 1 and stripped[1] in {".", ")", "]"}:
+            return True
+        if len(stripped) > 2 and stripped[1].isspace():
+            return True
+    if stripped[0] in {"*", "•", "-", "†", "‡"}:
+        return True
+    return False
 
 
 def _classify_repair(text: str, image_stats: dict, repair_mode: str) -> tuple[str, str | None]:
@@ -169,18 +201,36 @@ def _classify_repair(text: str, image_stats: dict, repair_mode: str) -> tuple[st
     quality = _text_quality_metrics(text)
     chars = int(quality["chars"])
     pua_chars = int(quality["pua_chars"])
+    line_count = int(quality["line_count"])
+    footnote_like_lines = int(quality["footnote_like_lines"])
+    footnote_ratio = float(footnote_like_lines) / float(max(1, line_count))
     pua_ratio = float(pua_chars) / float(max(1, chars))
     if pua_chars >= REPAIR_PUA_THRESHOLD or pua_ratio >= 0.10:
         return "plain", "markdown_garbage"
-    if chars <= REPAIR_EXTREME_SHORT_CHARS:
-        return "plain", "extreme_short"
     top_dark = float(image_stats.get("top_dark_ratio", 0.0))
     bottom_dark = float(image_stats.get("bottom_dark_ratio", 0.0))
+    top_third_dark = float(image_stats.get("top_third_dark_ratio", top_dark))
+    middle_third_dark = float(image_stats.get("middle_third_dark_ratio", 0.0))
+    bottom_third_dark = float(image_stats.get("bottom_third_dark_ratio", bottom_dark))
     overall_dark = float(image_stats.get("overall_dark_ratio", 0.0))
+    if (
+        chars <= REPAIR_FOOTNOTE_SHORT_CHARS
+        and footnote_like_lines >= REPAIR_MIN_FOOTNOTE_LINES
+        and footnote_ratio >= REPAIR_FOOTNOTE_RATIO
+        and top_third_dark >= REPAIR_MIN_THIRD_DARK
+        and middle_third_dark >= REPAIR_MIN_THIRD_DARK
+        and REPAIR_MIN_OVERALL_DARK <= overall_dark <= REPAIR_MAX_OVERALL_DARK
+    ):
+        return "tile", "footnote_dominant"
+    if chars <= REPAIR_EXTREME_SHORT_CHARS:
+        return "plain", "extreme_short"
     if (
         chars <= REPAIR_SHORT_CHARS
         and top_dark >= REPAIR_MIN_HALF_DARK
         and bottom_dark >= REPAIR_MIN_HALF_DARK
+        and top_third_dark >= REPAIR_MIN_THIRD_DARK
+        and middle_third_dark >= REPAIR_MIN_THIRD_DARK
+        and bottom_third_dark >= REPAIR_MIN_THIRD_DARK
         and REPAIR_MIN_OVERALL_DARK <= overall_dark <= REPAIR_MAX_OVERALL_DARK
     ):
         return "tile", "short_coverage"

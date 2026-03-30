@@ -12,10 +12,7 @@ import time
 from pathlib import Path
 from typing import Iterable, List
 
-import fitz
-import torch
 from PIL import Image
-from transformers import AutoModel, AutoTokenizer
 
 SRC_ROOT = Path(__file__).resolve().parents[3]
 if str(SRC_ROOT) not in sys.path:
@@ -82,6 +79,8 @@ def _iter_pdfs(input_dir: Path, files: List[str]) -> List[Path]:
 
 
 def _render_pages(pdf_path: Path, max_pages: int | None, render_dpi: int) -> List[Image.Image]:
+    import fitz
+
     images: List[Image.Image] = []
     doc = fitz.open(pdf_path)
     try:
@@ -204,6 +203,9 @@ def _load_model(
     repetition_penalty: float | None,
     no_repeat_ngram_size: int | None,
 ):
+    import torch
+    from transformers import AutoModel, AutoTokenizer
+
     attn_impl = _resolve_attn_backend(attn_backend)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
     try:
