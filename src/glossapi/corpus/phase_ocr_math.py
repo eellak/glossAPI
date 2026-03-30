@@ -41,6 +41,16 @@ class OcrMathPhaseMixin:
         limit: Optional[int] = None,
         dpi: Optional[int] = None,        # reserved for future use
         precision: Optional[str] = None,  # reserved for future use ("fp16","bf16")
+        workers_per_gpu: int = 1,
+        ocr_profile: str = "markdown_grounded",
+        attn_backend: str = "auto",
+        base_size: Optional[int] = None,
+        image_size: Optional[int] = None,
+        crop_mode: Optional[bool] = None,
+        render_dpi: Optional[int] = None,
+        max_new_tokens: Optional[int] = None,
+        repetition_penalty: Optional[float] = None,
+        no_repeat_ngram_size: Optional[int] = None,
         # Integrated math enrichment controls
         math_enhance: bool = True,
         math_targets: Optional[Dict[str, List[Tuple[int, int]]]] = None,
@@ -74,6 +84,17 @@ class OcrMathPhaseMixin:
                    Docling layout/json remains Phase-1 infrastructure; OCR remediation itself is DeepSeek-only.
         - fix_bad: re-run OCR on documents marked bad by the cleaner (default True).
         - math_enhance: run math/code enrichment after OCR (default True).
+        - use_gpus/devices/workers_per_gpu: DeepSeek multi-worker controls. Use
+          ``use_gpus="multi"`` to shard OCR across detected or specified GPUs.
+          Increase ``workers_per_gpu`` above ``1`` to run multiple OCR workers
+          per visible GPU.
+        - ocr_profile/attn_backend/base_size/image_size/crop_mode/render_dpi:
+          DeepSeek rendering and attention controls used for throughput/quality
+          benchmarking.
+        - max_new_tokens/repetition_penalty/no_repeat_ngram_size:
+          Optional generation controls forwarded to DeepSeek. These are exposed
+          for runtime experiments; leave them unset unless a benchmark calls for
+          them explicitly.
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
         - reprocess_completed: when False, skip documents already flagged as successfully
           OCRed or math-enriched in metadata. Set True to force reprocessing. Defaults to False
@@ -581,6 +602,22 @@ class OcrMathPhaseMixin:
                         self,
                         bad_files,
                         model_dir=Path(model_dir) if model_dir else None,
+                        max_pages=max_pages,
+                        persist_engine=bool(persist_engine),
+                        precision=precision,
+                        device=device,
+                        use_gpus=use_gpus,
+                        devices=devices,
+                        workers_per_gpu=int(max(1, workers_per_gpu)),
+                        ocr_profile=ocr_profile,
+                        attn_backend=attn_backend,
+                        base_size=base_size,
+                        image_size=image_size,
+                        crop_mode=crop_mode,
+                        render_dpi=render_dpi,
+                        max_new_tokens=max_new_tokens,
+                        repetition_penalty=repetition_penalty,
+                        no_repeat_ngram_size=no_repeat_ngram_size,
                         content_debug=bool(content_debug),
                     )
                 except Exception as _e:
