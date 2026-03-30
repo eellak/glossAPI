@@ -194,11 +194,22 @@ def test_vllm_repair_classifier_routes_garbage_and_short_pages():
     dense_page = {
         "top_dark_ratio": 0.16,
         "bottom_dark_ratio": 0.16,
+        "top_third_dark_ratio": 0.15,
+        "middle_third_dark_ratio": 0.15,
+        "bottom_third_dark_ratio": 0.15,
         "overall_dark_ratio": 0.15,
     }
     assert _classify_repair("\uf0b7" * 80, dense_page, "auto") == ("plain", "markdown_garbage")
     assert _classify_repair("42", dense_page, "auto") == ("plain", "extreme_short")
     assert _classify_repair("Α" * 300, dense_page, "auto") == ("tile", "short_coverage")
+    footnote_only = "\n".join(
+        [
+            "1. υποσημείωση πρώτη γραμμή",
+            "2. υποσημείωση δεύτερη γραμμή",
+            "3. υποσημείωση τρίτη γραμμή",
+        ]
+    )
+    assert _classify_repair(footnote_only, dense_page, "auto") == ("tile", "footnote_dominant")
     assert _classify_repair("Α" * 1200, dense_page, "auto") == ("none", None)
     assert _classify_repair("Α" * 300, dense_page, "off") == ("none", None)
 
