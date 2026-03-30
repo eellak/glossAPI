@@ -152,6 +152,30 @@ Validated on 2026-03-30:
 - GPU memory utilization: `0.9`
 - Best large-batch single-GPU floor observed: `0.3109 sec/page/GPU`
 
+Production markdown+repair benchmark on the same host:
+
+- Corpus: `43` OA PDFs, `7,624` pages
+- Runtime: `vllm`
+- Profile: `markdown_grounded`
+- Repair mode: `auto`
+- Max new tokens: `2048`
+- GPUs: `8`
+- Static sharding (`1` shard/GPU): `574.87s` wall, `0.0754 sec/page` overall, `0.4971` to `0.5484 sec/page/GPU`
+- Streaming admission (`stream_batch_pages=160`): `928.81s` wall, `0.1218 sec/page` overall, `0.5469` to `0.6856 sec/page/GPU`
+- Peak VRAM in both runs stayed at about `88,953 MiB` per active GPU
+- Static active-lane GPU utilization averaged about `65%` to `75%`; streaming active-lane utilization stayed similar while whole-run occupancy got worse because more lanes sat idle between batches
+
+Decision:
+
+- Keep static sharding as the default large-run pipeline shape for now
+- Do not enable streaming admission by default yet; on this benchmark it regressed badly versus static sharding
+- Treat the earlier `0.3109 sec/page/GPU` result as the raw floor, and the static repaired-markdown result above as the current production-like baseline on this hardware
+
+Attention/runtime note:
+
+- The production fast path is `vllm`; logs on this stack show `flashinfer` autotuning plus CUDA graph capture
+- Transformers remain the fallback path; prefer `flash_attention_2` there and do not optimize around `sdpa`
+
 That number is the floor to preserve or beat when tuning the full markdown pipeline. Faster raw runs that change the effective output mode or bypass repair logic do not replace it as the production baseline.
 
 - Batch sizes
