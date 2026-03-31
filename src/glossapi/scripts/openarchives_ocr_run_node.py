@@ -34,6 +34,7 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--python-log-level", default="INFO")
     p.add_argument("--download-concurrency", type=int, default=DEFAULT_DOWNLOAD_CONCURRENCY)
     p.add_argument("--download-timeout", type=int, default=DEFAULT_DOWNLOAD_TIMEOUT)
+    p.add_argument("--download-scheduler-mode", default="per_domain")
     p.add_argument("--download-group-by", default="base_domain")
     p.add_argument("--download-policy-file", default="")
     p.add_argument("--heartbeat-path")
@@ -263,6 +264,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             parallelize_by=str(args.download_group_by),
             concurrency=int(args.download_concurrency),
             request_timeout=int(args.download_timeout),
+            scheduler_mode=str(args.download_scheduler_mode),
             download_policy_file=(str(args.download_policy_file) if str(args.download_policy_file or "").strip() else None),
         )
         canonical_df = _normalize_download_results(shard_df=shard_df, download_results_df=dl_df, url_column="url")

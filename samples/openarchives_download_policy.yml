@@ -12,11 +12,32 @@ rules:
   - match:
       domains: [ikee.lib.auth.gr]
     downloader: standard
-    request_timeout: 120
-    per_domain_concurrency: 2
+    request_timeout: 180
+    per_domain_concurrency: 1
     domain_concurrency_floor: 1
-    domain_concurrency_ceiling: 2
+    domain_concurrency_ceiling: 1
     skip_failed_after: 5
+    sleep: 1.5
+
+  - match:
+      domains: [dspace.lib.ntua.gr]
+    downloader: standard
+    request_timeout: 120
+    per_domain_concurrency: 1
+    domain_concurrency_floor: 1
+    domain_concurrency_ceiling: 1
+    skip_failed_after: 4
+    sleep: 1.0
+
+  - match:
+      domains: [olympias.lib.uoi.gr]
+    downloader: standard
+    request_timeout: 180
+    ssl_verify: false
+    per_domain_concurrency: 1
+    domain_concurrency_floor: 1
+    domain_concurrency_ceiling: 1
+    skip_failed_after: 4
     sleep: 1.0
 
   - match:
@@ -42,8 +63,6 @@ rules:
 
   - match:
       domains:
-        - dspace.lib.ntua.gr
-        - olympias.lib.uoi.gr
         - dione.lib.unipi.gr
         - pergamos.lib.uoa.gr
         - hellanicus.lib.aegean.gr

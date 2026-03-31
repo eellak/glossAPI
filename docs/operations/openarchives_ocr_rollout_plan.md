@@ -97,6 +97,22 @@ Download policy note:
   - `samples/openarchives_download_policy.yml`
 - Stored OA probe runner:
   - `python -m glossapi.scripts.openarchives_download_probe`
+- OA download runs should use `scheduler_mode=per_domain` together with `parallelize_by=base_domain`,
+  otherwise the host-level concurrency policy is mostly inert.
+- Probe result on the CPU box:
+  - `dspace.lib.ntua.gr` succeeds cleanly once OA downloads use `scheduler_mode=per_domain`
+    and the host is throttled to a single in-flight request
+  - `ktisis.cut.ac.cy` succeeds with `ssl_verify=false`
+  - `repository.academyofathens.gr`, `repository.ihu.gr`, `pergamos.lib.uoa.gr`,
+    and `dione.lib.unipi.gr` behaved like standard hosts in the probe
+  - `ikee.lib.auth.gr` is not just a pre-ping false negative; direct PDF requests hit
+    real connection timeouts
+  - `olympias.lib.uoi.gr` is not just a pre-ping false negative either; direct PDF
+    requests reach the host but stall on response reads
+- Operational recommendation:
+  - bulk-freeze the good hosts first
+  - keep `ikee.lib.auth.gr` and `olympias.lib.uoi.gr` in a dedicated slow-path download phase
+    so they do not dominate the main corpus freeze run
 
 Standard node command:
 
