@@ -260,11 +260,207 @@ def _detect_repeated_lines_cut(text: str, *, threshold: int = 10) -> Optional[in
     return None
 
 
+def _is_private_use_char(ch: str) -> bool:
+    codepoint = ord(ch)
+    return (
+        0xE000 <= codepoint <= 0xF8FF
+        or 0xF0000 <= codepoint <= 0xFFFFD
+        or 0x100000 <= codepoint <= 0x10FFFD
+    )
+
+
+def _is_symbol_garbage_char(ch: str) -> bool:
+    if _is_private_use_char(ch):
+        return True
+    return ch in {
+        "•",
+        "",
+        "·",
+        "◦",
+        "▪",
+        "▫",
+        "‣",
+        "∙",
+        "⋅",
+        "●",
+        "○",
+        "◉",
+        "◌",
+        "◆",
+        "◇",
+        "■",
+        "□",
+        "▲",
+        "△",
+        "▼",
+        "▽",
+        "►",
+        "◄",
+        "◊",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+    }
+
+
+def _detect_symbol_garbage_cut(text: str, *, threshold: int = 16) -> Optional[int]:
+    """Cut on long runs of isolated bullet/dingbat/private-use symbols.
+
+    This targets the common DeepSeek garbage mode where the model emits long
+    whitespace-separated runs of bullets or private-use glyphs instead of text.
+    """
+    if threshold <= 1:
+        return 0
+    run_count = 0
+    run_start: Optional[int] = None
+    last_non_ws = -10_000
+    for index, ch in enumerate(text):
+        if ch.isspace():
+            continue
+        if _is_symbol_garbage_char(ch):
+            if run_count == 0 or (index - last_non_ws) > 3:
+                run_start = index
+                run_count = 1
+            else:
+                run_count += 1
+            last_non_ws = index
+            if run_count >= threshold:
+                return run_start
+            continue
+        run_count = 0
+        run_start = None
+        last_non_ws = index
+    return None
+
+
+NUMERIC_LIST_TOKEN_PATTERN = re.compile(r"(?<!\S)(\d{1,3})[.)](?=\s|$)")
+
+
+def _detect_numeric_list_garbage_cut(text: str, *, threshold: int = 12) -> Optional[int]:
+    """Cut on degenerate `1. 2. 3. ...` style list output."""
+    if threshold <= 1:
+        return 0
+    matches = list(NUMERIC_LIST_TOKEN_PATTERN.finditer(text))
+    if len(matches) < threshold:
+        return None
+    run_start = matches[0].start()
+    run_count = 1
+    prev_value = int(matches[0].group(1))
+    prev_end = matches[0].end()
+    for match in matches[1:]:
+        current_value = int(match.group(1))
+        gap = text[prev_end : match.start()]
+        if current_value == prev_value + 1 and len(gap) <= 4 and gap.strip() == "":
+            run_count += 1
+        else:
+            run_start = match.start()
+            run_count = 1
+        if run_count >= threshold:
+            return run_start
+        prev_value = current_value
+        prev_end = match.end()
+    return None
+
+
+class StreamingGarbageDetector:
+    """Incremental detector for common OCR garbage generation modes.
+
+    This is designed for hot decode loops: feed only newly decoded text chunks
+    and keep O(1) mutable state instead of rescanning the whole suffix.
+    """
+
+    def __init__(
+        self,
+        *,
+        symbol_threshold: int = 16,
+        numeric_list_threshold: int = 12,
+    ) -> None:
+        self.symbol_threshold = int(symbol_threshold)
+        self.numeric_list_threshold = int(numeric_list_threshold)
+        self._symbol_run = 0
+        self._numeric_run = 0
+        self._expected_next_number: Optional[int] = None
+        self._digits_buffer: str = ""
+        self.triggered_reason: Optional[str] = None
+
+    def reset(self) -> None:
+        self._symbol_run = 0
+        self._numeric_run = 0
+        self._expected_next_number = None
+        self._digits_buffer = ""
+        self.triggered_reason = None
+
+    def _reset_numeric(self) -> None:
+        self._numeric_run = 0
+        self._expected_next_number = None
+        self._digits_buffer = ""
+
+    def _feed_symbol_char(self, ch: str) -> bool:
+        if ch.isspace():
+            return False
+        if _is_symbol_garbage_char(ch):
+            self._symbol_run += 1
+            if self._symbol_run >= self.symbol_threshold:
+                self.triggered_reason = "symbol_garbage"
+                return True
+            return False
+        self._symbol_run = 0
+        return False
+
+    def _feed_numeric_char(self, ch: str) -> bool:
+        if ch.isspace():
+            if self._digits_buffer:
+                self._reset_numeric()
+            return False
+        if "0" <= ch <= "9":
+            self._digits_buffer += ch
+            return False
+        if ch in {".", ")"} and self._digits_buffer:
+            value = int(self._digits_buffer)
+            self._digits_buffer = ""
+            if self._expected_next_number is None:
+                if value == 1:
+                    self._numeric_run = 1
+                    self._expected_next_number = 2
+                else:
+                    self._reset_numeric()
+            else:
+                if value == self._expected_next_number:
+                    self._numeric_run += 1
+                    self._expected_next_number += 1
+                elif value == 1:
+                    self._numeric_run = 1
+                    self._expected_next_number = 2
+                else:
+                    self._reset_numeric()
+            if self._numeric_run >= self.numeric_list_threshold:
+                self.triggered_reason = "numeric_list_garbage"
+                return True
+            return False
+        self._reset_numeric()
+        return False
+
+    def feed(self, text: str) -> bool:
+        if self.triggered_reason is not None:
+            return True
+        for ch in str(text or ""):
+            if self._feed_symbol_char(ch):
+                return True
+            if self._feed_numeric_char(ch):
+                return True
+        return False
+
+
 def detect_early_stop_index(
     text: str,
     *,
     line_repeat_threshold: int = 10,
     char_repeat_threshold: int = 200,
+    symbol_garbage_threshold: int = 16,
+    numeric_list_threshold: int = 12,
 ) -> Optional[int]:
     """Find earliest cut index based on repetition heuristics.
 
@@ -273,11 +469,12 @@ def detect_early_stop_index(
     """
     idx_char = _detect_repeated_char_cut(text, threshold=char_repeat_threshold)
     idx_line = _detect_repeated_lines_cut(text, threshold=line_repeat_threshold)
-    if idx_char is None:
-        return idx_line
-    if idx_line is None:
-        return idx_char
-    return min(idx_char, idx_line)
+    idx_symbol = _detect_symbol_garbage_cut(text, threshold=symbol_garbage_threshold)
+    idx_numeric = _detect_numeric_list_garbage_cut(text, threshold=numeric_list_threshold)
+    candidates = [idx for idx in (idx_char, idx_line, idx_symbol, idx_numeric) if idx is not None]
+    if not candidates:
+        return None
+    return min(candidates)
 
 
 def apply_early_stop(
@@ -286,6 +483,8 @@ def apply_early_stop(
     content_debug: bool = False,
     line_repeat_threshold: int = 10,
     char_repeat_threshold: int = 200,
+    symbol_garbage_threshold: int = 16,
+    numeric_list_threshold: int = 12,
     metrics: Optional[dict] = None,
 ) -> str:
     """Apply early termination heuristics to ``text`` and optionally append notice.
@@ -299,6 +498,8 @@ def apply_early_stop(
         text,
         line_repeat_threshold=line_repeat_threshold,
         char_repeat_threshold=char_repeat_threshold,
+        symbol_garbage_threshold=symbol_garbage_threshold,
+        numeric_list_threshold=numeric_list_threshold,
     )
     if cut is None:
         return text
