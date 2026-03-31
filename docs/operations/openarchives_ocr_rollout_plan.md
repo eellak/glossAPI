@@ -100,6 +100,13 @@ Acceptance check:
 - `needs_ocr=True` count is available directly from the parquet
 - page totals are available
 
+Current state on 2026-03-31:
+
+- checked OCR instance `i-0504a326a1fee541f`
+- no `download_results.parquet` was found under `/opt`, `/data`, or `/home`
+- therefore this path did not recover the canonical OpenArchives routing parquet
+- the rollout should proceed with the CPU cleaning-pass fallback below
+
 ### 1B. Fallback: regenerate the routing state on a CPU instance
 
 If the OCR box does not contain the full canonical parquet:
