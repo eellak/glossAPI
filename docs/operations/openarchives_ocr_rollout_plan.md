@@ -93,6 +93,10 @@ Download policy note:
   - `skip_failed_after`
   - `domain_cookies`
 - That means the OA freeze-download phase can stay inside `Corpus.download(...)`; we do not need a separate downloader implementation.
+- Stored OA policy sample:
+  - `samples/openarchives_download_policy.yml`
+- Stored OA probe runner:
+  - `python -m glossapi.scripts.openarchives_download_probe`
 
 Standard node command:
 
