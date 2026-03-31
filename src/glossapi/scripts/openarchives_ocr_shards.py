@@ -9,6 +9,8 @@ import pandas as pd
 
 
 PAGE_COLUMN_CANDIDATES: Sequence[str] = (
+    "page_count_source",
+    "pages_total_source",
     "pages_total",
     "page_count",
     "total_pages",

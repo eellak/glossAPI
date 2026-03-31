@@ -6,6 +6,11 @@ This document records the concrete execution plan for running DeepSeek OCR over 
 
 The rollout is backed by concrete scripts in `src/glossapi/scripts/`:
 
+- `openarchives_ocr_enrich.py`
+  - reads the canonical OpenArchives parquet
+  - scans raw HF JSONL shards for the target docs
+  - extracts `page_count_source`, `pages_total_source`, and `pdf_url`
+  - writes a shard-ready enriched parquet for OCR deployment
 - `openarchives_ocr_shards.py`
   - reads the canonical parquet
   - filters `needs_ocr=True`
@@ -16,6 +21,44 @@ The rollout is backed by concrete scripts in `src/glossapi/scripts/`:
   - merges shard-level OCR metadata back into the canonical parquet by `filename`
 
 These scripts are intentionally document-level rather than page-fragment-level so merge stays simple and GlossAPI-compatible.
+
+## Executed result on 2026-03-31
+
+The CPU fallback path has now been executed successfully on AWS:
+
+- CPU cleaner node:
+  - instance: `c7i.8xlarge`
+  - instance id: `i-0ccf5ab1a510b31d8`
+- Full OA reevaluation fill:
+  - input rows: `179,845`
+  - missing `greek_badness_score` rows materialized and cleaned: `89,892`
+  - unique raw JSONL shards needed for the fill subset: `108`
+- Filled routing result:
+  - `greek_badness_score` coverage: `179,845 / 179,845`
+  - `needs_ocr == true`: `45,547`
+- Enriched OCR target manifest:
+  - OCR-target docs: `45,547`
+  - OCR-target pages: `3,292,392`
+  - raw JSONL shards needed for the full OCR target set: `218`
+- Balanced 4-node shard result:
+  - `4` shard manifests
+  - `823,098` pages per node
+  - `11,386` or `11,387` docs per node
+- ETA from validated `g7e.48xlarge` throughput:
+  - one node: `64.94h`
+  - four nodes: `16.23h`
+
+Published artifacts on Hugging Face dataset `glossAPI/openarchives.gr`:
+
+- `data/openarchives_ocr_completion/20260331/summary.json`
+- `data/openarchives_ocr_completion/20260331/filled_document_level.parquet`
+- `data/openarchives_ocr_completion/20260331/filled_document_quality.parquet`
+- `data/openarchives_ocr_completion/20260331/ocr_shards/needs_ocr_enriched.parquet`
+- `data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_node_00.parquet`
+- `data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_node_01.parquet`
+- `data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_node_02.parquet`
+- `data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_node_03.parquet`
+- `data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_summary.json`
 
 ## Current validated baseline
 
