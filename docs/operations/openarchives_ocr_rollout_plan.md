@@ -2,6 +2,21 @@
 
 This document records the concrete execution plan for running DeepSeek OCR over the OpenArchives subset with `needs_ocr=True`, including how to recover or regenerate the routing state, how to shard work across AWS nodes, and how to merge results back into the canonical GlossAPI corpus.
 
+## Implemented tooling
+
+The rollout is backed by concrete scripts in `src/glossapi/scripts/`:
+
+- `openarchives_ocr_shards.py`
+  - reads the canonical parquet
+  - filters `needs_ocr=True`
+  - balances documents across `N` nodes by page count
+  - writes one shard manifest parquet per node
+  - writes a JSON summary with page totals and ETA
+- `openarchives_ocr_merge.py`
+  - merges shard-level OCR metadata back into the canonical parquet by `filename`
+
+These scripts are intentionally document-level rather than page-fragment-level so merge stays simple and GlossAPI-compatible.
+
 ## Current validated baseline
 
 - Validated OCR node type: `g7e.48xlarge`
@@ -227,6 +242,42 @@ Standard production recipe:
   - `gpu_memory_utilization=0.9`
 
 Do not allow per-node env drift during the rollout.
+
+Cleaner/fallback venv decision:
+
+- CPU cleaning pass should use the standard GlossAPI environment from `development`
+- OCR nodes should use the dedicated DeepSeek venv only
+- do not mix the cleaner runtime and the OCR runtime on the same benchmark measurement path
+
+## Instance options
+
+Primary OCR choice:
+
+- `g7e.48xlarge`
+  - validated benchmarked path
+  - `192 vCPU`
+  - `8` RTX PRO Server 6000 GPUs
+  - current recommended production OCR node
+
+Secondary OCR options, only if we intentionally rebenchmark:
+
+- `g6e.48xlarge`
+  - `192 vCPU`
+  - `8` L40S GPUs
+- `g5.48xlarge`
+  - `192 vCPU`
+  - `8` A10G GPUs
+- `p5.48xlarge`
+  - technically available, but not the cost/default target for this rollout
+
+Cleaner node options:
+
+- first choice: `c7i.8xlarge`
+  - `32 vCPU`
+  - good CPU-bound cleaner candidate
+- alternative: `r7i.8xlarge`
+  - `32 vCPU`
+  - use if the cleaner pass needs more memory headroom
 
 ## Phase 6: ETA
 
