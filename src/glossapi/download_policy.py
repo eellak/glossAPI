@@ -12,6 +12,16 @@ import yaml
 
 VALID_DOWNLOADERS = {"standard", "browser", "auto"}
 ROUTE_OPTION_KEYS = {
+    "request_timeout",
+    "ssl_verify",
+    "ssl_cafile",
+    "request_method",
+    "sleep",
+    "per_domain_concurrency",
+    "domain_concurrency_floor",
+    "domain_concurrency_ceiling",
+    "skip_failed_after",
+    "domain_cookies",
     "browser_timeout_ms",
     "browser_post_load_wait_ms",
     "browser_engine",
