@@ -108,8 +108,8 @@ def _refresh_readme(readme_text: str, *, total_docs: int, needs_ocr_docs: int) -
         (r"pretty_name:\s*OpenArchives\.gr [^\n]+", f"pretty_name: {title_text}"),
         (r"# OpenArchives\.gr [^\n]+", f"# {title_text}"),
         (
-            r"- Σύνολο markdown αρχείων: \*\*[0-9,]+\*\* from openarchives\.gr",
-            f"- Σύνολο markdown αρχείων: **{total_docs:,}** from openarchives.gr",
+            r"- Σύνολο markdown αρχείων: \*\*[0-9,]+\*\* (?:from|από) openarchives\.gr",
+            f"- Σύνολο markdown αρχείων: **{total_docs:,}** από openarchives.gr",
         ),
         (
             r"- Total markdown files: \*\*[0-9,]+\*\* from openarchives\.gr",
