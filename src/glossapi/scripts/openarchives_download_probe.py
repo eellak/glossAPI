@@ -27,6 +27,7 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--concurrency", type=int, default=12)
     p.add_argument("--request-timeout", type=int, default=60)
+    p.add_argument("--scheduler-mode", default="per_domain")
     p.add_argument("--download-group-by", default="base_domain")
     p.add_argument("--hosts", nargs="*", default=None, help="Optional explicit host allowlist")
     p.add_argument("--dry-run", action="store_true")
@@ -137,6 +138,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         parallelize_by=str(args.download_group_by),
         concurrency=int(args.concurrency),
         request_timeout=int(args.request_timeout),
+        scheduler_mode=str(args.scheduler_mode),
         download_policy_file=(str(args.policy_file) if str(args.policy_file or "").strip() else None),
     )
     merged = results.merge(
