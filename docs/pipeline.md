@@ -11,7 +11,7 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
 | Stage | Main code | Typical inputs | Important parameters | Main outputs |
 | --- | --- | --- | --- | --- |
 | Download | `Corpus.download()`, `GlossDownloader.download_files()` | metadata parquet with a URL column | `input_parquet`, `links_column`, `parallelize_by`, downloader kwargs | `downloads/`, `download_results/*.parquet` |
-| Extract (Phase‑1) | `Corpus.prime_extractor()`, `Corpus.extract()`, `GlossExtract.extract_path()` | files in `downloads/` or explicit paths | `input_format`, `phase1_backend`, `force_ocr`, `use_gpus`, `devices`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json` |
+| Extract (Phase‑1) | `Corpus.prime_extractor()`, `Corpus.extract()`, `GlossExtract.extract_path()` | files in `downloads/` or explicit paths | `input_format`, `phase1_backend`, `use_gpus`, `devices`, `workers_per_device`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json` |
 | Clean | `Corpus.clean()` | `markdown/*.md` | `threshold`, `drop_bad`, `empty_char_threshold`, `empty_min_pages` | `clean_markdown/<stem>.md`, cleaner report parquet, parquet flags such as `filter` and `needs_ocr` |
 | OCR retry | `Corpus.ocr(mode='ocr_bad'...)` | parquet rows flagged by cleaner | `mode`, `fix_bad`, `use_gpus`, `devices` | refreshed `markdown/<stem>.md`, refreshed cleaner/parquet metadata |
 | Phase‑2 enrich | `Corpus.ocr(mode='math_only'...)`, `Corpus.formula_enrich_from_json()` | `json/<stem>.docling.json(.zst)` and optional formula index | `math_enhance`, `math_batch_size`, `math_dpi_base`, `targets_by_stem` | updated `markdown/<stem>.md`, `json/<stem>.latex_map.jsonl` |
@@ -42,9 +42,11 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
   - or explicit `file_paths`
 - Important parameters:
   - `phase1_backend='safe'|'docling'|'auto'`
-  - `force_ocr=True` to turn on OCR during extraction
   - `use_gpus='single'|'multi'`
+  - `workers_per_device` to fan out more than one extraction worker onto each GPU
   - `export_doc_json` and `emit_formula_index` for later Phase‑2 work
+- Operational note:
+  - `force_ocr` is deprecated and ignored in Phase‑1; use `Corpus.ocr(backend='deepseek')` after `clean()` for OCR remediation
 - Main outputs:
   - canonical markdown in `markdown/<stem>.md`
   - optional Docling JSON and index artifacts in `json/`
@@ -53,16 +55,21 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
 ### 3. Clean
 
 - Main code: `Corpus.clean()`
-- Purpose: run the Rust cleaner, compute quality/noise signals, and decide what should continue downstream.
+- Purpose: run the Rust cleaner, remove low-quality or noisy markdown,
+  and mark documents that may need OCR retry before moving on.
 - Typical inputs:
   - `markdown/*.md`
-  - metadata parquet if one exists
+  - metadata parquet, if available
 - Important parameters:
   - `threshold` and `drop_bad`
   - `empty_char_threshold` and `empty_min_pages` for OCR fallback decisions
 - Main outputs:
   - cleaned markdown in `clean_markdown/`
-  - merged parquet metadata including OCR-related flags
+  - updated parquet metadata with quality and OCR-related flags
+- Runtime/debug artifacts:
+  - `.processing_state.pkl` keeps track of progress so interrupted runs can resume
+  - `problematic_files/` keeps files that could not be cleaned successfully
+  - `timeout_files/` keeps files that exceeded the cleaning time limit
 
 ### 4. OCR Retry and Phase‑2 Enrichment
 
@@ -91,26 +98,40 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
 
 ## Artifact Layout
 
-```
+The tree below shows the main folders and files GlossAPI can create under
+the output directory.
+
+To make the layout easier to follow, artifacts are grouped by the role they
+play in the pipeline:
+
+- canonical — the main outputs a stage is expected to produce, and the
+  files later stages usually depend on
+- runtime — state files used to resume work safely if a run is interrupted
+- debug — extra files kept around when something fails or needs a closer look
+
 OUT/
-├── downloads/
-│   └── problematic_math/
-├── download_results/
-├── markdown/
+├── downloads/                                  (canonical)
+│   └── problematic_math/                       (debug)
+├── download_results/                           (canonical)
+├── markdown/                                   (canonical)
 │   └── <stem>.md
-├── json/
+├── clean_markdown/                             (canonical)
+│   └── <stem>.md
+├── json/                                       (canonical)
 │   ├── <stem>.docling.json(.zst)
 │   ├── <stem>.formula_index.jsonl
 │   ├── <stem>.latex_map.jsonl
 │   ├── metrics/
-│       ├── <stem>.metrics.json
-│       └── <stem>.per_page.metrics.json
-│   └── problematic_math/
-├── sections/
+│   │   ├── <stem>.metrics.json
+│   │   └── <stem>.per_page.metrics.json
+│   └── problematic_math/                       (debug)
+├── sections/                                   (canonical)
 │   └── sections_for_annotation.parquet
-├── classified_sections.parquet
-└── fully_annotated_sections.parquet
-```
+├── classified_sections.parquet                 (canonical)
+├── fully_annotated_sections.parquet            (canonical)
+├── .processing_state.pkl                       (runtime)
+├── problematic_files/                          (debug)
+└── timeout_files/                              (debug)
 
 Notes:
 - Enriched Markdown replaces the plain Markdown (single canonical location).

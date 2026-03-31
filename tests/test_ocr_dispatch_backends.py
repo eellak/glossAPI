@@ -54,4 +54,4 @@ def test_deepseek_backend_ignores_math_flags_and_runs_ocr_only(tmp_path, monkeyp
 def test_invalid_backend_is_rejected(tmp_path):
     corpus = _mk_corpus(tmp_path)
     with pytest.raises(ValueError, match="backend must be 'deepseek'"):
-        corpus.ocr(backend="rapidocr", fix_bad=True, math_enhance=False)
+        corpus.ocr(backend="bogus", fix_bad=True, math_enhance=False)

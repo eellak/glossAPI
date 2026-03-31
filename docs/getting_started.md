@@ -27,6 +27,7 @@ Use `dependency_setup/setup_glossapi.sh` for the main Docling environment and `d
 ```
 
 `setup_glossapi.sh --mode deepseek` delegates to the same uv-based installer. Inspect `dependency_setup/dependency_notes.md` for the current pins and validation runs. Both setup paths install GlossAPI and its Rust crates in editable mode so source changes are picked up immediately.
+The dedicated DeepSeek uv environment is intentionally OCR-only: it installs `glossapi[deepseek]` and leaves Docling in the main environment.
 
 **DeepSeek runtime checklist**
 - Run `python -m glossapi.ocr.deepseek.preflight` from the DeepSeek venv to assert the real runtime is reachable.
@@ -34,9 +35,16 @@ Use `dependency_setup/setup_glossapi.sh` for the main Docling environment and `d
   - `GLOSSAPI_DEEPSEEK_ALLOW_CLI=1`
   - `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`
   - `GLOSSAPI_DEEPSEEK_PYTHON=/path/to/deepseek/venv/bin/python`
-  - `GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT=/path/to/glossAPI/src/glossapi/ocr/deepseek/run_pdf_ocr_transformers.py`
   - `GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr-2-model/DeepSeek-OCR-2`
+- Standard OCR defaults after setup:
+  - `runtime_backend='vllm'`
+  - `ocr_profile='markdown_grounded'`
+  - `max_new_tokens=2048`
+  - `repair_mode='auto'`
+  - `scheduler='auto'`
+  - `target_batch_pages=160`
 - `flash-attn` is optional. The runner uses it when available and otherwise falls back to the Transformers `eager` attention implementation.
+- Do not benchmark against an ad hoc DeepSeek venv and compare it to the validated `dependency_setup/.venvs/deepseek` results as if they were the same stack.
 
 ### Option 1 — pip (evaluate quickly)
 

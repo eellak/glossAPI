@@ -18,6 +18,17 @@ GlossAPI exposes two Phase‑1 profiles. Use `Corpus.extract(..., phase1_backend
 
 Regardless of backend, the extractor clamps OMP/OpenBLAS/MKL pools to one thread per worker so multi‑GPU runs do not explode thread counts.
 
+### Docling Runtime Tuning
+
+These optional knobs map directly to current Docling `PdfPipelineOptions` fields and are mainly useful for benchmarking on strong GPUs:
+
+- `GLOSSAPI_DOCLING_LAYOUT_BATCH_SIZE`: override Docling `layout_batch_size`.
+- `GLOSSAPI_DOCLING_TABLE_BATCH_SIZE`: override Docling `table_batch_size`.
+- `GLOSSAPI_DOCLING_OCR_BATCH_SIZE`: override Docling `ocr_batch_size` even though Phase‑1 OCR stays disabled.
+- `GLOSSAPI_DOCLING_QUEUE_MAX_SIZE`: override Docling `queue_max_size`.
+- `GLOSSAPI_DOCLING_DOCUMENT_TIMEOUT`: override Docling `document_timeout`.
+- `GLOSSAPI_DOCLING_BATCH_POLL_INTERVAL`: override Docling `batch_polling_interval_seconds`.
+
 ### DeepSeek optional dependencies
 
 Install DeepSeek backend extras to enable the DeepSeek OCR path. The recommended path is the dedicated `uv` environment:
@@ -27,6 +38,7 @@ Install DeepSeek backend extras to enable the DeepSeek OCR path. The recommended
 ```
 
 When using `backend='deepseek'`, equations are included inline in the OCR output; Phase‑2 math flags are accepted but skipped.
+The dedicated uv profile is OCR-only and does not install the Docling extraction stack.
 
 ### DeepSeek runtime controls
 
@@ -36,6 +48,17 @@ When using `backend='deepseek'`, equations are included inline in the OCR output
 - `GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT`: override path to the OCR runner script (defaults to `src/glossapi/ocr/deepseek/run_pdf_ocr_transformers.py`).
 - `GLOSSAPI_DEEPSEEK_MODEL_DIR`: path to the downloaded `DeepSeek-OCR-2` snapshot.
 - `GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH`: prepend extra library search paths when launching the OCR runner.
+
+Standard OCR defaults:
+
+- `runtime_backend='vllm'`
+- `ocr_profile='markdown_grounded'`
+- `max_new_tokens=2048`
+- `repair_mode='auto'`
+- `scheduler='auto'`
+- `target_batch_pages=160`
+
+The DeepSeek runners now default to `max_new_tokens=2048`. Do not leave the token cap implicit in one environment and explicit in another when comparing benchmarks.
 
 ## Math Enrichment (Phase‑2)
 

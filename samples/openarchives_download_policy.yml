@@ -1,0 +1,92 @@
+default:
+  downloader: standard
+  request_timeout: 60
+  ssl_verify: true
+  per_domain_concurrency: 8
+  domain_concurrency_floor: 1
+  domain_concurrency_ceiling: 12
+  skip_failed_after: 3
+  sleep: 0.25
+
+rules:
+  - match:
+      domains: [ikee.lib.auth.gr]
+    downloader: standard
+    request_timeout: 180
+    per_domain_concurrency: 1
+    domain_concurrency_floor: 1
+    domain_concurrency_ceiling: 1
+    skip_failed_after: 5
+    sleep: 1.5
+
+  - match:
+      domains: [dspace.lib.ntua.gr]
+    downloader: standard
+    request_timeout: 120
+    per_domain_concurrency: 1
+    domain_concurrency_floor: 1
+    domain_concurrency_ceiling: 1
+    skip_failed_after: 4
+    sleep: 1.0
+
+  - match:
+      domains: [olympias.lib.uoi.gr]
+    downloader: standard
+    request_timeout: 180
+    ssl_verify: false
+    per_domain_concurrency: 1
+    domain_concurrency_floor: 1
+    domain_concurrency_ceiling: 1
+    skip_failed_after: 4
+    sleep: 1.0
+
+  - match:
+      domains: [ktisis.cut.ac.cy]
+    downloader: standard
+    request_timeout: 90
+    ssl_verify: false
+    per_domain_concurrency: 2
+    domain_concurrency_floor: 1
+    domain_concurrency_ceiling: 2
+    skip_failed_after: 4
+    sleep: 0.5
+
+  - match:
+      domains: [repository.academyofathens.gr]
+    downloader: standard
+    request_timeout: 45
+    per_domain_concurrency: 16
+    domain_concurrency_floor: 2
+    domain_concurrency_ceiling: 16
+    skip_failed_after: 3
+    sleep: 0.1
+
+  - match:
+      domains:
+        - dione.lib.unipi.gr
+        - pergamos.lib.uoa.gr
+        - hellanicus.lib.aegean.gr
+        - dias.library.tuc.gr
+    downloader: standard
+    request_timeout: 60
+    per_domain_concurrency: 12
+    domain_concurrency_floor: 1
+    domain_concurrency_ceiling: 12
+    skip_failed_after: 3
+    sleep: 0.2
+
+  - match:
+      domains:
+        - repository.ihu.gr
+        - dlib.statistics.gr
+        - apothesis.eap.gr
+        - repository.edulll.gr
+        - dspace.lib.uom.gr
+        - dspace.aua.gr
+    downloader: standard
+    request_timeout: 75
+    per_domain_concurrency: 6
+    domain_concurrency_floor: 1
+    domain_concurrency_ceiling: 8
+    skip_failed_after: 4
+    sleep: 0.25

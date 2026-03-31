@@ -126,7 +126,6 @@ def test_pipeline_smoke_and_artifacts(tmp_path, monkeypatch):
         num_threads=1,
         emit_formula_index=True,
         phase1_backend="docling",
-        force_ocr=True,
         use_gpus="single",
         devices=[device_idx],
     )
@@ -244,7 +243,6 @@ def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
         num_threads=1,
         emit_formula_index=True,
         phase1_backend="docling",
-        force_ocr=True,
         use_gpus="single",
         devices=[device_idx],
     )
@@ -378,7 +376,6 @@ def test_clean_skips_files_with_successful_ocr(tmp_path, monkeypatch):
         accel_type="CUDA",
         num_threads=1,
         phase1_backend="docling",
-        force_ocr=True,
         use_gpus="single",
         devices=[device_idx],
     )
@@ -469,7 +466,6 @@ def test_deepseek_cli_pipeline_with_synthetic_pdfs(tmp_path, monkeypatch):
         num_threads=1,
         emit_formula_index=True,
         phase1_backend="docling",
-        force_ocr=True,
         use_gpus="single",
         devices=[device_idx],
     )

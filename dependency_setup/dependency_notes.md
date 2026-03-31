@@ -2,7 +2,7 @@
 
 ## Environment Profiles
 - **Docling** – main GlossAPI environment for extraction, cleaning, sectioning, annotation, and math/code enrichment. Uses `requirements-glossapi-docling.txt`.
-- **DeepSeek** – dedicated OCR runtime managed with `uv`. Pins the tested Torch/Transformers stack in `dependency_setup/deepseek_uv/pyproject.toml`.
+- **DeepSeek** – dedicated OCR runtime managed with `uv`. Pins the tested Torch/Transformers stack in `dependency_setup/deepseek_uv/pyproject.toml` and intentionally excludes the Docling layout stack.
 
 Recommended installation commands:
 ```bash

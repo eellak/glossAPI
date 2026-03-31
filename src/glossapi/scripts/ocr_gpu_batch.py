@@ -115,15 +115,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--force-ocr",
         dest="force_ocr",
         action="store_true",
-        help="Force GPU OCR during extraction (default).",
+        help="Deprecated no-op retained for compatibility; OCR now runs through Corpus.ocr(...).",
     )
     parser.add_argument(
         "--no-force-ocr",
         dest="force_ocr",
         action="store_false",
-        help="Skip forced OCR (only run math/layout).",
+        help="Explicitly disable the deprecated Phase-1 OCR flag.",
     )
-    parser.set_defaults(force_ocr=True)
+    parser.set_defaults(force_ocr=False)
+    parser.add_argument(
+        "--workers-per-device",
+        type=int,
+        default=1,
+        help="Number of extraction workers to bind to each visible GPU (default: 1).",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -182,6 +188,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         export_doc_json=True,
         emit_formula_index=emit_formula_index,
         phase1_backend=args.phase1_backend,
+        workers_per_device=max(1, int(args.workers_per_device)),
     )
 
     print("[ocr_gpu_batch] Extraction complete.")
@@ -190,4 +197,3 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
     raise SystemExit(main())
-

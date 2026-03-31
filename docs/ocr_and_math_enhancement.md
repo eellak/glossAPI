@@ -27,6 +27,29 @@ Policy: never OCR and math on the same file
 - Torch CUDA installed in the DeepSeek env (the uv setup pins the tested stack).
 - Optional helpers for Phase‑2 JSON: `pypdfium2`, `zstandard`.
 
+### Standard DeepSeek venv
+
+Use a dedicated OCR runtime and treat it as the source of truth for DeepSeek runs:
+
+```bash
+./dependency_setup/setup_deepseek_uv.sh \
+  --venv dependency_setup/.venvs/deepseek \
+  --model-root /path/to/deepseek-ocr-2-model \
+  --download-model \
+  --run-tests --smoke-test
+```
+
+Recommended environment variables after setup:
+
+```bash
+export GLOSSAPI_DEEPSEEK_ALLOW_CLI=1
+export GLOSSAPI_DEEPSEEK_ALLOW_STUB=0
+export GLOSSAPI_DEEPSEEK_PYTHON="$PWD/dependency_setup/.venvs/deepseek/bin/python"
+export GLOSSAPI_DEEPSEEK_MODEL_DIR="/path/to/deepseek-ocr-2-model/DeepSeek-OCR-2"
+```
+
+The OCR runtime should not silently drift between ad hoc virtual environments during benchmarking. If a benchmark uses a different DeepSeek venv, treat the result as a different runtime stack.
+
 Verify GPU readiness before forcing OCR or math:
 
 ```bash
@@ -82,11 +105,60 @@ c.ocr(backend='deepseek', fix_bad=True, math_enhance=True, mode='ocr_bad_then_ma
 
 If you need Phase‑2 math on files that do not require OCR, run `math_only` after Docling extraction with JSON enabled.
 
+### DeepSeek fast path
+
+The current recommended high-throughput DeepSeek configuration is:
+
+- `runtime_backend='vllm'`
+- `ocr_profile='markdown_grounded'`
+- `max_new_tokens=2048` as the standard default ceiling
+- `repair_mode='auto'` to keep markdown as the primary output while selectively rerunning suspicious pages
+- `scheduler='auto'` so multi-GPU vLLM runs resolve to exact-fill page-range batching
+- `target_batch_pages=160`
+- large `vllm_batch_size` chosen to keep `sec/page/GPU` at or below the best validated floor for the target hardware
+
+Example:
+
+```python
+c.ocr(
+    backend='deepseek',
+    fix_bad=True,
+    math_enhance=False,
+    runtime_backend='vllm',
+    ocr_profile='markdown_grounded',
+    max_new_tokens=2048,
+    vllm_batch_size=160,
+    gpu_memory_utilization=0.9,
+    repair_mode='auto',
+    scheduler='auto',
+    target_batch_pages=160,
+    use_gpus='multi',
+)
+```
+
+`repair_mode='auto'` runs the pipeline in distinct phases inside the vLLM runner:
+
+1. markdown first pass over all rendered pages
+2. cheap per-page triage using output quality plus simple image density statistics
+3. plain-text rerun bucket for garbage markdown pages
+4. tiled markdown rerun bucket for short coverage failures
+
+This keeps the fast path batched while avoiding per-page sequential fallback overhead.
+
+### What is now implemented
+
+- Empty-page skipping before OCR dispatch
+- Streaming garbage early-stop during markdown generation
+- Plain-text retry for pages that hit the garbage early-stop
+- Multi-GPU exact-fill page-range scheduling for the DeepSeek runner
+- Benchmark harness support for `whole_doc`, `fixed_shard`, and `exact_fill`
+- Corpus API forwarding for the scheduler controls
+
 ## Multi‑GPU
 
 Phase‑1 (extract):
 ```python
-c.extract(input_format='pdf', use_gpus='multi', force_ocr=True)
+c.extract(input_format='pdf', use_gpus='multi', phase1_backend='docling', workers_per_device=2)
 ```
 Workers set `CUDA_VISIBLE_DEVICES` per process; Docling runs on `cuda:0` relative to each worker.
 
@@ -105,9 +177,73 @@ Spawns math workers; each binds to its GPU using `CUDA_VISIBLE_DEVICES` and runs
 
 ## Performance & Tuning
 
+### Validated benchmark floor
+
+The current non-regression metric is `sec/page/GPU`.
+
+Validated on 2026-03-30:
+
+- Host: AWS `g7e.48xlarge`
+- Runtime: `vllm`
+- Profile: `markdown_grounded`
+- Render DPI: `144`
+- GPU memory utilization: `0.9`
+- Best large-batch single-GPU floor observed: `0.3109 sec/page/GPU`
+
+Production markdown+repair benchmark on the same host:
+
+- Corpus: `43` OA PDFs, `7,624` pages
+- Runtime: `vllm`
+- Profile: `markdown_grounded`
+- Repair mode: `auto`
+- Max new tokens: `2048`
+- GPUs: `8`
+- Static sharding (`1` shard/GPU), validated rerun after classifier hardening: `558.88s` wall, `0.0733 sec/page` overall, `0.4912` to `0.5475 sec/page/GPU`
+- Streaming admission (`stream_batch_pages=160`): `928.81s` wall, `0.1218 sec/page` overall, `0.5469` to `0.6856 sec/page/GPU`
+- Peak VRAM in both runs stayed at about `88,953 MiB` per active GPU
+- Static active-lane GPU utilization averaged about `65%` to `75%`; streaming active-lane utilization stayed similar while whole-run occupancy got worse because more lanes sat idle between batches
+
+Validated on 2026-03-31 after standardizing the DeepSeek runtime ceiling back to `2048` and restoring the persistent one-process-per-lane architecture:
+
+- Corpus: `43` OA PDFs, `7,624` pages
+- Runtime: `vllm`
+- Profile: `markdown_grounded`
+- Repair mode: `auto`
+- Scheduler: `whole_doc`
+- Max new tokens: `2048`
+- GPUs: `8`
+- Clean rebuilt whole-document rerun: about `541s` wall, `0.0710 sec/page` overall, and `0.3927` to `0.5000 sec/page/GPU`
+
+Interpretation:
+
+- The rebuilt stack is back near the validated March 30 throughput once the silent `8192` ceiling regression is removed.
+- The remaining performance problem is not raw inference speed; it is whole-document tail imbalance, where one oversized PDF can keep a single GPU busy after the other lanes finish.
+- Multi-GPU `exact_fill` must therefore be benchmarked only on the persistent lane-worker architecture. The earlier exact-fill regression was caused by spawning a fresh OCR CLI per batch, not by the scheduling idea itself.
+
+Decision:
+
+- Keep static sharding as the default large-run pipeline shape for now
+- Do not enable streaming admission by default yet; on this benchmark it regressed badly versus static sharding
+- Treat the earlier `0.3109 sec/page/GPU` result as the raw floor, and the static repaired-markdown result above as the current production-like baseline on this hardware
+- Treat the 2026-03-31 clean whole-document rerun as the restored benchmark sanity check for the standardized `2048` ceiling on the rebuilt runtime
+
+Attention/runtime note:
+
+- The production fast path is `vllm`; logs on this stack show `flashinfer` autotuning plus CUDA graph capture
+- Transformers remain the fallback path; prefer `flash_attention_2` there and do not optimize around `sdpa`
+
+That number is the floor to preserve or beat when tuning the full markdown pipeline. Faster raw runs that change the effective output mode or bypass repair logic do not replace it as the production baseline.
+
+Default policy note:
+
+- The standard DeepSeek OCR default is now `max_new_tokens=2048` for both the Transformers and vLLM runners.
+- Leaving the flag unset must not silently expand to a larger ceiling such as `8192`.
+- When comparing benchmark runs, treat a different token ceiling or a different DeepSeek venv as a different runtime/configuration.
+
 - Batch sizes
   - Inline (Phase‑1): `GLOSSAPI_FORMULA_BATCH` (default 16) sets CodeFormula throughput.
   - Phase‑2: `batch_size` / `math_batch_size` parameter (typ. 8–16) balances VRAM and speed.
+  - DeepSeek vLLM: push `vllm_batch_size` as high as the hardware allows while tracking `sec/page/GPU`; on the validated `g7e.48xlarge` path, larger batches continued improving throughput through `batch_size=160`.
 - Images scale for OCR: `GLOSSAPI_IMAGES_SCALE` (~1.1–1.25) can improve detection on thin glyphs.
 - CPU threads: cap `OMP_NUM_THREADS` / `MKL_NUM_THREADS` to avoid CPU oversubscription on multi‑GPU nodes.
 

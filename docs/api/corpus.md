@@ -40,6 +40,7 @@ extract(
   skip_existing: bool = True,
   use_gpus: str = 'single',        # 'single'|'multi'
   devices: list[int] | None = None,
+  workers_per_device: int = 1,
   use_cls: bool = False,
   benchmark_mode: bool = False,
   export_doc_json: bool = True,
@@ -52,9 +53,10 @@ extract(
   - files already present in `downloads/`
   - or explicit `file_paths`
 - Important parameters:
-  - `phase1_backend='safe'|'docling'|'auto'`: PyPDFium for stability vs Docling for native layout/OCR
-  - `force_ocr=True`: turn on OCR during extraction
+  - `phase1_backend='safe'|'docling'|'auto'`: PyPDFium for stability vs Docling for native layout extraction
+  - `force_ocr`: deprecated no-op kept for compatibility; OCR remediation now lives in `Corpus.ocr(backend='deepseek')`
   - `use_gpus='multi'`: use all visible GPUs through a shared work queue
+  - `workers_per_device`: fan out more than one extraction worker onto a single visible GPU when measuring throughput
   - `export_doc_json=True`: write `json/<stem>.docling.json(.zst)`
   - `emit_formula_index=True`: also write `json/<stem>.formula_index.jsonl`
 - Main outputs:
@@ -187,11 +189,34 @@ download(
 - Important parameters:
   - `links_column`: override URL column name
   - `parallelize_by`: choose grouping for the scheduler
+  - `download_mode`: one of `standard`, `auto`, or `browser`
+  - `browser_mode=True`: alias for `download_mode="browser"`
+  - `download_policy_file`: route specific domains/URL patterns to `standard`, `auto`, or `browser`
   - downloader kwargs via `**kwargs` for concurrency, SSL, cookies, retries, checkpoints, etc.
 - Main outputs:
   - downloaded files in `downloads/`
   - partial/final results in `download_results/`
   - returned `pd.DataFrame` with download status and metadata
+
+Browser-capable download mode is intended for browser-gated file endpoints where a real file still exists behind session/bootstrap checks. It is not a general viewer extractor. Viewer-only sources should still fail cleanly with a recorded error and no local file artifact.
+
+Example:
+
+```python
+corpus.download(
+    input_parquet="input_urls.parquet",
+    download_mode="browser",
+)
+```
+
+Policy-routed example:
+
+```python
+corpus.download(
+    input_parquet="input_urls.parquet",
+    download_policy_file="download_policy.yml",
+)
+```
 
 ## triage_math()
 

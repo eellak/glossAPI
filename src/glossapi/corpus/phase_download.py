@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from .._naming import canonical_stem
+from ..gloss_browser_downloader import BrowserGlossDownloader
 from ..gloss_downloader import GlossDownloader
 # Avoid importing section/classifier here; download phase does not use them.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
@@ -212,6 +213,22 @@ class DownloadPhaseMixin:
         # Initialize downloader configuration (kwargs take precedence)
         dl_cfg = dict(self.downloader_config)
         dl_cfg.update(kwargs)
+        browser_mode = dl_cfg.pop('browser_mode', None)
+        if browser_mode is not None and 'download_mode' not in dl_cfg:
+            dl_cfg['download_mode'] = 'browser' if browser_mode else 'standard'
+        download_mode = str(dl_cfg.pop('download_mode', 'standard')).strip().lower()
+        policy_requested = bool(dl_cfg.get('download_policy_file') or dl_cfg.get('download_policy'))
+        if download_mode in {'standard', 'default', 'http'} and not policy_requested:
+            downloader_cls = GlossDownloader
+            default_download_route = 'standard'
+        elif download_mode in {'browser', 'browser_protected'} or policy_requested:
+            downloader_cls = BrowserGlossDownloader
+            default_download_route = 'browser' if download_mode in {'browser', 'browser_protected'} else 'standard'
+        elif download_mode in {'auto', 'browser_fallback'}:
+            downloader_cls = BrowserGlossDownloader
+            default_download_route = 'auto'
+        else:
+            raise ValueError(f"Unsupported download_mode: {download_mode}")
         # Allow caller to override which column holds links
         if links_column:
             url_column = links_column
@@ -232,14 +249,18 @@ class DownloadPhaseMixin:
         except Exception:
             pass
 
-        downloader = GlossDownloader(
-            url_column=url_column,
-            output_dir=str(self.output_dir),
-            log_level=self.logger.level,
-            verbose=verbose if verbose is not None else self.verbose,
+        downloader_kwargs = {
+            "url_column": url_column,
+            "output_dir": str(self.output_dir),
+            "log_level": self.logger.level,
+            "verbose": verbose if verbose is not None else self.verbose,
             **{k: v for k, v in dl_cfg.items() if k not in {'input_parquet'}},
-            _used_filename_bases=used_bases
-        )
+            "_used_filename_bases": used_bases,
+        }
+        if downloader_cls is BrowserGlossDownloader:
+            downloader_kwargs["default_download_route"] = default_download_route
+
+        downloader = downloader_cls(**downloader_kwargs)
 
         # Download files
         self.logger.info(f"Downloading files from URLs in {input_parquet}...")
