@@ -200,6 +200,85 @@ def test_browser_downloader_policy_routes_domain_to_browser(tmp_path, monkeypatc
     assert observed["route_options"]["browser_timeout_ms"] == 1234
 
 
+def test_download_policy_preserves_transport_and_scheduler_options():
+    policy = build_download_policy(
+        {
+            "default": {"downloader": "standard"},
+            "rules": [
+                {
+                    "match": {"domains": ["ikee.lib.auth.gr"]},
+                    "downloader": "standard",
+                    "request_timeout": 120,
+                    "ssl_verify": False,
+                    "per_domain_concurrency": 2,
+                    "domain_concurrency_floor": 1,
+                    "domain_concurrency_ceiling": 3,
+                    "skip_failed_after": 5,
+                    "domain_cookies": {"sessionid": "abc"},
+                }
+            ],
+        }
+    )
+
+    route, options = policy.resolve("https://ikee.lib.auth.gr/record/123/files/file.pdf")
+
+    assert route == "standard"
+    assert options["request_timeout"] == 120
+    assert options["ssl_verify"] is False
+    assert options["per_domain_concurrency"] == 2
+    assert options["domain_concurrency_floor"] == 1
+    assert options["domain_concurrency_ceiling"] == 3
+    assert options["skip_failed_after"] == 5
+    assert options["domain_cookies"] == {"sessionid": "abc"}
+
+
+def test_browser_downloader_route_options_apply_standard_transport_settings(tmp_path):
+    policy = build_download_policy(
+        {
+            "default": {"downloader": "standard"},
+            "rules": [
+                {
+                    "match": {"domains": ["ktisis.cut.ac.cy"]},
+                    "downloader": "standard",
+                    "request_timeout": 90,
+                    "ssl_verify": False,
+                    "per_domain_concurrency": 2,
+                    "domain_concurrency_floor": 1,
+                    "domain_concurrency_ceiling": 2,
+                    "skip_failed_after": 4,
+                    "domain_cookies": {"sessionid": "abc"},
+                }
+            ],
+        }
+    )
+    downloader = BrowserGlossDownloader(
+        output_dir=str(tmp_path),
+        download_policy=policy,
+        default_download_route="standard",
+    )
+
+    async def _build_connector():
+        return downloader._build_session_connector(
+            "https://ktisis.cut.ac.cy/items/123/file.pdf",
+            route_options=route_options,
+        )
+
+    route, route_options = downloader._resolve_route("https://ktisis.cut.ac.cy/items/123/file.pdf")
+    timeout = downloader._build_request_timeout(0, route_options=route_options)
+    connector = asyncio.run(_build_connector())
+    cookies = downloader._resolve_request_cookies(
+        "https://ktisis.cut.ac.cy/items/123/file.pdf",
+        route_options=route_options,
+    )
+    floor, ceiling, start, skip_after = downloader._resolve_domain_scheduler_settings(route_options)
+
+    assert route == "standard"
+    assert timeout.total == 90
+    assert connector is not None
+    assert cookies["sessionid"] == "abc"
+    assert (floor, ceiling, start, skip_after) == (1, 2, 2, 4)
+
+
 def test_corpus_download_mode_selects_browser_downloader(tmp_path, monkeypatch):
     input_df = pd.DataFrame({"url": ["https://example.org/file.pdf"]})
     input_parquet = tmp_path / "urls.parquet"

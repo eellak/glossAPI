@@ -534,12 +534,47 @@ class GlossDownloader:
         except Exception:
             return ''
 
+    def _resolve_route(self, url: str) -> tuple[str, Dict[str, Any]]:
+        return "standard", {}
+
+    def _route_setting(self, route_options: Optional[Dict[str, Any]], name: str, fallback: Any) -> Any:
+        if route_options and name in route_options:
+            return route_options[name]
+        return fallback
+
+    def _resolve_domain_scheduler_settings(
+        self,
+        route_options: Optional[Dict[str, Any]],
+    ) -> tuple[int, int, int, int]:
+        floor = max(
+            1,
+            int(self._route_setting(route_options, "domain_concurrency_floor", self.domain_concurrency_floor)),
+        )
+        raw_ceiling = self._route_setting(route_options, "domain_concurrency_ceiling", self.domain_concurrency_ceiling)
+        if raw_ceiling is None:
+            ceiling = max(floor, int(self.domain_concurrency_ceiling))
+        else:
+            ceiling = max(floor, int(raw_ceiling))
+        start = max(
+            floor,
+            min(
+                int(self._route_setting(route_options, "per_domain_concurrency", self.per_domain_concurrency)),
+                max(1, self.concurrency),
+                ceiling,
+            ),
+        )
+        skip_after = max(1, int(self._route_setting(route_options, "skip_failed_after", self.skip_failed_after)))
+        return floor, ceiling, start, skip_after
+
     @dataclass
     class _DomainState:
         base: str
         queue: deque = field(default_factory=deque)
         active: int = 0
         concurrency: int = 1
+        concurrency_floor: int = 1
+        concurrency_ceiling: int = 1
+        skip_failed_after: int = 3
         successes: int = 0
         failures: int = 0
         http_429: int = 0
@@ -896,7 +931,7 @@ class GlossDownloader:
             'DNT': '1'
         }
 
-    def _resolve_request_cookies(self, url: str) -> Dict[str, str]:
+    def _resolve_request_cookies(self, url: str, route_options: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
         cookies: Dict[str, str] = {}
         for domain_pattern, domain_cookies in self.domain_cookies.items():
             if domain_pattern in url:
@@ -907,25 +942,39 @@ class GlossDownloader:
                         # Replace with an actual random value (only supporting this pattern for now)
                         if 'session-id' in str(value):
                             cookies[key] = f"session-id-{random.randint(100000000, 999999999)}"
+        extra_cookies = self._route_setting(route_options, "domain_cookies", None)
+        if isinstance(extra_cookies, dict):
+            cookies.update({str(k): str(v) for k, v in extra_cookies.items()})
         return cookies
 
-    def _build_request_timeout(self, retry_count: int) -> aiohttp.ClientTimeout:
+    def _build_request_timeout(
+        self,
+        retry_count: int,
+        route_options: Optional[Dict[str, Any]] = None,
+    ) -> aiohttp.ClientTimeout:
+        base_request_timeout = float(self._route_setting(route_options, "request_timeout", self.request_timeout))
         return aiohttp.ClientTimeout(
-            total=min(self.request_timeout * (1.5 ** retry_count), 180),  # Cap at 3 minutes
+            total=min(base_request_timeout * (1.5 ** retry_count), 180),  # Cap at 3 minutes
             connect=min(30 * (1.2 ** retry_count), 60),  # Cap connect timeout at 1 minute
             sock_connect=min(30 * (1.2 ** retry_count), 60),  # Cap socket connect at 1 minute
             sock_read=min(60 * (1.2 ** retry_count), 120)  # Cap socket read at 2 minutes
         )
 
-    def _build_session_connector(self, url: str) -> Optional[aiohttp.TCPConnector]:
+    def _build_session_connector(
+        self,
+        url: str,
+        route_options: Optional[Dict[str, Any]] = None,
+    ) -> Optional[aiohttp.TCPConnector]:
         connector = None
         url_base = self._extract_base_domain(url)
         force_insecure = url_base in getattr(self, '_domains_ssl_insecure', set())
-        if (not self.ssl_verify) or force_insecure:
+        ssl_verify = bool(self._route_setting(route_options, "ssl_verify", self.ssl_verify))
+        ssl_cafile = self._route_setting(route_options, "ssl_cafile", self.ssl_cafile)
+        if (not ssl_verify) or force_insecure:
             connector = aiohttp.TCPConnector(ssl=False)
-        elif self.ssl_cafile:
+        elif ssl_cafile:
             import ssl as _ssl
-            ctx = _ssl.create_default_context(cafile=self.ssl_cafile)
+            ctx = _ssl.create_default_context(cafile=str(ssl_cafile))
             connector = aiohttp.TCPConnector(ssl=ctx)
         return connector
 
@@ -934,6 +983,7 @@ class GlossDownloader:
         session: aiohttp.ClientSession,
         url: str,
         headers: Dict[str, str],
+        route_options: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
         headers = await self.setup_session(session, url, headers)
 
@@ -942,7 +992,11 @@ class GlossDownloader:
         try:
             # Visit the base domain to establish cookies if needed
             base_domain = urlparse(url).netloc
-            if any(domain in base_domain for domain in self.domain_cookies.keys()):
+            all_cookie_domains = set(self.domain_cookies.keys())
+            extra_cookies = self._route_setting(route_options, "domain_cookies", None)
+            if isinstance(extra_cookies, dict) and extra_cookies:
+                all_cookie_domains.add(base_domain)
+            if any(domain in base_domain for domain in all_cookie_domains):
                 base_url = f"https://{base_domain}"
                 async with session.get(base_url, headers=headers, timeout=base_timeout):
                     pass
@@ -1155,15 +1209,17 @@ class GlossDownloader:
             return False, "", "", "Empty URL", retry_count
 
         url = self._normalize_request_url(url)
+        _, route_options = self._resolve_route(url)
         user_agent = next(self.user_agents)
         headers = self._build_request_headers(url, user_agent, referer)
-        cookies = self._resolve_request_cookies(url)
+        cookies = self._resolve_request_cookies(url, route_options=route_options)
         
         if semaphore:
             await semaphore.acquire()
         try:
             await rate_limiter.acquire()
-            sleep_time = self.sleep * (2 ** retry_count)
+            base_sleep = float(self._route_setting(route_options, "sleep", self.sleep))
+            sleep_time = base_sleep * (2 ** retry_count)
             await asyncio.sleep(random.uniform(sleep_time, sleep_time * 1.5))
             preflight = await self._preflight_download(
                 row_index=row_index,
@@ -1174,14 +1230,19 @@ class GlossDownloader:
             )
             if preflight is not None:
                 return preflight
-            timeout = self._build_request_timeout(retry_count)
+            timeout = self._build_request_timeout(retry_count, route_options=route_options)
 
             try:
-                connector = self._build_session_connector(url)
+                connector = self._build_session_connector(url, route_options=route_options)
                 async with aiohttp.ClientSession(cookies=cookies, connector=connector) as session:
                     try:
-                        headers = await self._bootstrap_download_session(session, url, headers)
-                        requester = self.request_method.lower()
+                        headers = await self._bootstrap_download_session(
+                            session,
+                            url,
+                            headers,
+                            route_options=route_options,
+                        )
+                        requester = str(self._route_setting(route_options, "request_method", self.request_method)).lower()
 
                         try:
                             self.verbose_log(f"Attempting download request to URL: {url}")
@@ -1343,6 +1404,8 @@ class GlossDownloader:
             for i, row_idx in enumerate(batch_indices):
                 url = df.loc[row_idx, self.url_column]
                 retry_count = df.loc[row_idx, 'download_retry_count']
+                _, route_options = self._resolve_route(url)
+                _, _, _, skip_after = self._resolve_domain_scheduler_settings(route_options)
                 # Optional per-row referer (e.g., external_link page)
                 ref_val = None
                 if self.referer_column and self.referer_column in df.columns:
@@ -1362,7 +1425,7 @@ class GlossDownloader:
                         pass
 
                 # Skip URLs that have failed too many times
-                if retry_count >= self.skip_failed_after:
+                if retry_count >= skip_after:
                     self.logger.info(f"Skipping URL at row {row_idx} - too many failures: {retry_count}")
                     continue
                 
@@ -1573,6 +1636,7 @@ class GlossDownloader:
         domains: Dict[str, GlossDownloader._DomainState] = {}
         for idx in row_indices:
             url = df.at[idx, self.url_column]
+            _, route_options = self._resolve_route(url)
             # Determine grouping key
             if self.scheduler_group_by and self.scheduler_group_by != 'base_domain':
                 key = str(df.at[idx, self.scheduler_group_by]) if self.scheduler_group_by in df.columns else ''
@@ -1583,9 +1647,14 @@ class GlossDownloader:
             if not key:
                 key = ''
             if key not in domains:
-                # Each group starts with up to per_domain_concurrency, but not exceeding global
-                start_c = min(self.per_domain_concurrency, max(1, self.concurrency))
-                domains[key] = GlossDownloader._DomainState(base=key, concurrency=start_c)
+                floor_c, ceiling_c, start_c, skip_after = self._resolve_domain_scheduler_settings(route_options)
+                domains[key] = GlossDownloader._DomainState(
+                    base=key,
+                    concurrency=start_c,
+                    concurrency_floor=floor_c,
+                    concurrency_ceiling=ceiling_c,
+                    skip_failed_after=skip_after,
+                )
             domains[key].queue.append(idx)
 
         if not domains:
@@ -1844,7 +1913,7 @@ class GlossDownloader:
             if remaining <= 0:
                 return 0.0
             avg = state.avg_duration() or 5.0  # default initial guess
-            eff_c = max(self.domain_concurrency_floor, min(state.concurrency, self.domain_concurrency_ceiling))
+            eff_c = max(state.concurrency_floor, min(state.concurrency, state.concurrency_ceiling))
             # ETA ≈ remaining * avg / eff_c (assuming steady parallelism)
             return float(remaining) * avg / max(1, eff_c)
 
@@ -1928,7 +1997,7 @@ class GlossDownloader:
                         if pending_domains:
                             active_order.append(pending_domains.popleft())
                         continue
-                    state.concurrency = max(self.domain_concurrency_floor, 1)
+                    state.concurrency = max(state.concurrency_floor, 1)
                     self.progress_logger.info(f"[park] Unparked domain: {dom}; resuming at concurrency={state.concurrency}")
                 # Attempt to launch up to (state.concurrency - state.active)
                 while (
@@ -1940,7 +2009,7 @@ class GlossDownloader:
                     url = df.at[row_idx, self.url_column]
                     retry_count = int(df.at[row_idx, 'download_retry_count']) if 'download_retry_count' in df.columns else 0
                     # Skip rows with too many failures
-                    if retry_count >= self.skip_failed_after:
+                    if retry_count >= state.skip_failed_after:
                         continue
                     # Launch task
                     t0 = time.time()
@@ -2122,7 +2191,7 @@ class GlossDownloader:
 
                 # Dynamic tuning: ease if overloaded
                 if self.dynamic_tuning and should_ease(state):
-                    if state.concurrency > self.domain_concurrency_floor:
+                    if state.concurrency > state.concurrency_floor:
                         state.concurrency -= 1
                         self.logger.info(f"Easing concurrency for {dom} -> {state.concurrency}")
 
@@ -2142,14 +2211,14 @@ class GlossDownloader:
                         if retry_after is None:
                             retry_after = max(1, int(self.ping_recheck_seconds))
                         state.parked_until = now2 + retry_after
-                        state.concurrency = max(self.domain_concurrency_floor, 1)
+                        state.concurrency = max(state.concurrency_floor, 1)
                         self.progress_logger.info(f"[park] Rate limited: {dom}; parked for {retry_after}s")
                     # Timeout streak -> exponential backoff
                     elif state.timeout_streak >= int(getattr(self, 'timeout_streak_threshold', 5)):
                         backoff = min(float(getattr(self, 'backoff_min_s', 60.0)) * (2 ** max(0, state.ping_failures)), float(getattr(self, 'backoff_max_s', 900.0)))
                         state.ping_failures += 1
                         state.parked_until = now2 + backoff
-                        state.concurrency = max(self.domain_concurrency_floor, 1)
+                        state.concurrency = max(state.concurrency_floor, 1)
                         state.timeout_streak = 0
                         self.progress_logger.info(f"[park] Timeout streak: {dom}; parked for {int(backoff)}s (level={state.ping_failures})")
                     else:
@@ -2171,7 +2240,7 @@ class GlossDownloader:
                     state.eta_exceeded_count += 1
                     if state.eta_exceeded_count == 1:
                         # Try to increase concurrency gently to improve ETA, up to ceiling
-                        if state.concurrency < self.domain_concurrency_ceiling:
+                        if state.concurrency < state.concurrency_ceiling:
                             state.concurrency += 1
                             self.logger.info(
                                 f"ETA high for {dom} ({int(eta_s)}s). Bumping concurrency -> {state.concurrency}"

@@ -77,6 +77,23 @@ The runner does four things in order:
 3. writes the shard metadata as canonical `download_results/download_results.parquet`
 4. runs `Corpus.ocr(...)` with the validated DeepSeek settings
 
+Download policy note:
+
+- OpenArchives download should be host-first, not collection-first.
+- GlossAPI now supports host-specific download policy overrides in the normal downloader path for:
+  - `downloader`
+  - `request_timeout`
+  - `ssl_verify`
+  - `ssl_cafile`
+  - `request_method`
+  - `sleep`
+  - `per_domain_concurrency`
+  - `domain_concurrency_floor`
+  - `domain_concurrency_ceiling`
+  - `skip_failed_after`
+  - `domain_cookies`
+- That means the OA freeze-download phase can stay inside `Corpus.download(...)`; we do not need a separate downloader implementation.
+
 Standard node command:
 
 ```bash
