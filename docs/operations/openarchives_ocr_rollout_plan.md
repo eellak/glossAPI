@@ -60,6 +60,49 @@ Published artifacts on Hugging Face dataset `glossAPI/openarchives.gr`:
 - `data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_node_03.parquet`
 - `data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_summary.json`
 
+## Node runner contract
+
+Each OCR node should materialize one shard into its own GlossAPI corpus root and
+run DeepSeek OCR through the standard `Corpus.ocr(...)` API, not through a
+standalone benchmark wrapper.
+
+Stored runner:
+
+- `python -m glossapi.scripts.openarchives_ocr_run_node`
+
+The runner does four things in order:
+
+1. reads one shard parquet
+2. downloads the shard PDFs into `downloads/` using their OA filenames
+3. writes the shard metadata as canonical `download_results/download_results.parquet`
+4. runs `Corpus.ocr(...)` with the validated DeepSeek settings
+
+Standard node command:
+
+```bash
+PYTHONPATH=src /home/ubuntu/venvs/deepseek/bin/python -m glossapi.scripts.openarchives_ocr_run_node \
+  --shard-parquet /data/openarchives/shards/openarchives_ocr_shard_node_00.parquet \
+  --work-root /data/openarchives/node_00 \
+  --heartbeat-path /data/openarchives/heartbeats/node_00.json \
+  --instance-id "$INSTANCE_ID" \
+  --node-id node-00 \
+  --scheduler whole_doc \
+  --runtime-backend vllm \
+  --ocr-profile markdown_grounded \
+  --render-dpi 144 \
+  --max-new-tokens 2048 \
+  --repair-mode auto \
+  --gpu-memory-utilization 0.9
+```
+
+Current rollout note:
+
+- use `scheduler=whole_doc` for the first production OA pass because that is the
+  last large-run configuration validated cleanly on the standardized stack
+- keep `exact_fill` as the next benchmarking target, but do not silently switch
+  the production rollout to it until the same stack shows a non-regression or
+  improvement
+
 ## Current validated baseline
 
 - Validated OCR node type: `g7e.48xlarge`
