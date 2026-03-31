@@ -4,7 +4,7 @@ import argparse
 import csv
 import json
 import os
-import shutil
+import re
 import signal
 import sqlite3
 import subprocess
@@ -36,12 +36,15 @@ CREATE TABLE IF NOT EXISTS transfer_items (
     remote_name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     attempts INTEGER NOT NULL DEFAULT 0,
+    priority_rank INTEGER NOT NULL DEFAULT 0,
     last_error TEXT NOT NULL DEFAULT '',
     transfer_started_at TEXT,
     transfer_finished_at TEXT,
     last_seen_size_bytes INTEGER NOT NULL DEFAULT 0
 );
 """
+
+PDF_NAME_PATTERN = re.compile(r"([A-Za-z0-9._-]+\.pdf(?:\.[A-Za-z0-9_-]+)?)", re.IGNORECASE)
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -59,6 +62,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--sleep-after-failure", type=float, default=10.0)
     p.add_argument("--summary-interval-seconds", type=float, default=5.0)
     p.add_argument("--limit", type=int, default=0, help="Optional limit for testing.")
+    p.add_argument(
+        "--priority-dir",
+        default=None,
+        help="Directory of dynamic priority files or filename lists. Items here are transferred first.",
+    )
     return p.parse_args(argv)
 
 
@@ -69,10 +77,16 @@ class TransferState:
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute(SCHEMA)
+        self._ensure_columns()
         self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
+
+    def _ensure_columns(self) -> None:
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(transfer_items)").fetchall()}
+        if "priority_rank" not in cols:
+            self.conn.execute("ALTER TABLE transfer_items ADD COLUMN priority_rank INTEGER NOT NULL DEFAULT 0")
 
     def sync_manifest(self, items: Iterable[TransferItem]) -> None:
         rows = [
@@ -151,7 +165,7 @@ class TransferState:
             FROM transfer_items
             WHERE status IN ('pending', 'failed')
               AND attempts < ?
-            ORDER BY attempts ASC, canonical_filename ASC
+            ORDER BY priority_rank DESC, attempts ASC, canonical_filename ASC
             LIMIT 1
             """,
             (max_attempts,),
@@ -236,6 +250,46 @@ class TransferState:
             "bytes_remaining": bytes_remaining,
         }
 
+    def set_priorities(self, canonical_filenames: set[str]) -> None:
+        self.conn.execute("UPDATE transfer_items SET priority_rank=0 WHERE priority_rank != 0")
+        if canonical_filenames:
+            batch = []
+            for name in sorted(canonical_filenames):
+                batch.append(name)
+                if len(batch) >= 500:
+                    placeholders = ",".join("?" for _ in batch)
+                    self.conn.execute(
+                        f"UPDATE transfer_items SET priority_rank=100 WHERE canonical_filename IN ({placeholders})",
+                        batch,
+                    )
+                    batch.clear()
+            if batch:
+                placeholders = ",".join("?" for _ in batch)
+                self.conn.execute(
+                    f"UPDATE transfer_items SET priority_rank=100 WHERE canonical_filename IN ({placeholders})",
+                    batch,
+                )
+        self.conn.commit()
+
+    def priority_counts(self) -> dict[str, int]:
+        cur = self.conn.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN priority_rank > 0 THEN 1 ELSE 0 END), 0) AS priority_total,
+                COALESCE(SUM(CASE WHEN priority_rank > 0 AND status='pending' THEN 1 ELSE 0 END), 0) AS priority_pending,
+                COALESCE(SUM(CASE WHEN priority_rank > 0 AND status='completed' THEN 1 ELSE 0 END), 0) AS priority_completed,
+                COALESCE(SUM(CASE WHEN priority_rank > 0 AND status='failed' THEN 1 ELSE 0 END), 0) AS priority_failed
+            FROM transfer_items
+            """
+        )
+        row = cur.fetchone()
+        return {
+            "priority_total": int(row[0] or 0),
+            "priority_pending": int(row[1] or 0),
+            "priority_completed": int(row[2] or 0),
+            "priority_failed": int(row[3] or 0),
+        }
+
 
 def read_manifest(path: Path) -> list[TransferItem]:
     items: list[TransferItem] = []
@@ -267,6 +321,42 @@ def append_event(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def canonicalize_pdf_name(raw: str) -> Optional[str]:
+    text = os.path.basename(str(raw).strip())
+    if not text:
+        return None
+    lower = text.lower()
+    marker = ".pdf."
+    if marker in lower:
+        idx = lower.index(marker)
+        return text[: idx + 4]
+    if lower.endswith(".pdf"):
+        return text
+    return None
+
+
+def load_priority_filenames(priority_dir: Path) -> set[str]:
+    results: set[str] = set()
+    if not priority_dir.exists():
+        return results
+    for path in sorted(priority_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        direct = canonicalize_pdf_name(path.name)
+        if direct is not None:
+            results.add(direct)
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        for match in PDF_NAME_PATTERN.findall(text):
+            canonical = canonicalize_pdf_name(match)
+            if canonical is not None:
+                results.add(canonical)
+    return results
 
 
 def sftp_one(
@@ -319,6 +409,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     manifest_path = Path(args.manifest).expanduser().resolve()
     work_root = Path(args.work_root).expanduser().resolve()
+    priority_dir = Path(args.priority_dir).expanduser().resolve() if args.priority_dir else (work_root / "unreachable_from_source_20260331")
     downloads_dir = work_root / "downloads"
     partial_dir = work_root / "partials"
     logs_dir = work_root / "logs"
@@ -335,6 +426,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     state.sync_manifest(items)
     state.reset_stale_in_progress()
     state.mark_completed_if_present(downloads_dir, partial_dir)
+    manifest_names = {item.canonical_filename for item in items}
 
     stop_requested = False
 
@@ -350,11 +442,46 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     current_path = state_dir / "current_transfer.json"
     summary_path = state_dir / "summary.json"
     events_path = logs_dir / "events.jsonl"
+    priority_summary_path = state_dir / "priority_summary.json"
+    priority_available_path = state_dir / "priority_available_in_manifest.txt"
+    priority_missing_path = state_dir / "priority_missing_in_manifest.txt"
+    last_priority_set: Optional[set[str]] = None
+
+    def refresh_priorities() -> dict[str, int]:
+        nonlocal last_priority_set
+        requested = load_priority_filenames(priority_dir)
+        if last_priority_set is None or requested != last_priority_set:
+            available = requested & manifest_names
+            missing = requested - manifest_names
+            state.set_priorities(available)
+            priority_available_path.write_text(
+                "".join(f"{name}\n" for name in sorted(available)),
+                encoding="utf-8",
+            )
+            priority_missing_path.write_text(
+                "".join(f"{name}\n" for name in sorted(missing)),
+                encoding="utf-8",
+            )
+            write_json(
+                priority_summary_path,
+                {
+                    "updated_at": utc_now(),
+                    "priority_dir": str(priority_dir),
+                    "requested_total": len(requested),
+                    "available_in_manifest_total": len(available),
+                    "missing_in_manifest_total": len(missing),
+                },
+            )
+            last_priority_set = requested
+        return state.priority_counts()
+
+    priority_counts = refresh_priorities()
 
     while not stop_requested:
+        priority_counts = refresh_priorities()
         row = state.next_item(max_attempts=int(args.max_attempts))
         if row is None:
-            write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), "done": True})
+            write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), **priority_counts, "done": True})
             break
 
         canonical = str(row["canonical_filename"])
@@ -439,7 +566,8 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
 
         now = time.time()
         if now - last_summary_ts >= float(args.summary_interval_seconds):
-            write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), "done": False})
+            priority_counts = refresh_priorities()
+            write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), **priority_counts, "done": False})
             last_summary_ts = now
 
     if current_path.exists():
@@ -448,7 +576,8 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         except Exception:
             pass
 
-    write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), "done": True})
+    priority_counts = refresh_priorities()
+    write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), **priority_counts, "done": True})
     state.close()
     return 0
 
