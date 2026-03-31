@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
 import shutil
 import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from glossapi.ocr.deepseek.scheduling import (
+    SourceDocument,
+    assign_batches_to_lanes,
+    build_exact_fill_batches,
+    build_fixed_shard_slices,
+    build_whole_document_slices,
+    pack_slices_into_batches,
+)
 
 
 def _parse_devices(spec: str) -> List[int]:
@@ -24,7 +32,7 @@ def _parse_devices(spec: str) -> List[int]:
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="python -m glossapi.scripts.deepseek_pipeline_benchmark",
-        description="Benchmark DeepSeek OCR pipeline throughput for static and streaming-style scheduling.",
+        description="Benchmark DeepSeek OCR pipeline throughput for different scheduling strategies.",
     )
     p.add_argument("--repo", required=True)
     p.add_argument("--input-dir", required=True)
@@ -33,12 +41,20 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--model-dir", required=True)
     p.add_argument("--label", required=True)
     p.add_argument("--mode", default="static", choices=["static", "streaming"])
+    p.add_argument(
+        "--scheduler",
+        default="whole_doc",
+        choices=["whole_doc", "fixed_shard", "exact_fill"],
+    )
     p.add_argument("--devices", default="0,1,2,3,4,5,6,7")
     p.add_argument("--workers-per-gpu", type=int, default=1)
     p.add_argument("--max-docs", type=int, default=None)
     p.add_argument("--doc-order", default="name", choices=["name", "random", "largest_first"])
     p.add_argument("--seed", type=int, default=20260330)
+    p.add_argument("--target-batch-pages", type=int, default=160)
     p.add_argument("--stream-batch-pages", type=int, default=160)
+    p.add_argument("--shard-pages", type=int, default=0)
+    p.add_argument("--shard-threshold-pages", type=int, default=0)
     p.add_argument("--runtime-backend", default="vllm", choices=["transformers", "vllm"])
     p.add_argument("--ocr-profile", default="markdown_grounded", choices=["markdown_grounded", "plain_ocr"])
     p.add_argument("--prompt-override", default=None)
@@ -47,7 +63,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--base-size", type=int, default=None)
     p.add_argument("--image-size", type=int, default=None)
     p.add_argument("--render-dpi", type=int, default=144)
-    p.add_argument("--max-new-tokens", type=int, default=None)
+    p.add_argument("--max-new-tokens", type=int, default=2048)
     p.add_argument("--vllm-batch-size", type=int, default=None)
     p.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     p.add_argument("--disable-fp8-kv", action="store_true")
@@ -55,125 +71,58 @@ def _parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _weighted_files(
+def _weighted_documents(
     *,
     input_dir: Path,
     max_docs: Optional[int],
     doc_order: str,
     seed: int,
-) -> List[Dict[str, Any]]:
+) -> List[SourceDocument]:
     from glossapi.ocr.deepseek import runner as deepseek_runner
 
-    weighted = []
-    for path in sorted(input_dir.glob("*.pdf")):
-        pages = int(deepseek_runner._effective_page_count(path, None))
-        weighted.append({"name": path.name, "pages": pages})
+    documents = [
+        SourceDocument(name=path.name, pages=int(deepseek_runner._effective_page_count(path, None)))
+        for path in sorted(input_dir.glob("*.pdf"))
+    ]
     if doc_order == "largest_first":
-        weighted.sort(key=lambda item: (-int(item["pages"]), str(item["name"])))
+        documents.sort(key=lambda item: (-int(item.pages), str(item.name)))
     elif doc_order == "random":
         rng = random.Random(int(seed))
-        rng.shuffle(weighted)
+        rng.shuffle(documents)
     if max_docs is not None:
-        weighted = weighted[: max(0, int(max_docs))]
-    return weighted
+        documents = documents[: max(0, int(max_docs))]
+    return documents
 
 
-def _empty_lanes(devices: List[int], workers_per_gpu: int) -> List[Dict[str, Any]]:
-    lanes: List[Dict[str, Any]] = []
-    lane_id = 0
-    for visible_device in devices:
-        for _ in range(max(1, int(workers_per_gpu))):
-            lanes.append(
-                {
-                    "lane_id": lane_id,
-                    "visible_device": int(visible_device),
-                    "batches": [],
-                    "assigned_pages": 0,
-                }
+def _plan_lanes(
+    *,
+    documents: List[SourceDocument],
+    devices: List[int],
+    workers_per_gpu: int,
+    scheduler: str,
+    target_batch_pages: int,
+    shard_pages: int,
+    shard_threshold_pages: int,
+) -> List[Dict[str, Any]]:
+    scheduler_norm = str(scheduler or "whole_doc").strip().lower()
+    if scheduler_norm == "exact_fill":
+        batches = build_exact_fill_batches(documents, target_batch_pages=max(1, int(target_batch_pages)))
+    else:
+        if scheduler_norm == "fixed_shard":
+            slices = build_fixed_shard_slices(
+                documents,
+                shard_pages=max(1, int(shard_pages)),
+                shard_threshold_pages=max(0, int(shard_threshold_pages)),
             )
-            lane_id += 1
-    return lanes
-
-
-def _plan_static(
-    weighted_files: List[Dict[str, Any]],
-    devices: List[int],
-    workers_per_gpu: int,
-    input_dir: Path,
-) -> List[Dict[str, Any]]:
-    from glossapi.ocr.deepseek import runner as deepseek_runner
-
-    lanes = deepseek_runner._plan_lanes(
-        file_list=[str(item["name"]) for item in weighted_files],
-        input_root=input_dir,
-        lane_devices=devices,
+        else:
+            slices = build_whole_document_slices(documents)
+        batches = pack_slices_into_batches(slices, target_batch_pages=max(1, int(target_batch_pages)))
+    lanes = assign_batches_to_lanes(
+        batches,
+        devices=devices,
         workers_per_gpu=max(1, int(workers_per_gpu)),
-        max_pages=None,
     )
-    weights = {str(item["name"]): int(item["pages"]) for item in weighted_files}
-    planned: List[Dict[str, Any]] = []
-    for lane in lanes:
-        files = list(lane["files"])
-        if not files:
-            continue
-        weight = sum(int(weights.get(name, 0)) for name in files)
-        planned.append(
-            {
-                "lane_id": int(lane["lane_id"]),
-                "visible_device": int(lane["visible_device"]),
-                "assigned_pages": int(weight),
-                "batches": [
-                    {
-                        "batch_id": 0,
-                        "files": files,
-                        "pages": int(weight),
-                    }
-                ],
-            }
-        )
-    return planned
-
-
-def _plan_streaming(
-    weighted_files: List[Dict[str, Any]],
-    devices: List[int],
-    workers_per_gpu: int,
-    stream_batch_pages: int,
-) -> List[Dict[str, Any]]:
-    lanes = _empty_lanes(devices, workers_per_gpu)
-    batch_target = max(1, int(stream_batch_pages))
-    current: Dict[int, Dict[str, Any]] = {
-        int(lane["lane_id"]): {"files": [], "pages": 0}
-        for lane in lanes
-    }
-
-    def flush(lane: Dict[str, Any]) -> None:
-        lane_id = int(lane["lane_id"])
-        state = current[lane_id]
-        if not state["files"]:
-            return
-        lane["batches"].append(
-            {
-                "batch_id": len(lane["batches"]),
-                "files": list(state["files"]),
-                "pages": int(state["pages"]),
-            }
-        )
-        state["files"] = []
-        state["pages"] = 0
-
-    for item in weighted_files:
-        lane = min(lanes, key=lambda value: (int(value["assigned_pages"]) + int(current[int(value["lane_id"])]["pages"]), int(value["lane_id"])))
-        lane_id = int(lane["lane_id"])
-        current[lane_id]["files"].append(str(item["name"]))
-        current[lane_id]["pages"] = int(current[lane_id]["pages"]) + int(item["pages"])
-        lane["assigned_pages"] = int(lane["assigned_pages"]) + int(item["pages"])
-        if int(current[lane_id]["pages"]) >= batch_target:
-            flush(lane)
-
-    for lane in lanes:
-        flush(lane)
-    return [lane for lane in lanes if lane["batches"]]
+    return [lane.to_dict() for lane in lanes if lane.batches]
 
 
 def _collect_repair_metrics(run_dir: Path) -> Dict[str, int]:
@@ -201,6 +150,26 @@ def _collect_repair_metrics(run_dir: Path) -> Dict[str, int]:
     return totals
 
 
+def _flatten_lane_batches(lane: Dict[str, Any]) -> Dict[str, Any]:
+    files: List[str] = []
+    page_ranges: List[str] = []
+    pages = 0
+    planned_batch_pages: List[int] = []
+    for batch in list(lane.get("batches") or []):
+        batch_pages = int(batch.get("pages", 0))
+        pages += batch_pages
+        planned_batch_pages.append(batch_pages)
+        files.extend(list(batch.get("files") or []))
+        page_ranges.extend(list(batch.get("page_ranges") or []))
+    return {
+        "files": files,
+        "page_ranges": page_ranges,
+        "pages": int(pages),
+        "planned_batch_count": len(planned_batch_pages),
+        "planned_batch_pages": planned_batch_pages,
+    }
+
+
 def main() -> int:
     args = _parse_args()
     repo = Path(args.repo).resolve()
@@ -212,29 +181,23 @@ def main() -> int:
 
     from glossapi.ocr.deepseek import runner as deepseek_runner
 
-    weighted_files = _weighted_files(
+    documents = _weighted_documents(
         input_dir=input_dir,
         max_docs=args.max_docs,
         doc_order=args.doc_order,
         seed=int(args.seed),
     )
-    if not weighted_files:
+    if not documents:
         raise SystemExit("No PDFs found for benchmark input set.")
-
-    if str(args.mode) == "streaming":
-        lanes = _plan_streaming(
-            weighted_files=weighted_files,
-            devices=devices,
-            workers_per_gpu=max(1, int(args.workers_per_gpu)),
-            stream_batch_pages=max(1, int(args.stream_batch_pages)),
-        )
-    else:
-        lanes = _plan_static(
-            weighted_files=weighted_files,
-            devices=devices,
-            workers_per_gpu=max(1, int(args.workers_per_gpu)),
-            input_dir=input_dir,
-        )
+    lanes = _plan_lanes(
+        documents=documents,
+        devices=devices,
+        workers_per_gpu=max(1, int(args.workers_per_gpu)),
+        scheduler=str(args.scheduler),
+        target_batch_pages=int(args.target_batch_pages),
+        shard_pages=int(args.shard_pages),
+        shard_threshold_pages=int(args.shard_threshold_pages),
+    )
 
     run_dir = output_root / args.label
     if args.clean and run_dir.exists():
@@ -249,31 +212,27 @@ def main() -> int:
         if str(args.runtime_backend) == "vllm"
         else deepseek_runner.DEFAULT_SCRIPT
     )
-
     py_env = {"PYTHONPATH": str(repo / "src")}
 
-    def start_batch(lane: Dict[str, Any], batch: Dict[str, Any]) -> Dict[str, Any]:
+    def start_lane(lane: Dict[str, Any]) -> Dict[str, Any]:
         lane_id = int(lane["lane_id"])
         visible_device = int(lane["visible_device"])
-        batch_id = int(batch["batch_id"])
-        files = list(batch["files"])
-        pages = int(batch["pages"])
+        lane_plan = _flatten_lane_batches(lane)
+        files = list(lane_plan["files"])
+        page_ranges = list(lane_plan["page_ranges"])
+        pages = int(lane_plan["pages"])
         resolved_vllm_batch_size = (
             int(args.vllm_batch_size)
             if args.vllm_batch_size is not None
-            else deepseek_runner._auto_vllm_batch_size(
-                runtime_backend=str(args.runtime_backend),
-                file_list=files,
-                input_root=input_dir,
-                max_pages=None,
-            )
+            else min(max(1, int(args.target_batch_pages)), max(1, pages))
         )
-        log_path = logs_dir / f"lane_{lane_id:02d}_batch_{batch_id:03d}_gpu{visible_device}.log"
+        log_path = logs_dir / f"lane_{lane_id:02d}_gpu{visible_device}.log"
         fh = log_path.open("w", encoding="utf-8")
         cmd = deepseek_runner._build_cli_command(
             input_dir=input_dir,
             output_dir=run_dir,
             files=files,
+            page_ranges=page_ranges,
             model_dir=model_dir,
             python_bin=python_bin,
             script=script_path,
@@ -297,17 +256,17 @@ def main() -> int:
             repair_mode=str(args.repair_mode),
         )
         env = deepseek_runner._build_env(python_bin=python_bin, visible_device=visible_device)
-        if env.get("PYTHONPATH"):
-            env["PYTHONPATH"] = f"{py_env['PYTHONPATH']}:{env['PYTHONPATH']}"
-        else:
-            env["PYTHONPATH"] = py_env["PYTHONPATH"]
+        env["PYTHONPATH"] = f"{py_env['PYTHONPATH']}:{env['PYTHONPATH']}" if env.get("PYTHONPATH") else py_env["PYTHONPATH"]
         proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env)  # nosec: controlled args
         return {
             "lane_id": lane_id,
             "visible_device": visible_device,
-            "batch_id": batch_id,
+            "batch_id": 0,
             "pages": pages,
             "files": files,
+            "page_ranges": page_ranges,
+            "planned_batch_count": int(lane_plan["planned_batch_count"]),
+            "planned_batch_pages": list(lane_plan["planned_batch_pages"]),
             "resolved_vllm_batch_size": resolved_vllm_batch_size,
             "log_path": str(log_path),
             "fh": fh,
@@ -316,17 +275,8 @@ def main() -> int:
             "cmd": cmd,
         }
 
-    pending_batches: Dict[int, List[Dict[str, Any]]] = {
-        int(lane["lane_id"]): list(lane["batches"])
-        for lane in lanes
-    }
-    active: List[Dict[str, Any]] = []
     global_start = time.perf_counter()
-    for lane in lanes:
-        lane_id = int(lane["lane_id"])
-        if pending_batches[lane_id]:
-            first_batch = pending_batches[lane_id].pop(0)
-            active.append(start_batch(lane, first_batch))
+    active: List[Dict[str, Any]] = [start_lane(lane) for lane in lanes]
 
     batch_results: List[Dict[str, Any]] = []
     while active:
@@ -345,8 +295,11 @@ def main() -> int:
                     "batch_id": int(item["batch_id"]),
                     "pages": int(item["pages"]),
                     "files": list(item["files"]),
+                    "page_ranges": list(item.get("page_ranges") or []),
+                    "planned_batch_count": int(item.get("planned_batch_count", 1)),
+                    "planned_batch_pages": list(item.get("planned_batch_pages") or []),
                     "return_code": int(rc),
-                    "resolved_vllm_batch_size": item["resolved_vllm_batch_size"],
+                    "resolved_vllm_batch_size": int(item["resolved_vllm_batch_size"]),
                     "start_offset_sec": float(item["start_ts"] - global_start),
                     "end_offset_sec": float(end_ts - global_start),
                     "elapsed_sec": float(elapsed),
@@ -356,13 +309,9 @@ def main() -> int:
                 }
             )
             active.remove(item)
-            lane = next(lane for lane in lanes if int(lane["lane_id"]) == int(item["lane_id"]))
-            if pending_batches[int(item["lane_id"])]:
-                next_batch = pending_batches[int(item["lane_id"])].pop(0)
-                active.append(start_batch(lane, next_batch))
 
     total_elapsed = max(0.000001, time.perf_counter() - global_start)
-    total_pages = sum(int(item["pages"]) for item in weighted_files)
+    total_pages = sum(int(doc.pages) for doc in documents)
     failures = [item for item in batch_results if int(item["return_code"]) != 0]
 
     lane_results: List[Dict[str, Any]] = []
@@ -409,15 +358,19 @@ def main() -> int:
         "label": str(args.label),
         "status": "pass" if not failures else "fail",
         "mode": str(args.mode),
+        "scheduler": str(args.scheduler),
         "runtime_backend": str(args.runtime_backend),
         "ocr_profile": str(args.ocr_profile),
         "repair_mode": str(args.repair_mode),
         "devices": devices,
         "workers_per_gpu": int(args.workers_per_gpu),
         "doc_order": str(args.doc_order),
+        "target_batch_pages": int(args.target_batch_pages),
         "stream_batch_pages": int(args.stream_batch_pages),
-        "docs": len(weighted_files),
+        "docs": len(documents),
         "pages": int(total_pages),
+        "shard_pages": int(args.shard_pages),
+        "shard_threshold_pages": int(args.shard_threshold_pages),
         "wall_time_sec": float(total_elapsed),
         "sec_per_page": float(total_elapsed / max(1, total_pages)),
         "batch_results": batch_results,

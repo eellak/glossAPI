@@ -49,6 +49,17 @@ The dedicated uv profile is OCR-only and does not install the Docling extraction
 - `GLOSSAPI_DEEPSEEK_MODEL_DIR`: path to the downloaded `DeepSeek-OCR-2` snapshot.
 - `GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH`: prepend extra library search paths when launching the OCR runner.
 
+Standard OCR defaults:
+
+- `runtime_backend='vllm'`
+- `ocr_profile='markdown_grounded'`
+- `max_new_tokens=2048`
+- `repair_mode='auto'`
+- `scheduler='auto'`
+- `target_batch_pages=160`
+
+The DeepSeek runners now default to `max_new_tokens=2048`. Do not leave the token cap implicit in one environment and explicit in another when comparing benchmarks.
+
 ## Math Enrichment (Phase‑2)
 
 - `GLOSSAPI_LATEX_EARLYSTOP` = `1|0` (default 1): enable/disable early‑stop wrapper.

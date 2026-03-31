@@ -12,6 +12,15 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from glossapi.ocr.deepseek.scheduling import (
+    SourceDocument,
+    assign_batches_to_lanes,
+    build_exact_fill_batches,
+    build_fixed_shard_slices,
+    build_whole_document_slices,
+    pack_slices_into_batches,
+)
+
 try:
     import pypdfium2 as _pypdfium2
 except Exception:  # pragma: no cover - optional dependency
@@ -22,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_transformers.py"
 DEFAULT_VLLM_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_vllm.py"
 AUTO_VLLM_BATCH_PAGE_CAP = 160
+DEFAULT_MAX_NEW_TOKENS = 2048
 
 
 def _page_count(pdf_path: Path) -> int:
@@ -38,6 +48,7 @@ def _build_cli_command(
     output_dir: Path,
     *,
     files: List[str],
+    page_ranges: Optional[List[str]],
     model_dir: Path,
     python_bin: Optional[Path],
     script: Path,
@@ -73,6 +84,8 @@ def _build_cli_command(
     ]
     if files:
         cmd += ["--files", *files]
+    if page_ranges:
+        cmd += ["--page-ranges", *page_ranges]
     if max_pages is not None:
         cmd += ["--max-pages", str(max_pages)]
     if content_debug:
@@ -166,6 +179,7 @@ def _run_cli(
         input_dir=input_dir,
         output_dir=output_dir,
         files=files,
+        page_ranges=None,
         model_dir=model_dir,
         python_bin=python_bin,
         script=script,
@@ -278,6 +292,24 @@ def _effective_page_count(pdf_path: Path, max_pages: Optional[int]) -> int:
     return max(1, count)
 
 
+def _source_documents(
+    *,
+    file_list: List[str],
+    input_root: Path,
+    max_pages: Optional[int],
+) -> List[SourceDocument]:
+    documents: List[SourceDocument] = []
+    for name in file_list:
+        pdf_path = (input_root / name).resolve()
+        documents.append(
+            SourceDocument(
+                name=str(name),
+                pages=int(_effective_page_count(pdf_path, max_pages)),
+            )
+        )
+    return documents
+
+
 def _plan_lanes(
     *,
     file_list: List[str],
@@ -315,6 +347,75 @@ def _plan_lanes(
     return lanes
 
 
+def _resolve_scheduler(
+    *,
+    scheduler: Optional[str],
+    runtime_backend: str,
+    lane_devices: List[int],
+    workers_per_gpu: int,
+) -> str:
+    scheduler_norm = str(scheduler or "auto").strip().lower()
+    if scheduler_norm not in {"auto", "whole_doc", "fixed_shard", "exact_fill"}:
+        raise ValueError("scheduler must be one of 'auto', 'whole_doc', 'fixed_shard', or 'exact_fill'")
+    if scheduler_norm != "auto":
+        return scheduler_norm
+    runtime_backend_norm = str(runtime_backend or "transformers").strip().lower()
+    lane_count = max(1, len(lane_devices)) * max(1, int(workers_per_gpu))
+    if runtime_backend_norm == "vllm" and lane_count > 1:
+        return "exact_fill"
+    return "whole_doc"
+
+
+def _plan_lane_batches(
+    *,
+    file_list: List[str],
+    input_root: Path,
+    lane_devices: List[int],
+    workers_per_gpu: int,
+    max_pages: Optional[int],
+    runtime_backend: str,
+    scheduler: Optional[str],
+    target_batch_pages: int,
+    shard_pages: int,
+    shard_threshold_pages: int,
+) -> List[Dict[str, Any]]:
+    documents = _source_documents(
+        file_list=file_list,
+        input_root=input_root,
+        max_pages=max_pages,
+    )
+    scheduler_norm = _resolve_scheduler(
+        scheduler=scheduler,
+        runtime_backend=runtime_backend,
+        lane_devices=lane_devices,
+        workers_per_gpu=workers_per_gpu,
+    )
+    if scheduler_norm == "exact_fill":
+        batches = build_exact_fill_batches(
+            documents,
+            target_batch_pages=max(1, int(target_batch_pages)),
+        )
+    else:
+        if scheduler_norm == "fixed_shard":
+            slices = build_fixed_shard_slices(
+                documents,
+                shard_pages=max(1, int(shard_pages)),
+                shard_threshold_pages=max(0, int(shard_threshold_pages)),
+            )
+        else:
+            slices = build_whole_document_slices(documents)
+        batches = pack_slices_into_batches(
+            slices,
+            target_batch_pages=max(1, int(target_batch_pages)),
+        )
+    lanes = assign_batches_to_lanes(
+        batches,
+        devices=lane_devices,
+        workers_per_gpu=workers_per_gpu,
+    )
+    return [lane.to_dict() for lane in lanes if lane.batches]
+
+
 def _auto_vllm_batch_size(
     *,
     runtime_backend: str,
@@ -331,6 +432,34 @@ def _auto_vllm_batch_size(
     if total_pages <= 0:
         return 1
     return min(int(total_pages), int(AUTO_VLLM_BATCH_PAGE_CAP))
+
+
+def _auto_vllm_batch_size_for_pages(*, runtime_backend: str, pages: int) -> Optional[int]:
+    if str(runtime_backend or "").strip().lower() != "vllm":
+        return None
+    if int(pages) <= 0:
+        return 1
+    return min(int(pages), int(AUTO_VLLM_BATCH_PAGE_CAP))
+
+
+def _flatten_lane_batches(lane: Dict[str, Any]) -> Dict[str, Any]:
+    files: List[str] = []
+    page_ranges: List[str] = []
+    pages = 0
+    planned_batch_pages: List[int] = []
+    for batch in list(lane.get("batches") or []):
+        batch_pages = int(batch.get("pages", 0))
+        pages += batch_pages
+        planned_batch_pages.append(batch_pages)
+        files.extend(list(batch.get("files") or []))
+        page_ranges.extend(list(batch.get("page_ranges") or []))
+    return {
+        "files": files,
+        "page_ranges": page_ranges,
+        "pages": int(pages),
+        "planned_batch_count": len(planned_batch_pages),
+        "planned_batch_pages": planned_batch_pages,
+    }
 
 
 def _run_multi_cli(
@@ -361,13 +490,22 @@ def _run_multi_cli(
     gpu_memory_utilization: Optional[float],
     disable_fp8_kv: bool,
     repair_mode: Optional[str],
+    scheduler: Optional[str],
+    target_batch_pages: int,
+    shard_pages: int,
+    shard_threshold_pages: int,
 ) -> None:
-    lanes = _plan_lanes(
+    lanes = _plan_lane_batches(
         file_list=file_list,
         input_root=input_root,
         lane_devices=lane_devices,
         workers_per_gpu=workers_per_gpu,
         max_pages=max_pages,
+        runtime_backend=runtime_backend,
+        scheduler=scheduler,
+        target_batch_pages=target_batch_pages,
+        shard_pages=shard_pages,
+        shard_threshold_pages=shard_threshold_pages,
     )
     if not lanes:
         return
@@ -376,27 +514,31 @@ def _run_multi_cli(
     failures: List[str] = []
     with ExitStack() as stack:
         procs = []
+
         for lane in lanes:
-            lane_files = list(lane["files"])
-            if not lane_files:
-                continue
+            lane_id = int(lane["lane_id"])
             visible_device = int(lane["visible_device"])
+            lane_plan = _flatten_lane_batches(lane)
+            files = list(lane_plan["files"])
+            page_ranges = list(lane_plan["page_ranges"])
+            pages = int(lane_plan["pages"])
+            if pages <= 0:
+                continue
             resolved_vllm_batch_size = (
                 int(vllm_batch_size)
                 if vllm_batch_size is not None
-                else _auto_vllm_batch_size(
+                else _auto_vllm_batch_size_for_pages(
                     runtime_backend=runtime_backend,
-                    file_list=lane_files,
-                    input_root=input_root,
-                    max_pages=max_pages,
+                    pages=min(int(target_batch_pages), int(pages)),
                 )
             )
-            log_path = log_dir / f"lane_{lane['lane_id']}_gpu{visible_device}.log"
+            log_path = log_dir / f"lane_{lane_id:02d}_gpu{visible_device}.log"
             fh = stack.enter_context(log_path.open("w", encoding="utf-8"))
             cmd = _build_cli_command(
                 input_dir=input_root,
                 output_dir=out_root,
-                files=lane_files,
+                files=files,
+                page_ranges=page_ranges,
                 model_dir=model_root,
                 python_bin=python_exe,
                 script=script_path,
@@ -421,11 +563,13 @@ def _run_multi_cli(
             )
             env = _build_env(python_bin=python_exe, visible_device=visible_device)
             LOGGER.info(
-                "Running DeepSeek OCR lane=%s visible_gpu=%s files=%d weight=%d: %s",
-                lane["lane_id"],
+                "Running DeepSeek OCR lane=%s visible_gpu=%s pages=%s planned_batches=%s files=%d ranges=%d: %s",
+                lane_id,
                 visible_device,
-                len(lane_files),
-                lane["weight"],
+                pages,
+                lane_plan["planned_batch_count"],
+                len(files),
+                len(page_ranges),
                 " ".join(cmd),
             )
             proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env)  # nosec: controlled args
@@ -465,7 +609,7 @@ def run_for_files(
     image_size: Optional[int] = None,
     crop_mode: Optional[bool] = None,
     render_dpi: Optional[int] = None,
-    max_new_tokens: Optional[int] = None,
+    max_new_tokens: Optional[int] = DEFAULT_MAX_NEW_TOKENS,
     repetition_penalty: Optional[float] = None,
     no_repeat_ngram_size: Optional[int] = None,
     use_gpus: Optional[str] = None,
@@ -475,6 +619,10 @@ def run_for_files(
     disable_fp8_kv: bool = False,
     vllm_batch_size: Optional[int] = None,
     repair_mode: str = "auto",
+    scheduler: str = "auto",
+    target_batch_pages: int = AUTO_VLLM_BATCH_PAGE_CAP,
+    shard_pages: int = 0,
+    shard_threshold_pages: int = 0,
     **_: Any,
 ) -> Dict[str, Any]:
     """Run DeepSeek OCR for the provided files."""
@@ -568,6 +716,10 @@ def run_for_files(
             gpu_memory_utilization=gpu_memory_utilization,
             disable_fp8_kv=disable_fp8_kv,
             repair_mode=repair_mode,
+            scheduler=scheduler,
+            target_batch_pages=int(max(1, target_batch_pages)),
+            shard_pages=int(max(0, shard_pages)),
+            shard_threshold_pages=int(max(0, shard_threshold_pages)),
         )
     else:
         resolved_vllm_batch_size = (
@@ -584,6 +736,7 @@ def run_for_files(
             input_dir=pdf_root,
             output_dir=out_root,
             files=file_list,
+            page_ranges=None,
             model_dir=model_root,
             python_bin=python_exe,
             script=script_path,

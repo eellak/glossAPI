@@ -7,37 +7,28 @@ import logging
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from PIL import Image
 
 from glossapi.ocr.deepseek.run_pdf_ocr_transformers import (
+    DEFAULT_MAX_NEW_TOKENS,
     PAGE_SPLIT,
-    _iter_pdfs,
+    _iter_pdf_jobs,
     _postprocess_page_text,
     _profile_defaults,
     _render_pages,
     _write_outputs,
     _write_progress,
 )
+from glossapi.ocr.utils.cleaning import StreamingGarbageDetector
 
 LOGGER = logging.getLogger(__name__)
-REPAIR_TILE_SPECS: Tuple[Tuple[str, float, float], ...] = (
-    ("top", 0.0, 0.5),
-    ("mid", 0.35, 0.8),
-    ("bottom", 0.65, 1.0),
-)
 REPAIR_DARK_THRESHOLD = 235
-REPAIR_SHORT_CHARS = 700
-REPAIR_EXTREME_SHORT_CHARS = 120
-REPAIR_PUA_THRESHOLD = 64
-REPAIR_MIN_HALF_DARK = 0.08
-REPAIR_MIN_THIRD_DARK = 0.07
-REPAIR_MAX_OVERALL_DARK = 0.25
-REPAIR_MIN_OVERALL_DARK = 0.04
-REPAIR_FOOTNOTE_SHORT_CHARS = 1100
-REPAIR_MIN_FOOTNOTE_LINES = 2
-REPAIR_FOOTNOTE_RATIO = 0.40
+EMPTY_PAGE_OVERALL_DARK_MAX = 0.0015
+EMPTY_PAGE_BAND_DARK_MAX = 0.0025
+GARBAGE_EARLY_STOP_MIN_OUTPUT_TOKENS = 48
+GARBAGE_EARLY_STOP_WINDOW_TOKENS = 160
 
 
 def _parse_args() -> argparse.Namespace:
@@ -46,6 +37,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--files", nargs="*", default=[])
+    parser.add_argument("--page-ranges", nargs="*", default=[])
     parser.add_argument("--max-pages", type=int, default=None)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--ocr-profile", default="markdown_grounded", choices=["markdown_grounded", "plain_ocr"])
@@ -54,7 +46,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--base-size", type=int, default=None)
     parser.add_argument("--image-size", type=int, default=None)
     parser.add_argument("--render-dpi", type=int, default=144)
-    parser.add_argument("--max-new-tokens", type=int, default=None)
+    parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
     parser.add_argument("--repetition-penalty", type=float, default=None)
     parser.add_argument("--no-repeat-ngram-size", type=int, default=None)
     parser.add_argument("--crop-mode", dest="crop_mode", action="store_true")
@@ -71,13 +63,99 @@ def _parse_args() -> argparse.Namespace:
 def _load_vllm(model_dir: Path, gpu_memory_utilization: float, disable_fp8_kv: bool):
     from vllm import LLM
 
-    logits_processors = None
+    logits_processors = []
     try:
         from vllm.model_executor.models.deepseek_ocr import NGramPerReqLogitsProcessor
 
-        logits_processors = [NGramPerReqLogitsProcessor]
+        logits_processors.append(NGramPerReqLogitsProcessor)
     except Exception as exc:  # pragma: no cover - environment dependent
         LOGGER.warning("DeepSeek OCR logits processor unavailable in vLLM; continuing without it: %s", exc)
+
+    try:
+        from transformers import AutoTokenizer
+        from vllm.sampling_params import SamplingParams
+        from vllm.v1.sample.logits_processor import AdapterLogitsProcessor
+
+        class _GarbageStopPerReqLogitsProcessor:
+            def __init__(
+                self,
+                tokenizer,
+                eos_token_id: int | None,
+                *,
+                min_output_tokens: int,
+                window_tokens: int,
+            ) -> None:
+                self.tokenizer = tokenizer
+                self.eos_token_id = eos_token_id
+                self.min_output_tokens = int(min_output_tokens)
+                self.window_tokens = int(window_tokens)
+                self.detector = StreamingGarbageDetector()
+                self.seen_output_tokens = 0
+
+            def __call__(self, prompt_ids: list[int], output_ids: list[int], logits):
+                del prompt_ids
+                if self.eos_token_id is None:
+                    return logits
+                current_len = len(output_ids)
+                if current_len <= self.seen_output_tokens:
+                    return logits
+                new_ids = output_ids[self.seen_output_tokens :]
+                self.seen_output_tokens = current_len
+                if not new_ids:
+                    return logits
+                new_text = self.tokenizer.decode(new_ids, skip_special_tokens=False)
+                if new_text:
+                    self.detector.feed(new_text)
+                if current_len < self.min_output_tokens or self.detector.triggered_reason is None:
+                    return logits
+                eos_token_id = int(self.eos_token_id)
+                eos_value = logits[eos_token_id].clone()
+                logits[:] = float("-inf")
+                logits[eos_token_id] = eos_value
+                return logits
+
+        class GarbageEarlyStopLogitsProcessor(AdapterLogitsProcessor):
+            @classmethod
+            def validate_params(cls, params: SamplingParams):
+                extra = params.extra_args or {}
+                enabled = extra.get("garbage_early_stop")
+                if enabled is None:
+                    return
+                if not isinstance(enabled, bool):
+                    raise ValueError("garbage_early_stop must be a bool when provided")
+                min_output_tokens = extra.get("garbage_min_output_tokens")
+                if min_output_tokens is not None and int(min_output_tokens) <= 0:
+                    raise ValueError("garbage_min_output_tokens must be > 0")
+                window_tokens = extra.get("garbage_window_tokens")
+                if window_tokens is not None and int(window_tokens) <= 0:
+                    raise ValueError("garbage_window_tokens must be > 0")
+
+            def __init__(self, vllm_config, device, is_pin_memory):
+                super().__init__(vllm_config, device, is_pin_memory)
+                self._tokenizer = AutoTokenizer.from_pretrained(str(model_dir), trust_remote_code=True)
+                self._eos_token_id = self._tokenizer.eos_token_id
+
+            def is_argmax_invariant(self) -> bool:
+                return False
+
+            def new_req_logits_processor(self, params: SamplingParams):
+                extra = params.extra_args or {}
+                if not bool(extra.get("garbage_early_stop", False)):
+                    return None
+                return _GarbageStopPerReqLogitsProcessor(
+                    self._tokenizer,
+                    self._eos_token_id,
+                    min_output_tokens=int(
+                        extra.get("garbage_min_output_tokens", GARBAGE_EARLY_STOP_MIN_OUTPUT_TOKENS)
+                    ),
+                    window_tokens=int(
+                        extra.get("garbage_window_tokens", GARBAGE_EARLY_STOP_WINDOW_TOKENS)
+                    ),
+                )
+
+        logits_processors.append(GarbageEarlyStopLogitsProcessor)
+    except Exception as exc:  # pragma: no cover - environment dependent
+        LOGGER.warning("Garbage-stop logits processor unavailable in vLLM; continuing without it: %s", exc)
 
     engine_kwargs = {
         "model": str(model_dir),
@@ -96,17 +174,20 @@ def _load_vllm(model_dir: Path, gpu_memory_utilization: float, disable_fp8_kv: b
     return LLM(**engine_kwargs)
 
 
-def _sampling_params(max_new_tokens: int | None):
+def _sampling_params(max_new_tokens: int | None, *, enable_garbage_early_stop: bool):
     from vllm import SamplingParams
 
     return SamplingParams(
         temperature=0.0,
-        max_tokens=int(max_new_tokens or 8192),
+        max_tokens=int(max_new_tokens or DEFAULT_MAX_NEW_TOKENS),
         skip_special_tokens=False,
         extra_args={
             "ngram_size": 30,
             "window_size": 90,
             "whitelist_token_ids": {128821, 128822},
+            "garbage_early_stop": bool(enable_garbage_early_stop),
+            "garbage_min_output_tokens": int(GARBAGE_EARLY_STOP_MIN_OUTPUT_TOKENS),
+            "garbage_window_tokens": int(GARBAGE_EARLY_STOP_WINDOW_TOKENS),
         },
     )
 
@@ -148,23 +229,18 @@ def _image_content_stats(image: Image.Image) -> dict:
     }
 
 
-def _count_private_use_chars(text: str) -> int:
-    return sum(
-        1
-        for ch in str(text or "")
-        if 0xE000 <= ord(ch) <= 0xF8FF
-        or 0xF0000 <= ord(ch) <= 0xFFFFD
-        or 0x100000 <= ord(ch) <= 0x10FFFD
-    )
-
-
 def _text_quality_metrics(text: str) -> dict:
     stripped = str(text or "").strip()
     letters = sum(1 for ch in stripped if ch.isalpha())
     digits = sum(1 for ch in stripped if ch.isdigit())
-    pua_chars = _count_private_use_chars(stripped)
+    pua_chars = sum(
+        1
+        for ch in stripped
+        if 0xE000 <= ord(ch) <= 0xF8FF
+        or 0xF0000 <= ord(ch) <= 0xFFFFD
+        or 0x100000 <= ord(ch) <= 0x10FFFD
+    )
     lines = [line.strip() for line in stripped.splitlines() if line.strip()]
-    footnote_like_lines = sum(1 for line in lines if _is_footnote_like_line(line))
     avg_line_length = (sum(len(line) for line in lines) / float(len(lines))) if lines else 0.0
     score = float(letters) + (0.10 * float(len(stripped))) + (0.05 * float(digits)) - (20.0 * float(pua_chars))
     return {
@@ -173,86 +249,31 @@ def _text_quality_metrics(text: str) -> dict:
         "digits": int(digits),
         "pua_chars": int(pua_chars),
         "line_count": int(len(lines)),
-        "footnote_like_lines": int(footnote_like_lines),
         "avg_line_length": float(avg_line_length),
         "quality_score": float(score),
     }
 
 
-def _is_footnote_like_line(line: str) -> bool:
-    stripped = str(line or "").strip()
-    if not stripped:
-        return False
-    if len(stripped) <= 2:
-        return False
-    if stripped[0].isdigit():
-        if len(stripped) > 1 and stripped[1] in {".", ")", "]"}:
-            return True
-        if len(stripped) > 2 and stripped[1].isspace():
-            return True
-    if stripped[0] in {"*", "•", "-", "†", "‡"}:
-        return True
-    return False
-
-
-def _classify_repair(text: str, image_stats: dict, repair_mode: str) -> tuple[str, str | None]:
+def _is_effectively_empty_page(image_stats: dict, repair_mode: str) -> bool:
     if str(repair_mode or "off").strip().lower() != "auto":
-        return "none", None
-    quality = _text_quality_metrics(text)
-    chars = int(quality["chars"])
-    pua_chars = int(quality["pua_chars"])
-    line_count = int(quality["line_count"])
-    footnote_like_lines = int(quality["footnote_like_lines"])
-    footnote_ratio = float(footnote_like_lines) / float(max(1, line_count))
-    pua_ratio = float(pua_chars) / float(max(1, chars))
-    if pua_chars >= REPAIR_PUA_THRESHOLD or pua_ratio >= 0.10:
-        return "plain", "markdown_garbage"
-    top_dark = float(image_stats.get("top_dark_ratio", 0.0))
-    bottom_dark = float(image_stats.get("bottom_dark_ratio", 0.0))
-    top_third_dark = float(image_stats.get("top_third_dark_ratio", top_dark))
-    middle_third_dark = float(image_stats.get("middle_third_dark_ratio", 0.0))
-    bottom_third_dark = float(image_stats.get("bottom_third_dark_ratio", bottom_dark))
+        return False
     overall_dark = float(image_stats.get("overall_dark_ratio", 0.0))
-    if (
-        chars <= REPAIR_FOOTNOTE_SHORT_CHARS
-        and footnote_like_lines >= REPAIR_MIN_FOOTNOTE_LINES
-        and footnote_ratio >= REPAIR_FOOTNOTE_RATIO
-        and top_third_dark >= REPAIR_MIN_THIRD_DARK
-        and middle_third_dark >= REPAIR_MIN_THIRD_DARK
-        and REPAIR_MIN_OVERALL_DARK <= overall_dark <= REPAIR_MAX_OVERALL_DARK
-    ):
-        return "tile", "footnote_dominant"
-    if chars <= REPAIR_EXTREME_SHORT_CHARS:
-        return "plain", "extreme_short"
-    if (
-        chars <= REPAIR_SHORT_CHARS
-        and top_dark >= REPAIR_MIN_HALF_DARK
-        and bottom_dark >= REPAIR_MIN_HALF_DARK
-        and top_third_dark >= REPAIR_MIN_THIRD_DARK
-        and middle_third_dark >= REPAIR_MIN_THIRD_DARK
-        and bottom_third_dark >= REPAIR_MIN_THIRD_DARK
-        and REPAIR_MIN_OVERALL_DARK <= overall_dark <= REPAIR_MAX_OVERALL_DARK
-    ):
-        return "tile", "short_coverage"
-    return "none", None
+    if overall_dark > EMPTY_PAGE_OVERALL_DARK_MAX:
+        return False
+    return all(
+        float(image_stats.get(key, 0.0)) <= EMPTY_PAGE_BAND_DARK_MAX
+        for key in (
+            "top_dark_ratio",
+            "bottom_dark_ratio",
+            "top_third_dark_ratio",
+            "middle_third_dark_ratio",
+            "bottom_third_dark_ratio",
+        )
+    )
 
 
 def _load_job_image(item: dict) -> Image.Image:
-    image = Image.open(item["image_path"]).convert("RGB")
-    crop_box = item.get("crop_box")
-    if not crop_box:
-        return image
-    width, height = image.size
-    x0_norm, y0_norm, x1_norm, y1_norm = crop_box
-    crop_pixels = (
-        int(round(float(x0_norm) * width)),
-        int(round(float(y0_norm) * height)),
-        int(round(float(x1_norm) * width)),
-        int(round(float(y1_norm) * height)),
-    )
-    cropped = image.crop(crop_pixels)
-    image.close()
-    return cropped
+    return Image.open(item["image_path"]).convert("RGB")
 
 
 def _generate_batch_outputs(
@@ -263,15 +284,15 @@ def _generate_batch_outputs(
     batch_size: int,
     sampling_params,
 ) -> List[dict]:
-    outputs_by_key: Dict[tuple[str, int, str], dict] = {}
+    outputs_by_key: Dict[tuple[str, int], dict] = {}
     for batch in _batched(jobs, batch_size):
         prompt_batch = []
         opened_images: List[Image.Image] = []
-        keys: List[tuple[str, int, str]] = []
+        keys: List[tuple[str, int]] = []
         for item in batch:
             image = _load_job_image(item)
             opened_images.append(image)
-            keys.append((str(item["stem"]), int(item["page_number"]), str(item.get("variant", "page"))))
+            keys.append((str(item["stem"]), int(item["page_number"])))
             prompt_batch.append(
                 {
                     "prompt": prompt,
@@ -293,28 +314,7 @@ def _generate_batch_outputs(
                 "raw_text": raw_text,
                 "infer_sec": float(per_item_sec),
             }
-    ordered = []
-    for item in jobs:
-        ordered.append(outputs_by_key[(str(item["stem"]), int(item["page_number"]), str(item.get("variant", "page")))])
-    return ordered
-
-
-def _stitch_tiled_markdown(parts: List[str]) -> str:
-    stitched: List[str] = []
-    previous_lines: List[str] = []
-    for part in parts:
-        lines = [line.rstrip() for line in str(part or "").splitlines() if line.strip()]
-        if not lines:
-            continue
-        overlap = 0
-        max_overlap = min(len(previous_lines), len(lines), 12)
-        for size in range(max_overlap, 0, -1):
-            if previous_lines[-size:] == lines[:size]:
-                overlap = size
-                break
-        stitched.extend(lines[overlap:])
-        previous_lines = lines
-    return "\n".join(stitched).strip()
+    return [outputs_by_key[(str(item["stem"]), int(item["page_number"]))] for item in jobs]
 
 
 def main() -> int:
@@ -322,8 +322,8 @@ def main() -> int:
     input_dir = Path(args.input_dir).resolve()
     output_dir = Path(args.output_dir).resolve()
     model_dir = Path(args.model_dir).resolve()
-    pdfs = _iter_pdfs(input_dir, args.files)
-    if not pdfs:
+    jobs_to_run = _iter_pdf_jobs(input_dir, args.files, args.page_ranges)
+    if not jobs_to_run:
         return 0
 
     profile_defaults = _profile_defaults(args.ocr_profile)
@@ -338,21 +338,36 @@ def main() -> int:
         gpu_memory_utilization=float(args.gpu_memory_utilization),
         disable_fp8_kv=bool(args.disable_fp8_kv),
     )
-    sampling_params = _sampling_params(args.max_new_tokens)
+    sampling_params = _sampling_params(
+        args.max_new_tokens,
+        enable_garbage_early_stop=str(args.repair_mode or "off").strip().lower() == "auto",
+    )
 
     with tempfile.TemporaryDirectory(prefix="deepseek_vllm_") as tmp_dir_str:
         tmp_dir = Path(tmp_dir_str)
         doc_states: Dict[str, dict] = {}
         jobs: List[dict] = []
+        plain_retry_jobs: List[dict] = []
 
-        for pdf_path in pdfs:
+        for job in jobs_to_run:
+            pdf_path = Path(job["pdf_path"])
+            stem = str(job["stem"])
             doc_start = time.perf_counter()
             render_start = time.perf_counter()
-            images = _render_pages(pdf_path, args.max_pages, args.render_dpi)
+            images = _render_pages(
+                pdf_path,
+                args.max_pages,
+                args.render_dpi,
+                start_page=int(job["start_page"]),
+                end_page=job["end_page"],
+            )
             render_sec = time.perf_counter() - render_start
             total_pages = len(images)
             state = {
-                "stem": pdf_path.stem,
+                "stem": stem,
+                "source_name": str(job["source_name"]),
+                "source_stem": str(job["source_stem"]),
+                "source_start_page": int(job["start_page"]),
                 "page_outputs": [""] * total_pages,
                 "page_metrics": [None] * total_pages,
                 "render_sec": float(render_sec),
@@ -360,25 +375,50 @@ def main() -> int:
                 "completed_pages": 0,
                 "total_pages": total_pages,
             }
-            doc_states[pdf_path.stem] = state
-            _write_progress(output_dir, pdf_path.stem, [], total_pages, 0)
+            doc_states[stem] = state
+            _write_progress(output_dir, stem, [], total_pages, 0)
             for idx, image in enumerate(images):
-                page_path = tmp_dir / f"{pdf_path.stem}_page_{idx + 1:04d}.png"
+                page_path = tmp_dir / f"{stem}_page_{idx + 1:04d}.png"
                 image_stats = _image_content_stats(image)
+                if _is_effectively_empty_page(image_stats, args.repair_mode):
+                    state["page_metrics"][idx] = {
+                        "page_number": int(idx + 1),
+                        "infer_sec": 0.0,
+                        "raw_chars": 0,
+                        "final_chars": 0,
+                        "first_pass_quality_score": 0.0,
+                        "first_pass_letters": 0,
+                        "first_pass_digits": 0,
+                        "first_pass_pua_chars": 0,
+                        "repair_strategy": "skip_empty",
+                        "repair_reason": "empty_page",
+                        "repair_attempted": False,
+                        "repair_applied": False,
+                        "empty_page_skipped": True,
+                        "garbage_early_stop_applied": False,
+                        **image_stats,
+                    }
+                    state["completed_pages"] = int(state["completed_pages"]) + 1
+                    _write_progress(
+                        output_dir,
+                        stem,
+                        [page for page in state["page_outputs"] if page],
+                        int(state["total_pages"]),
+                        int(state["completed_pages"]),
+                    )
+                    image.close()
+                    continue
                 image.save(page_path, format="PNG")
                 image.close()
                 jobs.append(
                     {
-                        "stem": pdf_path.stem,
+                        "stem": stem,
                         "page_number": int(idx + 1),
                         "image_path": page_path,
                         "image_stats": image_stats,
-                        "variant": "page",
                     }
                 )
 
-        plain_repair_jobs: List[dict] = []
-        tile_repair_requests: List[dict] = []
         first_pass_outputs = _generate_batch_outputs(
             llm,
             jobs=jobs,
@@ -400,11 +440,6 @@ def main() -> int:
                 page_text = f"<!-- page:{item['page_number']} -->\n{page_text}".strip()
             state["page_outputs"][item["page_number"] - 1] = page_text
             quality = _text_quality_metrics(page_text)
-            repair_strategy, repair_reason = _classify_repair(
-                page_text,
-                image_stats=image_stats,
-                repair_mode=args.repair_mode,
-            )
             metric = {
                 "page_number": int(item["page_number"]),
                 "infer_sec": float(result["infer_sec"]),
@@ -414,32 +449,31 @@ def main() -> int:
                 "first_pass_letters": int(quality["letters"]),
                 "first_pass_digits": int(quality["digits"]),
                 "first_pass_pua_chars": int(quality["pua_chars"]),
-                "repair_strategy": repair_strategy,
-                "repair_reason": repair_reason,
+                "repair_strategy": "plain" if bool(postprocess_metrics.get("early_stops", 0)) else "none",
+                "repair_reason": "early_stop_markdown_garbage" if bool(postprocess_metrics.get("early_stops", 0)) else None,
                 "repair_attempted": False,
                 "repair_applied": False,
+                "empty_page_skipped": False,
+                "garbage_early_stop_applied": bool(postprocess_metrics.get("early_stops", 0)),
                 **image_stats,
                 **postprocess_metrics,
             }
             state["page_metrics"][item["page_number"] - 1] = metric
-            if repair_strategy == "plain":
-                plain_repair_jobs.append(item)
-            elif repair_strategy == "tile":
-                tile_repair_requests.append(item)
+            if bool(postprocess_metrics.get("early_stops", 0)) and str(args.repair_mode or "off").strip().lower() == "auto":
+                plain_retry_jobs.append(item)
             state["completed_pages"] = int(state["completed_pages"]) + 1
-            progress_pages = [page for page in state["page_outputs"] if page]
             _write_progress(
                 output_dir,
                 item["stem"],
-                progress_pages,
+                [page for page in state["page_outputs"] if page],
                 int(state["total_pages"]),
                 int(state["completed_pages"]),
             )
 
-        if plain_repair_jobs:
+        if plain_retry_jobs:
             plain_repair_outputs = _generate_batch_outputs(
                 llm,
-                jobs=plain_repair_jobs,
+                jobs=plain_retry_jobs,
                 prompt=plain_prompt,
                 batch_size=int(args.batch_size),
                 sampling_params=sampling_params,
@@ -448,7 +482,6 @@ def main() -> int:
                 item = result["item"]
                 state = doc_states[item["stem"]]
                 metric = state["page_metrics"][item["page_number"] - 1]
-                original_text = state["page_outputs"][item["page_number"] - 1]
                 repair_text, repair_postprocess = _postprocess_page_text(
                     str(result["raw_text"]),
                     prompt=plain_prompt,
@@ -456,95 +489,19 @@ def main() -> int:
                 )
                 if args.content_debug:
                     repair_text = f"<!-- page:{item['page_number']} -->\n{repair_text}".strip()
-                original_quality = _text_quality_metrics(original_text)
-                repair_quality = _text_quality_metrics(repair_text)
-                apply_repair = bool(repair_text.strip()) and (
-                    float(repair_quality["quality_score"]) >= float(original_quality["quality_score"])
-                    or str(metric.get("repair_reason")) in {"markdown_garbage", "extreme_short"}
-                )
                 metric["repair_attempted"] = True
                 metric["repair_infer_sec"] = float(result["infer_sec"])
                 metric["repair_raw_chars"] = int(len(str(result["raw_text"]).strip()))
                 metric["repair_final_chars"] = int(len(repair_text.strip()))
-                metric["repair_quality_score"] = float(repair_quality["quality_score"])
                 metric["repair_profile"] = "plain_ocr"
+                metric["repair_quality_score"] = float(_text_quality_metrics(repair_text)["quality_score"])
+                metric["repair_garbage_early_stop_applied"] = bool(repair_postprocess.get("early_stops", 0))
                 metric.update({f"repair_{key}": value for key, value in repair_postprocess.items()})
                 metric["infer_sec"] = float(metric["infer_sec"]) + float(result["infer_sec"])
-                if apply_repair:
+                if repair_text.strip():
                     state["page_outputs"][item["page_number"] - 1] = repair_text
                     metric["repair_applied"] = True
                     metric["final_chars"] = int(len(repair_text.strip()))
-                    _write_progress(
-                        output_dir,
-                        item["stem"],
-                        [page for page in state["page_outputs"] if page],
-                        int(state["total_pages"]),
-                        int(state["completed_pages"]),
-                    )
-
-        if tile_repair_requests:
-            tile_jobs: List[dict] = []
-            for item in tile_repair_requests:
-                for tile_name, y0, y1 in REPAIR_TILE_SPECS:
-                    tile_jobs.append(
-                        {
-                            "stem": item["stem"],
-                            "page_number": int(item["page_number"]),
-                            "image_path": item["image_path"],
-                            "variant": tile_name,
-                            "crop_box": (0.0, y0, 1.0, y1),
-                        }
-                    )
-            tile_outputs = _generate_batch_outputs(
-                llm,
-                jobs=tile_jobs,
-                prompt=prompt,
-                batch_size=int(args.batch_size),
-                sampling_params=sampling_params,
-            )
-            grouped_tile_outputs: Dict[tuple[str, int], List[dict]] = {}
-            for result in tile_outputs:
-                key = (str(result["item"]["stem"]), int(result["item"]["page_number"]))
-                grouped_tile_outputs.setdefault(key, []).append(result)
-            for item in tile_repair_requests:
-                key = (str(item["stem"]), int(item["page_number"]))
-                state = doc_states[item["stem"]]
-                metric = state["page_metrics"][item["page_number"] - 1]
-                original_text = state["page_outputs"][item["page_number"] - 1]
-                grouped = sorted(
-                    grouped_tile_outputs.get(key, []),
-                    key=lambda value: {"top": 0, "mid": 1, "bottom": 2}.get(str(value["item"].get("variant")), 99),
-                )
-                tile_parts: List[str] = []
-                repair_infer_sec = 0.0
-                for result in grouped:
-                    repair_infer_sec += float(result["infer_sec"])
-                    tile_text, _ = _postprocess_page_text(
-                        str(result["raw_text"]),
-                        prompt=prompt,
-                        content_debug=bool(args.content_debug),
-                    )
-                    tile_parts.append(tile_text)
-                stitched = _stitch_tiled_markdown(tile_parts)
-                if args.content_debug:
-                    stitched = f"<!-- page:{item['page_number']} -->\n{stitched}".strip()
-                original_quality = _text_quality_metrics(original_text)
-                stitched_quality = _text_quality_metrics(stitched)
-                apply_repair = bool(stitched.strip()) and (
-                    float(stitched_quality["quality_score"]) > float(original_quality["quality_score"])
-                    and int(stitched_quality["chars"]) >= int(original_quality["chars"])
-                )
-                metric["repair_attempted"] = True
-                metric["repair_infer_sec"] = float(metric.get("repair_infer_sec", 0.0)) + float(repair_infer_sec)
-                metric["repair_final_chars"] = int(len(stitched.strip()))
-                metric["repair_quality_score"] = float(stitched_quality["quality_score"])
-                metric["repair_tile_count"] = int(len(grouped))
-                metric["repair_profile"] = "markdown_grounded_tiled"
-                metric["infer_sec"] = float(metric["infer_sec"]) + float(repair_infer_sec)
-                if apply_repair:
-                    state["page_outputs"][item["page_number"] - 1] = stitched
-                    metric["repair_applied"] = True
-                    metric["final_chars"] = int(len(stitched.strip()))
                     _write_progress(
                         output_dir,
                         item["stem"],
@@ -564,7 +521,9 @@ def main() -> int:
                 "pages_flagged": int(sum(1 for item in page_metrics if str(item.get("repair_strategy")) != "none")),
                 "pages_repaired": int(sum(1 for item in page_metrics if bool(item.get("repair_applied")))),
                 "plain_repairs": int(sum(1 for item in page_metrics if str(item.get("repair_profile")) == "plain_ocr" and bool(item.get("repair_applied")))),
-                "tiled_repairs": int(sum(1 for item in page_metrics if str(item.get("repair_profile")) == "markdown_grounded_tiled" and bool(item.get("repair_applied")))),
+                "tiled_repairs": 0,
+                "empty_pages_skipped": int(sum(1 for item in page_metrics if bool(item.get("empty_page_skipped")))),
+                "pages_with_early_stop": int(sum(1 for item in page_metrics if bool(item.get("garbage_early_stop_applied")))),
             }
             _write_outputs(
                 output_dir,
@@ -572,6 +531,10 @@ def main() -> int:
                 markdown,
                 int(state["total_pages"]),
                 extra_metrics={
+                    "source_file": str(state["source_name"]),
+                    "source_stem": str(state["source_stem"]),
+                    "source_start_page": int(state["source_start_page"]),
+                    "source_end_page": int(state["source_start_page"]) + max(0, len(page_metrics) - 1),
                     "ocr_profile": args.ocr_profile,
                     "attn_backend": "vllm",
                     "runtime_backend": "vllm",

@@ -29,6 +29,7 @@ LOGGER = logging.getLogger(__name__)
 PROMPT_GROUNDED_MARKDOWN = "<image>\n<|grounding|>Convert the document to markdown. "
 PROMPT_PLAIN_OCR = "<image>\nExtract the text from the document page in reading order."
 PAGE_SPLIT = "\n<--- Page Split --->\n"
+DEFAULT_MAX_NEW_TOKENS = 2048
 
 
 def _profile_defaults(profile: str) -> dict:
@@ -54,6 +55,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--files", nargs="*", default=[])
+    parser.add_argument("--page-ranges", nargs="*", default=[])
     parser.add_argument("--max-pages", type=int, default=None)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--ocr-profile", default="markdown_grounded", choices=["markdown_grounded", "plain_ocr"])
@@ -62,7 +64,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--base-size", type=int, default=None)
     parser.add_argument("--image-size", type=int, default=None)
     parser.add_argument("--render-dpi", type=int, default=144)
-    parser.add_argument("--max-new-tokens", type=int, default=None)
+    parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
     parser.add_argument("--repetition-penalty", type=float, default=None)
     parser.add_argument("--no-repeat-ngram-size", type=int, default=None)
     parser.add_argument("--crop-mode", dest="crop_mode", action="store_true")
@@ -72,22 +74,81 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _iter_pdfs(input_dir: Path, files: List[str]) -> List[Path]:
+def _parse_page_range_spec(input_dir: Path, spec: str) -> dict:
+    try:
+        name, start_raw, end_raw = str(spec).rsplit(":", 2)
+    except ValueError as exc:
+        raise ValueError(f"Invalid page range spec: {spec}") from exc
+    start_page = int(start_raw)
+    end_page = int(end_raw)
+    if start_page <= 0 or end_page < start_page:
+        raise ValueError(f"Invalid page range bounds: {spec}")
+    pdf_path = (input_dir / name).resolve()
+    return {
+        "pdf_path": pdf_path,
+        "source_name": str(name),
+        "source_stem": pdf_path.stem,
+        "start_page": start_page,
+        "end_page": end_page,
+        "stem": f"{pdf_path.stem}__p{start_page:05d}-{end_page:05d}",
+    }
+
+
+def _iter_pdf_jobs(input_dir: Path, files: List[str], page_ranges: List[str]) -> List[dict]:
+    jobs: List[dict] = []
     if files:
-        return [(input_dir / name).resolve() for name in files]
-    return sorted(input_dir.glob("*.pdf"))
+        for name in files:
+            pdf_path = (input_dir / name).resolve()
+            jobs.append(
+                {
+                    "pdf_path": pdf_path,
+                    "source_name": str(name),
+                    "source_stem": pdf_path.stem,
+                    "start_page": 1,
+                    "end_page": None,
+                    "stem": pdf_path.stem,
+                }
+            )
+    if page_ranges:
+        jobs.extend(_parse_page_range_spec(input_dir, spec) for spec in page_ranges)
+    if jobs:
+        return jobs
+    return [
+        {
+            "pdf_path": path.resolve(),
+            "source_name": path.name,
+            "source_stem": path.stem,
+            "start_page": 1,
+            "end_page": None,
+            "stem": path.stem,
+        }
+        for path in sorted(input_dir.glob("*.pdf"))
+    ]
 
 
-def _render_pages(pdf_path: Path, max_pages: int | None, render_dpi: int) -> List[Image.Image]:
+def _render_pages(
+    pdf_path: Path,
+    max_pages: int | None,
+    render_dpi: int,
+    *,
+    start_page: int = 1,
+    end_page: int | None = None,
+) -> List[Image.Image]:
     import fitz
 
     images: List[Image.Image] = []
     doc = fitz.open(pdf_path)
     try:
-        page_count = doc.page_count if max_pages is None else min(doc.page_count, max_pages)
+        doc_page_count = int(doc.page_count)
+        first_idx = max(0, int(start_page) - 1)
+        last_idx = doc_page_count - 1 if end_page is None else min(doc_page_count - 1, int(end_page) - 1)
+        if max_pages is not None:
+            last_idx = min(last_idx, first_idx + int(max_pages) - 1)
+        if last_idx < first_idx:
+            return images
         zoom = float(render_dpi) / 72.0
         matrix = fitz.Matrix(zoom, zoom)
-        for idx in range(page_count):
+        for idx in range(first_idx, last_idx + 1):
             page = doc[idx]
             pixmap = page.get_pixmap(matrix=matrix, alpha=False)
             img = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
@@ -327,8 +388,8 @@ def main() -> int:
     input_dir = Path(args.input_dir).resolve()
     output_dir = Path(args.output_dir).resolve()
     model_dir = Path(args.model_dir).resolve()
-    pdfs = _iter_pdfs(input_dir, args.files)
-    if not pdfs:
+    jobs = _iter_pdf_jobs(input_dir, args.files, args.page_ranges)
+    if not jobs:
         return 0
 
     profile_defaults = _profile_defaults(args.ocr_profile)
@@ -346,16 +407,24 @@ def main() -> int:
         args.no_repeat_ngram_size,
     )
 
-    for pdf_path in pdfs:
+    for job in jobs:
+        pdf_path = Path(job["pdf_path"])
+        stem = str(job["stem"])
         doc_start = time.perf_counter()
         render_start = time.perf_counter()
-        images = _render_pages(pdf_path, args.max_pages, args.render_dpi)
+        images = _render_pages(
+            pdf_path,
+            args.max_pages,
+            args.render_dpi,
+            start_page=int(job["start_page"]),
+            end_page=job["end_page"],
+        )
         render_sec = time.perf_counter() - render_start
         page_outputs: List[str] = []
         page_metrics: List[dict] = []
         total_pages = len(images)
-        _write_progress(output_dir, pdf_path.stem, page_outputs, total_pages, 0)
-        with tempfile.TemporaryDirectory(prefix=f"{pdf_path.stem}_deepseek_") as tmp_dir_str:
+        _write_progress(output_dir, stem, page_outputs, total_pages, 0)
+        with tempfile.TemporaryDirectory(prefix=f"{stem}_deepseek_") as tmp_dir_str:
             tmp_dir = Path(tmp_dir_str)
             for idx, image in enumerate(images):
                 page_png = tmp_dir / f"page_{idx + 1:04d}.png"
@@ -391,7 +460,7 @@ def main() -> int:
                 )
                 _write_progress(
                     output_dir,
-                    pdf_path.stem,
+                    stem,
                     page_outputs,
                     total_pages,
                     idx + 1,
@@ -399,10 +468,14 @@ def main() -> int:
         markdown = PAGE_SPLIT.join(page_outputs) if page_outputs else "[[Blank page]]"
         _write_outputs(
             output_dir,
-            pdf_path.stem,
+            stem,
             markdown,
             len(images),
             extra_metrics={
+                "source_file": str(job["source_name"]),
+                "source_stem": str(job["source_stem"]),
+                "source_start_page": int(job["start_page"]),
+                "source_end_page": int(job["start_page"]) + max(0, len(images) - 1),
                 "ocr_profile": args.ocr_profile,
                 "attn_backend": attn_impl,
                 "base_size": base_size,
