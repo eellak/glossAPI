@@ -69,6 +69,7 @@ standalone benchmark wrapper.
 Stored runner:
 
 - `python -m glossapi.scripts.openarchives_ocr_run_node`
+- `python -m glossapi.scripts.openarchives_download_freeze`
 
 The runner does four things in order:
 
@@ -76,6 +77,13 @@ The runner does four things in order:
 2. downloads the shard PDFs into `downloads/` using their OA filenames
 3. writes the shard metadata as canonical `download_results/download_results.parquet`
 4. runs `Corpus.ocr(...)` with the validated DeepSeek settings
+
+The download-freeze runner is the matching download-only entrypoint:
+
+1. reads one OA manifest parquet
+2. downloads the PDFs into `downloads/` using their OA filenames
+3. writes canonical `download_results/download_results.parquet`
+4. stops there, without starting OCR
 
 Download policy note:
 
