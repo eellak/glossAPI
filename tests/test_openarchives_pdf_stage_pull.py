@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from glossapi.scripts.openarchives_pdf_stage_pull import (
@@ -8,6 +9,7 @@ from glossapi.scripts.openarchives_pdf_stage_pull import (
     canonicalize_pdf_name,
     load_priority_filenames,
     read_manifest,
+    run,
 )
 
 
@@ -131,3 +133,59 @@ def test_transfer_state_priorities_are_selected_first(tmp_path: Path) -> None:
     assert counts["priority_total"] == 1
     assert counts["priority_pending"] == 1
     state.close()
+
+
+def test_load_priority_filenames_ignores_parquet_and_reads_csv_columns(tmp_path: Path) -> None:
+    priority_dir = tmp_path / "priority"
+    priority_dir.mkdir()
+    (priority_dir / "unreachable_from_source_20260331.csv").write_text(
+        "filename,source_unreachable_reason\n"
+        "ZFV_051.pdf,connect_timeout\n"
+        "ZGA_056.pdf,connect_timeout\n",
+        encoding="utf-8",
+    )
+    (priority_dir / "unreachable_from_source_20260331.parquet").write_bytes(b"PAR1junkZXY_999.pdfjunk")
+
+    names = load_priority_filenames(priority_dir)
+
+    assert names == {"ZFV_051.pdf", "ZGA_056.pdf"}
+
+
+def test_run_uses_rsync_transport_when_requested(tmp_path: Path, monkeypatch) -> None:
+    manifest = tmp_path / "manifest.tsv"
+    _write_manifest(manifest)
+    work_root = tmp_path / "work"
+    seen: list[str] = []
+
+    def _fake_rsync_one(**kwargs):
+        seen.append("rsync")
+        Path(kwargs["temp_path"]).parent.mkdir(parents=True, exist_ok=True)
+        Path(kwargs["temp_path"]).write_bytes(b"x" * 10)
+        return subprocess.CompletedProcess(args=["rsync"], returncode=0, stdout="", stderr="")
+
+    def _fake_sftp_one(**kwargs):
+        seen.append("sftp")
+        return subprocess.CompletedProcess(args=["sftp"], returncode=1, stdout="", stderr="unexpected")
+
+    monkeypatch.setenv("GREECE_BOX_PASSWORD", "secret")
+    monkeypatch.setattr("glossapi.scripts.openarchives_pdf_stage_pull.rsync_one", _fake_rsync_one)
+    monkeypatch.setattr("glossapi.scripts.openarchives_pdf_stage_pull.sftp_one", _fake_sftp_one)
+
+    rc = run(
+        [
+            "--manifest",
+            str(manifest),
+            "--work-root",
+            str(work_root),
+            "--transport",
+            "rsync",
+            "--limit",
+            "1",
+            "--summary-interval-seconds",
+            "0",
+        ]
+    )
+
+    assert rc == 0
+    assert seen == ["rsync"]
+    assert (work_root / "downloads" / "AAA_456.pdf").exists()

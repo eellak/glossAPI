@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS transfer_items (
 """
 
 PDF_NAME_PATTERN = re.compile(r"([A-Za-z0-9._-]+\.pdf(?:\.[A-Za-z0-9_-]+)?)", re.IGNORECASE)
+FILENAME_KEYS = ("filename", "canonical_filename", "md_filename", "source_filename")
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -56,6 +57,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--work-root", required=True, help="Root directory for downloads, partials, logs, and state.")
     p.add_argument("--remote-host", default="debian@83.212.80.170")
     p.add_argument("--password-env", default="GREECE_BOX_PASSWORD", help="Environment variable containing the remote SSH password.")
+    p.add_argument("--transport", choices=("sftp", "rsync"), default="sftp")
     p.add_argument("--max-attempts", type=int, default=20)
     p.add_argument("--connect-timeout", type=int, default=30)
     p.add_argument("--io-timeout", type=int, default=180)
@@ -323,55 +325,17 @@ def append_event(path: Path, payload: dict) -> None:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
-def canonicalize_pdf_name(raw: str) -> Optional[str]:
-    text = os.path.basename(str(raw).strip())
-    if not text:
-        return None
-    lower = text.lower()
-    marker = ".pdf."
-    if marker in lower:
-        idx = lower.index(marker)
-        return text[: idx + 4]
-    if lower.endswith(".pdf"):
-        return text
-    return None
+def sshpass_env(password_env: str) -> dict[str, str]:
+    env = os.environ.copy()
+    secret = env.get(password_env)
+    if not secret:
+        raise SystemExit(f"Password env var '{password_env}' is not set.")
+    env["SSHPASS"] = secret
+    return env
 
 
-def load_priority_filenames(priority_dir: Path) -> set[str]:
-    results: set[str] = set()
-    if not priority_dir.exists():
-        return results
-    for path in sorted(priority_dir.rglob("*")):
-        if not path.is_file():
-            continue
-        direct = canonicalize_pdf_name(path.name)
-        if direct is not None:
-            results.add(direct)
-            continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            continue
-        for match in PDF_NAME_PATTERN.findall(text):
-            canonical = canonicalize_pdf_name(match)
-            if canonical is not None:
-                results.add(canonical)
-    return results
-
-
-def sftp_one(
-    *,
-    remote_host: str,
-    remote_path: str,
-    temp_path: Path,
-    password_env: str,
-    connect_timeout: int,
-    io_timeout: int,
-) -> subprocess.CompletedProcess[str]:
-    cmd = [
-        "sshpass",
-        "-e",
-        "sftp",
+def ssh_transport_options(connect_timeout: int) -> list[str]:
+    return [
         "-o",
         "BatchMode=no",
         "-o",
@@ -392,17 +356,176 @@ def sftp_one(
         "StrictHostKeyChecking=no",
         "-o",
         "UserKnownHostsFile=/tmp/greece_box_known_hosts",
+    ]
+
+
+def canonicalize_pdf_name(raw: str) -> Optional[str]:
+    text = os.path.basename(str(raw).strip())
+    if not text:
+        return None
+    lower = text.lower()
+    marker = ".pdf."
+    if marker in lower:
+        idx = lower.index(marker)
+        return text[: idx + 4]
+    if lower.endswith(".pdf"):
+        return text
+    return None
+
+
+def _walk_json_strings(obj) -> Iterable[str]:
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if isinstance(key, str):
+                yield key
+            yield from _walk_json_strings(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from _walk_json_strings(item)
+    elif isinstance(obj, str):
+        yield obj
+
+
+def _extract_priority_filenames_from_csv(path: Path) -> set[str]:
+    results: set[str] = set()
+    with path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
+        reader = csv.DictReader(handle)
+        fields = {field.strip() for field in (reader.fieldnames or []) if field}
+        keyed = any(key in fields for key in FILENAME_KEYS)
+        for row in reader:
+            if keyed:
+                for key in FILENAME_KEYS:
+                    value = row.get(key)
+                    if value:
+                        canonical = canonicalize_pdf_name(value)
+                        if canonical is not None:
+                            results.add(canonical)
+                            break
+            else:
+                for value in row.values():
+                    if not value:
+                        continue
+                    for match in PDF_NAME_PATTERN.findall(str(value)):
+                        canonical = canonicalize_pdf_name(match)
+                        if canonical is not None:
+                            results.add(canonical)
+    return results
+
+
+def _extract_priority_filenames_from_json(path: Path) -> set[str]:
+    results: set[str] = set()
+    data = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+    for text in _walk_json_strings(data):
+        canonical = canonicalize_pdf_name(text)
+        if canonical is not None:
+            results.add(canonical)
+            continue
+        for match in PDF_NAME_PATTERN.findall(text):
+            canonical = canonicalize_pdf_name(match)
+            if canonical is not None:
+                results.add(canonical)
+    return results
+
+
+def _extract_priority_filenames_from_text(path: Path) -> set[str]:
+    results: set[str] = set()
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    for line in text.splitlines():
+        canonical = canonicalize_pdf_name(line)
+        if canonical is not None:
+            results.add(canonical)
+    for match in PDF_NAME_PATTERN.findall(text):
+        canonical = canonicalize_pdf_name(match)
+        if canonical is not None:
+            results.add(canonical)
+    return results
+
+
+def load_priority_filenames(priority_dir: Path) -> set[str]:
+    results: set[str] = set()
+    if not priority_dir.exists():
+        return results
+    for path in sorted(priority_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        direct = canonicalize_pdf_name(path.name)
+        if direct is not None:
+            results.add(direct)
+            continue
+        suffix = path.suffix.lower()
+        try:
+            if suffix == ".csv":
+                results.update(_extract_priority_filenames_from_csv(path))
+            elif suffix == ".json":
+                results.update(_extract_priority_filenames_from_json(path))
+            elif suffix in {".txt", ".list", ".lst", ".log"}:
+                results.update(_extract_priority_filenames_from_text(path))
+            else:
+                continue
+        except Exception:
+            continue
+    return results
+
+
+def rsync_one(
+    *,
+    remote_host: str,
+    remote_path: str,
+    temp_path: Path,
+    password_env: str,
+    connect_timeout: int,
+    io_timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    ssh_cmd = (
+        "ssh "
+        "-o BatchMode=no "
+        "-o PreferredAuthentications=password "
+        "-o PubkeyAuthentication=no "
+        "-o KbdInteractiveAuthentication=yes "
+        f"-o ConnectTimeout={int(connect_timeout)} "
+        "-o ServerAliveInterval=15 "
+        "-o ServerAliveCountMax=3 "
+        "-o ConnectionAttempts=3 "
+        "-o StrictHostKeyChecking=no "
+        "-o UserKnownHostsFile=/tmp/greece_box_known_hosts"
+    )
+    cmd = [
+        "sshpass",
+        "-e",
+        "rsync",
+        "-av",
+        "--partial",
+        "--append-verify",
+        "--inplace",
+        f"--timeout={int(io_timeout)}",
+        "-e",
+        ssh_cmd,
+        f"{remote_host}:{remote_path}",
+        str(temp_path),
+    ]
+    return subprocess.run(cmd, capture_output=True, text=True, env=sshpass_env(password_env))
+
+
+def sftp_one(
+    *,
+    remote_host: str,
+    remote_path: str,
+    temp_path: Path,
+    password_env: str,
+    connect_timeout: int,
+    io_timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    cmd = [
+        "sshpass",
+        "-e",
+        "sftp",
+        *ssh_transport_options(connect_timeout),
         "-b",
         "-",
         remote_host,
     ]
-    env = os.environ.copy()
-    secret = env.get(password_env)
-    if not secret:
-        raise SystemExit(f"Password env var '{password_env}' is not set.")
-    env["SSHPASS"] = secret
     batch = f'reget "{remote_path}" "{temp_path}"\n'
-    return subprocess.run(cmd, capture_output=True, text=True, env=env, input=batch)
+    return subprocess.run(cmd, capture_output=True, text=True, env=sshpass_env(password_env), input=batch)
 
 
 def run(argv: Optional[Sequence[str]] = None) -> int:
@@ -496,6 +619,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             current_path,
             {
                 "updated_at": utc_now(),
+                "transport": str(args.transport),
                 "canonical_filename": canonical,
                 "remote_path": remote_path,
                 "remote_size_bytes": remote_size,
@@ -509,6 +633,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             {
                 "ts": utc_now(),
                 "event": "start",
+                "transport": str(args.transport),
                 "canonical_filename": canonical,
                 "remote_path": remote_path,
                 "remote_size_bytes": remote_size,
@@ -517,14 +642,18 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             },
         )
 
-        result = sftp_one(
-            remote_host=str(args.remote_host),
-            remote_path=remote_path,
-            temp_path=temp_path,
-            password_env=str(args.password_env),
-            connect_timeout=int(args.connect_timeout),
-            io_timeout=int(args.io_timeout),
-        )
+        transfer_kwargs = {
+            "remote_host": str(args.remote_host),
+            "remote_path": remote_path,
+            "temp_path": temp_path,
+            "password_env": str(args.password_env),
+            "connect_timeout": int(args.connect_timeout),
+            "io_timeout": int(args.io_timeout),
+        }
+        if str(args.transport) == "rsync":
+            result = rsync_one(**transfer_kwargs)
+        else:
+            result = sftp_one(**transfer_kwargs)
 
         if result.returncode == 0 and temp_path.exists():
             actual_size = temp_path.stat().st_size
@@ -543,6 +672,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
                     {
                         "ts": utc_now(),
                         "event": "completed",
+                        "transport": str(args.transport),
                         "canonical_filename": canonical,
                         "size_bytes": actual_size,
                     },
@@ -556,6 +686,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
                 {
                     "ts": utc_now(),
                     "event": "failed",
+                    "transport": str(args.transport),
                     "canonical_filename": canonical,
                     "return_code": int(result.returncode),
                     "partial_size_bytes": actual_size,
