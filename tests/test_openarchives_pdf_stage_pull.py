@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from glossapi.scripts.openarchives_pdf_stage_pull import TransferItem, TransferState, read_manifest
+from glossapi.scripts.openarchives_pdf_stage_pull import (
+    TransferItem,
+    TransferState,
+    canonicalize_pdf_name,
+    load_priority_filenames,
+    read_manifest,
+)
 
 
 def _write_manifest(path: Path) -> None:
@@ -86,4 +92,42 @@ def test_transfer_state_next_item_respects_attempt_limit(tmp_path: Path) -> None
 
     assert row is not None
     assert row["canonical_filename"] == "BBB_001.pdf"
+    state.close()
+
+
+def test_load_priority_filenames_supports_lists_and_suffix_forms(tmp_path: Path) -> None:
+    priority_dir = tmp_path / "priority"
+    priority_dir.mkdir()
+    (priority_dir / "manual.txt").write_text(
+        "AAA_456.pdf\n"
+        "/tmp/VFK_368.pdf.Ac6Dc3BA\n"
+        "ignore me\n",
+        encoding="utf-8",
+    )
+    (priority_dir / "BBB_001.pdf").write_text("", encoding="utf-8")
+
+    names = load_priority_filenames(priority_dir)
+
+    assert names == {"AAA_456.pdf", "VFK_368.pdf", "BBB_001.pdf"}
+    assert canonicalize_pdf_name("VFK_368.pdf.Ac6Dc3BA") == "VFK_368.pdf"
+
+
+def test_transfer_state_priorities_are_selected_first(tmp_path: Path) -> None:
+    state = TransferState(tmp_path / "state.sqlite3")
+    state.sync_manifest(
+        [
+            TransferItem("AAA_456.pdf", "/remote/AAA_456.pdf", 10, "AAA_456.pdf"),
+            TransferItem("BBB_001.pdf", "/remote/BBB_001.pdf", 12, "BBB_001.pdf"),
+            TransferItem("CCC_002.pdf", "/remote/CCC_002.pdf", 14, "CCC_002.pdf"),
+        ]
+    )
+    state.set_priorities({"CCC_002.pdf"})
+
+    row = state.next_item(max_attempts=20)
+
+    assert row is not None
+    assert row["canonical_filename"] == "CCC_002.pdf"
+    counts = state.priority_counts()
+    assert counts["priority_total"] == 1
+    assert counts["priority_pending"] == 1
     state.close()
