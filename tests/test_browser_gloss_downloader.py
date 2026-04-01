@@ -1,6 +1,8 @@
 import asyncio
+import io
 
 import pandas as pd
+from PIL import Image
 
 from glossapi import Corpus
 from glossapi.download_policy import build_download_policy
@@ -70,6 +72,105 @@ def test_browser_downloader_recovers_challenge_page(tmp_path, monkeypatch):
     assert result == (True, "AAA_000.pdf", "pdf", "", 1)
     assert (tmp_path / "downloads" / "AAA_000.pdf").read_bytes().startswith(b"%PDF-1.7")
     assert not (tmp_path / "downloads" / ".part_browser_0").exists()
+
+
+def test_browser_downloader_detects_anubis_challenge(tmp_path):
+    downloader = BrowserGlossDownloader(output_dir=str(tmp_path))
+
+    issue = downloader._detect_html_interstitial(
+        "https://dias.library.tuc.gr/view/view/manf/77495",
+        {"Content-Type": "text/html"},
+        b"<!doctype html><html><head><title>Making sure you're not a bot!</title></head>"
+        b"<body>anubis /.within.website/</body></html>",
+    )
+
+    assert issue is not None
+    assert "challenge page returned" in issue.lower()
+
+
+def test_infer_file_extension_prefers_html_magic_over_pdf_url(tmp_path):
+    downloader = BrowserGlossDownloader(output_dir=str(tmp_path))
+
+    file_ext = downloader.infer_file_extension(
+        "https://repository.academyofathens.gr/document/43963.pdf",
+        {"Content-Type": "text/html"},
+        b"<!doctype html><html><body>spa shell</body></html>",
+    )
+
+    assert file_ext == "html"
+
+
+def test_infer_file_extension_accepts_pdf_header_after_small_prefix(tmp_path):
+    downloader = BrowserGlossDownloader(output_dir=str(tmp_path))
+
+    file_ext = downloader.infer_file_extension(
+        "https://pergamos.lib.uoa.gr/uoa/dl/object/1316268/file.pdf",
+        {"Content-Type": "application/pdf"},
+        b"test123%PDF-1.5\nrest",
+    )
+
+    assert file_ext == "pdf"
+
+
+def test_finalize_download_result_rejects_invalid_pdf_payload(tmp_path):
+    downloader = BrowserGlossDownloader(output_dir=str(tmp_path))
+
+    result = asyncio.run(
+        downloader._finalize_download_result(
+            row_index=0,
+            url="https://example.org/file.pdf",
+            resp_headers={"Content-Type": "application/pdf"},
+            content=b"this is not a pdf payload",
+            retry_count=0,
+            filename_base="AAA_000",
+            referer=None,
+        )
+    )
+
+    assert result[0] is False
+    assert result[2] == "pdf"
+    assert "invalid pdf signature" in result[3].lower()
+    assert not (tmp_path / "downloads" / "AAA_000.pdf").exists()
+
+
+def test_browser_downloader_recovers_academy_bookreader_pdf(tmp_path, monkeypatch):
+    downloader = BrowserGlossDownloader(output_dir=str(tmp_path), default_download_route="standard")
+
+    async def _fake_download_academy(url: str):
+        return b"%PDF-1.4\n%academy\n"
+
+    monkeypatch.setattr(downloader, "_download_academy_bookreader_pdf", _fake_download_academy)
+
+    result = asyncio.run(
+        downloader._recover_html_interstitial(
+            row_index=0,
+            url="https://repository.academyofathens.gr/document/43963.pdf",
+            headers={"Content-Type": "text/html"},
+            content=b"<!doctype html><html></html>",
+            html_issue="Expected a file-like response but received HTML instead",
+            retry_count=0,
+            filename_base="AAA_000",
+            referer=None,
+        )
+    )
+
+    assert result == (True, "AAA_000.pdf", "pdf", "", 0)
+    assert (tmp_path / "downloads" / "AAA_000.pdf").read_bytes().startswith(b"%PDF-1.4")
+
+
+def test_academy_images_to_pdf_bytes_builds_pdf(tmp_path):
+    downloader = BrowserGlossDownloader(output_dir=str(tmp_path))
+
+    blobs = []
+    for color in ("red", "blue"):
+        image = Image.new("RGB", (16, 16), color=color)
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG")
+        blobs.append(buf.getvalue())
+
+    pdf_bytes = downloader._academy_images_to_pdf_bytes(blobs)
+
+    assert pdf_bytes.startswith(b"%PDF-")
 
 
 def test_browser_downloader_domain_cookie_lookup(tmp_path):
