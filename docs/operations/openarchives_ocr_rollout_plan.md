@@ -2,10 +2,6 @@
 
 This document records the concrete execution plan for running DeepSeek OCR over the OpenArchives subset with `needs_ocr=True`, including how to recover or regenerate the routing state, how to shard work across AWS nodes, and how to merge results back into the canonical GlossAPI corpus.
 
-For the reproducible single-machine source-download plus Greek supplementation workflow, see:
-
-- [openarchives_single_machine_download_runbook.md](/Users/foivoskarounos-zamparloukos/Projects/glossapi-development/docs/operations/openarchives_single_machine_download_runbook.md)
-
 ## Implemented tooling
 
 The rollout is backed by concrete scripts in `src/glossapi/scripts/`:
