@@ -42,6 +42,7 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--instance-id", default="")
     p.add_argument("--node-id", default="")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--skip-download", action="store_true")
     p.add_argument("--scheduler", default="whole_doc")
     p.add_argument("--target-batch-pages", type=int, default=160)
     p.add_argument("--shard-pages", type=int, default=0)
@@ -78,6 +79,15 @@ def _prepare_download_input(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["url"] = out["pdf_url"].astype(str)
     out["filename_base"] = out["filename"].astype(str).map(lambda s: Path(s).stem)
+    return out
+
+
+def _prepare_materialized_input(df: pd.DataFrame) -> pd.DataFrame:
+    if "filename" not in df.columns:
+        raise SystemExit("Shard parquet missing required column: filename")
+    out = df.copy()
+    if "filename_base" not in out.columns:
+        out["filename_base"] = out["filename"].astype(str).map(lambda s: Path(s).stem)
     return out
 
 
@@ -130,6 +140,32 @@ def _write_canonical_metadata(work_root: Path, df: pd.DataFrame) -> Path:
     normalized = schema.normalize_metadata_frame(df)
     schema.write_metadata_parquet(normalized, canonical)
     return canonical
+
+
+def _normalize_materialized_results(
+    *,
+    shard_df: pd.DataFrame,
+    downloads_dir: Path,
+) -> pd.DataFrame:
+    out = shard_df.copy()
+    if "filename_base" not in out.columns:
+        out["filename_base"] = out["filename"].astype(str).map(lambda s: Path(s).stem)
+    if "local_pdf_path" in out.columns:
+        local_exists = out["local_pdf_path"].astype(str).map(lambda s: Path(s).exists())
+    else:
+        local_exists = out["filename"].astype(str).map(lambda s: (downloads_dir / s).exists())
+    out["download_success"] = local_exists.astype(bool)
+    out["download_error"] = out["download_success"].map(lambda ok: "" if ok else "materialized_pdf_missing")
+    if "needs_ocr" not in out.columns:
+        out["needs_ocr"] = True
+    if "ocr_success" not in out.columns:
+        out["ocr_success"] = False
+    if "url" not in out.columns:
+        if "pdf_url" in out.columns:
+            out["url"] = out["pdf_url"].fillna("").astype(str)
+        else:
+            out["url"] = ""
+    return out
 
 
 def _read_progress(parquet_path: Path, page_col: str = "page_count_source") -> Dict[str, Any]:
@@ -218,14 +254,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     manifests_dir = work_root / "manifests"
     manifests_dir.mkdir(parents=True, exist_ok=True)
 
-    shard_df = _prepare_download_input(_load_frame(shard_path))
+    raw_shard_df = _load_frame(shard_path)
+    shard_df = (
+        _prepare_materialized_input(raw_shard_df)
+        if args.skip_download
+        else _prepare_download_input(raw_shard_df)
+    )
     download_input = manifests_dir / "download_input.parquet"
-    shard_df.to_parquet(download_input, index=False)
+    if not args.skip_download:
+        shard_df.to_parquet(download_input, index=False)
 
     metadata_path = work_root / "download_results" / "download_results.parquet"
     if not metadata_path.exists():
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        _write_canonical_metadata(work_root, shard_df)
+        if args.skip_download:
+            _write_canonical_metadata(
+                work_root,
+                _normalize_materialized_results(shard_df=shard_df, downloads_dir=work_root / "downloads"),
+            )
+        else:
+            _write_canonical_metadata(work_root, shard_df)
 
     heartbeat: Optional[_HeartbeatThread] = None
     if args.heartbeat_path:
@@ -248,27 +296,36 @@ def main(argv: Optional[List[str]] = None) -> int:
                 heartbeat.set_stage("dry_run")
             return 0
 
-        corpus = Corpus(
-            input_dir=work_root / "downloads",
-            output_dir=work_root,
-            metadata_path=metadata_path,
-            log_level=getattr(logging, str(args.python_log_level).upper(), logging.INFO),
-            verbose=False,
-        )
+        if args.skip_download:
+            if heartbeat:
+                heartbeat.set_stage("materialized")
+            canonical_df = _normalize_materialized_results(
+                shard_df=shard_df,
+                downloads_dir=work_root / "downloads",
+            )
+            metadata_path = _write_canonical_metadata(work_root, canonical_df)
+        else:
+            corpus = Corpus(
+                input_dir=work_root / "downloads",
+                output_dir=work_root,
+                metadata_path=metadata_path,
+                log_level=getattr(logging, str(args.python_log_level).upper(), logging.INFO),
+                verbose=False,
+            )
 
-        if heartbeat:
-            heartbeat.set_stage("download")
-        dl_df = corpus.download(
-            input_parquet=download_input,
-            links_column="url",
-            parallelize_by=str(args.download_group_by),
-            concurrency=int(args.download_concurrency),
-            request_timeout=int(args.download_timeout),
-            scheduler_mode=str(args.download_scheduler_mode),
-            download_policy_file=(str(args.download_policy_file) if str(args.download_policy_file or "").strip() else None),
-        )
-        canonical_df = _normalize_download_results(shard_df=shard_df, download_results_df=dl_df, url_column="url")
-        metadata_path = _write_canonical_metadata(work_root, canonical_df)
+            if heartbeat:
+                heartbeat.set_stage("download")
+            dl_df = corpus.download(
+                input_parquet=download_input,
+                links_column="url",
+                parallelize_by=str(args.download_group_by),
+                concurrency=int(args.download_concurrency),
+                request_timeout=int(args.download_timeout),
+                scheduler_mode=str(args.download_scheduler_mode),
+                download_policy_file=(str(args.download_policy_file) if str(args.download_policy_file or "").strip() else None),
+            )
+            canonical_df = _normalize_download_results(shard_df=shard_df, download_results_df=dl_df, url_column="url")
+            metadata_path = _write_canonical_metadata(work_root, canonical_df)
         if heartbeat:
             heartbeat.parquet_path = metadata_path
             heartbeat.set_stage("ocr")
