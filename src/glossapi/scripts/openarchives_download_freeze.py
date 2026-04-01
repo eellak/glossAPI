@@ -29,9 +29,11 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--python-log-level", default="INFO")
     p.add_argument("--download-concurrency", type=int, default=DEFAULT_DOWNLOAD_CONCURRENCY)
     p.add_argument("--download-timeout", type=int, default=DEFAULT_DOWNLOAD_TIMEOUT)
+    p.add_argument("--download-mode", default="auto")
     p.add_argument("--download-scheduler-mode", default="per_domain")
     p.add_argument("--download-group-by", default="base_domain")
     p.add_argument("--download-policy-file", default="")
+    p.add_argument("--supported-formats", default="pdf")
     p.add_argument("--dry-run", action="store_true")
     return p.parse_args(argv)
 
@@ -66,10 +68,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     dl_df = corpus.download(
         input_parquet=download_input,
         links_column="url",
+        download_mode=str(args.download_mode),
         parallelize_by=str(args.download_group_by),
         concurrency=int(args.download_concurrency),
         request_timeout=int(args.download_timeout),
         scheduler_mode=str(args.download_scheduler_mode),
+        supported_formats=[part.strip() for part in str(args.supported_formats).split(",") if part.strip()],
         download_policy_file=(str(args.download_policy_file) if str(args.download_policy_file or "").strip() else None),
     )
     canonical_df = _normalize_download_results(shard_df=manifest_df, download_results_df=dl_df, url_column="url")

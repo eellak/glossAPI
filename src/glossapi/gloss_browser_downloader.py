@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -11,6 +14,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import aiofiles
 import aiohttp
+from PIL import Image
 
 from .download_policy import DownloadPolicy, load_download_policy
 from .gloss_downloader import GlossDownloader
@@ -109,6 +113,105 @@ class BrowserGlossDownloader(GlossDownloader):
         if "expected a file-like response but received html instead" in issue:
             return self._url_looks_like_file_endpoint(url)
         return False
+
+    def _extract_academy_document_id(self, url: str) -> Optional[str]:
+        parsed = urlparse(str(url or ""))
+        host = (parsed.hostname or "").lower()
+        if host != "repository.academyofathens.gr":
+            return None
+        match = re.match(r"^/document/(\d+)(?:\.pdf)?/?$", parsed.path or "")
+        if not match:
+            return None
+        return match.group(1)
+
+    async def _fetch_bytes(self, session: aiohttp.ClientSession, url: str) -> bytes:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=min(max(self.request_timeout, 60), 180))) as response:
+            response.raise_for_status()
+            return await response.read()
+
+    def _academy_images_to_pdf_bytes(self, image_blobs: list[bytes]) -> bytes:
+        if not image_blobs:
+            raise RuntimeError("No Academy image pages available to synthesize PDF")
+        images = []
+        try:
+            for blob in image_blobs:
+                img = Image.open(io.BytesIO(blob)).convert("RGB")
+                images.append(img)
+            out = io.BytesIO()
+            images[0].save(out, format="PDF", save_all=True, append_images=images[1:])
+            return out.getvalue()
+        finally:
+            for img in images:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+
+    async def _download_academy_bookreader_pdf(self, url: str) -> Optional[bytes]:
+        item_id = self._extract_academy_document_id(url)
+        if not item_id:
+            return None
+
+        candidate_bases = [
+            "https://repo.academyofathens.gr",
+            "https://digitallibrary.academyofathens.gr",
+        ]
+        connector = self._build_ssl_connector()
+        headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json,*/*"}
+        async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
+            for base_url in candidate_bases:
+                try:
+                    payload_bytes = await self._fetch_bytes(session, f"{base_url}/archive/bookreader_options/{item_id}")
+                    payload = json.loads(payload_bytes.decode("utf-8", errors="ignore"))
+                except Exception:
+                    continue
+
+                page_data = payload.get("data")
+                if not isinstance(page_data, list) or not page_data:
+                    continue
+
+                image_urls: list[str] = []
+                for page in page_data:
+                    if not page or not isinstance(page, list):
+                        continue
+                    first = page[0] if page else None
+                    uri = first.get("uri") if isinstance(first, dict) else None
+                    if not uri:
+                        continue
+                    image_urls.append(uri if uri.startswith("http") else f"{base_url}{uri}")
+
+                if not image_urls:
+                    continue
+
+                image_blobs: list[bytes] = []
+                try:
+                    for image_url in image_urls:
+                        image_blobs.append(await self._fetch_bytes(session, image_url))
+                except Exception:
+                    continue
+
+                try:
+                    return await asyncio.to_thread(self._academy_images_to_pdf_bytes, image_blobs)
+                except Exception:
+                    continue
+        return None
+
+    async def _recover_source_specific_html_interstitial(
+        self,
+        *,
+        row_index: int,
+        url: str,
+        retry_count: int,
+        filename_base: Optional[str],
+    ) -> Optional[Tuple[bool, str, str, str, int]]:
+        pdf_body = await self._download_academy_bookreader_pdf(url)
+        if not pdf_body:
+            return None
+
+        filename = f"{filename_base}.pdf" if filename_base and str(filename_base).strip() else self.generate_filename(row_index, "pdf")
+        await self._write_recovered_file(row_index, filename, pdf_body)
+        self.logger.info("Recovered Academy document via bookreader image->PDF fallback: %s -> %s", url, filename)
+        return True, filename, "pdf", "", retry_count
 
     def _build_ssl_connector(self) -> Optional[aiohttp.TCPConnector]:
         connector = None
@@ -370,6 +473,15 @@ class BrowserGlossDownloader(GlossDownloader):
         filename_base: Optional[str],
         referer: Optional[str],
     ) -> Optional[Tuple[bool, str, str, str, int]]:
+        source_specific = await self._recover_source_specific_html_interstitial(
+            row_index=row_index,
+            url=url,
+            retry_count=retry_count,
+            filename_base=filename_base,
+        )
+        if source_specific is not None:
+            return source_specific
+
         route, route_options = self._resolve_route(url)
         if route == "standard":
             return None

@@ -53,11 +53,11 @@ rules:
 
   - match:
       domains: [repository.academyofathens.gr]
-    downloader: standard
+    downloader: auto
     request_timeout: 45
-    per_domain_concurrency: 16
+    per_domain_concurrency: 6
     domain_concurrency_floor: 2
-    domain_concurrency_ceiling: 16
+    domain_concurrency_ceiling: 8
     skip_failed_after: 3
     sleep: 0.1
 
@@ -66,7 +66,6 @@ rules:
         - dione.lib.unipi.gr
         - pergamos.lib.uoa.gr
         - hellanicus.lib.aegean.gr
-        - dias.library.tuc.gr
     downloader: standard
     request_timeout: 60
     per_domain_concurrency: 12
@@ -74,6 +73,19 @@ rules:
     domain_concurrency_ceiling: 12
     skip_failed_after: 3
     sleep: 0.2
+
+  - match:
+      domains:
+        - dias.library.tuc.gr
+    downloader: auto
+    request_timeout: 90
+    per_domain_concurrency: 2
+    domain_concurrency_floor: 1
+    domain_concurrency_ceiling: 2
+    skip_failed_after: 4
+    sleep: 0.5
+    browser_timeout_ms: 90000
+    browser_post_load_wait_ms: 4000
 
   - match:
       domains:

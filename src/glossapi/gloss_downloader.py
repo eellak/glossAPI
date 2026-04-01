@@ -752,15 +752,17 @@ class GlossDownloader:
         if not content:
             return None
         head = content[:4096]
-        # PDF
-        if head.startswith(b'%PDF-'):
+        lower_head = head.lower()
+        lstripped = lower_head.lstrip()
+        # PDF: allow a small junk prefix before the real header.
+        pdf_idx = head.find(b'%PDF-')
+        if 0 <= pdf_idx <= 1024:
             return 'pdf'
         # HTML (very simple heuristic)
-        lower_head = head.lower()
-        if b'<!doctype html' in lower_head or b'<html' in lower_head:
+        if lstripped.startswith(b'<!doctype html') or lstripped.startswith(b'<html'):
             return 'html'
         # XML
-        if lower_head.lstrip().startswith(b'<?xml'):
+        if lstripped.startswith(b'<?xml'):
             return 'xml'
         # OOXML/ZIP containers (docx/pptx/xlsx)
         if head[:4] in (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08'):
@@ -777,8 +779,24 @@ class GlossDownloader:
                 pass
         return None
 
+    def _looks_like_pdf_bytes(self, content: bytes) -> bool:
+        """Lightweight PDF sanity check for content we are about to persist as a PDF."""
+        if not content:
+            return False
+        head = content[:4096]
+        pdf_idx = head.find(b'%PDF-')
+        return 0 <= pdf_idx <= 1024
+
     def infer_file_extension(self, url: str, headers: Dict[str, str], content: bytes) -> str:
         """Infer the most likely file extension using URL, headers and content bytes"""
+        # Strong content sniffing first for the two cases that matter most here:
+        # real PDFs and HTML bodies masquerading as direct-file endpoints.
+        sniff_ext = self._ext_from_magic_bytes(content)
+        if sniff_ext == 'pdf':
+            return 'pdf'
+        if sniff_ext == 'html':
+            return 'html'
+
         # 1) URL path extension
         url_ext = self.get_file_extension_from_url(url)
         if self.is_supported_format(url_ext):
@@ -797,8 +815,7 @@ class GlossDownloader:
         if ct_ext and self.is_supported_format(ct_ext):
             return ct_ext
 
-        # 4) Magic byte sniffing
-        sniff_ext = self._ext_from_magic_bytes(content)
+        # 4) Magic byte sniffing for the remaining supported formats
         if sniff_ext and self.is_supported_format(sniff_ext):
             return sniff_ext
 
@@ -849,6 +866,10 @@ class GlossDownloader:
             or "awswafintegration" in lower_body
             or "challenge.js" in lower_body
             or "verify that you're not a robot" in lower_body
+            or "making sure you&#39;re not a bot" in lower_body
+            or "making sure you're not a bot" in lower_body
+            or "/.within.website/" in lower_body
+            or "anubis" in lower_body
         ):
             return (
                 "HTML challenge page returned instead of a document; "
@@ -1071,6 +1092,11 @@ class GlossDownloader:
                 f"Unsupported file format after inference: {file_ext}. Supported formats: {', '.join(self.supported_formats)}"
             )
             return False, "", file_ext or "", f"Unsupported file format: {file_ext}", retry_count
+        if file_ext == 'pdf' and not self._looks_like_pdf_bytes(content):
+            self._cleanup_temp_file(tmp_path)
+            message = "Invalid PDF signature in downloaded content"
+            self.logger.warning("%s for %s", message, url)
+            return False, "", file_ext, message, retry_count
 
         filename = self._build_output_filename(row_index, file_ext, filename_base)
         if tmp_path is not None:
