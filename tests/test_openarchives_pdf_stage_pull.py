@@ -135,6 +135,28 @@ def test_transfer_state_priorities_are_selected_first(tmp_path: Path) -> None:
     state.close()
 
 
+def test_transfer_state_priority_only_skips_non_priority(tmp_path: Path) -> None:
+    state = TransferState(tmp_path / "state.sqlite3")
+    state.sync_manifest(
+        [
+            TransferItem("AAA_456.pdf", "/remote/AAA_456.pdf", 10, "AAA_456.pdf"),
+            TransferItem("BBB_001.pdf", "/remote/BBB_001.pdf", 12, "BBB_001.pdf"),
+        ]
+    )
+    state.set_priorities({"BBB_001.pdf"})
+
+    row = state.next_item(max_attempts=20, priority_only=True)
+    assert row is not None
+    assert row["canonical_filename"] == "BBB_001.pdf"
+
+    state.mark_in_progress("BBB_001.pdf", 0)
+    state.mark_completed("BBB_001.pdf", 12)
+
+    row2 = state.next_item(max_attempts=20, priority_only=True)
+    assert row2 is None
+    state.close()
+
+
 def test_load_priority_filenames_ignores_parquet_and_reads_csv_columns(tmp_path: Path) -> None:
     priority_dir = tmp_path / "priority"
     priority_dir.mkdir()
@@ -189,3 +211,42 @@ def test_run_uses_rsync_transport_when_requested(tmp_path: Path, monkeypatch) ->
     assert rc == 0
     assert seen == ["rsync"]
     assert (work_root / "downloads" / "AAA_456.pdf").exists()
+
+
+def test_run_priority_only_ignores_non_priority_items(tmp_path: Path, monkeypatch) -> None:
+    manifest = tmp_path / "manifest.tsv"
+    _write_manifest(manifest)
+    work_root = tmp_path / "work"
+    priority_dir = tmp_path / "priority"
+    priority_dir.mkdir()
+    (priority_dir / "priority.csv").write_text("filename\nVFK_368.pdf\n", encoding="utf-8")
+    seen: list[str] = []
+
+    def _fake_sftp_one(**kwargs):
+        seen.append(Path(kwargs["remote_path"]).name)
+        size = 20 if "VFK_368" in kwargs["remote_path"] else 10
+        Path(kwargs["temp_path"]).parent.mkdir(parents=True, exist_ok=True)
+        Path(kwargs["temp_path"]).write_bytes(b"x" * size)
+        return subprocess.CompletedProcess(args=["sftp"], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("GREECE_BOX_PASSWORD", "secret")
+    monkeypatch.setattr("glossapi.scripts.openarchives_pdf_stage_pull.sftp_one", _fake_sftp_one)
+
+    rc = run(
+        [
+            "--manifest",
+            str(manifest),
+            "--work-root",
+            str(work_root),
+            "--priority-dir",
+            str(priority_dir),
+            "--priority-only",
+            "--summary-interval-seconds",
+            "0",
+        ]
+    )
+
+    assert rc == 0
+    assert seen == ["VFK_368.pdf.Ac6Dc3BA"]
+    assert (work_root / "downloads" / "VFK_368.pdf").exists()
+    assert not (work_root / "downloads" / "AAA_456.pdf").exists()

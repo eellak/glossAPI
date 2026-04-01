@@ -69,6 +69,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=None,
         help="Directory of dynamic priority files or filename lists. Items here are transferred first.",
     )
+    p.add_argument(
+        "--priority-only",
+        action="store_true",
+        help="Transfer only files currently present in the priority set; do not fall through to the rest of the manifest.",
+    )
     return p.parse_args(argv)
 
 
@@ -159,19 +164,33 @@ class TransferState:
             )
         self.conn.commit()
 
-    def next_item(self, *, max_attempts: int) -> Optional[sqlite3.Row]:
+    def next_item(self, *, max_attempts: int, priority_only: bool = False) -> Optional[sqlite3.Row]:
         self.conn.row_factory = sqlite3.Row
-        cur = self.conn.execute(
-            """
-            SELECT *
-            FROM transfer_items
-            WHERE status IN ('pending', 'failed')
-              AND attempts < ?
-            ORDER BY priority_rank DESC, attempts ASC, canonical_filename ASC
-            LIMIT 1
-            """,
-            (max_attempts,),
-        )
+        if priority_only:
+            cur = self.conn.execute(
+                """
+                SELECT *
+                FROM transfer_items
+                WHERE status IN ('pending', 'failed')
+                  AND attempts < ?
+                  AND priority_rank > 0
+                ORDER BY priority_rank DESC, attempts ASC, canonical_filename ASC
+                LIMIT 1
+                """,
+                (max_attempts,),
+            )
+        else:
+            cur = self.conn.execute(
+                """
+                SELECT *
+                FROM transfer_items
+                WHERE status IN ('pending', 'failed')
+                  AND attempts < ?
+                ORDER BY priority_rank DESC, attempts ASC, canonical_filename ASC
+                LIMIT 1
+                """,
+                (max_attempts,),
+            )
         return cur.fetchone()
 
     def mark_in_progress(self, canonical_filename: str, current_size: int) -> None:
@@ -590,6 +609,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
                 {
                     "updated_at": utc_now(),
                     "priority_dir": str(priority_dir),
+                    "priority_only": bool(args.priority_only),
                     "requested_total": len(requested),
                     "available_in_manifest_total": len(available),
                     "missing_in_manifest_total": len(missing),
@@ -602,9 +622,9 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
 
     while not stop_requested:
         priority_counts = refresh_priorities()
-        row = state.next_item(max_attempts=int(args.max_attempts))
+        row = state.next_item(max_attempts=int(args.max_attempts), priority_only=bool(args.priority_only))
         if row is None:
-            write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), **priority_counts, "done": True})
+            write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), **priority_counts, "priority_only": bool(args.priority_only), "done": True})
             break
 
         canonical = str(row["canonical_filename"])
@@ -698,7 +718,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         now = time.time()
         if now - last_summary_ts >= float(args.summary_interval_seconds):
             priority_counts = refresh_priorities()
-            write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), **priority_counts, "done": False})
+            write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), **priority_counts, "priority_only": bool(args.priority_only), "done": False})
             last_summary_ts = now
 
     if current_path.exists():
@@ -708,7 +728,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             pass
 
     priority_counts = refresh_priorities()
-    write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), **priority_counts, "done": True})
+    write_json(summary_path, {"updated_at": utc_now(), **state.counts(), **state.byte_counts(), **priority_counts, "priority_only": bool(args.priority_only), "done": True})
     state.close()
     return 0
 
