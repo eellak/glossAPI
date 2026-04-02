@@ -32,6 +32,35 @@ c.ocr(use_gpus='multi', math_batch_size=12)
 - Crashed workers are respawned automatically; control the retry budget per GPU with `GLOSSAPI_MATH_RESPAWN_CAP` (default `5`). Use `GLOSSAPI_WORKER_LOG_VERBOSE=0` to silence the banner that prints the binding info.
 - When a device exceeds the respawn cap, remaining stems are added to the fatal skip-list and their artifacts are quarantined under `downloads/problematic_math/` and `json/problematic_math/` for follow-up.
 
+## DeepSeek OCR on Multiple GPUs
+
+```python
+from glossapi import Corpus
+c = Corpus("OUT", "OUT")
+c.ocr(
+    use_gpus="multi",
+    runtime_backend="vllm",
+    workers_per_gpu=1,
+    scheduler="exact_fill",
+    target_batch_pages=96,
+)
+```
+
+- `scheduler="exact_fill"` is the preferred multi-GPU vLLM scheduler when PDFs vary widely in length. It shards large documents into page ranges and keeps GPU lanes filled more evenly.
+- Internal shard runs now preserve the public `Corpus.ocr()` contract. Canonical outputs are reassembled back into `markdown/<stem>.md` and `json/metrics/<stem>.metrics.json` for each source PDF.
+- Shard markdown and shard metrics are retained for debugging under `sidecars/ocr_shards/` instead of remaining in the canonical handoff directories.
+- The vLLM path now renders pages into memory and feeds a bounded queue directly into inference, which removes the temporary PNG round-trip and overlaps rendering with generation.
+- Empty-page detection still happens before inference, and repair retries reuse the in-memory page image instead of reopening a file from disk.
+- Final OCR markdown now tags each page split with `<!-- page:N -->` so page images, markdown, and metrics stay aligned during inspection.
+- If a repair retry hits the garbage cutoff again, the page is blanked rather than keeping the failed first-pass garbage.
+- Multi-GPU vLLM workers now pull from a durable shared batch queue in `sidecars/ocr_runtime/work_queue.sqlite`, so finished batches survive worker crashes and respawned workers can continue without rescanning completed work.
+- Repair work now runs as a second global queue phase. First-pass batches finish and persist shard outputs first; then any worker can claim the queued repair shards. This keeps repair tails balanced across GPUs without mixing worker-local repair state into the controller.
+- Each worker writes `sidecars/ocr_runtime/worker_*.runtime.json` with heartbeat state and steady-state timing markers. The runner also emits `gpu_preflight.json`, `gpu_telemetry.jsonl`, and `runtime_summary.json`.
+- The runner checks GPU persistence mode before launch by default. Control it with `GLOSSAPI_DEEPSEEK_GPU_PREFLIGHT=off|warn|ensure`. The default is `ensure`, which will try `sudo -n nvidia-smi -pm 1` and record the result in `gpu_preflight.json`.
+- Worker reliability knobs are environment-driven: `GLOSSAPI_DEEPSEEK_WORKER_RESPAWN_CAP`, `GLOSSAPI_DEEPSEEK_WORK_ITEM_MAX_ATTEMPTS`, `GLOSSAPI_DEEPSEEK_WORK_STALE_AFTER_SEC`, `GLOSSAPI_DEEPSEEK_WORK_HEARTBEAT_SEC`, and `GLOSSAPI_DEEPSEEK_TELEMETRY_INTERVAL_SEC`.
+- The default `GLOSSAPI_DEEPSEEK_WORK_ITEM_MAX_ATTEMPTS=2` means one retry after the first failed claim, then the batch is marked failed instead of retrying forever.
+- `workers_per_gpu=1` remains the safe default on A100 40GB nodes. Prefer increasing `target_batch_pages` before adding more workers per device.
+
 ## Provider & Device Checks
 
 - ONNXRuntime providers must include `CUDAExecutionProvider`.

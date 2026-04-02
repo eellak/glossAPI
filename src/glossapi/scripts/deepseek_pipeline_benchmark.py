@@ -150,6 +150,16 @@ def _collect_repair_metrics(run_dir: Path) -> Dict[str, int]:
     return totals
 
 
+def _collect_runtime_summary(run_dir: Path) -> Dict[str, Any]:
+    summary_path = run_dir / "sidecars" / "ocr_runtime" / "runtime_summary.json"
+    if not summary_path.exists():
+        return {}
+    try:
+        return json.loads(summary_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def _flatten_lane_batches(lane: Dict[str, Any]) -> Dict[str, Any]:
     files: List[str] = []
     page_ranges: List[str] = []
@@ -354,6 +364,7 @@ def main() -> int:
         )
 
     repair_metrics = _collect_repair_metrics(run_dir)
+    runtime_summary = _collect_runtime_summary(run_dir)
     summary = {
         "label": str(args.label),
         "status": "pass" if not failures else "fail",
@@ -377,6 +388,8 @@ def main() -> int:
         "lane_results": lane_results,
         "gpu_results": gpu_results,
         "repair_metrics": repair_metrics,
+        "runtime_summary": runtime_summary,
+        "steady_state": dict(runtime_summary.get("steady_state") or {}),
         "failures": failures,
     }
     (run_dir / "pipeline_benchmark_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
