@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, Iterator, List
 
 from PIL import Image
 
@@ -29,6 +29,7 @@ LOGGER = logging.getLogger(__name__)
 PROMPT_GROUNDED_MARKDOWN = "<image>\n<|grounding|>Convert the document to markdown. "
 PROMPT_PLAIN_OCR = "<image>\nExtract the text from the document page in reading order."
 PAGE_SPLIT = "\n<--- Page Split --->\n"
+PAGE_SPLIT_RE = re.compile(r"(?:^|\n)(?:<!-- page:\d+ -->\n)?<--- Page Split --->\n?")
 DEFAULT_MAX_NEW_TOKENS = 2048
 
 
@@ -126,6 +127,79 @@ def _iter_pdf_jobs(input_dir: Path, files: List[str], page_ranges: List[str]) ->
     ]
 
 
+def _resolve_render_window(
+    *,
+    doc_page_count: int,
+    max_pages: int | None,
+    start_page: int = 1,
+    end_page: int | None = None,
+) -> tuple[int, int] | None:
+    first_idx = max(0, int(start_page) - 1)
+    last_idx = int(doc_page_count) - 1 if end_page is None else min(int(doc_page_count) - 1, int(end_page) - 1)
+    if max_pages is not None:
+        last_idx = min(last_idx, first_idx + int(max_pages) - 1)
+    if last_idx < first_idx:
+        return None
+    return first_idx, last_idx
+
+
+def _count_rendered_pages(
+    pdf_path: Path,
+    max_pages: int | None,
+    *,
+    start_page: int = 1,
+    end_page: int | None = None,
+) -> int:
+    import fitz
+
+    doc = fitz.open(pdf_path)
+    try:
+        window = _resolve_render_window(
+            doc_page_count=int(doc.page_count),
+            max_pages=max_pages,
+            start_page=start_page,
+            end_page=end_page,
+        )
+        if window is None:
+            return 0
+        first_idx, last_idx = window
+        return max(0, int(last_idx) - int(first_idx) + 1)
+    finally:
+        doc.close()
+
+
+def _iter_rendered_pages(
+    pdf_path: Path,
+    max_pages: int | None,
+    render_dpi: int,
+    *,
+    start_page: int = 1,
+    end_page: int | None = None,
+) -> Iterator[Image.Image]:
+    import fitz
+
+    doc = fitz.open(pdf_path)
+    try:
+        window = _resolve_render_window(
+            doc_page_count=int(doc.page_count),
+            max_pages=max_pages,
+            start_page=start_page,
+            end_page=end_page,
+        )
+        if window is None:
+            return
+        first_idx, last_idx = window
+        zoom = float(render_dpi) / 72.0
+        matrix = fitz.Matrix(zoom, zoom)
+        for idx in range(first_idx, last_idx + 1):
+            page = doc[idx]
+            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+            img = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
+            yield img
+    finally:
+        doc.close()
+
+
 def _render_pages(
     pdf_path: Path,
     max_pages: int | None,
@@ -134,28 +208,15 @@ def _render_pages(
     start_page: int = 1,
     end_page: int | None = None,
 ) -> List[Image.Image]:
-    import fitz
-
-    images: List[Image.Image] = []
-    doc = fitz.open(pdf_path)
-    try:
-        doc_page_count = int(doc.page_count)
-        first_idx = max(0, int(start_page) - 1)
-        last_idx = doc_page_count - 1 if end_page is None else min(doc_page_count - 1, int(end_page) - 1)
-        if max_pages is not None:
-            last_idx = min(last_idx, first_idx + int(max_pages) - 1)
-        if last_idx < first_idx:
-            return images
-        zoom = float(render_dpi) / 72.0
-        matrix = fitz.Matrix(zoom, zoom)
-        for idx in range(first_idx, last_idx + 1):
-            page = doc[idx]
-            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
-            img = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
-            images.append(img)
-    finally:
-        doc.close()
-    return images
+    return list(
+        _iter_rendered_pages(
+            pdf_path,
+            max_pages,
+            render_dpi,
+            start_page=start_page,
+            end_page=end_page,
+        )
+    )
 
 
 def _clean_markdown(text: str) -> str:
@@ -168,6 +229,37 @@ def _clean_markdown(text: str) -> str:
         else:
             text = text.replace(full_match, "")
     return text.replace("\\coloneqq", ":=").replace("\\eqqcolon", "=:").strip()
+
+
+def _page_split_comment(page_number: int) -> str:
+    return f"\n<!-- page:{int(page_number)} -->\n<--- Page Split --->\n"
+
+
+def _join_page_outputs(page_outputs: List[str]) -> str:
+    if not page_outputs:
+        return ""
+    first_page = str(page_outputs[0])
+    parts = [first_page]
+    emitted = bool(first_page)
+    for page_number, page_text in enumerate(page_outputs[1:], start=2):
+        separator = _page_split_comment(page_number)
+        if not emitted:
+            separator = separator.lstrip("\n")
+        parts.append(separator)
+        emitted = True
+        parts.append(str(page_text))
+    return "".join(parts)
+
+
+def _split_page_outputs(markdown_text: str) -> List[str]:
+    content = str(markdown_text or "").rstrip("\n")
+    if not content:
+        return []
+    return PAGE_SPLIT_RE.split(content)
+
+
+def _serialize_markdown(markdown: str) -> str:
+    return str(markdown or "").rstrip("\n") + "\n"
 
 
 def _postprocess_page_text(
@@ -342,7 +434,7 @@ def _write_outputs(
     md_dir.mkdir(parents=True, exist_ok=True)
     metrics_dir.mkdir(parents=True, exist_ok=True)
     progress_dir.mkdir(parents=True, exist_ok=True)
-    (md_dir / f"{stem}.md").write_text(markdown.strip() + "\n", encoding="utf-8")
+    (md_dir / f"{stem}.md").write_text(_serialize_markdown(markdown), encoding="utf-8")
     metrics = {
         "page_count": page_count,
         "model": "deepseek-ai/DeepSeek-OCR-2",
@@ -368,9 +460,9 @@ def _write_progress(
     progress_dir = output_dir / "sidecars" / "ocr_progress"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     progress_dir.mkdir(parents=True, exist_ok=True)
-    partial_markdown = PAGE_SPLIT.join(page_outputs).strip()
+    partial_markdown = _join_page_outputs(page_outputs)
     if partial_markdown:
-        (progress_dir / f"{stem}.partial.md").write_text(partial_markdown + "\n", encoding="utf-8")
+        (progress_dir / f"{stem}.partial.md").write_text(_serialize_markdown(partial_markdown), encoding="utf-8")
     progress = {
         "completed_pages": completed_pages,
         "total_pages": total_pages,
@@ -465,7 +557,7 @@ def main() -> int:
                     total_pages,
                     idx + 1,
                 )
-        markdown = PAGE_SPLIT.join(page_outputs) if page_outputs else "[[Blank page]]"
+        markdown = _join_page_outputs(page_outputs) if page_outputs else "[[Blank page]]"
         _write_outputs(
             output_dir,
             stem,

@@ -50,6 +50,8 @@ EMPTY_PAGE_OVERALL_DARK_MAX = 0.0015
 EMPTY_PAGE_BAND_DARK_MAX = 0.0025
 GARBAGE_EARLY_STOP_MIN_OUTPUT_TOKENS = 48
 GARBAGE_EARLY_STOP_WINDOW_TOKENS = 160
+DEFAULT_REPAIR_EXEC_BATCH_TARGET_PAGES = 48
+DEFAULT_REPAIR_EXEC_BATCH_TARGET_ITEMS = 32
 
 
 def _parse_args() -> argparse.Namespace:
@@ -84,6 +86,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--work-stale-after-sec", type=float, default=900.0)
     parser.add_argument("--work-heartbeat-sec", type=float, default=10.0)
     parser.add_argument("--work-max-attempts", type=int, default=2)
+    parser.add_argument("--repair-exec-batch-target-pages", type=int, default=DEFAULT_REPAIR_EXEC_BATCH_TARGET_PAGES)
+    parser.add_argument("--repair-exec-batch-target-items", type=int, default=DEFAULT_REPAIR_EXEC_BATCH_TARGET_ITEMS)
     return parser.parse_args()
 
 
@@ -476,6 +480,64 @@ def _build_repair_batches(*, doc_states: Dict[str, dict], retry_pages_by_stem: D
     return batches
 
 
+def _claim_additional_repair_batches(
+    work_db: Path,
+    *,
+    worker_id: str,
+    stale_after_sec: float,
+    first_batch: dict,
+    target_pages: int,
+    target_items: int,
+) -> List[dict]:
+    claimed_batches = [dict(first_batch)]
+    first_batch_pages = max(0, int(first_batch.get("pages", len(list(first_batch.get("repair_page_numbers") or [])))))
+    claimed_pages = first_batch_pages
+    target_pages = max(1, int(target_pages))
+    target_items = max(1, int(target_items))
+    if "batch_id" in first_batch:
+        heartbeat_batch(work_db, batch_id=int(first_batch["batch_id"]), worker_id=worker_id)
+    while len(claimed_batches) < target_items and claimed_pages < target_pages:
+        next_batch = claim_next_batch(
+            work_db,
+            worker_id=worker_id,
+            stale_after_sec=stale_after_sec,
+            queue_name=QUEUE_REPAIR,
+        )
+        if next_batch is None:
+            break
+        claimed_batches.append(dict(next_batch))
+        claimed_pages += max(0, int(next_batch.get("pages", 0)))
+    return claimed_batches
+
+
+def _repair_batch_result(
+    *,
+    batch: dict,
+    render_sec_total: float,
+    infer_sec_total: float,
+    first_infer_started_at: Optional[float],
+    last_infer_completed_at: Optional[float],
+    batch_wall_time_sec: float,
+    execution_pack_batch_ids: List[int],
+    execution_pack_pages: int,
+) -> dict:
+    batch_pages = int(batch.get("pages", len(list(batch.get("repair_page_numbers") or []))))
+    return {
+        "docs": 1,
+        "pages": int(batch_pages),
+        "render_sec_total": float(render_sec_total),
+        "infer_sec_total": float(infer_sec_total),
+        "first_infer_started_at": _utc_now_iso(first_infer_started_at) if first_infer_started_at is not None else None,
+        "last_infer_completed_at": _utc_now_iso(last_infer_completed_at) if last_infer_completed_at is not None else None,
+        "batch_wall_time_sec": float(batch_wall_time_sec),
+        "execution_pack_batch_ids": [int(batch_id) for batch_id in execution_pack_batch_ids],
+        "execution_pack_pages": int(execution_pack_pages),
+        "execution_pack_items": int(len(execution_pack_batch_ids)),
+        "queue_name": QUEUE_REPAIR,
+        "batch_id": int(batch["batch_id"]) if "batch_id" in batch else None,
+    }
+
+
 def _run_vllm_batch(
     llm,
     *,
@@ -856,71 +918,97 @@ def _run_jobs_to_outputs(
     }
 
 
-def _run_repair_batch_to_outputs(
+def _run_repair_batches_to_outputs(
     args: argparse.Namespace,
     *,
-    batch: dict,
+    batches: List[dict],
     output_dir: Path,
     llm,
     plain_prompt: str,
     sampling_params,
 ) -> dict:
     batch_wall_start = time.perf_counter()
-    stem = str(batch["stem"])
-    state = _load_persisted_doc_state(output_dir, stem)
-    source_start_page = int(batch["source_start_page"])
-    repair_page_numbers = sorted({int(page_number) for page_number in list(batch.get("repair_page_numbers") or [])})
-    if not repair_page_numbers:
+    claimed_batches = [dict(batch) for batch in batches]
+    if not claimed_batches:
         return {
-            "docs": 1,
+            "docs": 0,
             "pages": 0,
             "render_sec_total": 0.0,
             "infer_sec_total": 0.0,
             "first_infer_started_at": None,
             "last_infer_completed_at": None,
             "batch_wall_time_sec": float(time.perf_counter() - batch_wall_start),
+            "per_batch_results": {},
         }
 
-    render_start = time.perf_counter()
-    source_page_numbers = [source_start_page + page_number - 1 for page_number in repair_page_numbers]
+    state_by_stem: Dict[str, dict] = {}
     repair_jobs: List[dict] = []
-    for source_page_number, image in _iter_selected_rendered_pages(
-        Path(str(batch["pdf_path"])),
-        render_dpi=int(args.render_dpi),
-        source_page_numbers=source_page_numbers,
-    ):
-        repair_jobs.append(
-            {
-                "stem": stem,
-                "page_number": int(source_page_number) - source_start_page + 1,
-                "image": image,
-            }
-        )
-    render_sec = float(time.perf_counter() - render_start)
-    if not repair_jobs:
-        return {
-            "docs": 1,
-            "pages": 0,
-            "render_sec_total": render_sec,
-            "infer_sec_total": 0.0,
-            "first_infer_started_at": None,
-            "last_infer_completed_at": None,
-            "batch_wall_time_sec": float(time.perf_counter() - batch_wall_start),
-        }
+    per_batch_results: Dict[int, dict] = {}
+    execution_pack_batch_ids = [int(batch["batch_id"]) for batch in claimed_batches if "batch_id" in batch]
+    execution_pack_pages = int(sum(max(0, int(batch.get("pages", 0))) for batch in claimed_batches))
+    render_sec_total = 0.0
 
-    first_infer_started_at = time.time()
-    repair_outputs = _generate_batch_outputs(
-        llm,
-        jobs=repair_jobs,
-        prompt=plain_prompt,
-        batch_size=max(1, int(args.batch_size)),
-        sampling_params=sampling_params,
-    )
-    last_infer_completed_at = time.time()
+    for batch in claimed_batches:
+        batch_id = int(batch["batch_id"]) if "batch_id" in batch else None
+        stem = str(batch["stem"])
+        state = state_by_stem.get(stem)
+        if state is None:
+            state = _load_persisted_doc_state(output_dir, stem)
+            state_by_stem[stem] = state
+        source_start_page = int(batch["source_start_page"])
+        repair_page_numbers = sorted({int(page_number) for page_number in list(batch.get("repair_page_numbers") or [])})
+        render_start = time.perf_counter()
+        if repair_page_numbers:
+            source_page_numbers = [source_start_page + page_number - 1 for page_number in repair_page_numbers]
+            for source_page_number, image in _iter_selected_rendered_pages(
+                Path(str(batch["pdf_path"])),
+                render_dpi=int(args.render_dpi),
+                source_page_numbers=source_page_numbers,
+            ):
+                repair_jobs.append(
+                    {
+                        "batch_id": batch_id,
+                        "stem": stem,
+                        "page_number": int(source_page_number) - source_start_page + 1,
+                        "image": image,
+                    }
+                )
+        render_sec = float(time.perf_counter() - render_start)
+        render_sec_total += render_sec
+        if batch_id is not None:
+            per_batch_results[batch_id] = _repair_batch_result(
+                batch=batch,
+                render_sec_total=render_sec,
+                infer_sec_total=0.0,
+                first_infer_started_at=None,
+                last_infer_completed_at=None,
+                batch_wall_time_sec=float(time.perf_counter() - batch_wall_start),
+                execution_pack_batch_ids=execution_pack_batch_ids,
+                execution_pack_pages=execution_pack_pages,
+            )
+
+    first_infer_started_at: Optional[float] = None
+    last_infer_completed_at: Optional[float] = None
+    if repair_jobs:
+        first_infer_started_at = time.time()
+        repair_outputs = _generate_batch_outputs(
+            llm,
+            jobs=repair_jobs,
+            prompt=plain_prompt,
+            batch_size=max(1, int(args.batch_size)),
+            sampling_params=sampling_params,
+        )
+        last_infer_completed_at = time.time()
+    else:
+        repair_outputs = []
+
     try:
         for result in repair_outputs:
             item = result["item"]
+            stem = str(item["stem"])
             page_number = int(item["page_number"])
+            batch_id = int(item["batch_id"]) if item.get("batch_id") is not None else None
+            state = state_by_stem[stem]
             metric = state["page_metrics"][page_number - 1]
             if metric is None:
                 metric = {
@@ -969,32 +1057,78 @@ def _run_repair_batch_to_outputs(
             if disposition["final_text"] is not None:
                 state["page_outputs"][page_number - 1] = repair_effective_text
                 metric["final_chars"] = int(len(repair_effective_text.strip()))
+            if batch_id is not None and batch_id in per_batch_results:
+                per_batch_results[batch_id]["infer_sec_total"] = float(
+                    per_batch_results[batch_id]["infer_sec_total"] + float(result["infer_sec"])
+                )
             _close_job_image(item)
     finally:
         for item in repair_jobs:
             _close_job_image(item)
 
-    page_metrics = sorted([item for item in state["page_metrics"] if item], key=lambda item: int(item["page_number"]))
-    extra_metrics = dict(state["extra_metrics"])
-    extra_metrics["repair_summary"] = _repair_summary_from_page_metrics(page_metrics, extra_metrics.get("repair_mode", args.repair_mode))
-    extra_metrics["page_metrics"] = page_metrics
-    extra_metrics["infer_sec_total"] = float(sum(float(item["infer_sec"]) for item in page_metrics))
-    _write_outputs(
-        output_dir,
-        stem,
-        _join_page_outputs(state["page_outputs"]) if state["page_outputs"] else "[[Blank page]]",
-        int(state["total_pages"]),
-        extra_metrics=extra_metrics,
-    )
+    for stem, state in state_by_stem.items():
+        page_metrics = sorted([item for item in state["page_metrics"] if item], key=lambda item: int(item["page_number"]))
+        extra_metrics = dict(state["extra_metrics"])
+        extra_metrics["repair_summary"] = _repair_summary_from_page_metrics(
+            page_metrics,
+            extra_metrics.get("repair_mode", args.repair_mode),
+        )
+        extra_metrics["page_metrics"] = page_metrics
+        extra_metrics["infer_sec_total"] = float(sum(float(item["infer_sec"]) for item in page_metrics))
+        _write_outputs(
+            output_dir,
+            stem,
+            _join_page_outputs(state["page_outputs"]) if state["page_outputs"] else "[[Blank page]]",
+            int(state["total_pages"]),
+            extra_metrics=extra_metrics,
+        )
+
+    batch_wall_time_sec = float(time.perf_counter() - batch_wall_start)
+    for batch_id, result in per_batch_results.items():
+        result["first_infer_started_at"] = (
+            _utc_now_iso(first_infer_started_at) if first_infer_started_at is not None else None
+        )
+        result["last_infer_completed_at"] = (
+            _utc_now_iso(last_infer_completed_at) if last_infer_completed_at is not None else None
+        )
+        result["batch_wall_time_sec"] = batch_wall_time_sec
+
     return {
-        "docs": 1,
-        "pages": int(len(repair_page_numbers)),
-        "render_sec_total": render_sec,
+        "docs": int(len(state_by_stem)),
+        "pages": int(
+            sum(max(0, int(batch.get("pages", len(list(batch.get("repair_page_numbers") or []))))) for batch in claimed_batches)
+        ),
+        "render_sec_total": float(render_sec_total),
         "infer_sec_total": float(sum(float(result["infer_sec"]) for result in repair_outputs)),
-        "first_infer_started_at": _utc_now_iso(first_infer_started_at),
-        "last_infer_completed_at": _utc_now_iso(last_infer_completed_at),
-        "batch_wall_time_sec": float(time.perf_counter() - batch_wall_start),
+        "first_infer_started_at": _utc_now_iso(first_infer_started_at) if first_infer_started_at is not None else None,
+        "last_infer_completed_at": _utc_now_iso(last_infer_completed_at) if last_infer_completed_at is not None else None,
+        "batch_wall_time_sec": batch_wall_time_sec,
+        "per_batch_results": per_batch_results,
     }
+
+
+def _run_repair_batch_to_outputs(
+    args: argparse.Namespace,
+    *,
+    batch: dict,
+    output_dir: Path,
+    llm,
+    plain_prompt: str,
+    sampling_params,
+) -> dict:
+    result = _run_repair_batches_to_outputs(
+        args,
+        batches=[batch],
+        output_dir=output_dir,
+        llm=llm,
+        plain_prompt=plain_prompt,
+        sampling_params=sampling_params,
+    )
+    batch_id = int(batch["batch_id"]) if "batch_id" in batch else None
+    if batch_id is not None and batch_id in result["per_batch_results"]:
+        return dict(result["per_batch_results"][batch_id])
+    result.pop("per_batch_results", None)
+    return result
 
 
 def _queue_has_pending_or_running(counts: Dict[str, object], queue_name: str) -> bool:
@@ -1064,6 +1198,7 @@ def _run_work_queue(
         "engine_ready_at": _utc_now_iso(),
         "current_batch_id": None,
         "current_queue_name": None,
+        "current_batch_ids": [],
         "completed_batches": [],
         "first_batch_started_at": None,
         "last_batch_finished_at": None,
@@ -1086,12 +1221,24 @@ def _run_work_queue(
             _write_worker_runtime(runtime_file, runtime_state)
             return 0
 
-        batch_id = int(batch["batch_id"])
+        claimed_batches = [dict(batch)]
+        if queue_name == QUEUE_REPAIR:
+            claimed_batches = _claim_additional_repair_batches(
+                work_db,
+                worker_id=worker_id,
+                stale_after_sec=stale_after_sec,
+                first_batch=batch,
+                target_pages=int(args.repair_exec_batch_target_pages),
+                target_items=int(args.repair_exec_batch_target_items),
+            )
+        batch_ids = [int(claimed_batch["batch_id"]) for claimed_batch in claimed_batches if "batch_id" in claimed_batch]
+        batch_id = batch_ids[0]
         heartbeat_stop = threading.Event()
 
         def _heartbeat_loop() -> None:
             while not heartbeat_stop.wait(heartbeat_interval):
-                heartbeat_batch(work_db, batch_id=batch_id, worker_id=worker_id)
+                for heartbeat_batch_id in batch_ids:
+                    heartbeat_batch(work_db, batch_id=heartbeat_batch_id, worker_id=worker_id)
                 runtime_state["heartbeat_at"] = _utc_now_iso()
                 _write_worker_runtime(runtime_file, runtime_state)
 
@@ -1101,7 +1248,8 @@ def _run_work_queue(
             runtime_state["status"] = f"running_{queue_name}"
             runtime_state["current_batch_id"] = batch_id
             runtime_state["current_queue_name"] = queue_name
-            runtime_state["current_batch_pages"] = int(batch.get("pages", 0))
+            runtime_state["current_batch_ids"] = batch_ids
+            runtime_state["current_batch_pages"] = int(sum(int(claimed_batch.get("pages", 0)) for claimed_batch in claimed_batches))
             runtime_state["heartbeat_at"] = _utc_now_iso()
             _write_worker_runtime(runtime_file, runtime_state)
             if queue_name == QUEUE_MAIN:
@@ -1119,44 +1267,57 @@ def _run_work_queue(
                     crop_mode=crop_mode,
                     sampling_params=sampling_params,
                 )
+                per_batch_results = {batch_id: dict(result)}
             else:
-                result = _run_repair_batch_to_outputs(
+                result = _run_repair_batches_to_outputs(
                     args,
-                    batch=batch,
+                    batches=claimed_batches,
                     output_dir=output_dir,
                     llm=llm,
                     plain_prompt=plain_prompt,
                     sampling_params=sampling_params,
                 )
+                per_batch_results = dict(result.get("per_batch_results") or {})
             if runtime_state["first_batch_started_at"] is None:
                 runtime_state["first_batch_started_at"] = result.get("first_infer_started_at")
             runtime_state["last_batch_finished_at"] = result.get("last_infer_completed_at")
-            runtime_state["completed_batches"].append(
+            runtime_state["completed_batches"].extend(
                 {
-                    "batch_id": batch_id,
+                    "batch_id": int(claimed_batch["batch_id"]),
                     "queue_name": queue_name,
                 }
+                for claimed_batch in claimed_batches
+                if "batch_id" in claimed_batch
             )
-            mark_batch_done(work_db, batch_id=batch_id, worker_id=worker_id, result=result)
+            for claimed_batch in claimed_batches:
+                claimed_batch_id = int(claimed_batch["batch_id"])
+                mark_batch_done(
+                    work_db,
+                    batch_id=claimed_batch_id,
+                    worker_id=worker_id,
+                    result=per_batch_results.get(claimed_batch_id, dict(result)),
+                )
         except Exception as exc:
             runtime_state["status"] = "failed"
             runtime_state["current_batch_id"] = batch_id
             runtime_state["current_queue_name"] = queue_name
             runtime_state["last_error"] = str(exc)
             _write_worker_runtime(runtime_file, runtime_state)
-            mark_batch_failed(
-                work_db,
-                batch_id=batch_id,
-                worker_id=worker_id,
-                error=str(exc),
-                max_attempts=max_attempts,
-            )
+            for claimed_batch in claimed_batches:
+                mark_batch_failed(
+                    work_db,
+                    batch_id=int(claimed_batch["batch_id"]),
+                    worker_id=worker_id,
+                    error=str(exc),
+                    max_attempts=max_attempts,
+                )
             raise
         finally:
             heartbeat_stop.set()
             heartbeat_thread.join(timeout=max(1.0, heartbeat_interval))
             runtime_state["current_batch_id"] = None
             runtime_state["current_queue_name"] = None
+            runtime_state["current_batch_ids"] = []
             _write_worker_runtime(runtime_file, runtime_state)
 
 

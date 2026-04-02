@@ -421,6 +421,135 @@ def test_repair_batch_updates_persisted_outputs_with_repeat_cutoff_drop(tmp_path
     assert metrics["repair_summary"]["pages_dropped_after_repeat_cutoff"] == 1
 
 
+def test_repair_batch_pack_updates_multiple_stems(tmp_path, monkeypatch):
+    from PIL import Image
+
+    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _join_page_outputs, _split_page_outputs, _write_outputs
+    from glossapi.ocr.deepseek.run_pdf_ocr_vllm import _run_repair_batches_to_outputs
+
+    output_dir = tmp_path / "output"
+    _write_outputs(
+        output_dir=output_dir,
+        stem="doc_a",
+        markdown=_join_page_outputs(["bad a", "page two a"]),
+        page_count=2,
+        extra_metrics={
+            "repair_mode": "auto",
+            "page_metrics": [
+                {
+                    "page_number": 1,
+                    "infer_sec": 1.0,
+                    "raw_chars": 10,
+                    "final_chars": 5,
+                    "repair_strategy": "plain",
+                    "repair_reason": "early_stop_markdown_garbage",
+                    "repair_attempted": False,
+                    "repair_applied": False,
+                    "page_dropped_after_repair": False,
+                    "empty_page_skipped": False,
+                    "garbage_early_stop_applied": True,
+                },
+                {
+                    "page_number": 2,
+                    "infer_sec": 0.5,
+                    "raw_chars": 9,
+                    "final_chars": 9,
+                    "repair_strategy": "none",
+                    "repair_reason": None,
+                    "repair_attempted": False,
+                    "repair_applied": False,
+                    "page_dropped_after_repair": False,
+                    "empty_page_skipped": False,
+                    "garbage_early_stop_applied": False,
+                },
+            ],
+            "repair_summary": {"repair_mode": "auto", "pages_flagged": 1, "pages_repaired": 0},
+        },
+    )
+    _write_outputs(
+        output_dir=output_dir,
+        stem="doc_b",
+        markdown=_join_page_outputs(["bad b"]),
+        page_count=1,
+        extra_metrics={
+            "repair_mode": "auto",
+            "page_metrics": [
+                {
+                    "page_number": 1,
+                    "infer_sec": 0.7,
+                    "raw_chars": 8,
+                    "final_chars": 5,
+                    "repair_strategy": "plain",
+                    "repair_reason": "early_stop_markdown_garbage",
+                    "repair_attempted": False,
+                    "repair_applied": False,
+                    "page_dropped_after_repair": False,
+                    "empty_page_skipped": False,
+                    "garbage_early_stop_applied": True,
+                }
+            ],
+            "repair_summary": {"repair_mode": "auto", "pages_flagged": 1, "pages_repaired": 0},
+        },
+    )
+
+    monkeypatch.setattr(
+        "glossapi.ocr.deepseek.run_pdf_ocr_vllm._iter_selected_rendered_pages",
+        lambda pdf_path, *, render_dpi, source_page_numbers: [
+            (page_number, Image.new("RGB", (4, 4), "white")) for page_number in source_page_numbers
+        ],
+    )
+    monkeypatch.setattr(
+        "glossapi.ocr.deepseek.run_pdf_ocr_vllm._generate_batch_outputs",
+        lambda llm, *, jobs, prompt, batch_size, sampling_params: [
+            {"item": job, "raw_text": f"fixed-{job['stem']}-{job['page_number']}", "infer_sec": 0.25}
+            for job in jobs
+        ],
+    )
+    monkeypatch.setattr(
+        "glossapi.ocr.deepseek.run_pdf_ocr_vllm._postprocess_page_text",
+        lambda text, *, prompt, content_debug: (text, {"early_stops": 0}),
+    )
+
+    result = _run_repair_batches_to_outputs(
+        SimpleNamespace(render_dpi=144, batch_size=8, content_debug=False, repair_mode="auto"),
+        batches=[
+            {
+                "batch_id": 10,
+                "stem": "doc_a",
+                "pdf_path": str(tmp_path / "doc_a.pdf"),
+                "source_start_page": 1,
+                "repair_page_numbers": [1],
+                "pages": 1,
+            },
+            {
+                "batch_id": 11,
+                "stem": "doc_b",
+                "pdf_path": str(tmp_path / "doc_b.pdf"),
+                "source_start_page": 1,
+                "repair_page_numbers": [1],
+                "pages": 1,
+            },
+        ],
+        output_dir=output_dir,
+        llm=object(),
+        plain_prompt="plain prompt",
+        sampling_params=object(),
+    )
+
+    markdown_a = (output_dir / "markdown" / "doc_a.md").read_text(encoding="utf-8")
+    markdown_b = (output_dir / "markdown" / "doc_b.md").read_text(encoding="utf-8")
+    metrics_a = json.loads((output_dir / "json" / "metrics" / "doc_a.metrics.json").read_text(encoding="utf-8"))
+    metrics_b = json.loads((output_dir / "json" / "metrics" / "doc_b.metrics.json").read_text(encoding="utf-8"))
+
+    assert result["pages"] == 2
+    assert result["docs"] == 2
+    assert set(result["per_batch_results"]) == {10, 11}
+    assert _split_page_outputs(markdown_a)[0] == "fixed-doc_a-1"
+    assert _split_page_outputs(markdown_b)[0] == "fixed-doc_b-1"
+    assert metrics_a["repair_summary"]["pages_repaired"] == 1
+    assert metrics_b["repair_summary"]["pages_repaired"] == 1
+
+
 def test_vllm_progress_sidecar_keeps_absolute_page_numbers(tmp_path):
     from glossapi.ocr.deepseek.run_pdf_ocr_vllm import _emit_progress
 

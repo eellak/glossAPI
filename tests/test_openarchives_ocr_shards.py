@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -173,5 +174,59 @@ def test_openarchives_ocr_merge_copies_markdown_artifacts(tmp_path: Path) -> Non
     merged = pd.read_parquet(out_path).set_index("source_doc_id")
     assert merged.loc["doc-1", "filename"] == "a.html"
     assert bool(merged.loc["doc-1", "ocr_success"]) is True
+    assert merged.loc["doc-1", "text"] == "ocr text"
+    assert merged.loc["doc-1", "ocr_markdown_relpath"] == "markdown/A.md"
+    assert merged.loc["doc-1", "ocr_metrics_relpath"] == "json/metrics/A.metrics.json"
+    assert merged.loc["doc-1", "ocr_text_sha256"] == hashlib.sha256(b"ocr text").hexdigest()
     assert (tmp_path / "final" / "markdown" / "A.md").exists()
     assert (tmp_path / "final" / "json" / "metrics" / "A.metrics.json").exists()
+
+
+def test_openarchives_ocr_merge_embeds_text_without_copy_root(tmp_path: Path) -> None:
+    master = pd.DataFrame(
+        [
+            {"source_doc_id": "doc-1", "filename": "a.html", "needs_ocr": True, "ocr_success": False},
+        ]
+    )
+    shard = pd.DataFrame(
+        [
+            {
+                "source_doc_id": "doc-1",
+                "filename": "A.pdf",
+                "filename_base": "A",
+                "md_filename": "A.md",
+                "needs_ocr": False,
+                "ocr_success": True,
+            },
+        ]
+    )
+    master_path = tmp_path / "master.parquet"
+    shard_path = tmp_path / "shard.parquet"
+    out_path = tmp_path / "merged.parquet"
+    work_root = tmp_path / "node00"
+    (work_root / "markdown").mkdir(parents=True)
+    (work_root / "json" / "metrics").mkdir(parents=True)
+    (work_root / "markdown" / "A.md").write_text("embedded text", encoding="utf-8")
+    (work_root / "json" / "metrics" / "A.metrics.json").write_text("{}", encoding="utf-8")
+    master.to_parquet(master_path, index=False)
+    shard.to_parquet(shard_path, index=False)
+
+    rc = openarchives_ocr_merge.main(
+        [
+            "--master-parquet",
+            str(master_path),
+            "--shard-parquets",
+            str(shard_path),
+            "--output-parquet",
+            str(out_path),
+            "--key-column",
+            "source_doc_id",
+            "--artifact-work-roots",
+            str(work_root),
+        ]
+    )
+    assert rc == 0
+
+    merged = pd.read_parquet(out_path).set_index("source_doc_id")
+    assert merged.loc["doc-1", "text"] == "embedded text"
+    assert pd.isna(merged.loc["doc-1", "ocr_markdown_relpath"])

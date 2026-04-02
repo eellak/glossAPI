@@ -126,6 +126,7 @@ ocr(
 - Main outputs:
   - refreshed `markdown/<stem>.md`
   - refreshed cleaner/parquet metadata after OCR reruns
+  - when metadata parquet is present, a canonical OCR parquet should preserve the same row identity and carry corrected `text` together with the updated metadata
   - `json/<stem>.latex_map.jsonl` when enrichment runs
 
 ## formula_enrich_from_json()

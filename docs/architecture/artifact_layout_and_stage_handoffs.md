@@ -97,6 +97,7 @@ For DeepSeek OCR, there is an important distinction between execution-time shard
 - Multi-GPU `exact_fill` may execute shards such as `doc__p00001-00096` internally to keep GPU lanes full.
 - Those shard names are operational artifacts, not the downstream contract for OCR outputs.
 - After worker completion, the runner reassembles canonical `markdown/<stem>.md` and `json/metrics/<stem>.metrics.json` files for each source PDF.
+- If OCR started from canonical corpus metadata, the authoritative OCR handoff should also include a canonical parquet where corrected `text` is embedded back into the same document rows. Detached markdown alone is not the full stage handoff in that case.
 - Canonical OCR markdown page boundaries are annotated with `<!-- page:N -->` comments next to the page-split marker, and the parser remains backward-compatible with legacy unnumbered separators.
 - Original shard markdown and shard metrics are moved under `sidecars/ocr_shards/` for debugging and audit trails.
 - If a repair retry trips the garbage cutoff again, the canonical markdown keeps the page slot but blanks the page content rather than preserving the bad first-pass OCR.
@@ -113,6 +114,11 @@ The runtime queue now has two phases inside the same operational state:
 
 - first-pass shard batches
 - repair shard batches published after first pass completes
+
+Repair queue durability and repair execution batching are intentionally separate concerns:
+
+- the durable queue records individual repair work items so retries, failure accounting, and resume logic stay precise
+- workers may pack multiple pending repair items into one larger execution batch to keep GPUs busy during the repair tail
 
 These runtime artifacts are operational state, not downstream stage inputs. They are intended for monitoring, debugging, and safe resumption logic.
 

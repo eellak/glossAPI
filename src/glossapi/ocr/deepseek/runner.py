@@ -104,6 +104,8 @@ def _build_cli_command(
     gpu_memory_utilization: Optional[float],
     disable_fp8_kv: bool,
     repair_mode: Optional[str],
+    repair_exec_batch_target_pages: Optional[int] = None,
+    repair_exec_batch_target_items: Optional[int] = None,
     work_db: Optional[Path] = None,
     worker_id: Optional[str] = None,
     worker_runtime_file: Optional[Path] = None,
@@ -176,6 +178,10 @@ def _build_cli_command(
             cmd.append("--disable-fp8-kv")
         if repair_mode:
             cmd += ["--repair-mode", str(repair_mode)]
+        if repair_exec_batch_target_pages is not None:
+            cmd += ["--repair-exec-batch-target-pages", str(int(repair_exec_batch_target_pages))]
+        if repair_exec_batch_target_items is not None:
+            cmd += ["--repair-exec-batch-target-items", str(int(repair_exec_batch_target_items))]
     return cmd
 
 
@@ -244,6 +250,8 @@ def _run_cli(
     gpu_memory_utilization: Optional[float],
     disable_fp8_kv: bool,
     repair_mode: Optional[str],
+    repair_exec_batch_target_pages: Optional[int],
+    repair_exec_batch_target_items: Optional[int],
     visible_device: Optional[int] = None,
 ) -> None:
     cmd = _build_cli_command(
@@ -272,6 +280,8 @@ def _run_cli(
         gpu_memory_utilization=gpu_memory_utilization,
         disable_fp8_kv=disable_fp8_kv,
         repair_mode=repair_mode,
+        repair_exec_batch_target_pages=repair_exec_batch_target_pages,
+        repair_exec_batch_target_items=repair_exec_batch_target_items,
     )
     env = _build_env(python_bin=python_bin, visible_device=visible_device, script=script)
 
@@ -1035,6 +1045,8 @@ def _run_multi_cli(
     gpu_memory_utilization: Optional[float],
     disable_fp8_kv: bool,
     repair_mode: Optional[str],
+    repair_exec_batch_target_pages: Optional[int],
+    repair_exec_batch_target_items: Optional[int],
     scheduler: Optional[str],
     target_batch_pages: int,
     shard_pages: int,
@@ -1124,6 +1136,8 @@ def _run_multi_cli(
                 gpu_memory_utilization=gpu_memory_utilization,
                 disable_fp8_kv=disable_fp8_kv,
                 repair_mode=repair_mode,
+                repair_exec_batch_target_pages=repair_exec_batch_target_pages,
+                repair_exec_batch_target_items=repair_exec_batch_target_items,
                 work_db=work_db,
                 worker_id=worker_id,
                 worker_runtime_file=runtime_dir / f"{worker_id}.runtime.json",
@@ -1279,6 +1293,8 @@ def _run_multi_cli(
                 gpu_memory_utilization=gpu_memory_utilization,
                 disable_fp8_kv=disable_fp8_kv,
                 repair_mode=repair_mode,
+                repair_exec_batch_target_pages=repair_exec_batch_target_pages,
+                repair_exec_batch_target_items=repair_exec_batch_target_items,
             )
             env = _build_env(python_bin=python_exe, visible_device=visible_device, script=script_path)
             LOGGER.info(
@@ -1338,6 +1354,8 @@ def run_for_files(
     disable_fp8_kv: bool = False,
     vllm_batch_size: Optional[int] = None,
     repair_mode: str = "auto",
+    repair_exec_batch_target_pages: Optional[int] = None,
+    repair_exec_batch_target_items: Optional[int] = None,
     scheduler: str = "auto",
     target_batch_pages: int = AUTO_VLLM_BATCH_PAGE_CAP,
     shard_pages: int = 0,
@@ -1435,6 +1453,8 @@ def run_for_files(
             gpu_memory_utilization=gpu_memory_utilization,
             disable_fp8_kv=disable_fp8_kv,
             repair_mode=repair_mode,
+            repair_exec_batch_target_pages=repair_exec_batch_target_pages,
+            repair_exec_batch_target_items=repair_exec_batch_target_items,
             scheduler=scheduler,
             target_batch_pages=int(max(1, target_batch_pages)),
             shard_pages=int(max(0, shard_pages)),
@@ -1477,6 +1497,8 @@ def run_for_files(
             gpu_memory_utilization=gpu_memory_utilization,
             disable_fp8_kv=disable_fp8_kv,
             repair_mode=repair_mode,
+            repair_exec_batch_target_pages=repair_exec_batch_target_pages,
+            repair_exec_batch_target_items=repair_exec_batch_target_items,
         )
 
     _ensure_canonical_outputs(out_root=out_root, pdf_root=pdf_root, file_list=file_list)

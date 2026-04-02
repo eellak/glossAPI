@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shutil
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -29,36 +30,63 @@ def _normalize_key(df: pd.DataFrame, key: str) -> pd.Series:
     return df[key].astype(str).str.strip()
 
 
-def _copy_artifacts(
+def _collect_artifact_updates(
     *,
     shard_rows: pd.DataFrame,
     work_roots: List[Path],
-    output_root: Path,
-) -> int:
+    output_root: Optional[Path],
+) -> tuple[int, pd.DataFrame]:
     copied = 0
-    markdown_out = output_root / "markdown"
-    metrics_out = output_root / "json" / "metrics"
-    markdown_out.mkdir(parents=True, exist_ok=True)
-    metrics_out.mkdir(parents=True, exist_ok=True)
+    markdown_out = output_root / "markdown" if output_root is not None else None
+    metrics_out = output_root / "json" / "metrics" if output_root is not None else None
+    if markdown_out is not None:
+        markdown_out.mkdir(parents=True, exist_ok=True)
+    if metrics_out is not None:
+        metrics_out.mkdir(parents=True, exist_ok=True)
+    updates: List[Dict[str, object]] = []
     for row in shard_rows.to_dict(orient="records"):
+        merge_key = str(row.get("_merge_key") or "").strip()
         stem = str(row.get("filename_base") or Path(str(row.get("filename") or "")).stem).strip()
         if not stem:
             continue
         md_name = str(row.get("md_filename") or f"{stem}.md")
+        md_payload = None
+        md_relpath = None
         for root in work_roots:
             md_src = root / "markdown" / f"{stem}.md"
             if md_src.exists():
-                shutil.copy2(md_src, markdown_out / md_name)
-                copied += 1
+                md_payload = md_src.read_text(encoding="utf-8")
+                if markdown_out is not None:
+                    shutil.copy2(md_src, markdown_out / md_name)
+                    copied += 1
+                    md_relpath = str(Path("markdown") / md_name)
                 break
+        metrics_relpath = None
         for suffix in (".metrics.json", ".per_page.metrics.json"):
             for root in work_roots:
                 src = root / "json" / "metrics" / f"{stem}{suffix}"
                 if src.exists():
-                    shutil.copy2(src, metrics_out / src.name)
-                    copied += 1
+                    if metrics_out is not None:
+                        shutil.copy2(src, metrics_out / src.name)
+                        copied += 1
+                        metrics_relpath = str(Path("json") / "metrics" / src.name)
                     break
-    return copied
+            if metrics_relpath is not None:
+                break
+        updates.append(
+            {
+                "_merge_key": merge_key,
+                "text": md_payload,
+                "ocr_markdown_relpath": md_relpath,
+                "ocr_metrics_relpath": metrics_relpath,
+                "ocr_text_sha256": (
+                    hashlib.sha256(md_payload.encode("utf-8")).hexdigest()
+                    if isinstance(md_payload, str)
+                    else None
+                ),
+            }
+        )
+    return copied, pd.DataFrame(updates)
 
 
 def main(argv: List[str] | None = None) -> int:
@@ -89,16 +117,31 @@ def main(argv: List[str] | None = None) -> int:
             continue
         master.loc[shards.index, column] = shards[column]
 
-    master = master.reset_index(drop=True).drop(columns=["_merge_key"], errors="ignore")
-    master.to_parquet(out_path, index=False)
     copied = 0
-    if args.artifact_work_roots and str(args.artifact_output_root or "").strip():
+    if args.artifact_work_roots:
         roots = [Path(p).expanduser().resolve() for p in args.artifact_work_roots]
-        copied = _copy_artifacts(
+        artifact_output_root = (
+            Path(args.artifact_output_root).expanduser().resolve()
+            if str(args.artifact_output_root or "").strip()
+            else None
+        )
+        copied, artifact_updates = _collect_artifact_updates(
             shard_rows=shards.reset_index(drop=True),
             work_roots=roots,
-            output_root=Path(args.artifact_output_root).expanduser().resolve(),
+            output_root=artifact_output_root,
         )
+        if not artifact_updates.empty:
+            artifact_updates = artifact_updates.drop_duplicates(subset=["_merge_key"], keep="last").set_index("_merge_key")
+            for column in artifact_updates.columns:
+                if column in preserve_master_columns:
+                    continue
+                if column not in master.columns:
+                    master[column] = None
+                mask = artifact_updates[column].notna()
+                if bool(mask.any()):
+                    master.loc[artifact_updates.index[mask], column] = artifact_updates.loc[mask, column]
+    master = master.reset_index(drop=True).drop(columns=["_merge_key"], errors="ignore")
+    master.to_parquet(out_path, index=False)
     print(f"Merged {len(shards)} shard row(s) into {master_path} -> {out_path}; copied {copied} artifact file(s)")
     return 0
 

@@ -190,6 +190,45 @@ def test_work_queue_marks_batch_failed_after_one_retry(tmp_path):
     assert item["last_error"] == "second failure"
 
 
+def test_claim_additional_repair_batches_packs_multiple_items(tmp_path):
+    from glossapi.ocr.deepseek import run_pdf_ocr_vllm
+    from glossapi.ocr.deepseek import work_queue
+
+    db_path = tmp_path / "work.sqlite"
+    work_queue.init_work_db(db_path, batches=[])
+    inserted = work_queue.enqueue_batches(
+        db_path,
+        queue_name=work_queue.QUEUE_REPAIR,
+        batches=[
+            {"queue_key": "repair:1:a", "batch_id": 10, "stem": "a", "repair_page_numbers": [1, 2], "pages": 2},
+            {"queue_key": "repair:1:b", "batch_id": 11, "stem": "b", "repair_page_numbers": [3, 4], "pages": 2},
+            {"queue_key": "repair:1:c", "batch_id": 12, "stem": "c", "repair_page_numbers": [5], "pages": 1},
+        ],
+    )
+    assert inserted == [10, 11, 12]
+
+    first = work_queue.claim_next_batch(
+        db_path,
+        worker_id="worker-pack",
+        stale_after_sec=60.0,
+        queue_name=work_queue.QUEUE_REPAIR,
+        now_ts=10.0,
+    )
+    packed = run_pdf_ocr_vllm._claim_additional_repair_batches(
+        db_path,
+        worker_id="worker-pack",
+        stale_after_sec=60.0,
+        first_batch=first,
+        target_pages=4,
+        target_items=8,
+    )
+
+    assert [int(batch["batch_id"]) for batch in packed] == [10, 11]
+    counts = work_queue.work_queue_counts(db_path)
+    assert counts["by_queue"][work_queue.QUEUE_REPAIR][work_queue.STATUS_RUNNING] == 2
+    assert counts["by_queue"][work_queue.QUEUE_REPAIR][work_queue.STATUS_PENDING] == 1
+
+
 def test_claim_next_phase_batch_switches_to_repair_after_main_drains(tmp_path):
     from glossapi.ocr.deepseek import run_pdf_ocr_vllm
     from glossapi.ocr.deepseek import work_queue
@@ -353,6 +392,8 @@ def test_build_cli_command_includes_work_queue_flags(tmp_path):
         gpu_memory_utilization=0.9,
         disable_fp8_kv=False,
         repair_mode="auto",
+        repair_exec_batch_target_pages=48,
+        repair_exec_batch_target_items=32,
         work_db=tmp_path / "work.sqlite",
         worker_id="worker_00_gpu0",
         worker_runtime_file=tmp_path / "worker_00.runtime.json",
@@ -368,6 +409,8 @@ def test_build_cli_command_includes_work_queue_flags(tmp_path):
     assert "--work-stale-after-sec" in cmd and "900.0" in cmd
     assert "--work-heartbeat-sec" in cmd and "10.0" in cmd
     assert "--work-max-attempts" in cmd and "2" in cmd
+    assert "--repair-exec-batch-target-pages" in cmd and "48" in cmd
+    assert "--repair-exec-batch-target-items" in cmd and "32" in cmd
 
 
 def test_launch_worker_process_uses_start_new_session(monkeypatch):

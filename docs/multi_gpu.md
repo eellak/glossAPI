@@ -48,6 +48,7 @@ c.ocr(
 
 - `scheduler="exact_fill"` is the preferred multi-GPU vLLM scheduler when PDFs vary widely in length. It shards large documents into page ranges and keeps GPU lanes filled more evenly.
 - Internal shard runs now preserve the public `Corpus.ocr()` contract. Canonical outputs are reassembled back into `markdown/<stem>.md` and `json/metrics/<stem>.metrics.json` for each source PDF.
+- When OCR starts from canonical corpus rows, the preferred stage handoff is also a canonical parquet where corrected `text` is embedded back into the same row identity. Markdown and metrics remain sidecars for inspection and audit.
 - Shard markdown and shard metrics are retained for debugging under `sidecars/ocr_shards/` instead of remaining in the canonical handoff directories.
 - The vLLM path now renders pages into memory and feeds a bounded queue directly into inference, which removes the temporary PNG round-trip and overlaps rendering with generation.
 - Empty-page detection still happens before inference, and repair retries reuse the in-memory page image instead of reopening a file from disk.
@@ -55,6 +56,7 @@ c.ocr(
 - If a repair retry hits the garbage cutoff again, the page is blanked rather than keeping the failed first-pass garbage.
 - Multi-GPU vLLM workers now pull from a durable shared batch queue in `sidecars/ocr_runtime/work_queue.sqlite`, so finished batches survive worker crashes and respawned workers can continue without rescanning completed work.
 - Repair work now runs as a second global queue phase. First-pass batches finish and persist shard outputs first; then any worker can claim the queued repair shards. This keeps repair tails balanced across GPUs without mixing worker-local repair state into the controller.
+- Workers may pack multiple pending repair items into one larger execution batch. Queue durability stays item-granular, but the runtime no longer has to execute the repair tail as one tiny origin-shard retry at a time.
 - Each worker writes `sidecars/ocr_runtime/worker_*.runtime.json` with heartbeat state and steady-state timing markers. The runner also emits `gpu_preflight.json`, `gpu_telemetry.jsonl`, and `runtime_summary.json`.
 - The runner checks GPU persistence mode before launch by default. Control it with `GLOSSAPI_DEEPSEEK_GPU_PREFLIGHT=off|warn|ensure`. The default is `ensure`, which will try `sudo -n nvidia-smi -pm 1` and record the result in `gpu_preflight.json`.
 - Worker reliability knobs are environment-driven: `GLOSSAPI_DEEPSEEK_WORKER_RESPAWN_CAP`, `GLOSSAPI_DEEPSEEK_WORK_ITEM_MAX_ATTEMPTS`, `GLOSSAPI_DEEPSEEK_WORK_STALE_AFTER_SEC`, `GLOSSAPI_DEEPSEEK_WORK_HEARTBEAT_SEC`, and `GLOSSAPI_DEEPSEEK_TELEMETRY_INTERVAL_SEC`.

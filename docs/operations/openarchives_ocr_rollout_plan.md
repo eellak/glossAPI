@@ -19,6 +19,7 @@ The rollout is backed by concrete scripts in `src/glossapi/scripts/`:
   - writes a JSON summary with page totals and ETA
 - `openarchives_ocr_merge.py`
   - merges shard-level OCR metadata back into the canonical parquet by `filename`
+  - can also embed merged OCR `text` plus artifact linkage fields back into the canonical rows when OCR markdown artifacts are available
 
 These scripts are intentionally document-level rather than page-fragment-level so merge stays simple and GlossAPI-compatible.
 
