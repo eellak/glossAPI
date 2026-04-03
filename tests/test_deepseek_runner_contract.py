@@ -615,6 +615,40 @@ def test_runner_selects_vllm_script_when_requested(tmp_path, monkeypatch):
     assert result["doc"]["page_count"] == 1
 
 
+def test_runner_prefers_repo_local_deepseek_runtime_when_env_missing(tmp_path, monkeypatch):
+    from glossapi.ocr.deepseek import runner, runtime_paths
+
+    corpus = _mk_corpus(tmp_path)
+    (corpus.input_dir / "doc.pdf").write_bytes(b"%PDF-1.4\n%real\n")
+
+    repo_root = tmp_path / "repo"
+    python_bin = repo_root / "dependency_setup" / ".venvs" / "deepseek31111" / "bin" / "python"
+    python_bin.parent.mkdir(parents=True, exist_ok=True)
+    python_bin.write_text("", encoding="utf-8")
+    monkeypatch.setattr(runtime_paths, "REPO_ROOT", repo_root)
+
+    calls = {}
+
+    def fake_run_cli(input_dir, output_dir, **kwargs):
+        calls["python_bin"] = kwargs["python_bin"]
+        md_dir = output_dir / "markdown"
+        metrics_dir = output_dir / "json" / "metrics"
+        md_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        (md_dir / "doc.md").write_text("ok\n", encoding="utf-8")
+        (metrics_dir / "doc.metrics.json").write_text('{"page_count": 1}', encoding="utf-8")
+
+    monkeypatch.setattr(runner, "_run_cli", fake_run_cli)
+    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_MODEL_DIR", str(tmp_path))
+    monkeypatch.delenv("GLOSSAPI_DEEPSEEK_PYTHON", raising=False)
+    monkeypatch.delenv("GLOSSAPI_DEEPSEEK_TEST_PYTHON", raising=False)
+
+    result = runner.run_for_files(corpus, ["doc.pdf"], runtime_backend="vllm")
+
+    assert calls["python_bin"] == python_bin
+    assert result["doc"]["page_count"] == 1
+
+
 def test_runner_forwards_scheduler_controls_to_multi_cli(tmp_path, monkeypatch):
     from glossapi.ocr.deepseek import runner
 

@@ -39,6 +39,19 @@ def test_build_env_uses_virtualenv_path_when_python_bin_is_symlink(tmp_path):
     assert str(cuda_runtime_lib) in ld_entries
 
 
+def test_resolve_deepseek_python_prefers_repo_local_runtime(tmp_path):
+    from glossapi.ocr.deepseek import runtime_paths
+
+    repo_root = tmp_path / "repo"
+    python_bin = repo_root / "dependency_setup" / ".venvs" / "deepseek31111" / "bin" / "python"
+    python_bin.parent.mkdir(parents=True, exist_ok=True)
+    python_bin.write_text("", encoding="utf-8")
+
+    resolved = runtime_paths.resolve_deepseek_python(env={}, repo_root=repo_root)
+
+    assert resolved == python_bin
+
+
 def test_work_queue_requeues_stale_running_batch(tmp_path):
     from glossapi.ocr.deepseek import work_queue
 

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
+
+from .runtime_paths import resolve_deepseek_python
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_transformers.py"
@@ -88,11 +89,7 @@ def check_deepseek_env(
     )
     _ensure_path(script, "runner_script", errors)
 
-    python_bin = Path(
-        env.get("GLOSSAPI_DEEPSEEK_TEST_PYTHON")
-        or env.get("GLOSSAPI_DEEPSEEK_PYTHON")
-        or sys.executable
-    )
+    python_bin = resolve_deepseek_python(env=env)
     _ensure_path(python_bin, "deepseek_python", errors)
 
     model_dir = Path(

@@ -25,6 +25,7 @@ from glossapi.ocr.deepseek.scheduling import (
     build_whole_document_slices,
     pack_slices_into_batches,
 )
+from glossapi.ocr.deepseek.runtime_paths import resolve_deepseek_python
 from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _join_page_outputs, _split_page_outputs, _write_outputs
 from glossapi.ocr.deepseek.work_queue import (
     STATUS_DONE,
@@ -1433,12 +1434,7 @@ def run_for_files(
     if not script_path.exists():
         raise FileNotFoundError(f"DeepSeek OCR runner script not found: {script_path}")
 
-    python_exe = Path(
-        python_bin
-        or os.environ.get("GLOSSAPI_DEEPSEEK_PYTHON", "")
-        or os.environ.get("GLOSSAPI_DEEPSEEK_TEST_PYTHON", "")
-        or sys.executable
-    )
+    python_exe = resolve_deepseek_python(explicit_python=python_bin)
     if not python_exe.exists():
         raise FileNotFoundError(f"DeepSeek Python interpreter not found: {python_exe}")
 
