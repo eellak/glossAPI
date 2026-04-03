@@ -4,6 +4,7 @@ from glossapi.corpus.phase_extract import (
     _build_extract_work_items,
     _resolve_docling_batch_target_pages,
     _resolve_docling_max_batch_files,
+    _resolve_docling_queue_policy,
 )
 
 
@@ -30,6 +31,20 @@ def test_resolve_docling_batch_target_pages_defaults(monkeypatch):
 def test_resolve_docling_batch_target_pages_accepts_override(monkeypatch):
     monkeypatch.setenv("GLOSSAPI_DOCLING_BATCH_TARGET_PAGES", "384")
     assert _resolve_docling_batch_target_pages() == 384
+
+
+def test_resolve_docling_queue_policy_uses_env_when_extractor_is_unprimed(monkeypatch):
+    monkeypatch.setenv("GLOSSAPI_DOCLING_MAX_BATCH_FILES", "2")
+    assert _resolve_docling_queue_policy(None) == (2, 600)
+
+
+def test_resolve_docling_queue_policy_prefers_extractor_values(monkeypatch):
+    class Extractor:
+        max_batch_files = 3
+        long_pdf_page_threshold = 900
+
+    monkeypatch.setenv("GLOSSAPI_DOCLING_MAX_BATCH_FILES", "2")
+    assert _resolve_docling_queue_policy(Extractor()) == (3, 900)
 
 
 def test_build_extract_work_items_packs_smaller_files_by_page_budget():

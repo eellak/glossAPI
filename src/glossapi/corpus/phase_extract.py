@@ -158,6 +158,26 @@ def _build_extract_work_items(
     return [bundle_paths for bundle_paths, _ in work_items]
 
 
+def _resolve_docling_queue_policy(extractor: Any | None = None) -> Tuple[int, int]:
+    """Return the Docling queue packing knobs the multi-GPU planner should use."""
+
+    max_batch_files = _resolve_docling_max_batch_files()
+    long_pdf_page_threshold = 600
+    if extractor is None:
+        return max_batch_files, long_pdf_page_threshold
+    try:
+        max_batch_files = max(1, int(getattr(extractor, "max_batch_files", max_batch_files)))
+    except Exception:
+        max_batch_files = _resolve_docling_max_batch_files()
+    try:
+        long_pdf_page_threshold = max(
+            1, int(getattr(extractor, "long_pdf_page_threshold", long_pdf_page_threshold))
+        )
+    except Exception:
+        long_pdf_page_threshold = 600
+    return max_batch_files, long_pdf_page_threshold
+
+
 class ExtractPhaseMixin:
     def prime_extractor(
         self,
@@ -546,14 +566,8 @@ class ExtractPhaseMixin:
                 workers_per_device = max(1, int(workers_per_device or 1))
                 configured_batch_hint = 1
                 if backend_choice == "docling":
-                    try:
-                        extractor = getattr(self, "extractor", None)
-                        if extractor is not None:
-                            configured_batch_hint = max(
-                                1, int(getattr(extractor, "max_batch_files", configured_batch_hint))
-                            )
-                    except Exception:
-                        configured_batch_hint = _resolve_docling_max_batch_files()
+                    extractor = getattr(self, "extractor", None)
+                    configured_batch_hint, _ = _resolve_docling_queue_policy(extractor)
                 self.logger.info(
                     "Phase-1 config: backend=%s max_batch_files=%s threads=%s workers_per_device=%s skip_existing=%s benchmark=%s",
                     backend_choice,
@@ -604,18 +618,8 @@ class ExtractPhaseMixin:
                 configured_max_batch_files = 1
                 long_pdf_page_threshold = 600
                 work_items: List[List[Path]] = [[Path(p)] for p in pending_files]
-                try:
-                    extractor = getattr(self, "extractor", None)
-                    if extractor is not None:
-                        configured_max_batch_files = max(
-                            1, int(getattr(extractor, "max_batch_files", configured_max_batch_files))
-                        )
-                        long_pdf_page_threshold = max(
-                            1, int(getattr(extractor, "long_pdf_page_threshold", long_pdf_page_threshold))
-                        )
-                except Exception:
-                    configured_max_batch_files = 1
-                    long_pdf_page_threshold = 600
+                extractor = getattr(self, "extractor", None)
+                configured_max_batch_files, long_pdf_page_threshold = _resolve_docling_queue_policy(extractor)
                 if backend_choice == "docling":
                     batch_target_pages = _resolve_docling_batch_target_pages()
                     work_items = _build_extract_work_items(
