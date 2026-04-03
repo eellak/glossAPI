@@ -26,6 +26,11 @@ try:  # pragma: no cover - depends on installed Docling version
 except ImportError:  # pragma: no cover - older Docling versions
     ThreadedPdfPipelineOptions = None
 
+try:  # pragma: no cover - depends on installed Docling version
+    from docling.datamodel.settings import settings as docling_settings
+except ImportError:  # pragma: no cover - older Docling versions
+    docling_settings = None
+
 
 def _resolve_accelerator(device: str | None) -> Tuple[AcceleratorOptions, bool]:
     """Return accelerator options and whether CUDA was requested."""
@@ -140,6 +145,20 @@ def _apply_runtime_overrides(opts: PdfPipelineOptions) -> None:
             setattr(opts, attr_name, value)
         except Exception:
             pass
+
+    raw_page_batch_size = os.getenv("GLOSSAPI_DOCLING_PAGE_BATCH_SIZE")
+    if raw_page_batch_size and docling_settings is not None:
+        try:
+            page_batch_size = int(raw_page_batch_size)
+        except ValueError:
+            page_batch_size = 0
+        if page_batch_size > 0:
+            try:
+                perf_settings = getattr(docling_settings, "perf", None)
+                if perf_settings is not None and hasattr(perf_settings, "page_batch_size"):
+                    setattr(perf_settings, "page_batch_size", page_batch_size)
+            except Exception:
+                pass
 
 
 def build_layout_pipeline(

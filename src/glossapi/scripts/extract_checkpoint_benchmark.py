@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import time
@@ -13,6 +14,19 @@ from glossapi import Corpus
 
 
 HEADER_RE = re.compile(r"(?m)^[ \t]{0,3}#{1,6}\s+\S")
+
+TUNING_ENV_VARS = (
+    "GLOSSAPI_DOCLING_MAX_BATCH_FILES",
+    "GLOSSAPI_DOCLING_BATCH_TARGET_PAGES",
+    "GLOSSAPI_DOCLING_LAYOUT_BATCH_SIZE",
+    "GLOSSAPI_DOCLING_TABLE_BATCH_SIZE",
+    "GLOSSAPI_DOCLING_OCR_BATCH_SIZE",
+    "GLOSSAPI_DOCLING_PAGE_BATCH_SIZE",
+)
+
+
+def _runtime_env_snapshot() -> Dict[str, str]:
+    return {name: os.getenv(name, "") for name in TUNING_ENV_VARS}
 
 
 def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
@@ -204,6 +218,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "devices": list(args.devices) if args.devices else [],
         "workers_per_device": int(args.workers_per_device),
         "benchmark_mode": bool(args.benchmark_mode),
+        "runtime_env": _runtime_env_snapshot(),
         "markdown_present": markdown_present,
         "markdown_missing": int(len(pdf_paths) - markdown_present),
         "markdown_inventory": inventory,

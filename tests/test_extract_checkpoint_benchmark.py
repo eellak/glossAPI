@@ -44,3 +44,15 @@ def test_inventory_markdown_marks_missing_files(tmp_path):
     assert inventory["sample"]["present"] is False
     assert inventory["sample"]["byte_size"] == 0
     assert inventory["sample"]["header_count"] == 0
+
+
+def test_runtime_env_snapshot_captures_docling_batch_knobs(monkeypatch):
+    monkeypatch.setenv("GLOSSAPI_DOCLING_MAX_BATCH_FILES", "2")
+    monkeypatch.setenv("GLOSSAPI_DOCLING_BATCH_TARGET_PAGES", "384")
+    monkeypatch.setenv("GLOSSAPI_DOCLING_PAGE_BATCH_SIZE", "8")
+
+    snapshot = benchmark._runtime_env_snapshot()
+
+    assert snapshot["GLOSSAPI_DOCLING_MAX_BATCH_FILES"] == "2"
+    assert snapshot["GLOSSAPI_DOCLING_BATCH_TARGET_PAGES"] == "384"
+    assert snapshot["GLOSSAPI_DOCLING_PAGE_BATCH_SIZE"] == "8"
