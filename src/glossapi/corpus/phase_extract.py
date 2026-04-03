@@ -544,11 +544,20 @@ class ExtractPhaseMixin:
                     threads_effective = int(num_threads) if isinstance(num_threads, int) else max(2, 2 * max(1, len(devs)))
 
                 workers_per_device = max(1, int(workers_per_device or 1))
-                batch_hint = 1
+                configured_batch_hint = 1
+                if backend_choice == "docling":
+                    try:
+                        extractor = getattr(self, "extractor", None)
+                        if extractor is not None:
+                            configured_batch_hint = max(
+                                1, int(getattr(extractor, "max_batch_files", configured_batch_hint))
+                            )
+                    except Exception:
+                        configured_batch_hint = _resolve_docling_max_batch_files()
                 self.logger.info(
-                    "Phase-1 config: backend=%s batch_size=%s threads=%s workers_per_device=%s skip_existing=%s benchmark=%s",
+                    "Phase-1 config: backend=%s max_batch_files=%s threads=%s workers_per_device=%s skip_existing=%s benchmark=%s",
                     backend_choice,
-                    batch_hint,
+                    configured_batch_hint,
                     threads_effective,
                     workers_per_device,
                     bool(skip_existing),

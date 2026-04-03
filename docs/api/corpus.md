@@ -58,6 +58,7 @@ extract(
   - `use_gpus='multi'`: use all visible GPUs through a shared work queue
   - `workers_per_device`: fan out more than one extraction worker onto a single visible GPU when measuring throughput
   - `GLOSSAPI_DOCLING_MAX_BATCH_FILES`: optional environment override for how many PDFs one Docling worker processes per extractor batch; GlossAPI keeps the default at `1` until a benchmark proves a larger batch is safe on the target node
+  - `GLOSSAPI_DOCLING_BATCH_TARGET_PAGES`: optional environment override for the page budget of each queued multi-GPU Docling work item; use it with benchmark checkpoints when long PDFs dominate the tail
   - `export_doc_json=True`: write `json/<stem>.docling.json(.zst)`
   - `emit_formula_index=True`: also write `json/<stem>.formula_index.jsonl`
 - Main outputs:

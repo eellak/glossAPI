@@ -1,7 +1,7 @@
 # Multi‑GPU & Benchmarking
 
 GlossAPI can scale across multiple visible GPUs. Faster GPUs drain more work from a shared queue of **absolute
-file paths**, so no worker rescans directories.
+file paths or pre-packed work items, so no worker rescans directories.
 
 ## Extract (Phase‑1) on Multiple GPUs
 
@@ -14,6 +14,7 @@ c.extract(input_format='pdf', use_gpus='multi', phase1_backend='docling', worker
 - Workers are bound using `CUDA_VISIBLE_DEVICES=<id>` and run Docling on `cuda:0` relative to each worker.
 - `workers_per_device` defaults to `1`; raise it only when benchmarking a strong GPU such as an A100.
 - `GLOSSAPI_DOCLING_MAX_BATCH_FILES` lets one Docling worker take more than one PDF per extractor batch; keep the default `1` for fresh-node stability and benchmark larger values explicitly.
+- `GLOSSAPI_DOCLING_BATCH_TARGET_PAGES` controls the page budget per queued multi-GPU Docling work item. The controller now sorts heavier work first and packs smaller PDFs toward that page budget so workers do not immediately collapse into a long single-file tail.
 - Threads auto‑tune when `num_threads=None` (roughly `min(cpu_count, 2 * #GPUs)`). Override explicitly if needed.
 - The controller persists extraction progress in `download_results/download_results.parquet` after each reported
   batch, so interrupted runs can resume cleanly without ad-hoc checkpoint files.

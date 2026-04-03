@@ -23,6 +23,7 @@ Regardless of backend, the extractor clamps OMP/OpenBLAS/MKL pools to one thread
 These optional knobs map directly to current Docling `PdfPipelineOptions` fields and are mainly useful for benchmarking on strong GPUs:
 
 - `GLOSSAPI_DOCLING_MAX_BATCH_FILES`: override the number of PDF documents a single Phase‑1 Docling worker processes per extractor batch. Defaults to `1` in GlossAPI for stability; raise it deliberately when benchmarking fresh A100 nodes.
+- `GLOSSAPI_DOCLING_BATCH_TARGET_PAGES`: target page budget for each queued multi‑GPU Docling work item. Defaults to `256`; lower it when a single worker hoards long PDFs, raise it when a strong GPU can keep larger mixed bundles resident.
 - `GLOSSAPI_DOCLING_LAYOUT_BATCH_SIZE`: override Docling `layout_batch_size`.
 - `GLOSSAPI_DOCLING_TABLE_BATCH_SIZE`: override Docling `table_batch_size`.
 - `GLOSSAPI_DOCLING_OCR_BATCH_SIZE`: override Docling `ocr_batch_size` even though Phase‑1 OCR stays disabled.
