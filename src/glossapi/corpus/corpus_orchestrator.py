@@ -574,22 +574,9 @@ def gpu_extract_worker_queue(
                 c.extractor.batch_result_callback = _report_batch
     except Exception as _e:
         print(f"[GPU{device_id}] Unable to set batch callback: {_e}")
-    # Prepare persistent extractor in this worker on first call
-    # Process queue items in small batches to reduce function-call overhead
-    batch: list[str] = []
-    try:
-        _batch_env = int(str(_os.environ.get("GLOSSAPI_GPU_BATCH_SIZE", "")).strip() or 0)
-    except Exception:
-        _batch_env = 0
-    default_batch = 5
-    try:
-        extractor = getattr(c, "extractor", None)
-        if extractor is not None:
-            configured = int(getattr(extractor, "max_batch_files", default_batch))
-            default_batch = max(1, configured)
-    except Exception:
-        pass
-    BATCH_SIZE = max(1, _batch_env) if _batch_env else max(1, default_batch)
+    # The controller already shapes queue items for multi-GPU extraction. Workers
+    # should execute those queue items as-is rather than re-batching them locally,
+    # otherwise long PDFs can be accidentally merged back into tail-heavy bundles.
     import queue as _queue
     last_progress = _time.time()
     processed = 0
@@ -646,10 +633,6 @@ def gpu_extract_worker_queue(
             try:
                 work_item = work_q.get_nowait()
             except _queue.Empty:
-                # queue.Empty or other -> flush any pending batch then exit
-                if batch:
-                    _run_batch(batch)
-                    batch.clear()
                 break
             except Exception as exc:
                 exit_code = 1
@@ -658,16 +641,7 @@ def gpu_extract_worker_queue(
             normalized = _normalize_work_item(work_item)
             if not normalized:
                 continue
-            if len(normalized) > 1:
-                if batch:
-                    _run_batch(batch)
-                    batch.clear()
-                _run_batch(normalized)
-                continue
-            batch.extend(normalized)
-            if len(batch) >= BATCH_SIZE:
-                _run_batch(batch)
-                batch.clear()
+            _run_batch(normalized)
             # Occasional heartbeat
             if _time.time() - last_progress > 30:
                 try:

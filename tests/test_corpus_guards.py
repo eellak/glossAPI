@@ -285,3 +285,60 @@ def test_gpu_worker_accepts_bundled_work_items(tmp_path, monkeypatch):
     assert exit_info.value.code == 0
     assert processed_batches == [["doc-a.pdf", "doc-b.pdf"]]
     assert status_map == {}
+
+
+def test_gpu_worker_keeps_singleton_queue_items_separate(tmp_path, monkeypatch):
+    import glossapi.corpus as corpus_mod
+
+    processed_batches = []
+
+    class FakeCorpus:
+        def __init__(self, input_dir, output_dir):
+            self.input_dir = input_dir
+            self.output_dir = output_dir
+            self.extractor = SimpleNamespace(max_batch_files=2)
+
+        def prime_extractor(self, *args, **kwargs):
+            return None
+
+        def extract(self, *, file_paths=None, **kwargs):
+            processed_batches.append(list(file_paths or []))
+            return None
+
+    monkeypatch.setattr(corpus_mod, "Corpus", FakeCorpus)
+    monkeypatch.setattr("glossapi.Corpus", FakeCorpus)
+    monkeypatch.delenv("GLOSSAPI_WORKER_LOG_DIR", raising=False)
+
+    work_q = queue.Queue()
+    work_q.put("doc-a.pdf")
+    work_q.put("doc-b.pdf")
+    result_q = queue.Queue()
+    status_map: dict = {}
+
+    with pytest.raises(SystemExit) as exit_info:
+        corpus_mod.gpu_extract_worker_queue(
+            device_id=0,
+            worker_slot=0,
+            worker_key="gpu0-w0",
+            in_dir=str(tmp_path),
+            out_dir=str(tmp_path),
+            work_q=work_q,
+            force=False,
+            fe=False,
+            ce=False,
+            use_cls_w=False,
+            skip=False,
+            input_fmt="pdf",
+            threads=1,
+            benchmark=False,
+            export_json=False,
+            emit_index=False,
+            backend="docling",
+            result_q=result_q,
+            status_map=status_map,
+            marker_dir=None,
+        )
+
+    assert exit_info.value.code == 0
+    assert processed_batches == [["doc-a.pdf"], ["doc-b.pdf"]]
+    assert status_map == {}
