@@ -105,6 +105,24 @@ After correcting those bootstrap defects, the same fresh node was able to:
 - initialize a direct one-GPU `LLM(...)`
 - start a real `openarchives_ocr_run_node` workload with `runtime_backend=vllm`
 
+The same node was also used for a real `10`-PDF `extract -> clean -> ocr`
+checkpoint:
+
+- the stable end-to-end shape on that node was:
+  - multi-GPU extraction
+  - `workers_per_device=1`
+  - multi-GPU DeepSeek OCR with `workers_per_gpu=1`
+- an isolated extraction benchmark with `workers_per_device=2` was faster on the
+  same sample, but the first full-pipeline replay hit a Docling allocator crash:
+  - `malloc_consolidate(): unaligned fastbin chunk detected`
+- treat `workers_per_device=2` as benchmark-only / experimental until it is
+  proven stable in the full Corpus pipeline, not just in extract-only tests
+
+The full-pipeline checkpoint harness also now retries the JSONL export when OCR
+has already filled text into parquet rows but the first export pass still emits
+zero records. This guards the observed end-of-run export race on the benchmark
+node without changing the OCR output contract itself.
+
 ## Current runner expectation
 
 `glossapi.ocr.deepseek.runner._build_env()` now auto-discovers

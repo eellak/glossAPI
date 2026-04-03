@@ -106,6 +106,37 @@ def _count_jsonl_records(path: Path) -> int:
         return sum(1 for line in fp if line.strip())
 
 
+def _export_jsonl_with_retry(
+    corpus: Corpus,
+    *,
+    export_path: Path,
+    metadata_path: Path,
+    text_key: str,
+    metadata_key: str,
+    post_ocr_counts: Dict[str, int],
+    max_attempts: int = 4,
+    retry_delay_sec: float = 1.0,
+) -> int:
+    needs_retry = int(post_ocr_counts.get("text_nonempty", 0) or 0) > 0
+    attempts = max_attempts if needs_retry else 1
+
+    for attempt in range(attempts):
+        if export_path.exists():
+            export_path.unlink()
+        corpus.jsonl(
+            export_path,
+            text_key=text_key,
+            metadata_key=metadata_key,
+            include_remaining_metadata=False,
+            metadata_path=metadata_path,
+        )
+        export_records = _count_jsonl_records(export_path)
+        if export_records > 0 or attempt == attempts - 1:
+            return export_records
+        time.sleep(retry_delay_sec)
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = _parse_args(argv)
     _apply_cli_tuning_overrides(args)
@@ -178,15 +209,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     post_ocr_counts = _read_metadata_counts(metadata_path)
 
     export_start = time.perf_counter()
-    corpus.jsonl(
-        export_path,
+    export_records = _export_jsonl_with_retry(
+        corpus,
+        export_path=export_path,
+        metadata_path=metadata_path,
         text_key=str(args.text_key),
         metadata_key=str(args.metadata_key),
-        include_remaining_metadata=False,
-        metadata_path=metadata_path,
+        post_ocr_counts=post_ocr_counts,
     )
     export_elapsed = float(time.perf_counter() - export_start)
-    export_records = _count_jsonl_records(export_path)
 
     finished_at = time.time()
     report: Dict[str, Any] = {

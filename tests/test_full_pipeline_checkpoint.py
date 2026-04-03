@@ -208,3 +208,64 @@ def test_full_pipeline_checkpoint_forwards_repair_exec_batch_controls(tmp_path, 
     assert rc == 0
     assert captured["repair_exec_batch_target_pages"] == 64
     assert captured["repair_exec_batch_target_items"] == 24
+
+
+def test_full_pipeline_checkpoint_retries_empty_export_when_ocr_text_exists(tmp_path, monkeypatch):
+    calls = {"jsonl": 0}
+
+    class DummyCorpus:
+        def __init__(self, input_dir, output_dir):
+            self.input_dir = input_dir
+            self.output_dir = output_dir
+
+        def _metadata_path(self):
+            path = self.output_dir / "download_results" / "download_results.parquet"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return path
+
+        def extract(self, **kwargs):
+            pd.DataFrame(
+                [{"filename": "doc.pdf", "needs_ocr": True, "ocr_success": False, "text": ""}]
+            ).to_parquet(self._metadata_path(), index=False)
+
+        def clean(self, **kwargs):
+            return None
+
+        def ocr(self, **kwargs):
+            pd.DataFrame(
+                [{"filename": "doc.pdf", "needs_ocr": False, "ocr_success": True, "text": "fixed text"}]
+            ).to_parquet(self._metadata_path(), index=False)
+
+        def jsonl(self, output_path, **kwargs):
+            calls["jsonl"] += 1
+            if calls["jsonl"] == 1:
+                output_path.write_text("", encoding="utf-8")
+                return
+            output_path.write_text(json.dumps({"text": "fixed text"}) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(checkpoint, "Corpus", DummyCorpus)
+
+    input_dir = tmp_path / "in"
+    input_dir.mkdir()
+    output_dir = tmp_path / "out"
+    export_path = tmp_path / "export.jsonl"
+    report_path = tmp_path / "report.json"
+
+    rc = checkpoint.main(
+        [
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--export-path",
+            str(export_path),
+            "--report-path",
+            str(report_path),
+        ]
+    )
+
+    assert rc == 0
+    assert calls["jsonl"] == 2
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["post_ocr_counts"]["text_nonempty"] == 1
+    assert report["export_records"] == 1
