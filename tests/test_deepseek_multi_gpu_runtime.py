@@ -23,6 +23,22 @@ def test_build_env_adds_wheel_managed_cuda_lib_dirs(tmp_path):
     assert str(cublas_lib) in ld_entries
 
 
+def test_build_env_uses_virtualenv_path_when_python_bin_is_symlink(tmp_path):
+    from glossapi.ocr.deepseek import runner
+
+    venv_root = tmp_path / "venv"
+    python_bin = venv_root / "bin" / "python"
+    python_bin.parent.mkdir(parents=True, exist_ok=True)
+    python_bin.symlink_to("/usr/bin/python3")
+    cuda_runtime_lib = venv_root / "lib" / "python3.11" / "site-packages" / "nvidia" / "cuda_runtime" / "lib"
+    cuda_runtime_lib.mkdir(parents=True, exist_ok=True)
+
+    env = runner._build_env(python_bin=python_bin, visible_device=0, script=None)
+
+    ld_entries = env["LD_LIBRARY_PATH"].split(":")
+    assert str(cuda_runtime_lib) in ld_entries
+
+
 def test_work_queue_requeues_stale_running_batch(tmp_path):
     from glossapi.ocr.deepseek import work_queue
 

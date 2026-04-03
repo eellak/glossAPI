@@ -220,7 +220,10 @@ def _build_env(
             break
     ld_entries: List[str] = []
     if python_bin:
-        venv_root = Path(python_bin).expanduser().resolve().parent.parent
+        # Keep the venv path semantics instead of resolving the interpreter symlink
+        # back to `/usr/bin/python...`; the wheel-managed CUDA libs live under the
+        # virtualenv tree, not under the system interpreter location.
+        venv_root = Path(python_bin).expanduser().parent.parent
         for site_packages in sorted((venv_root / "lib").glob("python*/site-packages")):
             nvidia_root = site_packages / "nvidia"
             if not nvidia_root.is_dir():
