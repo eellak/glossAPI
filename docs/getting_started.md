@@ -8,6 +8,12 @@ This guide gets a new GlossAPI contributor from clone → first extraction with 
 - Recent `pip` (or `uv`) and a C/C++ toolchain for Rust wheels
 - Optional: NVIDIA GPU with CUDA drivers for Docling/DeepSeek acceleration
 
+On fresh Linux hosts, make these assumptions explicit instead of relying on shell startup files:
+
+- prefer a stable final CPython, not a prerelease distro build
+- keep `~/.local/bin` on `PATH` if `uv` was installed with `pip install --user uv`
+- keep `~/.cargo/bin` on `PATH` if Rust was installed with `rustup`
+
 ## Install GlossAPI
 
 ### Recommended setup
@@ -20,6 +26,7 @@ Use `dependency_setup/setup_glossapi.sh` for the main Docling environment and `d
 
 # DeepSeek OCR on GPU (uv-managed, downloads DeepSeek-OCR-2 if requested)
 ./dependency_setup/setup_deepseek_uv.sh \
+  --python /path/to/stable/python \
   --venv dependency_setup/.venvs/deepseek \
   --model-root /path/to/deepseek-ocr-2-model \
   --download-model \
@@ -29,8 +36,28 @@ Use `dependency_setup/setup_glossapi.sh` for the main Docling environment and `d
 `setup_glossapi.sh --mode deepseek` delegates to the same uv-based installer. Inspect `dependency_setup/dependency_notes.md` for the current pins and validation runs. Both setup paths install GlossAPI and its Rust crates in editable mode so source changes are picked up immediately.
 The dedicated DeepSeek uv environment is intentionally OCR-only: it installs `glossapi[deepseek]` and leaves Docling in the main environment.
 
+On fresh GPU nodes, prefer a `uv`-managed stable Python such as:
+
+```bash
+~/.local/bin/uv python install 3.11.11
+```
+
+Then pass that interpreter explicitly to the setup scripts:
+
+```bash
+./dependency_setup/setup_glossapi.sh \
+  --mode docling \
+  --python /home/$USER/.local/share/uv/python/cpython-3.11.11-linux-x86_64-gnu/bin/python3.11 \
+  --venv dependency_setup/.venvs/docling
+
+./dependency_setup/setup_deepseek_uv.sh \
+  --python /home/$USER/.local/share/uv/python/cpython-3.11.11-linux-x86_64-gnu/bin/python3.11 \
+  --venv dependency_setup/.venvs/deepseek
+```
+
 **DeepSeek runtime checklist**
 - Run `python -m glossapi.ocr.deepseek.preflight` from the DeepSeek venv to assert the real runtime is reachable.
+- Run `python -m glossapi.scripts.deepseek_runtime_report` from the DeepSeek venv on fresh GPU nodes before ad hoc fixes. That captures the interpreter, CUDA wheel layout, and package versions used by the node.
 - Force the real runtime and avoid stub fallback by setting:
   - `GLOSSAPI_DEEPSEEK_ALLOW_CLI=1`
   - `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`

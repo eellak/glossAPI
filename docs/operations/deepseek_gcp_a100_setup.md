@@ -24,7 +24,7 @@ This rollout has validated the following stack on working OCR fleet nodes:
 - NVIDIA driver `590.48.01`
 - `A100 40GB` GPUs
 - host Python `3.10`
-- DeepSeek venv Python `3.11`
+- DeepSeek venv Python `3.11` from a stable final CPython, not a prerelease distro build
 - `torch 2.10.0+cu130`
 - `vllm 0.18.0`
 - `transformers 4.57.6`
@@ -89,6 +89,22 @@ surfaced two setup classes:
 This means instance creation itself worked, but bootstrap/runtime reproducibility
 was incomplete.
 
+The concrete bootstrap issues found on that node were:
+
+- `uv` existed only in `~/.local/bin`, which non-interactive shells were not using
+- the default DeepSeek venv was created against `/usr/bin/python3.11`, which on
+  that node was `Python 3.11.0rc1`
+- system cargo/rustc were too old to parse the repo `Cargo.lock`
+- the DeepSeek venv still needed the cu12 runtime pair for `vllm._C` to import:
+  - `nvidia-cuda-runtime-cu12`
+  - `nvidia-cuda-nvrtc-cu12`
+
+After correcting those bootstrap defects, the same fresh node was able to:
+
+- import `vllm._C`
+- initialize a direct one-GPU `LLM(...)`
+- start a real `openarchives_ocr_run_node` workload with `runtime_backend=vllm`
+
 ## Current runner expectation
 
 `glossapi.ocr.deepseek.runner._build_env()` now auto-discovers
@@ -101,10 +117,26 @@ not rely on manual shell-session exports as the primary contract.
 ## Practical bring-up checklist
 
 1. confirm the node matches the OS / driver baseline
-2. run `deepseek_runtime_report`
-3. compare report output to a known-good node
-4. fix bootstrap mismatches first
-5. rerun the report
-6. only then run a small OCR validation workload
-7. if OCR still fails, inspect worker logs and decide whether the remaining gap
+2. export user-local tool paths explicitly for non-interactive shells:
+   - `export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"`
+3. install a stable CPython explicitly, for example:
+   - `~/.local/bin/uv python install 3.11.11`
+4. run `deepseek_runtime_report`
+5. compare report output to a known-good node
+6. fix bootstrap mismatches first
+7. rerun the report
+8. only then run a small OCR validation workload
+9. if OCR still fails, inspect worker logs and decide whether the remaining gap
    belongs in GlossAPI runtime code or external bootstrap
+
+## Rust note
+
+If editable installs fail while building `glossapi_rs_cleaner` or
+`glossapi_rs_noise`, prefer a user-local modern Rust toolchain:
+
+```bash
+curl https://sh.rustup.rs -sSf | sh -s -- -y
+export PATH="$HOME/.cargo/bin:$PATH"
+rustup toolchain install stable
+rustup default stable
+```

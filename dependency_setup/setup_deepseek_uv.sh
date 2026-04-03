@@ -33,6 +33,38 @@ Options:
 EOF
 }
 
+prepend_path_if_dir() {
+  local dir="$1"
+  if [[ -d "${dir}" ]]; then
+    case ":${PATH}:" in
+      *":${dir}:"*) ;;
+      *) export PATH="${dir}:${PATH}" ;;
+    esac
+  fi
+}
+
+ensure_stable_python() {
+  local python_bin="$1"
+  local release_level
+  release_level="$("${python_bin}" - <<'PY'
+import sys
+print(sys.version_info.releaselevel)
+PY
+)"
+  if [[ "${release_level}" != "final" ]]; then
+    error "Python interpreter ${python_bin} is not a stable final release (releaselevel=${release_level}). Install a stable CPython (for example via 'uv python install 3.11.11') and rerun with --python."
+  fi
+}
+
+check_rust_toolchain() {
+  if ! command -v cargo >/dev/null 2>&1; then
+    error "cargo is required to build the Rust extensions. Install Rust (for example via rustup) and ensure cargo is on PATH."
+  fi
+  if ! cargo metadata --format-version 1 --manifest-path "${REPO_ROOT}/rust/glossapi_rs_cleaner/Cargo.toml" >/dev/null 2>&1; then
+    error "Current cargo cannot parse the repo Rust metadata/Cargo.lock. Upgrade Rust (for example 'rustup toolchain install stable && rustup default stable') and rerun setup."
+  fi
+}
+
 while (( "$#" )); do
   case "$1" in
     --venv)
@@ -69,7 +101,13 @@ while (( "$#" )); do
   shift || true
 done
 
+prepend_path_if_dir "${HOME}/.local/bin"
+prepend_path_if_dir "${HOME}/.cargo/bin"
+
 command -v uv >/dev/null 2>&1 || error "uv is required. Install it first, e.g. 'python3 -m pip install --user uv'."
+command -v "${PYTHON_BIN}" >/dev/null 2>&1 || error "Python executable not found: ${PYTHON_BIN}"
+ensure_stable_python "${PYTHON_BIN}"
+check_rust_toolchain
 
 MODEL_DIR="${MODEL_ROOT}/DeepSeek-OCR-2"
 
