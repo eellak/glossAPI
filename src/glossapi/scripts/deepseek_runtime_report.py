@@ -32,15 +32,18 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def _detect_python_bin(repo_root: Path, explicit: str) -> Path:
     if str(explicit).strip():
-        return Path(explicit).expanduser().resolve()
+        path = Path(explicit).expanduser()
+        if not path.is_absolute():
+            path = repo_root / path
+        return path.absolute()
     candidates = (
         repo_root / "dependency_setup" / ".venvs" / "deepseek" / "bin" / "python",
         repo_root / "dependency_setup" / "deepseek_uv" / ".venv" / "bin" / "python",
     )
     for candidate in candidates:
         if candidate.exists():
-            return candidate.resolve()
-    return Path(sys.executable).resolve()
+            return candidate.absolute()
+    return Path(sys.executable).absolute()
 
 
 def _read_os_release() -> Dict[str, str]:
