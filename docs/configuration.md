@@ -47,7 +47,7 @@ The dedicated uv profile is OCR-only and does not install the Docling extraction
 
 - `GLOSSAPI_DEEPSEEK_ALLOW_STUB`: must remain `0`; stub execution is rejected.
 - `GLOSSAPI_DEEPSEEK_ALLOW_CLI`: keep at `1` to require the real runtime.
-- `GLOSSAPI_DEEPSEEK_PYTHON`: absolute path to the Python interpreter that runs the DeepSeek OCR runner.
+- `GLOSSAPI_DEEPSEEK_PYTHON`: absolute path to the Python interpreter that runs the DeepSeek OCR runner. When this is unset, GlossAPI now prefers a repo-local version-pinned DeepSeek runtime under `dependency_setup/.venvs/deepseek*` before falling back to the generic `deepseek` alias and finally the current process interpreter.
 - `GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT`: override path to the OCR runner script (defaults to `src/glossapi/ocr/deepseek/run_pdf_ocr_transformers.py`).
 - `GLOSSAPI_DEEPSEEK_MODEL_DIR`: path to the downloaded `DeepSeek-OCR-2` snapshot.
 - `GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH`: prepend extra library search paths when launching the OCR runner.

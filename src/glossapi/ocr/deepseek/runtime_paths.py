@@ -10,6 +10,17 @@ from typing import Dict, Iterable, List, Optional
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
+def _runtime_sort_key(candidate: Path) -> tuple[int, int, str]:
+    name = candidate.parent.parent.name
+    if name == "deepseek":
+        return (1, 0, name)
+    if name.startswith("deepseek"):
+        suffix = name[len("deepseek") :]
+        if suffix.isdigit():
+            return (0, -int(suffix), name)
+    return (2, 0, name)
+
+
 def _candidate_deepseek_pythons(
     *,
     explicit_python: Optional[Path | str] = None,
@@ -33,11 +44,8 @@ def _candidate_deepseek_pythons(
     _append(resolved_env.get("GLOSSAPI_DEEPSEEK_TEST_PYTHON"))
 
     venv_root = root / "dependency_setup" / ".venvs"
-    preferred_names = ("deepseek", "deepseek31111")
-    for name in preferred_names:
-        _append(venv_root / name / "bin" / "python")
     if venv_root.exists():
-        for candidate in sorted(venv_root.glob("deepseek*/bin/python")):
+        for candidate in sorted(venv_root.glob("deepseek*/bin/python"), key=_runtime_sort_key):
             _append(candidate)
 
     _append(sys.executable)

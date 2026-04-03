@@ -63,6 +63,7 @@ Then pass that interpreter explicitly to the setup scripts:
   - `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`
   - `GLOSSAPI_DEEPSEEK_PYTHON=/path/to/deepseek/venv/bin/python`
   - `GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr-2-model/DeepSeek-OCR-2`
+- If `GLOSSAPI_DEEPSEEK_PYTHON` is unset, GlossAPI now searches for a repo-local version-pinned DeepSeek runtime under `dependency_setup/.venvs/deepseek*` before falling back to the generic `deepseek` alias and then the current process interpreter. Keep the env var set when you need an explicit override; broken explicit paths are treated as configuration errors, not silently ignored.
 - Standard OCR defaults after setup:
   - `runtime_backend='vllm'`
   - `ocr_profile='markdown_grounded'`
