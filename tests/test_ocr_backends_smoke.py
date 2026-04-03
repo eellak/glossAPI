@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pandas as pd
@@ -63,4 +64,12 @@ def test_deepseek_ocr_then_math_only_smoke(tmp_path, monkeypatch):
     # Verify
     updated = pd.read_parquet(parquet_path).set_index("filename")
     assert bool(updated.loc["needs.pdf", "ocr_success"]) is True
+    assert bool(updated.loc["needs.pdf", "needs_ocr"]) is False
+    assert updated.loc["needs.pdf", "text"] == "ds md\n"
+    assert updated.loc["needs.pdf", "ocr_markdown_relpath"] == "markdown/needs.md"
+    assert updated.loc["needs.pdf", "ocr_metrics_relpath"] == "json/metrics/needs.metrics.json"
+    assert (
+        updated.loc["needs.pdf", "ocr_text_sha256"]
+        == hashlib.sha256(b"ds md\n").hexdigest()
+    )
     assert captured.get("files") == ["clean"], "Math-only should run for non-OCR stem only"

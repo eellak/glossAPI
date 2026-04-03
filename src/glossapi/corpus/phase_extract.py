@@ -37,6 +37,24 @@ def _maybe_import_torch(force: bool = False):
     return _maybe_import_torch_fallback(force=force)
 
 
+def _resolve_docling_max_batch_files(default: int = 1) -> int:
+    """Resolve the per-worker Docling document batch size for Phase-1 extraction.
+
+    GlossAPI keeps the default conservative because fresh GPU nodes have been
+    more sensitive to bootstrap/runtime drift than to raw scheduler limits.
+    Strong GPUs can still be benchmarked explicitly by raising this knob.
+    """
+
+    fallback = max(1, int(default))
+    raw = os.getenv("GLOSSAPI_DOCLING_MAX_BATCH_FILES")
+    if not raw:
+        return fallback
+    try:
+        return max(1, int(raw))
+    except Exception:
+        return fallback
+
+
 class ExtractPhaseMixin:
     def prime_extractor(
         self,
@@ -112,8 +130,13 @@ class ExtractPhaseMixin:
 
         # Configure batch/backend policy based on resolved choice
         if backend_choice == "docling":
-            # Keep docling runs conservative: process one document per batch for stability
-            self.extractor.configure_batch_policy("docling", max_batch_files=1, prefer_safe_backend=False)
+            # Keep docling runs conservative by default, but expose an explicit
+            # Phase-1 tuning hook for benchmark nodes and strong GPUs.
+            self.extractor.configure_batch_policy(
+                "docling",
+                max_batch_files=_resolve_docling_max_batch_files(),
+                prefer_safe_backend=False,
+            )
         else:
             self.extractor.configure_batch_policy("safe", max_batch_files=1, prefer_safe_backend=True)
 

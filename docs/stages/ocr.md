@@ -44,6 +44,10 @@ OCR reruns should preserve:
 
 ## DeepSeek runtime contract
 
+For the operator-facing summary of the OCR changes already merged into
+`development` during the April 1-3 rollout, see
+`../operations/ocr_changes_2026-04-01_to_2026-04-03.md`.
+
 - `ocr()` may execute page-range shards internally when `use_gpus="multi"` and `scheduler="exact_fill"`, but the stage contract remains one canonical Markdown file and one canonical metrics file per source PDF.
 - When shard execution is used, the runner reassembles `markdown/<stem>.md` and `json/metrics/<stem>.metrics.json` after the CLI workers finish.
 - Execution-time shard artifacts are moved under `sidecars/ocr_shards/` so downstream stages do not mistake them for canonical stage outputs.

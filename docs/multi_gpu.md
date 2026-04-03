@@ -13,6 +13,7 @@ c.extract(input_format='pdf', use_gpus='multi', phase1_backend='docling', worker
 
 - Workers are bound using `CUDA_VISIBLE_DEVICES=<id>` and run Docling on `cuda:0` relative to each worker.
 - `workers_per_device` defaults to `1`; raise it only when benchmarking a strong GPU such as an A100.
+- `GLOSSAPI_DOCLING_MAX_BATCH_FILES` lets one Docling worker take more than one PDF per extractor batch; keep the default `1` for fresh-node stability and benchmark larger values explicitly.
 - Threads auto‑tune when `num_threads=None` (roughly `min(cpu_count, 2 * #GPUs)`). Override explicitly if needed.
 - The controller persists extraction progress in `download_results/download_results.parquet` after each reported
   batch, so interrupted runs can resume cleanly without ad-hoc checkpoint files.

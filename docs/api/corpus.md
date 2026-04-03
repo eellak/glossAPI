@@ -57,6 +57,7 @@ extract(
   - `force_ocr`: deprecated no-op kept for compatibility; OCR remediation now lives in `Corpus.ocr(backend='deepseek')`
   - `use_gpus='multi'`: use all visible GPUs through a shared work queue
   - `workers_per_device`: fan out more than one extraction worker onto a single visible GPU when measuring throughput
+  - `GLOSSAPI_DOCLING_MAX_BATCH_FILES`: optional environment override for how many PDFs one Docling worker processes per extractor batch; GlossAPI keeps the default at `1` until a benchmark proves a larger batch is safe on the target node
   - `export_doc_json=True`: write `json/<stem>.docling.json(.zst)`
   - `emit_formula_index=True`: also write `json/<stem>.formula_index.jsonl`
 - Main outputs:
@@ -126,7 +127,7 @@ ocr(
 - Main outputs:
   - refreshed `markdown/<stem>.md`
   - refreshed cleaner/parquet metadata after OCR reruns
-  - when metadata parquet is present, a canonical OCR parquet should preserve the same row identity and carry corrected `text` together with the updated metadata
+  - when metadata parquet is present, OCR now preserves the same row identity and embeds corrected `text` plus direct OCR sidecar pointers such as `ocr_markdown_relpath`, `ocr_metrics_relpath`, and `ocr_text_sha256`
   - `json/<stem>.latex_map.jsonl` when enrichment runs
 
 ## formula_enrich_from_json()

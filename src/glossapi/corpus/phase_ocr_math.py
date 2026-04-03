@@ -1,6 +1,7 @@
 """OCR and math enrichment helpers split from Corpus."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -25,6 +26,85 @@ from ..gloss_section import GlossSection
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch
+
+
+def _build_ocr_stage_artifact_update(
+    *,
+    markdown_dir: Path,
+    metrics_dir: Path,
+    stem: str,
+) -> Optional[Dict[str, object]]:
+    """Return direct OCR-owned artifact fields for one canonical OCR document.
+
+    The OCR stage should hand off the same row identity that upstream stages
+    produced, with corrected text embedded back into parquet. Markdown and
+    metrics remain sidecars, but detached markdown alone is not the full stage
+    contract.
+    """
+
+    markdown_path = Path(markdown_dir) / f"{stem}.md"
+    if not markdown_path.exists():
+        return None
+    text_payload = markdown_path.read_text(encoding="utf-8")
+    metrics_path = Path(metrics_dir) / f"{stem}.metrics.json"
+    return {
+        "text": text_payload,
+        "ocr_markdown_relpath": str(Path("markdown") / markdown_path.name),
+        "ocr_metrics_relpath": (
+            str(Path("json") / "metrics" / metrics_path.name) if metrics_path.exists() else None
+        ),
+        "ocr_text_sha256": hashlib.sha256(text_payload.encode("utf-8")).hexdigest(),
+    }
+
+
+def _apply_ocr_success_updates(
+    df_meta: pd.DataFrame,
+    *,
+    filenames: List[str],
+    markdown_dir: Path,
+    metrics_dir: Path,
+    backend_norm: str,
+) -> pd.DataFrame:
+    """Apply only direct, obvious OCR-owned metadata updates to the parquet rows."""
+
+    if "filename" not in df_meta.columns:
+        return df_meta
+
+    if "filter" not in df_meta.columns:
+        df_meta["filter"] = "ok"
+    if "needs_ocr" not in df_meta.columns:
+        df_meta["needs_ocr"] = False
+    if "ocr_success" not in df_meta.columns:
+        df_meta["ocr_success"] = False
+    if "extraction_mode" not in df_meta.columns:
+        df_meta["extraction_mode"] = None
+
+    direct_columns = ("text", "ocr_markdown_relpath", "ocr_metrics_relpath", "ocr_text_sha256")
+    for column in direct_columns:
+        if column not in df_meta.columns:
+            df_meta[column] = None
+
+    for fname in filenames:
+        mask = df_meta["filename"].astype(str) == str(fname)
+        if not bool(mask.any()):
+            continue
+        stem = canonical_stem(fname)
+        artifact_update = _build_ocr_stage_artifact_update(
+            markdown_dir=markdown_dir,
+            metrics_dir=metrics_dir,
+            stem=stem,
+        )
+        df_meta.loc[mask, "filter"] = "ok"
+        df_meta.loc[mask, "needs_ocr"] = False
+        df_meta.loc[mask, "ocr_success"] = True
+        if backend_norm == "deepseek":
+            df_meta.loc[mask, "extraction_mode"] = "deepseek"
+        if artifact_update is None:
+            continue
+        for column, value in artifact_update.items():
+            df_meta.loc[mask, column] = value
+
+    return df_meta
 
 
 class OcrMathPhaseMixin:
@@ -674,25 +754,15 @@ class OcrMathPhaseMixin:
                         import pandas as _pd
 
                         df_meta = _pd.read_parquet(parquet_path)
-                        if "filename" in df_meta.columns:
-                            if "filter" not in df_meta.columns:
-                                df_meta["filter"] = "ok"
-                            if "needs_ocr" not in df_meta.columns:
-                                df_meta["needs_ocr"] = False
-                            if "ocr_success" not in df_meta.columns:
-                                df_meta["ocr_success"] = False
-                            if "extraction_mode" not in df_meta.columns:
-                                df_meta["extraction_mode"] = None
-                            for _fname in success_files:
-                                mask = df_meta["filename"].astype(str) == str(_fname)
-                                if mask.any():
-                                    df_meta.loc[mask, "filter"] = "ok"
-                                    df_meta.loc[mask, "needs_ocr"] = False
-                                    df_meta.loc[mask, "ocr_success"] = True
-                                    if backend_norm == "deepseek":
-                                        df_meta.loc[mask, "extraction_mode"] = "deepseek"
-                            self._cache_metadata_parquet(parquet_path)
-                            parquet_schema.write_metadata_parquet(df_meta, parquet_path)
+                        df_meta = _apply_ocr_success_updates(
+                            df_meta,
+                            filenames=success_files,
+                            markdown_dir=self.markdown_dir,
+                            metrics_dir=self.output_dir / "json" / "metrics",
+                            backend_norm=backend_norm,
+                        )
+                        self._cache_metadata_parquet(parquet_path)
+                        parquet_schema.write_metadata_parquet(df_meta, parquet_path)
                     # Keep sectioner in sync with newly recovered files
                     try:
                         stems = [canonical_stem(_f) for _f in success_files]
