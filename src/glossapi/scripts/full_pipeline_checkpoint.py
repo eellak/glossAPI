@@ -30,6 +30,9 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--export-path", required=True)
     p.add_argument("--report-path", required=True)
     p.add_argument("--clean-output-dir", action="store_true")
+    p.add_argument("--skip-extract", action="store_true")
+    p.add_argument("--skip-clean", action="store_true")
+    p.add_argument("--skip-ocr", action="store_true")
 
     p.add_argument("--phase1-backend", default="docling", choices=["auto", "safe", "docling"])
     p.add_argument("--accel-type", default="CUDA")
@@ -120,41 +123,54 @@ def main(argv: Optional[List[str]] = None) -> int:
     metadata_path = output_dir / "download_results" / "download_results.parquet"
 
     started_at = time.time()
+    skipped_phases: List[str] = []
 
-    extract_start = time.perf_counter()
-    corpus.extract(
-        input_format="pdf",
-        accel_type=str(args.accel_type),
-        num_threads=int(args.num_threads),
-        phase1_backend=str(args.phase1_backend),
-        use_gpus=str(args.use_gpus),
-        devices=_parse_int_list(args.devices),
-        workers_per_device=int(args.workers_per_device),
-        benchmark_mode=bool(args.benchmark_mode),
-        filenames=list(args.filenames or []),
-    )
-    extract_elapsed = float(time.perf_counter() - extract_start)
+    if bool(args.skip_extract):
+        skipped_phases.append("extract")
+        extract_elapsed = 0.0
+    else:
+        extract_start = time.perf_counter()
+        corpus.extract(
+            input_format="pdf",
+            accel_type=str(args.accel_type),
+            num_threads=int(args.num_threads),
+            phase1_backend=str(args.phase1_backend),
+            use_gpus=str(args.use_gpus),
+            devices=_parse_int_list(args.devices),
+            workers_per_device=int(args.workers_per_device),
+            benchmark_mode=bool(args.benchmark_mode),
+            filenames=list(args.filenames or []),
+        )
+        extract_elapsed = float(time.perf_counter() - extract_start)
     post_extract_counts = _read_metadata_counts(metadata_path)
 
-    clean_start = time.perf_counter()
-    corpus.clean(drop_bad=bool(args.drop_bad))
-    clean_elapsed = float(time.perf_counter() - clean_start)
+    if bool(args.skip_clean):
+        skipped_phases.append("clean")
+        clean_elapsed = 0.0
+    else:
+        clean_start = time.perf_counter()
+        corpus.clean(drop_bad=bool(args.drop_bad))
+        clean_elapsed = float(time.perf_counter() - clean_start)
     post_clean_counts = _read_metadata_counts(metadata_path)
 
-    ocr_start = time.perf_counter()
-    corpus.ocr(
-        backend=str(args.ocr_backend),
-        runtime_backend=str(args.ocr_runtime_backend),
-        use_gpus=str(args.ocr_use_gpus),
-        devices=_parse_int_list(args.ocr_devices),
-        workers_per_gpu=int(args.ocr_workers_per_gpu),
-        vllm_batch_size=args.ocr_vllm_batch_size,
-        target_batch_pages=int(args.ocr_target_batch_pages),
-        render_dpi=args.ocr_render_dpi,
-        scheduler=str(args.ocr_scheduler),
-        math_enhance=bool(args.ocr_math_enhance),
-    )
-    ocr_elapsed = float(time.perf_counter() - ocr_start)
+    if bool(args.skip_ocr):
+        skipped_phases.append("ocr")
+        ocr_elapsed = 0.0
+    else:
+        ocr_start = time.perf_counter()
+        corpus.ocr(
+            backend=str(args.ocr_backend),
+            runtime_backend=str(args.ocr_runtime_backend),
+            use_gpus=str(args.ocr_use_gpus),
+            devices=_parse_int_list(args.ocr_devices),
+            workers_per_gpu=int(args.ocr_workers_per_gpu),
+            vllm_batch_size=args.ocr_vllm_batch_size,
+            target_batch_pages=int(args.ocr_target_batch_pages),
+            render_dpi=args.ocr_render_dpi,
+            scheduler=str(args.ocr_scheduler),
+            math_enhance=bool(args.ocr_math_enhance),
+        )
+        ocr_elapsed = float(time.perf_counter() - ocr_start)
     post_ocr_counts = _read_metadata_counts(metadata_path)
 
     export_start = time.perf_counter()
@@ -177,6 +193,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "started_at": int(started_at),
         "finished_at": int(finished_at),
         "elapsed_total_sec": float(finished_at - started_at),
+        "skipped_phases": list(skipped_phases),
         "extract_elapsed_sec": extract_elapsed,
         "clean_elapsed_sec": clean_elapsed,
         "ocr_elapsed_sec": ocr_elapsed,
