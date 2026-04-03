@@ -3,6 +3,26 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
+def test_build_env_adds_wheel_managed_cuda_lib_dirs(tmp_path):
+    from glossapi.ocr.deepseek import runner
+
+    venv_root = tmp_path / "venv"
+    python_bin = venv_root / "bin" / "python"
+    python_bin.parent.mkdir(parents=True, exist_ok=True)
+    python_bin.write_text("")
+    cuda_runtime_lib = venv_root / "lib" / "python3.11" / "site-packages" / "nvidia" / "cuda_runtime" / "lib"
+    cublas_lib = venv_root / "lib" / "python3.11" / "site-packages" / "nvidia" / "cublas" / "lib"
+    cuda_runtime_lib.mkdir(parents=True, exist_ok=True)
+    cublas_lib.mkdir(parents=True, exist_ok=True)
+
+    env = runner._build_env(python_bin=python_bin, visible_device=1, script=None)
+
+    assert env["CUDA_VISIBLE_DEVICES"] == "1"
+    ld_entries = env["LD_LIBRARY_PATH"].split(":")
+    assert str(cuda_runtime_lib) in ld_entries
+    assert str(cublas_lib) in ld_entries
+
+
 def test_work_queue_requeues_stale_running_batch(tmp_path):
     from glossapi.ocr.deepseek import work_queue
 

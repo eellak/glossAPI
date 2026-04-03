@@ -59,6 +59,7 @@ c.ocr(
 - Workers may pack multiple pending repair items into one larger execution batch. Queue durability stays item-granular, but the runtime no longer has to execute the repair tail as one tiny origin-shard retry at a time.
 - Each worker writes `sidecars/ocr_runtime/worker_*.runtime.json` with heartbeat state and steady-state timing markers. The runner also emits `gpu_preflight.json`, `gpu_telemetry.jsonl`, and `runtime_summary.json`.
 - The runner checks GPU persistence mode before launch by default. Control it with `GLOSSAPI_DEEPSEEK_GPU_PREFLIGHT=off|warn|ensure`. The default is `ensure`, which will try `sudo -n nvidia-smi -pm 1` and record the result in `gpu_preflight.json`.
+- When the DeepSeek runtime is built from wheel-managed CUDA packages, the runner now auto-discovers the venv's `site-packages/nvidia/*/lib` directories and prepends them to `LD_LIBRARY_PATH`. `GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH` still works as a manual override or supplement.
 - Worker reliability knobs are environment-driven: `GLOSSAPI_DEEPSEEK_WORKER_RESPAWN_CAP`, `GLOSSAPI_DEEPSEEK_WORK_ITEM_MAX_ATTEMPTS`, `GLOSSAPI_DEEPSEEK_WORK_STALE_AFTER_SEC`, `GLOSSAPI_DEEPSEEK_WORK_HEARTBEAT_SEC`, and `GLOSSAPI_DEEPSEEK_TELEMETRY_INTERVAL_SEC`.
 - The default `GLOSSAPI_DEEPSEEK_WORK_ITEM_MAX_ATTEMPTS=2` means one retry after the first failed claim, then the batch is marked failed instead of retrying forever.
 - `workers_per_gpu=1` remains the safe default on A100 40GB nodes. Prefer increasing `target_batch_pages` before adding more workers per device.

@@ -218,9 +218,30 @@ def _build_env(
         for candidate in sorted(Path("/usr/lib/gcc/x86_64-linux-gnu").glob("*/cc1plus")):
             env["PATH"] = f"{candidate.parent}:{env.get('PATH', '')}"
             break
+    ld_entries: List[str] = []
+    if python_bin:
+        venv_root = Path(python_bin).expanduser().resolve().parent.parent
+        for site_packages in sorted((venv_root / "lib").glob("python*/site-packages")):
+            nvidia_root = site_packages / "nvidia"
+            if not nvidia_root.is_dir():
+                continue
+            for lib_dir in sorted(nvidia_root.glob("*/lib")):
+                if lib_dir.is_dir():
+                    ld_entries.append(str(lib_dir))
     ld_path = env.get("GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH")
     if ld_path:
-        env["LD_LIBRARY_PATH"] = f"{ld_path}:{env.get('LD_LIBRARY_PATH', '')}"
+        ld_entries.extend(entry for entry in str(ld_path).split(os.pathsep) if entry)
+    existing_ld = str(env.get("LD_LIBRARY_PATH", "")).strip()
+    if existing_ld:
+        ld_entries.extend(entry for entry in existing_ld.split(os.pathsep) if entry)
+    if ld_entries:
+        deduped: List[str] = []
+        seen: Set[str] = set()
+        for entry in ld_entries:
+            if entry and entry not in seen:
+                seen.add(entry)
+                deduped.append(entry)
+        env["LD_LIBRARY_PATH"] = os.pathsep.join(deduped)
     return env
 
 
