@@ -24,6 +24,15 @@ TUNING_ENV_VARS = (
     "GLOSSAPI_DOCLING_PAGE_BATCH_SIZE",
 )
 
+TUNING_ARG_TO_ENV = {
+    "docling_max_batch_files": "GLOSSAPI_DOCLING_MAX_BATCH_FILES",
+    "docling_batch_target_pages": "GLOSSAPI_DOCLING_BATCH_TARGET_PAGES",
+    "docling_layout_batch_size": "GLOSSAPI_DOCLING_LAYOUT_BATCH_SIZE",
+    "docling_table_batch_size": "GLOSSAPI_DOCLING_TABLE_BATCH_SIZE",
+    "docling_ocr_batch_size": "GLOSSAPI_DOCLING_OCR_BATCH_SIZE",
+    "docling_page_batch_size": "GLOSSAPI_DOCLING_PAGE_BATCH_SIZE",
+}
+
 
 def _runtime_env_snapshot() -> Dict[str, str]:
     return {name: os.getenv(name, "") for name in TUNING_ENV_VARS}
@@ -48,10 +57,24 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--devices", nargs="*", type=int, default=None)
     p.add_argument("--workers-per-device", type=int, default=1)
     p.add_argument("--benchmark-mode", action="store_true")
+    p.add_argument("--docling-max-batch-files", type=int, default=None)
+    p.add_argument("--docling-batch-target-pages", type=int, default=None)
+    p.add_argument("--docling-layout-batch-size", type=int, default=None)
+    p.add_argument("--docling-table-batch-size", type=int, default=None)
+    p.add_argument("--docling-ocr-batch-size", type=int, default=None)
+    p.add_argument("--docling-page-batch-size", type=int, default=None)
     p.add_argument("--filenames", nargs="*", default=[])
     p.add_argument("--clean-output-dir", action="store_true")
     p.add_argument("--log-level", default="INFO")
     return p.parse_args(argv)
+
+
+def _apply_cli_tuning_overrides(args: argparse.Namespace) -> None:
+    for arg_name, env_name in TUNING_ARG_TO_ENV.items():
+        value = getattr(args, arg_name, None)
+        if value is None:
+            continue
+        os.environ[env_name] = str(int(value))
 
 
 def _count_pdf_pages(pdf_path: Path) -> int:
@@ -163,6 +186,7 @@ def _load_baseline_inventory(path: Path) -> Dict[str, Dict[str, Any]]:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = _parse_args(argv)
+    _apply_cli_tuning_overrides(args)
     input_dir = Path(args.input_dir).expanduser().resolve()
     output_dir = Path(args.output_dir).expanduser().resolve()
     report_path = Path(args.report_path).expanduser().resolve()

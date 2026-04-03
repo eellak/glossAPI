@@ -115,6 +115,7 @@ def test_prime_extractor_configures_docling_backend_explicitly(tmp_path, monkeyp
     corpus = make_corpus(tmp_path)
     corpus.extractor = DummyExtractor()
 
+    monkeypatch.delenv("GLOSSAPI_DOCLING_MAX_BATCH_FILES", raising=False)
     set_torch_stub(monkeypatch, available=True, device_count=2)
     corpus.prime_extractor(
         input_format="pdf",

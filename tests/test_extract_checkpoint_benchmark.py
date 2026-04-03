@@ -56,3 +56,30 @@ def test_runtime_env_snapshot_captures_docling_batch_knobs(monkeypatch):
     assert snapshot["GLOSSAPI_DOCLING_MAX_BATCH_FILES"] == "2"
     assert snapshot["GLOSSAPI_DOCLING_BATCH_TARGET_PAGES"] == "384"
     assert snapshot["GLOSSAPI_DOCLING_PAGE_BATCH_SIZE"] == "8"
+
+
+def test_apply_cli_tuning_overrides_sets_docling_env(monkeypatch):
+    for env_name in benchmark.TUNING_ENV_VARS:
+        monkeypatch.delenv(env_name, raising=False)
+
+    args = benchmark._parse_args(
+        [
+            "--input-dir",
+            "/tmp/in",
+            "--output-dir",
+            "/tmp/out",
+            "--report-path",
+            "/tmp/report.json",
+            "--docling-max-batch-files",
+            "2",
+            "--docling-batch-target-pages",
+            "512",
+            "--docling-page-batch-size",
+            "8",
+        ]
+    )
+    benchmark._apply_cli_tuning_overrides(args)
+
+    assert benchmark._runtime_env_snapshot()["GLOSSAPI_DOCLING_MAX_BATCH_FILES"] == "2"
+    assert benchmark._runtime_env_snapshot()["GLOSSAPI_DOCLING_BATCH_TARGET_PAGES"] == "512"
+    assert benchmark._runtime_env_snapshot()["GLOSSAPI_DOCLING_PAGE_BATCH_SIZE"] == "8"
