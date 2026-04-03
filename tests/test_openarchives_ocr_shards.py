@@ -230,3 +230,58 @@ def test_openarchives_ocr_merge_embeds_text_without_copy_root(tmp_path: Path) ->
     merged = pd.read_parquet(out_path).set_index("source_doc_id")
     assert merged.loc["doc-1", "text"] == "embedded text"
     assert pd.isna(merged.loc["doc-1", "ocr_markdown_relpath"])
+
+
+def test_openarchives_ocr_merge_unifies_markdown_shards(tmp_path: Path) -> None:
+    master = pd.DataFrame(
+        [
+            {"source_doc_id": "doc-1", "filename": "a.html", "md_filename": "a.md", "needs_ocr": True, "ocr_success": False},
+        ]
+    )
+    shard = pd.DataFrame(
+        [
+            {
+                "source_doc_id": "doc-1",
+                "filename": "A.pdf",
+                "filename_base": "A",
+                "md_filename": "A.md",
+                "needs_ocr": False,
+                "ocr_success": True,
+            },
+        ]
+    )
+    master_path = tmp_path / "master.parquet"
+    shard_path = tmp_path / "shard.parquet"
+    out_path = tmp_path / "merged.parquet"
+    work_root = tmp_path / "node00"
+    markdown_dir = work_root / "markdown"
+    markdown_dir.mkdir(parents=True)
+    (markdown_dir / "A__p00001-00096.md").write_text("part one", encoding="utf-8")
+    (markdown_dir / "A__p00097-00179.md").write_text("part two\n", encoding="utf-8")
+    master.to_parquet(master_path, index=False)
+    shard.to_parquet(shard_path, index=False)
+
+    rc = openarchives_ocr_merge.main(
+        [
+            "--master-parquet",
+            str(master_path),
+            "--shard-parquets",
+            str(shard_path),
+            "--output-parquet",
+            str(out_path),
+            "--key-column",
+            "source_doc_id",
+            "--artifact-work-roots",
+            str(work_root),
+            "--artifact-output-root",
+            str(tmp_path / "final"),
+        ]
+    )
+    assert rc == 0
+
+    merged = pd.read_parquet(out_path).set_index("source_doc_id")
+    assert merged.loc["doc-1", "text"] == "part one\npart two\n"
+    assert merged.loc["doc-1", "ocr_markdown_relpath"] == "markdown/A.md"
+    assert (tmp_path / "final" / "markdown" / "A.md").read_text(encoding="utf-8") == "part one\npart two\n"
+    assert (tmp_path / "final" / "sidecars" / "ocr_shards" / "markdown" / "A__p00001-00096.md").exists()
+    assert (tmp_path / "final" / "sidecars" / "ocr_shards" / "markdown" / "A__p00097-00179.md").exists()

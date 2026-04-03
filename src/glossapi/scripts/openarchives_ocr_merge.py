@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
+
+
+_MARKDOWN_SHARD_RE = re.compile(r"^(?P<stem>.+)__p(?P<start>\d+)-(?P<end>\d+)\.md$")
 
 
 def _parse_args(argv: List[str] | None = None) -> argparse.Namespace:
@@ -30,6 +34,66 @@ def _normalize_key(df: pd.DataFrame, key: str) -> pd.Series:
     return df[key].astype(str).str.strip()
 
 
+def _merge_markdown_parts(parts: List[str]) -> str:
+    merged: List[str] = []
+    for part in parts:
+        if not part:
+            continue
+        if merged and not merged[-1].endswith("\n"):
+            merged[-1] = merged[-1] + "\n"
+        merged.append(part)
+    return "".join(merged)
+
+
+def _copy_once(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        return
+    shutil.copy2(src, dst)
+
+
+def _resolve_markdown_payload(
+    *,
+    stem: str,
+    md_name: str,
+    work_roots: List[Path],
+    output_root: Optional[Path],
+) -> tuple[Optional[str], Optional[str]]:
+    markdown_out = output_root / "markdown" if output_root is not None else None
+    shard_out = output_root / "sidecars" / "ocr_shards" / "markdown" if output_root is not None else None
+
+    for root in work_roots:
+        canonical_src = root / "markdown" / f"{stem}.md"
+        if canonical_src.exists():
+            payload = canonical_src.read_text(encoding="utf-8")
+            if markdown_out is not None:
+                _copy_once(canonical_src, markdown_out / md_name)
+                return payload, str(Path("markdown") / md_name)
+            return payload, None
+
+        shard_sources = []
+        for candidate in sorted((root / "markdown").glob(f"{stem}__p*.md")):
+            match = _MARKDOWN_SHARD_RE.match(candidate.name)
+            if not match or match.group("stem") != stem:
+                continue
+            shard_sources.append((int(match.group("start")), candidate))
+        if not shard_sources:
+            continue
+
+        shard_sources.sort(key=lambda item: item[0])
+        payload = _merge_markdown_parts([path.read_text(encoding="utf-8") for _, path in shard_sources])
+        if markdown_out is not None:
+            destination = markdown_out / md_name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(payload, encoding="utf-8")
+            if shard_out is not None:
+                for _, shard_path in shard_sources:
+                    _copy_once(shard_path, shard_out / shard_path.name)
+            return payload, str(Path("markdown") / md_name)
+        return payload, None
+    return None, None
+
+
 def _collect_artifact_updates(
     *,
     shard_rows: pd.DataFrame,
@@ -39,8 +103,6 @@ def _collect_artifact_updates(
     copied = 0
     markdown_out = output_root / "markdown" if output_root is not None else None
     metrics_out = output_root / "json" / "metrics" if output_root is not None else None
-    if markdown_out is not None:
-        markdown_out.mkdir(parents=True, exist_ok=True)
     if metrics_out is not None:
         metrics_out.mkdir(parents=True, exist_ok=True)
     updates: List[Dict[str, object]] = []
@@ -50,24 +112,21 @@ def _collect_artifact_updates(
         if not stem:
             continue
         md_name = str(row.get("md_filename") or f"{stem}.md")
-        md_payload = None
-        md_relpath = None
-        for root in work_roots:
-            md_src = root / "markdown" / f"{stem}.md"
-            if md_src.exists():
-                md_payload = md_src.read_text(encoding="utf-8")
-                if markdown_out is not None:
-                    shutil.copy2(md_src, markdown_out / md_name)
-                    copied += 1
-                    md_relpath = str(Path("markdown") / md_name)
-                break
+        md_payload, md_relpath = _resolve_markdown_payload(
+            stem=stem,
+            md_name=md_name,
+            work_roots=work_roots,
+            output_root=output_root,
+        )
+        if md_payload is not None and markdown_out is not None:
+            copied += 1
         metrics_relpath = None
         for suffix in (".metrics.json", ".per_page.metrics.json"):
             for root in work_roots:
                 src = root / "json" / "metrics" / f"{stem}{suffix}"
                 if src.exists():
                     if metrics_out is not None:
-                        shutil.copy2(src, metrics_out / src.name)
+                        _copy_once(src, metrics_out / src.name)
                         copied += 1
                         metrics_relpath = str(Path("json") / "metrics" / src.name)
                     break

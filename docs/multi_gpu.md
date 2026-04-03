@@ -63,6 +63,7 @@ c.ocr(
 - Worker reliability knobs are environment-driven: `GLOSSAPI_DEEPSEEK_WORKER_RESPAWN_CAP`, `GLOSSAPI_DEEPSEEK_WORK_ITEM_MAX_ATTEMPTS`, `GLOSSAPI_DEEPSEEK_WORK_STALE_AFTER_SEC`, `GLOSSAPI_DEEPSEEK_WORK_HEARTBEAT_SEC`, and `GLOSSAPI_DEEPSEEK_TELEMETRY_INTERVAL_SEC`.
 - The default `GLOSSAPI_DEEPSEEK_WORK_ITEM_MAX_ATTEMPTS=2` means one retry after the first failed claim, then the batch is marked failed instead of retrying forever.
 - `workers_per_gpu=1` remains the safe default on A100 40GB nodes. Prefer increasing `target_batch_pages` before adding more workers per device.
+- For fresh GCP A100 nodes, run `python -m glossapi.scripts.deepseek_runtime_report --repo-root <repo-root>` before applying ad hoc fixes. Treat that report as the baseline comparison against a known-good node. See [operations/deepseek_gcp_a100_setup.md](operations/deepseek_gcp_a100_setup.md).
 
 ## Provider & Device Checks
 
