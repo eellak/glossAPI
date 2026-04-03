@@ -354,7 +354,7 @@ def gpu_extract_worker_queue(
     worker_key: str,
     in_dir: str,
     out_dir: str,
-    work_q,  # multiprocessing Queue of filename strings
+    work_q,  # multiprocessing Queue of filename strings or bundled path lists
     force: bool,
     fe: bool,
     ce: bool,
@@ -420,6 +420,21 @@ def gpu_extract_worker_queue(
                 _marker_path.unlink(missing_ok=True)
             except Exception:
                 pass
+
+    def _normalize_work_item(item: Any) -> List[str]:
+        if isinstance(item, str):
+            return [item] if item.strip() else []
+        if isinstance(item, (list, tuple, set)):
+            normalized: List[str] = []
+            for value in item:
+                try:
+                    text = str(value).strip()
+                except Exception:
+                    continue
+                if text:
+                    normalized.append(text)
+            return normalized
+        return []
     _worker_log_handle = None
     try:
         _log_dir = _os.environ.get("GLOSSAPI_WORKER_LOG_DIR")
@@ -579,104 +594,79 @@ def gpu_extract_worker_queue(
     last_progress = _time.time()
     processed = 0
     exit_code = 0
+
+    def _run_batch(batch_items: List[str]) -> None:
+        nonlocal processed, exit_code
+        if not batch_items:
+            return
+        try:
+            _update_current(list(batch_items))
+            c.extract(
+                input_format=input_fmt,
+                num_threads=threads,
+                accel_type="cuda:0",
+                force_ocr=force,
+                formula_enrichment=fe,
+                code_enrichment=ce,
+                file_paths=list(batch_items),
+                skip_existing=skip,
+                use_gpus="single",
+                use_cls=use_cls_w,
+                benchmark_mode=benchmark,
+                export_doc_json=bool(export_json),
+                emit_formula_index=bool(emit_index),
+                phase1_backend=backend,
+                _prepared=True,
+            )
+            processed += len(batch_items)
+            _clear_current()
+        except Exception as _e:
+            exit_code = 1
+            print(f"[GPU{device_id}] Batch failed ({len(batch_items)}): {_e}")
+            if result_q is not None:
+                try:
+                    result_q.put(
+                        {
+                            "event": "batch",
+                            "worker": _worker_label,
+                            "device_id": device_id,
+                            "worker_slot": worker_slot,
+                            "processed": [],
+                            "problematic": list(batch_items),
+                            "pid": _os.getpid(),
+                            "error": str(_e),
+                        }
+                    )
+                except Exception:
+                    pass
+            _clear_current()
+
     try:
         while True:
             try:
-                nm = work_q.get_nowait()
+                work_item = work_q.get_nowait()
             except _queue.Empty:
                 # queue.Empty or other -> flush any pending batch then exit
                 if batch:
-                    try:
-                        _update_current(list(batch))
-                        c.extract(
-                            input_format=input_fmt,
-                            num_threads=threads,
-                            accel_type="cuda:0",
-                            force_ocr=force,
-                            formula_enrichment=fe,
-                            code_enrichment=ce,
-                            file_paths=list(batch),
-                            skip_existing=skip,
-                            use_gpus="single",
-                            use_cls=use_cls_w,
-                            benchmark_mode=benchmark,
-                            export_doc_json=bool(export_json),
-                            emit_formula_index=bool(emit_index),
-                            phase1_backend=backend,
-                            _prepared=True,
-                        )
-                        processed += len(batch)
-                        _clear_current()
-                    except Exception as _e:
-                        exit_code = 1
-                        print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
-                        if result_q is not None:
-                            try:
-                                result_q.put(
-                                    {
-                                        "event": "batch",
-                                        "worker": _worker_label,
-                                        "device_id": device_id,
-                                        "worker_slot": worker_slot,
-                                        "processed": [],
-                                        "problematic": list(batch),
-                                        "pid": _os.getpid(),
-                                        "error": str(_e),
-                                    }
-                                )
-                            except Exception:
-                                pass
-                        _clear_current()
+                    _run_batch(batch)
                     batch.clear()
                 break
             except Exception as exc:
                 exit_code = 1
                 print(f"[GPU{device_id}] Queue receive error: {exc}")
                 break
-            if isinstance(nm, str) and nm.strip():
-                batch.append(nm)
+            normalized = _normalize_work_item(work_item)
+            if not normalized:
+                continue
+            if len(normalized) > 1:
+                if batch:
+                    _run_batch(batch)
+                    batch.clear()
+                _run_batch(normalized)
+                continue
+            batch.extend(normalized)
             if len(batch) >= BATCH_SIZE:
-                try:
-                    _update_current(list(batch))
-                    c.extract(
-                        input_format=input_fmt,
-                        num_threads=threads,
-                        accel_type="cuda:0",
-                        force_ocr=force,
-                        formula_enrichment=fe,
-                        code_enrichment=ce,
-                        file_paths=list(batch),
-                        skip_existing=skip,
-                        use_gpus="single",
-                        use_cls=use_cls_w,
-                        benchmark_mode=benchmark,
-                        export_doc_json=bool(export_json),
-                        emit_formula_index=bool(emit_index),
-                        phase1_backend=backend,
-                        _prepared=True,
-                    )
-                    processed += len(batch)
-                    _clear_current()
-                except Exception as _e:
-                    exit_code = 1
-                    print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
-                    if result_q is not None:
-                        try:
-                            result_q.put(
-                                {
-                                    "event": "batch",
-                                    "worker": _worker_label,
-                                    "device_id": device_id,
-                                    "worker_slot": worker_slot,
-                                    "processed": [],
-                                    "problematic": list(batch),
-                                    "pid": _os.getpid(),
-                                    "error": str(_e),
-                                }
-                            )
-                        except Exception:
-                            pass
-                    _clear_current()
+                _run_batch(batch)
                 batch.clear()
             # Occasional heartbeat
             if _time.time() - last_progress > 30:

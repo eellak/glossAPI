@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -53,6 +53,109 @@ def _resolve_docling_max_batch_files(default: int = 1) -> int:
         return max(1, int(raw))
     except Exception:
         return fallback
+
+
+def _resolve_docling_batch_target_pages(default: int = 256) -> int:
+    """Resolve the target page budget per queued Docling extraction work item."""
+
+    fallback = max(1, int(default))
+    raw = os.getenv("GLOSSAPI_DOCLING_BATCH_TARGET_PAGES")
+    if not raw:
+        return fallback
+    try:
+        return max(1, int(raw))
+    except Exception:
+        return fallback
+
+
+def _estimate_extract_work_pages(path: Path) -> int:
+    """Best-effort PDF page estimate used for Phase-1 queue packing."""
+
+    suffix = path.suffix.lower()
+    if suffix != ".pdf":
+        return 1
+
+    try:
+        import pypdfium2 as pdfium  # type: ignore
+
+        pdf = pdfium.PdfDocument(str(path))
+        try:
+            return max(1, int(len(pdf)))
+        finally:
+            close = getattr(pdf, "close", None)
+            if callable(close):
+                close()
+    except Exception:
+        pass
+
+    for module_name, attr_name in (
+        ("pypdf", "PdfReader"),
+        ("PyPDF2", "PdfReader"),
+    ):
+        try:
+            module = __import__(module_name, fromlist=[attr_name])
+            reader_cls = getattr(module, attr_name)
+            reader = reader_cls(str(path))
+            return max(1, int(len(reader.pages)))
+        except Exception:
+            continue
+
+    return 1
+
+
+def _build_extract_work_items(
+    paths: Iterable[Path],
+    *,
+    max_batch_files: int,
+    target_batch_pages: int,
+    long_pdf_page_threshold: int = 600,
+    page_counter: Optional[Callable[[Path], int]] = None,
+) -> List[List[Path]]:
+    """Pack extraction work into steadier page-budget batches for multi-GPU runs."""
+
+    files = [Path(path) for path in paths]
+    if not files:
+        return []
+
+    max_files = max(1, int(max_batch_files))
+    target_pages = max(1, int(target_batch_pages))
+    long_threshold = max(1, int(long_pdf_page_threshold))
+    counter = page_counter or _estimate_extract_work_pages
+
+    packed: List[Tuple[List[Path], int]] = []
+    standalone: List[Tuple[List[Path], int]] = []
+
+    for path in files:
+        try:
+            est_pages = max(1, int(counter(path)))
+        except Exception:
+            est_pages = 1
+
+        if path.suffix.lower() == ".pdf" and est_pages > long_threshold:
+            standalone.append(([path], est_pages))
+            continue
+
+        best_idx: Optional[int] = None
+        best_leftover: Optional[int] = None
+        for idx, (bundle_paths, bundle_pages) in enumerate(packed):
+            if len(bundle_paths) >= max_files:
+                continue
+            new_pages = bundle_pages + est_pages
+            if bundle_paths and new_pages > target_pages:
+                continue
+            leftover = max(0, target_pages - new_pages)
+            if best_leftover is None or leftover < best_leftover:
+                best_idx = idx
+                best_leftover = leftover
+        if best_idx is None:
+            packed.append(([path], est_pages))
+        else:
+            packed[best_idx][0].append(path)
+            packed[best_idx] = (packed[best_idx][0], packed[best_idx][1] + est_pages)
+
+    work_items = standalone + packed
+    work_items.sort(key=lambda item: item[1], reverse=True)
+    return [bundle_paths for bundle_paths, _ in work_items]
 
 
 class ExtractPhaseMixin:
@@ -488,9 +591,47 @@ class ExtractPhaseMixin:
                 task_q = ctx.Queue()
                 result_q = ctx.Queue()
                 status_map = manager.dict()
-                path_list = [str(p.resolve()) for p in pending_files]
-                for full_path in path_list:
-                    task_q.put(full_path)
+                batch_target_pages = 1
+                configured_max_batch_files = 1
+                long_pdf_page_threshold = 600
+                work_items: List[List[Path]] = [[Path(p)] for p in pending_files]
+                try:
+                    extractor = getattr(self, "extractor", None)
+                    if extractor is not None:
+                        configured_max_batch_files = max(
+                            1, int(getattr(extractor, "max_batch_files", configured_max_batch_files))
+                        )
+                        long_pdf_page_threshold = max(
+                            1, int(getattr(extractor, "long_pdf_page_threshold", long_pdf_page_threshold))
+                        )
+                except Exception:
+                    configured_max_batch_files = 1
+                    long_pdf_page_threshold = 600
+                if backend_choice == "docling":
+                    batch_target_pages = _resolve_docling_batch_target_pages()
+                    work_items = _build_extract_work_items(
+                        pending_files,
+                        max_batch_files=configured_max_batch_files,
+                        target_batch_pages=batch_target_pages,
+                        long_pdf_page_threshold=long_pdf_page_threshold,
+                    )
+                queue_items = [[str(path.resolve()) for path in item] for item in work_items]
+                for queue_item in queue_items:
+                    task_q.put(queue_item)
+                total_estimated_pages = 0
+                try:
+                    total_estimated_pages = sum(_estimate_extract_work_pages(path) for path in pending_files)
+                except Exception:
+                    total_estimated_pages = 0
+                self.logger.info(
+                    "Phase-1 dispatch: %d file(s) -> %d work item(s) (backend=%s max_batch_files=%d target_pages=%d est_pages=%d)",
+                    len(pending_files),
+                    len(queue_items),
+                    backend_choice,
+                    configured_max_batch_files,
+                    batch_target_pages,
+                    total_estimated_pages,
+                )
                 worker_log_dir_env = os.environ.get("GLOSSAPI_WORKER_LOG_DIR")
                 worker_log_dir_to_use = worker_log_dir_env
                 if not worker_log_dir_to_use:
@@ -699,7 +840,7 @@ class ExtractPhaseMixin:
                         now = time.time()
                         if now - last_summary > 30:
                             try:
-                                pending = result_q.qsize()
+                                pending = task_q.qsize()
                             except NotImplementedError:
                                 pending = -1
                             self.logger.info(
@@ -740,6 +881,13 @@ class ExtractPhaseMixin:
                         pending_item = task_q.get_nowait()
                         if isinstance(pending_item, str) and pending_item.strip():
                             remaining_after_failure.append(pending_item)
+                            continue
+                        if isinstance(pending_item, (list, tuple, set)):
+                            remaining_after_failure.extend(
+                                str(item).strip()
+                                for item in pending_item
+                                if str(item).strip()
+                            )
                 except queue.Empty:
                     pass
                 if remaining_after_failure:
