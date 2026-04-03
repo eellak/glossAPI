@@ -210,6 +210,8 @@ def test_canonical_stem_variants():
         "beta.metrics.json": "beta",
         "gamma.per_page.metrics.json": "gamma",
         "delta.with.dots.pdf": "delta.with.dots",
+        "needs__p0001-0002.pdf": "needs",
+        "needs__p00001-00096.md": "needs",
     }
     for source, expected in cases.items():
         assert canonical_stem(source) == expected

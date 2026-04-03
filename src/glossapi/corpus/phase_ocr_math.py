@@ -84,11 +84,14 @@ def _apply_ocr_success_updates(
         if column not in df_meta.columns:
             df_meta[column] = None
 
+    filename_series = df_meta["filename"].astype(str)
+    stem_series = filename_series.map(canonical_stem)
+
     for fname in filenames:
-        mask = df_meta["filename"].astype(str) == str(fname)
+        stem = canonical_stem(fname)
+        mask = stem_series == stem
         if not bool(mask.any()):
             continue
-        stem = canonical_stem(fname)
         artifact_update = _build_ocr_stage_artifact_update(
             markdown_dir=markdown_dir,
             metrics_dir=metrics_dir,
@@ -105,6 +108,27 @@ def _apply_ocr_success_updates(
             df_meta.loc[mask, column] = value
 
     return df_meta
+
+
+def _normalize_ocr_target_filenames(*, filenames: List[str], input_dir: Path) -> List[str]:
+    """Collapse chunk-like metadata rows back to real OCR source files when possible."""
+
+    source_by_stem: Dict[str, str] = {}
+    try:
+        for path in sorted(Path(input_dir).glob("*.pdf")):
+            source_by_stem.setdefault(canonical_stem(path.name), path.name)
+    except Exception:
+        source_by_stem = {}
+
+    normalized: List[str] = []
+    seen: Set[str] = set()
+    for fname in filenames:
+        resolved = source_by_stem.get(canonical_stem(fname), str(fname))
+        if resolved in seen:
+            continue
+        normalized.append(resolved)
+        seen.add(resolved)
+    return normalized
 
 
 class OcrMathPhaseMixin:
@@ -137,6 +161,8 @@ class OcrMathPhaseMixin:
         gpu_memory_utilization: Optional[float] = None,
         disable_fp8_kv: bool = False,
         repair_mode: str = "auto",
+        repair_exec_batch_target_pages: Optional[int] = None,
+        repair_exec_batch_target_items: Optional[int] = None,
         scheduler: str = "auto",
         target_batch_pages: int = 160,
         shard_pages: int = 0,
@@ -196,8 +222,11 @@ class OcrMathPhaseMixin:
         - vllm_batch_size/gpu_memory_utilization/disable_fp8_kv/repair_mode:
           Optional vLLM controls. ``repair_mode='auto'`` enables the markdown-first
           repair pipeline (plain fallback for garbage pages, tiled fallback for
-          short coverage failures). These are ignored by the transformers runtime
-          except for ``prompt_override``.
+          short coverage failures). ``repair_exec_batch_target_pages`` and
+          ``repair_exec_batch_target_items`` control how many pending repair rows
+          a worker tries to execute together once the global repair phase begins.
+          These are ignored by the transformers runtime except for
+          ``prompt_override``.
         - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
         - reprocess_completed: when False, skip documents already flagged as successfully
           OCRed or math-enriched in metadata. Set True to force reprocessing. Defaults to False
@@ -357,6 +386,17 @@ class OcrMathPhaseMixin:
                     removed,
                 )
         try:
+            normalized_bad_files = _normalize_ocr_target_filenames(
+                filenames=bad_files,
+                input_dir=Path(self.input_dir),
+            )
+            if len(normalized_bad_files) != len(bad_files):
+                self.logger.info(
+                    "OCR: collapsed %d metadata-selected row(s) onto %d real source PDF(s) by canonical stem.",
+                    len(bad_files),
+                    len(normalized_bad_files),
+                )
+            bad_files = normalized_bad_files
             self.logger.info(
                 "OCR targets: total=%d kept=%d skipped_completed=%d skipped_skiplist=%d",
                 ocr_candidates_initial,
@@ -727,6 +767,8 @@ class OcrMathPhaseMixin:
                         gpu_memory_utilization=gpu_memory_utilization,
                         disable_fp8_kv=disable_fp8_kv,
                         repair_mode=repair_mode,
+                        repair_exec_batch_target_pages=repair_exec_batch_target_pages,
+                        repair_exec_batch_target_items=repair_exec_batch_target_items,
                         scheduler=scheduler,
                         target_batch_pages=int(max(1, target_batch_pages)),
                         shard_pages=int(max(0, shard_pages)),

@@ -53,6 +53,8 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--max-new-tokens", type=int, default=2048)
     p.add_argument("--render-dpi", type=int, default=144)
     p.add_argument("--repair-mode", default="auto")
+    p.add_argument("--repair-exec-batch-target-pages", type=int, default=None)
+    p.add_argument("--repair-exec-batch-target-items", type=int, default=None)
     p.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     return p.parse_args(argv)
 
@@ -348,6 +350,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             render_dpi=int(args.render_dpi),
             max_new_tokens=int(args.max_new_tokens),
             repair_mode=str(args.repair_mode),
+            repair_exec_batch_target_pages=args.repair_exec_batch_target_pages,
+            repair_exec_batch_target_items=args.repair_exec_batch_target_items,
             scheduler=str(args.scheduler),
             target_batch_pages=int(args.target_batch_pages),
             shard_pages=int(args.shard_pages),
