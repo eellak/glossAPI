@@ -41,13 +41,30 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def _count_pdf_pages(pdf_path: Path) -> int:
-    import fitz
-
-    doc = fitz.open(pdf_path)
     try:
-        return int(doc.page_count)
-    finally:
-        doc.close()
+        import fitz
+
+        doc = fitz.open(pdf_path)
+        try:
+            return int(doc.page_count)
+        finally:
+            doc.close()
+    except Exception:
+        pass
+
+    try:
+        from pypdf import PdfReader
+
+        return int(len(PdfReader(str(pdf_path)).pages))
+    except Exception:
+        pass
+
+    try:
+        from PyPDF2 import PdfReader  # type: ignore
+
+        return int(len(PdfReader(str(pdf_path)).pages))
+    except Exception as exc:
+        raise RuntimeError(f"Unable to count PDF pages for {pdf_path}: {exc}") from exc
 
 
 def _sha256_bytes(data: bytes) -> str:
