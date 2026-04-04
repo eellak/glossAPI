@@ -58,7 +58,7 @@ class DownloadPhaseMixin:
         if input_parquet is None:
             parquet_files = list(self.input_dir.glob('*.parquet'))
             if not parquet_files:
-                raise ValueError(f"No parquet files found in {self.input_dir}")
+                raise ValueError(f"[Download Phase] No parquet files found in {self.input_dir}")
             input_parquet = parquet_files[0]
             self.logger.info(f"Using parquet file: {input_parquet}")
         else:
@@ -92,7 +92,7 @@ class DownloadPhaseMixin:
                 existing_results_path = specific_results_path
                 found_existing = True
             except Exception as e:
-                self.logger.warning(f"Failed to read specific download results: {e}")
+                self.logger.warning(f"[Download Phase] Failed to read specific download results: {e}")
         elif os.path.exists(partial_results_path):
             self.logger.info(f"Found partial download checkpoint: {partial_results_path}")
             try:
@@ -100,7 +100,7 @@ class DownloadPhaseMixin:
                 existing_results_path = partial_results_path
                 found_existing = True
             except Exception as e:
-                self.logger.warning(f"Failed to read partial results: {e}")
+                self.logger.warning(f"[Download Phase] Failed to read partial results: {e}")
 
         # If specific results not found, look in the directory for any download results
         if not found_existing and os.path.exists(download_results_dir):
