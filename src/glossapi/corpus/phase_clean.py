@@ -20,6 +20,7 @@ import warnings
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
@@ -237,6 +238,9 @@ def _blank_regex_matches_preserve_layout(text: str, pattern: re.Pattern[str]) ->
 
 
 def _filter_tables_preserve_layout(text: str) -> str:
+    lowered = text.lower()
+    if "<table" not in lowered and "|" not in text and "<tr" not in lowered and "<td" not in lowered and "<th" not in lowered:
+        return text
     text = _blank_regex_matches_preserve_layout(text, HTML_TABLE_BLOCK_RE)
     kept: List[str] = []
     for segment in text.splitlines(keepends=True):
@@ -252,6 +256,8 @@ def _filter_tables_preserve_layout(text: str) -> str:
 
 
 def _filter_latex_preserve_layout(text: str) -> str:
+    if "$" not in text and "\\" not in text:
+        return text
     for pattern in (
         LATEX_BEGIN_END_RE,
         LATEX_BLOCK_RE,
@@ -264,6 +270,8 @@ def _filter_latex_preserve_layout(text: str) -> str:
 
 
 def _blank_existing_match_regions_preserve_layout(text: str) -> str:
+    if "<match" not in text:
+        return text
     return _blank_regex_matches_preserve_layout(text, EXISTING_MATCH_BLOCK_RE)
 
 
@@ -322,6 +330,11 @@ def _extract_html_table_rows(table_text: str) -> List[List[str]]:
     return rows
 
 
+@lru_cache(maxsize=2048)
+def _extract_html_table_rows_cached(table_text: str) -> Tuple[Tuple[str, ...], ...]:
+    return tuple(tuple(row) for row in _extract_html_table_rows(table_text))
+
+
 def _flatten_html_table_nonempty_cells(table_text: str) -> List[str]:
     parsed_rows, _ = _audit_parse_table_rows(table_text)
     grid, _ = _audit_expand_table_rows(parsed_rows)
@@ -336,8 +349,13 @@ def _flatten_html_table_nonempty_cells(table_text: str) -> List[str]:
     return nonempty
 
 
+@lru_cache(maxsize=2048)
+def _flatten_html_table_nonempty_cells_cached(table_text: str) -> Tuple[str, ...]:
+    return tuple(_flatten_html_table_nonempty_cells(table_text))
+
+
 def _extract_sentence_shell_table_text(table_text: str) -> Optional[str]:
-    nonempty_cells = _flatten_html_table_nonempty_cells(table_text)
+    nonempty_cells = _flatten_html_table_nonempty_cells_cached(table_text)
     if len(nonempty_cells) != 1:
         return None
     candidate = nonempty_cells[0].strip()
@@ -348,7 +366,8 @@ def _extract_sentence_shell_table_text(table_text: str) -> Optional[str]:
     return candidate
 
 
-def _render_table_html_for_output(table_text: str, *, match_kind: Optional[str] = None) -> str:
+@lru_cache(maxsize=2048)
+def _render_table_html_for_output_cached(table_text: str, match_kind: Optional[str]) -> str:
     sentence_shell = _extract_sentence_shell_table_text(table_text)
     if sentence_shell and match_kind == "sentence_shell_table":
         return sentence_shell
@@ -357,6 +376,10 @@ def _render_table_html_for_output(table_text: str, *, match_kind: Optional[str] 
     if audit.markdown:
         return audit.markdown
     return table_text
+
+
+def _render_table_html_for_output(table_text: str, *, match_kind: Optional[str] = None) -> str:
+    return _render_table_html_for_output_cached(table_text, match_kind)
 
 
 def _replace_html_tables_with_markdown(text: str) -> str:
@@ -407,7 +430,7 @@ def _find_table_repeat_spans(page_text: str) -> List[Dict[str, Any]]:
             )
             continue
 
-        rows = _extract_html_table_rows(raw_table)
+        rows = _extract_html_table_rows_cached(raw_table)
         if not rows:
             continue
 
