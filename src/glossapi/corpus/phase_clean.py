@@ -6,6 +6,7 @@ import importlib
 import json
 import logging
 import math
+import multiprocessing as mp
 import os
 import queue
 import random
@@ -15,8 +16,10 @@ import subprocess
 import sys
 import time
 import unicodedata
+import warnings
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
@@ -163,10 +166,70 @@ MATCH_CATEGORY_BY_TYPE = {
 _WORD_REPEAT_RUST_MOD: Optional[Any] = None
 _WORD_REPEAT_RUST_IMPORT_ATTEMPTED = False
 _RUST_EXTENSION_PREBUILD_ATTEMPTED: Set[str] = set()
+_COMBINED_OCR_WORKER_NOISE_MOD: Optional[Any] = None
+_COMBINED_OCR_WORKER_REQUIRED_ATTRS = (
+    "find_numeric_debug_page_spans",
+    "evaluate_page_character_noise",
+)
 
 
 def _blank_non_newlines(text: str) -> str:
     return "".join("\n" if ch == "\n" else " " for ch in text)
+
+
+def _init_combined_ocr_worker() -> None:
+    global _COMBINED_OCR_WORKER_NOISE_MOD
+    noise_mod = importlib.import_module("glossapi_rs_noise")
+    missing = [
+        attr for attr in _COMBINED_OCR_WORKER_REQUIRED_ATTRS if not hasattr(noise_mod, attr)
+    ]
+    if missing:
+        raise ImportError(
+            "glossapi_rs_noise missing required attrs for OCR worker: "
+            + ", ".join(missing)
+        )
+    _COMBINED_OCR_WORKER_NOISE_MOD = noise_mod
+
+
+def _get_combined_ocr_worker_noise_mod() -> Any:
+    global _COMBINED_OCR_WORKER_NOISE_MOD
+    if _COMBINED_OCR_WORKER_NOISE_MOD is None:
+        _init_combined_ocr_worker()
+    return _COMBINED_OCR_WORKER_NOISE_MOD
+
+
+def _can_use_combined_ocr_process_pool(noise_mod: Any, render_workers: int) -> bool:
+    return (
+        render_workers > 1
+        and os.name != "nt"
+        and getattr(noise_mod, "__name__", "") == "glossapi_rs_noise"
+    )
+
+
+def _default_combined_ocr_render_workers(
+    *,
+    noise_mod: Any,
+    requested_workers: Optional[int],
+    max_workers: int,
+) -> int:
+    if requested_workers is not None:
+        return max(1, int(requested_workers))
+    host_workers = max(1, int(max_workers))
+    if _can_use_combined_ocr_process_pool(noise_mod, host_workers):
+        return host_workers
+    return min(4, host_workers)
+
+
+@contextmanager
+def _combined_ocr_process_pool_warning_ctx() -> Iterable[None]:
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"This process .* is multi-threaded, use of fork\(\) may lead to deadlocks in the child\.",
+            category=DeprecationWarning,
+            module=r"multiprocessing\.popen_fork",
+        )
+        yield
 
 
 def _blank_regex_matches_preserve_layout(text: str, pattern: re.Pattern[str]) -> str:
@@ -1937,7 +2000,7 @@ def _process_combined_ocr_debug_document(
     source_path: Path,
     output_path: Path,
     *,
-    noise_mod: Any,
+    noise_mod: Optional[Any],
     min_progress_steps: int,
     min_repeat_steps: int,
     min_same_digit_steps: int,
@@ -1945,6 +2008,8 @@ def _process_combined_ocr_debug_document(
     word_min_period: int,
     word_window: int,
 ) -> Dict[str, Any]:
+    if noise_mod is None:
+        noise_mod = _get_combined_ocr_worker_noise_mod()
     text = source_path.read_text(encoding="utf-8")
     pages = text.split(PAGE_SPLIT_MARKER)
     annotated_pages: List[str] = []
@@ -2076,7 +2141,7 @@ def _process_combined_ocr_clean_document(
     source_path: Path,
     output_path: Path,
     *,
-    noise_mod: Any,
+    noise_mod: Optional[Any],
     min_progress_steps: int,
     min_repeat_steps: int,
     min_same_digit_steps: int,
@@ -2084,6 +2149,8 @@ def _process_combined_ocr_clean_document(
     word_min_period: int,
     word_window: int,
 ) -> None:
+    if noise_mod is None:
+        noise_mod = _get_combined_ocr_worker_noise_mod()
     text = source_path.read_text(encoding="utf-8")
     pages = text.split(PAGE_SPLIT_MARKER)
     cleaned_pages: List[str] = []
@@ -2101,6 +2168,58 @@ def _process_combined_ocr_clean_document(
         )
         cleaned_pages.append(str(page_result["annotated_page"]))
     output_path.write_text(PAGE_SPLIT_MARKER.join(cleaned_pages), encoding="utf-8")
+
+
+def _process_combined_ocr_debug_document_job(
+    job: Tuple[str, str, int, int, int, int, int, int]
+) -> Dict[str, Any]:
+    (
+        source_path_str,
+        output_path_str,
+        min_progress_steps,
+        min_repeat_steps,
+        min_same_digit_steps,
+        word_rep_threshold,
+        word_min_period,
+        word_window,
+    ) = job
+    return _process_combined_ocr_debug_document(
+        Path(source_path_str),
+        Path(output_path_str),
+        noise_mod=None,
+        min_progress_steps=int(min_progress_steps),
+        min_repeat_steps=int(min_repeat_steps),
+        min_same_digit_steps=int(min_same_digit_steps),
+        word_rep_threshold=int(word_rep_threshold),
+        word_min_period=int(word_min_period),
+        word_window=int(word_window),
+    )
+
+
+def _process_combined_ocr_clean_document_job(
+    job: Tuple[str, str, int, int, int, int, int, int]
+) -> None:
+    (
+        source_path_str,
+        output_path_str,
+        min_progress_steps,
+        min_repeat_steps,
+        min_same_digit_steps,
+        word_rep_threshold,
+        word_min_period,
+        word_window,
+    ) = job
+    _process_combined_ocr_clean_document(
+        Path(source_path_str),
+        Path(output_path_str),
+        noise_mod=None,
+        min_progress_steps=int(min_progress_steps),
+        min_repeat_steps=int(min_repeat_steps),
+        min_same_digit_steps=int(min_same_digit_steps),
+        word_rep_threshold=int(word_rep_threshold),
+        word_min_period=int(word_min_period),
+        word_window=int(word_window),
+    )
 
 
 def _summarize_metric(values: List[float]) -> Dict[str, float]:
@@ -2955,7 +3074,11 @@ class CleanPhaseMixin:
             ),
         )
         n_threads = int(num_threads or os.cpu_count() or 4)
-        render_workers = max(1, min(4, n_threads))
+        render_workers = _default_combined_ocr_render_workers(
+            noise_mod=noise_mod,
+            requested_workers=None,
+            max_workers=n_threads,
+        )
         md_files = sorted(input_dir.glob("*.md"))
         if write_cleaned_files:
             if self.cleaned_markdown_dir.exists():
@@ -2967,21 +3090,43 @@ class CleanPhaseMixin:
                 len(md_files),
                 render_workers,
             )
-            def _run_clean_doc(source_path: Path) -> None:
-                _process_combined_ocr_clean_document(
-                    source_path,
-                    self.cleaned_markdown_dir / source_path.name,
-                    noise_mod=noise_mod,
-                    min_progress_steps=int(min_progress_steps),
-                    min_repeat_steps=int(min_repeat_steps),
-                    min_same_digit_steps=int(min_same_digit_steps),
-                    word_rep_threshold=int(word_rep_threshold),
-                    word_min_period=int(word_min_period),
-                    word_window=int(word_window),
-                )
+            if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
+                jobs = [
+                    (
+                        str(source_path),
+                        str(self.cleaned_markdown_dir / source_path.name),
+                        int(min_progress_steps),
+                        int(min_repeat_steps),
+                        int(min_same_digit_steps),
+                        int(word_rep_threshold),
+                        int(word_min_period),
+                        int(word_window),
+                    )
+                    for source_path in md_files
+                ]
+                with _combined_ocr_process_pool_warning_ctx():
+                    with ProcessPoolExecutor(
+                        max_workers=render_workers,
+                        mp_context=mp.get_context("fork"),
+                        initializer=_init_combined_ocr_worker,
+                    ) as executor:
+                        list(executor.map(_process_combined_ocr_clean_document_job, jobs))
+            else:
+                def _run_clean_doc(source_path: Path) -> None:
+                    _process_combined_ocr_clean_document(
+                        source_path,
+                        self.cleaned_markdown_dir / source_path.name,
+                        noise_mod=noise_mod,
+                        min_progress_steps=int(min_progress_steps),
+                        min_repeat_steps=int(min_repeat_steps),
+                        min_same_digit_steps=int(min_same_digit_steps),
+                        word_rep_threshold=int(word_rep_threshold),
+                        word_min_period=int(word_min_period),
+                        word_window=int(word_window),
+                    )
 
-            with ThreadPoolExecutor(max_workers=render_workers) as executor:
-                list(executor.map(_run_clean_doc, md_files))
+                with ThreadPoolExecutor(max_workers=render_workers) as executor:
+                    list(executor.map(_run_clean_doc, md_files))
 
         self.logger.info(
             "Scoring OCR markdown files with glossapi_rs_noise OCR profile on %d markdown files…",
@@ -3259,7 +3404,11 @@ class CleanPhaseMixin:
             source_paths = all_source_paths[doc_offset : doc_offset + int(max_docs)]
         else:
             source_paths = all_source_paths[doc_offset:]
-        render_workers = max(1, int(doc_workers or min(4, os.cpu_count() or 1)))
+        render_workers = _default_combined_ocr_render_workers(
+            noise_mod=noise_mod,
+            requested_workers=doc_workers,
+            max_workers=int(os.cpu_count() or 1),
+        )
 
         self.logger.info(
             "Exporting combined OCR table+numeric+latex+hybrid+word debug docs from %s into %s for %d documents (offset=%d, workers=%d)",
@@ -3280,31 +3429,65 @@ class CleanPhaseMixin:
         hybrid_page_times: List[float] = []
         char_eval_times: List[float] = []
         bad_char_ratios: List[float] = []
-        def _run_debug_doc(source_path: Path) -> Dict[str, Any]:
-            return _process_combined_ocr_debug_document(
-                source_path,
-                output_dir / source_path.name,
-                noise_mod=noise_mod,
-                min_progress_steps=int(min_progress_steps),
-                min_repeat_steps=int(min_repeat_steps),
-                min_same_digit_steps=int(min_same_digit_steps),
-                word_rep_threshold=int(word_rep_threshold),
-                word_min_period=int(word_min_period),
-                word_window=int(word_window),
-            )
+        if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
+            jobs = [
+                (
+                    str(source_path),
+                    str(output_dir / source_path.name),
+                    int(min_progress_steps),
+                    int(min_repeat_steps),
+                    int(min_same_digit_steps),
+                    int(word_rep_threshold),
+                    int(word_min_period),
+                    int(word_window),
+                )
+                for source_path in source_paths
+            ]
+            iterator: Iterable[Dict[str, Any]]
+            with _combined_ocr_process_pool_warning_ctx():
+                with ProcessPoolExecutor(
+                    max_workers=render_workers,
+                    mp_context=mp.get_context("fork"),
+                    initializer=_init_combined_ocr_worker,
+                ) as executor:
+                    iterator = executor.map(_process_combined_ocr_debug_document_job, jobs)
+                    for doc_result in iterator:
+                        rows.append(dict(doc_result["row"]))
+                        page_metric_rows.extend(list(doc_result["page_metric_rows"]))
+                        total_page_times.extend(list(doc_result["total_page_times"]))
+                        table_page_times.extend(list(doc_result["table_page_times"]))
+                        numeric_page_times.extend(list(doc_result["numeric_page_times"]))
+                        latex_page_times.extend(list(doc_result["latex_page_times"]))
+                        hybrid_page_times.extend(list(doc_result["hybrid_page_times"]))
+                        shared_page_times.extend(list(doc_result["shared_page_times"]))
+                        char_eval_times.extend(list(doc_result["char_eval_times"]))
+                        bad_char_ratios.extend(list(doc_result["bad_char_ratios"]))
+        else:
+            def _run_debug_doc(source_path: Path) -> Dict[str, Any]:
+                return _process_combined_ocr_debug_document(
+                    source_path,
+                    output_dir / source_path.name,
+                    noise_mod=noise_mod,
+                    min_progress_steps=int(min_progress_steps),
+                    min_repeat_steps=int(min_repeat_steps),
+                    min_same_digit_steps=int(min_same_digit_steps),
+                    word_rep_threshold=int(word_rep_threshold),
+                    word_min_period=int(word_min_period),
+                    word_window=int(word_window),
+                )
 
-        with ThreadPoolExecutor(max_workers=render_workers) as executor:
-            for doc_result in executor.map(_run_debug_doc, source_paths):
-                rows.append(dict(doc_result["row"]))
-                page_metric_rows.extend(list(doc_result["page_metric_rows"]))
-                total_page_times.extend(list(doc_result["total_page_times"]))
-                table_page_times.extend(list(doc_result["table_page_times"]))
-                numeric_page_times.extend(list(doc_result["numeric_page_times"]))
-                latex_page_times.extend(list(doc_result["latex_page_times"]))
-                hybrid_page_times.extend(list(doc_result["hybrid_page_times"]))
-                shared_page_times.extend(list(doc_result["shared_page_times"]))
-                char_eval_times.extend(list(doc_result["char_eval_times"]))
-                bad_char_ratios.extend(list(doc_result["bad_char_ratios"]))
+            with ThreadPoolExecutor(max_workers=render_workers) as executor:
+                for doc_result in executor.map(_run_debug_doc, source_paths):
+                    rows.append(dict(doc_result["row"]))
+                    page_metric_rows.extend(list(doc_result["page_metric_rows"]))
+                    total_page_times.extend(list(doc_result["total_page_times"]))
+                    table_page_times.extend(list(doc_result["table_page_times"]))
+                    numeric_page_times.extend(list(doc_result["numeric_page_times"]))
+                    latex_page_times.extend(list(doc_result["latex_page_times"]))
+                    hybrid_page_times.extend(list(doc_result["hybrid_page_times"]))
+                    shared_page_times.extend(list(doc_result["shared_page_times"]))
+                    char_eval_times.extend(list(doc_result["char_eval_times"]))
+                    bad_char_ratios.extend(list(doc_result["bad_char_ratios"]))
 
         with manifest_path.open("w", encoding="utf-8") as handle:
             for row in rows:
