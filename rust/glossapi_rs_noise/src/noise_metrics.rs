@@ -78,6 +78,7 @@ use rayon::ThreadPoolBuilder;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use unicode_normalization::UnicodeNormalization;
 use walkdir::WalkDir;
 // Avoid heavy regex for table detection; use lightweight checks instead
 
@@ -245,6 +246,15 @@ pub struct WordRepeatSpan {
     pub tail_chars: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct HybridRepeatSpan {
+    pub start: usize,
+    pub end: usize,
+    pub kind: &'static str,
+    pub item_count: usize,
+    pub cycle_len: Option<usize>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PageCharacterNoise {
     pub total_chars: u64,
@@ -257,6 +267,64 @@ pub struct PageCharacterNoise {
 }
 
 const MERGE_SAME_CATEGORY_MAX_NONWHITESPACE_GAP: usize = 10;
+const HYBRID_REPEAT_MIN_ITEMS: usize = 4;
+const HYBRID_REPEAT_MIN_BODY_ALNUM: usize = 6;
+const HYBRID_REPEAT_MAX_CYCLE: usize = 6;
+const HYBRID_REPEAT_MIN_CYCLE_ITEMS: usize = 8;
+const HYBRID_INLINE_CONTEXT_WORDS: usize = 2;
+const HYBRID_INLINE_CONTEXT_MIN_ALPHA_WORDS: usize = 2;
+const HYBRID_INLINE_CONTEXT_MIN_CHARS: usize = 8;
+const HYBRID_INLINE_REPEAT_MIN_ITEMS: usize = 6;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HybridFieldKind {
+    HeaderCounter,
+    NumericValue,
+}
+
+#[derive(Debug, Clone)]
+struct HybridNumberedItem {
+    start: usize,
+    end: usize,
+    field_kind: HybridFieldKind,
+    numbers: Vec<u32>,
+    shape: String,
+    body_key: String,
+    body_is_full: bool,
+}
+
+#[derive(Debug, Clone)]
+struct HybridInlineItem {
+    start: usize,
+    end: usize,
+    clause_index: usize,
+    inline_context_key: String,
+    numeric_value: f64,
+}
+
+#[derive(Debug, Clone)]
+struct HybridCandidate {
+    prefix_start_byte: usize,
+    prefix_end_byte: usize,
+    field_kind: HybridFieldKind,
+    numbers: Vec<u32>,
+    shape: String,
+}
+
+#[derive(Debug, Clone)]
+struct HybridToken {
+    kind: HybridTokenKind,
+    start: usize,
+    end: usize,
+    token_key: Option<String>,
+    numeric_value: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HybridTokenKind {
+    Numeric,
+    Alpha,
+}
 
 #[derive(Debug, Clone, Copy)]
 struct TokenSpan {
@@ -1378,6 +1446,806 @@ const WORD_REPEAT_HASH_MASK: u64 = (1u64 << 63).wrapping_mul(2).wrapping_sub(1);
 const WORD_REPEAT_HASH_BASE: u64 = 1469598103934665603u64;
 
 #[inline]
+fn hybrid_text_char_boundaries(text: &str) -> Vec<usize> {
+    let mut boundaries = Vec::with_capacity(text.chars().count() + 1);
+    for (byte_idx, _) in text.char_indices() {
+        boundaries.push(byte_idx);
+    }
+    boundaries.push(text.len());
+    boundaries
+}
+
+fn hybrid_byte_to_char_idx(boundaries: &[usize], byte_idx: usize) -> usize {
+    match boundaries.binary_search(&byte_idx) {
+        Ok(idx) => idx,
+        Err(idx) => idx,
+    }
+}
+
+fn hybrid_normalize_body(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        for lower in ch.to_lowercase() {
+            let lower = if lower == 'ς' { 'σ' } else { lower };
+            for sub in lower.to_string().nfd() {
+                if sub.is_alphanumeric() {
+                    let mapped = match sub {
+                        'ο' => 'o',
+                        'κ' => 'k',
+                        _ => sub,
+                    };
+                    out.push(mapped);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn hybrid_has_markup_body(text: &str) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+    let lower = text.to_lowercase();
+    if lower.contains("src=")
+        || lower.contains("alt=")
+        || lower.contains("image_")
+        || lower.contains(".png")
+        || lower.contains(".jpg")
+        || lower.contains(".jpeg")
+        || lower.contains(".gif")
+    {
+        return true;
+    }
+
+    let bytes = text.as_bytes();
+    for (idx, byte) in bytes.iter().enumerate() {
+        if *byte == b'<' && idx + 2 <= bytes.len() && bytes[idx + 1..].contains(&b'>') {
+            return true;
+        }
+    }
+    false
+}
+
+fn hybrid_classify_numeric_field(token: &str) -> Option<(HybridFieldKind, Vec<u32>, String)> {
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+
+    let trailing_paren = token.ends_with(')');
+    let trailing_dot = token.ends_with('.');
+    let stripped = if trailing_paren || trailing_dot {
+        &token[..token.len() - 1]
+    } else {
+        token
+    };
+    if stripped.is_empty() {
+        return None;
+    }
+
+    if stripped.contains('/') {
+        return Some((HybridFieldKind::NumericValue, Vec::new(), String::new()));
+    }
+
+    let parts: Vec<&str> = stripped.split('.').collect();
+    if parts.is_empty() || parts.iter().any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit())) {
+        return None;
+    }
+
+    let mut numbers = Vec::with_capacity(parts.len());
+    for part in &parts {
+        numbers.push(part.parse::<u32>().ok()?);
+    }
+
+    let mut shape = std::iter::repeat("#")
+        .take(numbers.len())
+        .collect::<Vec<_>>()
+        .join(".");
+    if trailing_paren {
+        shape.push(')');
+    } else if trailing_dot {
+        shape.push('.');
+    }
+
+    let field_kind = if trailing_paren || trailing_dot {
+        HybridFieldKind::HeaderCounter
+    } else if numbers.len() >= 3 {
+        HybridFieldKind::HeaderCounter
+    } else if numbers.len() == 2 && parts.last().map(|part| part.len()).unwrap_or(0) <= 2 {
+        HybridFieldKind::HeaderCounter
+    } else {
+        HybridFieldKind::NumericValue
+    };
+
+    Some((field_kind, numbers, shape))
+}
+
+fn hybrid_classify_inline_numeric_field(token: &str) -> bool {
+    let stripped = token.trim();
+    if stripped.is_empty() {
+        return false;
+    }
+
+    if stripped.chars().all(|ch| ch.is_ascii_digit()) {
+        return true;
+    }
+
+    if stripped.matches('/').count() == 1 {
+        let mut parts = stripped.split('/');
+        let lhs = parts.next().unwrap_or("");
+        let rhs = parts.next().unwrap_or("");
+        return !lhs.is_empty()
+            && !rhs.is_empty()
+            && lhs.chars().all(|ch| ch.is_ascii_digit())
+            && rhs.chars().all(|ch| ch.is_ascii_digit())
+            && rhs != "0";
+    }
+
+    let decimal_candidate = stripped.replacen(',', ".", 1);
+    if decimal_candidate.matches('.').count() == 1 {
+        let mut parts = decimal_candidate.split('.');
+        let lhs = parts.next().unwrap_or("");
+        let rhs = parts.next().unwrap_or("");
+        return !lhs.is_empty()
+            && !rhs.is_empty()
+            && lhs.chars().all(|ch| ch.is_ascii_digit())
+            && rhs.chars().all(|ch| ch.is_ascii_digit());
+    }
+
+    false
+}
+
+fn hybrid_parse_numeric_value(token: &str) -> Option<f64> {
+    let stripped = token.trim();
+    if stripped.is_empty() {
+        return None;
+    }
+
+    if stripped.chars().all(|ch| ch.is_ascii_digit()) {
+        return stripped.parse::<u64>().ok().map(|value| value as f64);
+    }
+
+    if stripped.matches('/').count() == 1 {
+        let mut parts = stripped.split('/');
+        let lhs = parts.next().unwrap_or("");
+        let rhs = parts.next().unwrap_or("");
+        if !lhs.is_empty()
+            && !rhs.is_empty()
+            && lhs.chars().all(|ch| ch.is_ascii_digit())
+            && rhs.chars().all(|ch| ch.is_ascii_digit())
+        {
+            let lhs_value = lhs.parse::<f64>().ok()?;
+            let rhs_value = rhs.parse::<f64>().ok()?;
+            if rhs_value != 0.0 {
+                return Some(lhs_value / rhs_value);
+            }
+        }
+        return None;
+    }
+
+    let decimal_candidate = stripped.replacen(',', ".", 1);
+    if decimal_candidate.matches('.').count() == 1 {
+        let mut parts = decimal_candidate.split('.');
+        let lhs = parts.next().unwrap_or("");
+        let rhs = parts.next().unwrap_or("");
+        if !lhs.is_empty()
+            && !rhs.is_empty()
+            && lhs.chars().all(|ch| ch.is_ascii_digit())
+            && rhs.chars().all(|ch| ch.is_ascii_digit())
+        {
+            return decimal_candidate.parse::<f64>().ok();
+        }
+    }
+
+    None
+}
+
+fn hybrid_next_char(text: &str, byte_idx: usize) -> Option<(char, usize)> {
+    let ch = text[byte_idx..].chars().next()?;
+    Some((ch, byte_idx + ch.len_utf8()))
+}
+
+fn hybrid_previous_char(text: &str, byte_idx: usize) -> Option<char> {
+    text[..byte_idx].chars().next_back()
+}
+
+fn hybrid_parse_prefix_at(text: &str, start: usize) -> Option<usize> {
+    if start >= text.len() {
+        return None;
+    }
+    if let Some(prev) = hybrid_previous_char(text, start) {
+        if prev.is_ascii_digit() {
+            return None;
+        }
+    }
+
+    let (first, mut idx) = hybrid_next_char(text, start)?;
+    if !first.is_ascii_digit() {
+        return None;
+    }
+    while idx < text.len() {
+        let (ch, next_idx) = hybrid_next_char(text, idx)?;
+        if !ch.is_ascii_digit() {
+            break;
+        }
+        idx = next_idx;
+    }
+
+    if idx >= text.len() {
+        return None;
+    }
+    let (delimiter, mut end_idx) = hybrid_next_char(text, idx)?;
+    match delimiter {
+        ')' => {}
+        '.' => {
+            loop {
+                let mut cursor = end_idx;
+                let mut saw_digit = false;
+                while cursor < text.len() {
+                    let (ch, next_cursor) = hybrid_next_char(text, cursor)?;
+                    if !ch.is_ascii_digit() {
+                        break;
+                    }
+                    saw_digit = true;
+                    cursor = next_cursor;
+                }
+                if saw_digit {
+                    if cursor < text.len() {
+                        let (ch, next_cursor) = hybrid_next_char(text, cursor)?;
+                        if ch == '.' {
+                            end_idx = next_cursor;
+                            continue;
+                        }
+                    }
+                    end_idx = cursor;
+                }
+                break;
+            }
+        }
+        _ => return None,
+    }
+
+    let mut lookahead = end_idx;
+    while lookahead < text.len() {
+        let (ch, next_idx) = hybrid_next_char(text, lookahead)?;
+        if !ch.is_whitespace() {
+            return ch.is_alphabetic().then_some(end_idx);
+        }
+        lookahead = next_idx;
+    }
+    None
+}
+
+fn hybrid_extract_numbered_items(analysis_text: &str) -> Vec<HybridNumberedItem> {
+    let boundaries = hybrid_text_char_boundaries(analysis_text);
+    let mut candidates: Vec<HybridCandidate> = Vec::new();
+    let mut byte_idx = 0usize;
+    while byte_idx < analysis_text.len() {
+        let (ch, next_idx) = match hybrid_next_char(analysis_text, byte_idx) {
+            Some(value) => value,
+            None => break,
+        };
+        if ch.is_ascii_digit() {
+            if let Some(prefix_end_byte) = hybrid_parse_prefix_at(analysis_text, byte_idx) {
+                let prefix = &analysis_text[byte_idx..prefix_end_byte];
+                if let Some((field_kind, numbers, shape)) = hybrid_classify_numeric_field(prefix) {
+                    candidates.push(HybridCandidate {
+                        prefix_start_byte: byte_idx,
+                        prefix_end_byte,
+                        field_kind,
+                        numbers,
+                        shape,
+                    });
+                }
+                byte_idx = prefix_end_byte;
+                continue;
+            }
+        }
+        byte_idx = next_idx;
+    }
+
+    let mut items: Vec<HybridNumberedItem> = Vec::new();
+    for (idx, candidate) in candidates.iter().enumerate() {
+        let next_start = candidates
+            .get(idx + 1)
+            .map(|item| item.prefix_start_byte)
+            .unwrap_or_else(|| analysis_text.len());
+        let body_raw = analysis_text[candidate.prefix_end_byte..next_start].trim();
+        if hybrid_has_markup_body(body_raw) {
+            continue;
+        }
+        let body_key = hybrid_normalize_body(body_raw);
+        let has_alpha = body_key.chars().any(|ch| ch.is_alphabetic());
+        if !has_alpha {
+            continue;
+        }
+        let body_is_full = body_key.chars().count() >= HYBRID_REPEAT_MIN_BODY_ALNUM;
+        items.push(HybridNumberedItem {
+            start: hybrid_byte_to_char_idx(&boundaries, candidate.prefix_start_byte),
+            end: hybrid_byte_to_char_idx(&boundaries, next_start),
+            field_kind: candidate.field_kind,
+            numbers: candidate.numbers.clone(),
+            shape: candidate.shape.clone(),
+            body_key,
+            body_is_full,
+        });
+    }
+
+    items
+}
+
+fn hybrid_clause_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut clause_start = 0usize;
+    let mut iter = text.char_indices().peekable();
+    while let Some((idx, ch)) = iter.next() {
+        let is_delimiter = match ch {
+            ';' | '\n' => true,
+            ',' => match iter.peek() {
+                Some((_, next_ch)) => !next_ch.is_ascii_digit(),
+                None => true,
+            },
+            _ => false,
+        };
+        if is_delimiter {
+            ranges.push((clause_start, idx));
+            clause_start = idx + ch.len_utf8();
+        }
+    }
+    ranges.push((clause_start, text.len()));
+    ranges
+}
+
+fn hybrid_extract_inline_items(analysis_text: &str) -> Vec<HybridInlineItem> {
+    let boundaries = hybrid_text_char_boundaries(analysis_text);
+    let clause_ranges = hybrid_clause_ranges(analysis_text);
+    let mut items: Vec<HybridInlineItem> = Vec::new();
+
+    for (clause_index, (raw_start, raw_end)) in clause_ranges.iter().enumerate() {
+        let clause = &analysis_text[*raw_start..*raw_end];
+        if clause.trim().is_empty() {
+            continue;
+        }
+
+        let leading_ws = clause.len() - clause.trim_start().len();
+        let trailing_ws = clause.len() - clause.trim_end().len();
+        let clause_start_abs = raw_start + leading_ws;
+        let clause_end_abs = raw_end - trailing_ws;
+        if clause_start_abs >= clause_end_abs {
+            continue;
+        }
+
+        let clause_text = &analysis_text[clause_start_abs..clause_end_abs];
+        if clause_text.is_empty() || hybrid_has_markup_body(clause_text) {
+            continue;
+        }
+
+        let mut working_offset = clause_start_abs;
+        let mut working_text = clause_text;
+        if let Some(prefix_end) = hybrid_parse_prefix_at(working_text, 0) {
+            let trimmed = working_text[prefix_end..].trim_start();
+            let trimmed_leading = working_text[prefix_end..].len() - trimmed.len();
+            working_offset += prefix_end + trimmed_leading;
+            working_text = trimmed;
+        }
+        if working_text.is_empty() {
+            continue;
+        }
+
+        let mut tokens: Vec<HybridToken> = Vec::new();
+        let mut numeric_positions: Vec<usize> = Vec::new();
+        let mut token_byte = 0usize;
+        while token_byte < working_text.len() {
+            let (ch, next_idx) = match hybrid_next_char(working_text, token_byte) {
+                Some(value) => value,
+                None => break,
+            };
+            if ch.is_ascii_digit() {
+                let mut end = next_idx;
+                loop {
+                    let mut cursor = end;
+                    while cursor < working_text.len() {
+                        let (digit_ch, digit_next) = match hybrid_next_char(working_text, cursor) {
+                            Some(value) => value,
+                            None => break,
+                        };
+                        if !digit_ch.is_ascii_digit() {
+                            break;
+                        }
+                        cursor = digit_next;
+                    }
+                    end = cursor;
+                    if end >= working_text.len() {
+                        break;
+                    }
+                    let (sep, sep_next) = match hybrid_next_char(working_text, end) {
+                        Some(value) => value,
+                        None => break,
+                    };
+                    if !matches!(sep, '.' | ',' | '/') {
+                        break;
+                    }
+                    if sep_next >= working_text.len() {
+                        break;
+                    }
+                    let (after_sep, _) = match hybrid_next_char(working_text, sep_next) {
+                        Some(value) => value,
+                        None => break,
+                    };
+                    if !after_sep.is_ascii_digit() {
+                        break;
+                    }
+                    end = sep_next;
+                }
+                let token = &working_text[token_byte..end];
+                if hybrid_classify_inline_numeric_field(token) {
+                    if let Some(parsed_value) = hybrid_parse_numeric_value(token) {
+                        numeric_positions.push(tokens.len());
+                        tokens.push(HybridToken {
+                            kind: HybridTokenKind::Numeric,
+                            start: hybrid_byte_to_char_idx(&boundaries, working_offset + token_byte),
+                            end: hybrid_byte_to_char_idx(&boundaries, working_offset + end),
+                            token_key: None,
+                            numeric_value: Some(parsed_value),
+                        });
+                    }
+                }
+                token_byte = end;
+                continue;
+            }
+            if ch.is_alphabetic() {
+                let mut end = next_idx;
+                while end < working_text.len() {
+                    let (next_ch, next_end) = match hybrid_next_char(working_text, end) {
+                        Some(value) => value,
+                        None => break,
+                    };
+                    if !next_ch.is_alphabetic() {
+                        break;
+                    }
+                    end = next_end;
+                }
+                let token = &working_text[token_byte..end];
+                let token_key = hybrid_normalize_body(token);
+                if !token_key.is_empty() {
+                    tokens.push(HybridToken {
+                        kind: HybridTokenKind::Alpha,
+                        start: hybrid_byte_to_char_idx(&boundaries, working_offset + token_byte),
+                        end: hybrid_byte_to_char_idx(&boundaries, working_offset + end),
+                        token_key: Some(token_key),
+                        numeric_value: None,
+                    });
+                }
+                token_byte = end;
+                continue;
+            }
+            token_byte = next_idx;
+        }
+
+        if numeric_positions.len() != 1 {
+            continue;
+        }
+        let numeric_pos = numeric_positions[0];
+        let numeric_token = &tokens[numeric_pos];
+        let left_alpha: Vec<&HybridToken> = tokens[..numeric_pos]
+            .iter()
+            .filter(|token| token.kind == HybridTokenKind::Alpha)
+            .collect();
+        let right_alpha: Vec<&HybridToken> = tokens[numeric_pos + 1..]
+            .iter()
+            .filter(|token| token.kind == HybridTokenKind::Alpha)
+            .collect();
+
+        let left_start = left_alpha.len().saturating_sub(HYBRID_INLINE_CONTEXT_WORDS);
+        let left_context = &left_alpha[left_start..];
+        let right_limit = std::cmp::min(HYBRID_INLINE_CONTEXT_WORDS, right_alpha.len());
+        let right_context = &right_alpha[..right_limit];
+        let alpha_word_count = left_context.len() + right_context.len();
+        if alpha_word_count < HYBRID_INLINE_CONTEXT_MIN_ALPHA_WORDS {
+            continue;
+        }
+
+        let mut context_parts: Vec<String> =
+            Vec::with_capacity(left_context.len() + 1 + right_context.len());
+        for token in left_context {
+            if let Some(token_key) = &token.token_key {
+                context_parts.push(token_key.clone());
+            }
+        }
+        context_parts.push("num".to_string());
+        for token in right_context {
+            if let Some(token_key) = &token.token_key {
+                context_parts.push(token_key.clone());
+            }
+        }
+        let context_key = hybrid_normalize_body(&context_parts.join(" "));
+        if context_key.chars().count() < HYBRID_INLINE_CONTEXT_MIN_CHARS {
+            continue;
+        }
+
+        let item_start = left_context
+            .first()
+            .map(|token| token.start)
+            .unwrap_or(numeric_token.start);
+        let item_end = right_context
+            .last()
+            .map(|token| token.end)
+            .unwrap_or(numeric_token.end);
+        items.push(HybridInlineItem {
+            start: item_start,
+            end: item_end,
+            clause_index,
+            inline_context_key: context_key,
+            numeric_value: numeric_token.numeric_value.unwrap_or(0.0),
+        });
+    }
+
+    items
+}
+
+fn hybrid_partial_body_matches(candidate_body_key: &str, target_body_key: &str) -> bool {
+    if candidate_body_key.is_empty() || target_body_key.is_empty() || candidate_body_key == target_body_key {
+        return false;
+    }
+    if !target_body_key.starts_with(candidate_body_key) {
+        return false;
+    }
+    let target_len = target_body_key.chars().count();
+    let candidate_len = candidate_body_key.chars().count();
+    let min_chars = std::cmp::min(4usize, target_len);
+    let min_ratio_chars = std::cmp::max(1usize, (target_len + 1) / 2);
+    candidate_len >= std::cmp::min(min_chars, min_ratio_chars)
+}
+
+fn hybrid_header_progresses(previous: &HybridNumberedItem, current: &HybridNumberedItem) -> bool {
+    previous.field_kind == HybridFieldKind::HeaderCounter
+        && current.field_kind == HybridFieldKind::HeaderCounter
+        && !previous.numbers.is_empty()
+        && previous.numbers.len() == current.numbers.len()
+        && previous.numbers[..previous.numbers.len() - 1] == current.numbers[..current.numbers.len() - 1]
+        && current.numbers.last().copied() == previous.numbers.last().copied().map(|value| value + 1)
+}
+
+fn hybrid_header_is_parent(previous: &HybridNumberedItem, current: &HybridNumberedItem) -> bool {
+    previous.field_kind == HybridFieldKind::HeaderCounter
+        && current.field_kind == HybridFieldKind::HeaderCounter
+        && !previous.numbers.is_empty()
+        && previous.numbers.len() + 1 == current.numbers.len()
+        && current.numbers[..current.numbers.len() - 1] == previous.numbers[..]
+}
+
+fn hybrid_extend_tail_span_end(
+    items: &[HybridNumberedItem],
+    run_start: usize,
+    run_end: usize,
+    expected_body_key: &str,
+) -> usize {
+    let span_end = items[run_end - 1].end;
+    if run_end >= items.len() {
+        return span_end;
+    }
+    let tail = &items[run_end];
+    if tail.field_kind != HybridFieldKind::HeaderCounter
+        || tail.shape != items[run_start].shape
+        || !hybrid_header_progresses(&items[run_end - 1], tail)
+        || !hybrid_partial_body_matches(&tail.body_key, expected_body_key)
+    {
+        return span_end;
+    }
+    tail.end
+}
+
+fn hybrid_inline_step(previous: &HybridInlineItem, current: &HybridInlineItem) -> Option<f64> {
+    if current.clause_index != previous.clause_index + 1
+        || current.inline_context_key != previous.inline_context_key
+    {
+        return None;
+    }
+    let step = current.numeric_value - previous.numeric_value;
+    (step > 0.0).then_some(step)
+}
+
+fn hybrid_inline_step_matches(expected_step: f64, actual_step: f64) -> bool {
+    let tolerance = f64::max(1e-9, expected_step.abs() * 1e-6);
+    (expected_step - actual_step).abs() <= tolerance
+}
+
+fn hybrid_find_same_body_progression_spans(items: &[HybridNumberedItem]) -> Vec<HybridRepeatSpan> {
+    let mut spans: Vec<HybridRepeatSpan> = Vec::new();
+    let mut idx = 0usize;
+    while idx < items.len() {
+        let item = &items[idx];
+        if item.field_kind != HybridFieldKind::HeaderCounter || !item.body_is_full {
+            idx += 1;
+            continue;
+        }
+
+        let mut end_idx = idx + 1;
+        while end_idx < items.len()
+            && items[end_idx].field_kind == HybridFieldKind::HeaderCounter
+            && items[end_idx].body_is_full
+            && items[end_idx].body_key == item.body_key
+            && items[end_idx].shape == item.shape
+            && hybrid_header_progresses(&items[end_idx - 1], &items[end_idx])
+        {
+            end_idx += 1;
+        }
+
+        let run_length = end_idx - idx;
+        if run_length >= HYBRID_REPEAT_MIN_ITEMS {
+            let mut start_idx = idx;
+            if idx > 0 {
+                let previous = &items[idx - 1];
+                if previous.body_is_full
+                    && previous.body_key == item.body_key
+                    && hybrid_header_is_parent(previous, item)
+                {
+                    start_idx = idx - 1;
+                }
+            }
+            let span_end = hybrid_extend_tail_span_end(items, idx, end_idx, &item.body_key);
+            spans.push(HybridRepeatSpan {
+                start: items[start_idx].start,
+                end: span_end,
+                kind: "same_body_progression",
+                item_count: end_idx - start_idx,
+                cycle_len: None,
+            });
+            idx = end_idx;
+            continue;
+        }
+
+        idx += 1;
+    }
+    spans
+}
+
+fn hybrid_find_cycle_progression_spans(items: &[HybridNumberedItem]) -> Vec<HybridRepeatSpan> {
+    let mut spans: Vec<HybridRepeatSpan> = Vec::new();
+    let n_items = items.len();
+    for cycle_len in 2..=HYBRID_REPEAT_MAX_CYCLE {
+        let mut idx = 0usize;
+        while idx + 2 * cycle_len <= n_items {
+            let run = &items[idx..idx + 2 * cycle_len];
+            if run
+                .iter()
+                .any(|item| item.field_kind != HybridFieldKind::HeaderCounter || !item.body_is_full)
+            {
+                idx += 1;
+                continue;
+            }
+            let first_shape = &run[0].shape;
+            if run.iter().any(|item| item.shape != *first_shape) {
+                idx += 1;
+                continue;
+            }
+            if !(1..run.len()).all(|pos| hybrid_header_progresses(&run[pos - 1], &run[pos])) {
+                idx += 1;
+                continue;
+            }
+
+            let template: Vec<&str> = run[..cycle_len]
+                .iter()
+                .map(|item| item.body_key.as_str())
+                .collect();
+            let unique_template_count = template
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<&str>>()
+                .len();
+            if unique_template_count < 2 {
+                idx += 1;
+                continue;
+            }
+
+            if (cycle_len..run.len()).any(|pos| run[pos].body_key != template[pos % cycle_len]) {
+                idx += 1;
+                continue;
+            }
+
+            let mut end_idx = idx + 2 * cycle_len;
+            while end_idx < n_items
+                && items[end_idx].field_kind == HybridFieldKind::HeaderCounter
+                && items[end_idx].body_is_full
+                && items[end_idx].shape == items[idx].shape
+                && hybrid_header_progresses(&items[end_idx - 1], &items[end_idx])
+                && items[end_idx].body_key == template[(end_idx - idx) % cycle_len]
+            {
+                end_idx += 1;
+            }
+
+            let item_count = end_idx - idx;
+            if item_count >= HYBRID_REPEAT_MIN_CYCLE_ITEMS {
+                let span_end = hybrid_extend_tail_span_end(
+                    items,
+                    idx,
+                    end_idx,
+                    template[(end_idx - idx) % cycle_len],
+                );
+                spans.push(HybridRepeatSpan {
+                    start: items[idx].start,
+                    end: span_end,
+                    kind: "body_cycle_progression",
+                    item_count,
+                    cycle_len: Some(cycle_len),
+                });
+                idx = end_idx;
+                continue;
+            }
+            idx += 1;
+        }
+    }
+    spans
+}
+
+fn hybrid_find_inline_progression_spans(items: &[HybridInlineItem]) -> Vec<HybridRepeatSpan> {
+    let mut spans: Vec<HybridRepeatSpan> = Vec::new();
+    let mut idx = 0usize;
+    while idx + HYBRID_INLINE_REPEAT_MIN_ITEMS <= items.len() {
+        let first = &items[idx];
+        let second = &items[idx + 1];
+        let expected_step = match hybrid_inline_step(first, second) {
+            Some(step) => step,
+            None => {
+                idx += 1;
+                continue;
+            }
+        };
+
+        let mut end_idx = idx + 2;
+        while end_idx < items.len() {
+            let actual_step = match hybrid_inline_step(&items[end_idx - 1], &items[end_idx]) {
+                Some(step) => step,
+                None => break,
+            };
+            if !hybrid_inline_step_matches(expected_step, actual_step) {
+                break;
+            }
+            end_idx += 1;
+        }
+
+        let item_count = end_idx - idx;
+        if item_count >= HYBRID_INLINE_REPEAT_MIN_ITEMS {
+            spans.push(HybridRepeatSpan {
+                start: items[idx].start,
+                end: items[end_idx - 1].end,
+                kind: "inline_numeric_progression",
+                item_count,
+                cycle_len: None,
+            });
+            idx = end_idx;
+            continue;
+        }
+        idx += 1;
+    }
+    spans
+}
+
+pub fn find_hybrid_repeat_spans_internal(analysis_text: &str) -> Vec<HybridRepeatSpan> {
+    let items = hybrid_extract_numbered_items(analysis_text);
+    let mut spans = hybrid_find_same_body_progression_spans(&items);
+    spans.extend(hybrid_find_cycle_progression_spans(&items));
+    let inline_items = hybrid_extract_inline_items(analysis_text);
+    spans.extend(hybrid_find_inline_progression_spans(&inline_items));
+    spans.sort_by(|lhs, rhs| {
+        lhs.start
+            .cmp(&rhs.start)
+            .then_with(|| (rhs.end - rhs.start).cmp(&(lhs.end - lhs.start)))
+    });
+
+    let mut deduped: Vec<HybridRepeatSpan> = Vec::new();
+    for span in spans {
+        if let Some(previous) = deduped.last() {
+            if span.start >= previous.start && span.end <= previous.end {
+                continue;
+            }
+        }
+        deduped.push(span);
+    }
+    deduped
+}
+
 fn word_repeat_hash_slice(pref: &[u64], pw: &[u64], start: usize, end: usize) -> u64 {
     pref[end].wrapping_sub(pref[start].wrapping_mul(pw[end - start])) & WORD_REPEAT_HASH_MASK
 }
