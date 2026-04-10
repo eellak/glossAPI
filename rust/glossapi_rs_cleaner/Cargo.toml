@@ -26,6 +26,7 @@ memchr = "2"
 aho-corasick = "1"
 htmlentity = "~1.3.0"
 chrono = { version = "=0.4.33", features = ["serde"] }
+glossapi_rs_common = { path = "../glossapi_rs_common" }
 
 [tool.maturin]
 bindings = "pyo3-abi3-py38"

@@ -1,0 +1,11 @@
+[package]
+name = "glossapi_rs_common"
+version = "0.1.0"
+edition = "2021"
+authors = ["GlossAPI Team <glossapi.team@eellak.gr>"]
+description = "Shared Rust script-analysis helpers for GlossAPI"
+license = "EUPL-1.2"
+
+[lib]
+name = "glossapi_rs_common"
+path = "src/lib.rs"

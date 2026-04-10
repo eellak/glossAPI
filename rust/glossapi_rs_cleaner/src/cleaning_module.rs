@@ -1,4 +1,5 @@
 use aho_corasick::AhoCorasick;
+use glossapi_rs_common::scan_script_metrics;
 use htmlentity::entity::{decode, ICodedDataTrait};
 use lazy_static::lazy_static;
 use memchr::memchr; // For Step 5.1
@@ -548,31 +549,21 @@ pub fn perform_text_analysis(
 
     // This block already calculates cleaned_non_whitespace_chars_val correctly after cleaning
     if calculate_specific_counts {
-        let mut current_greek_count = 0;
-        let mut current_latin_count = 0;
-        let mut current_cleaned_non_ws_count = 0;
+        let metrics = scan_script_metrics(&cleaned_text);
+        let include_greek = scripts_for_percentage_and_specific_counts
+            .iter()
+            .any(|script| script == "greek");
+        let include_latin = scripts_for_percentage_and_specific_counts
+            .iter()
+            .any(|script| script == "latin");
 
-        let greek_set = SCRIPT_SETS.get("greek").cloned().unwrap_or_default();
-        let latin_set = SCRIPT_SETS.get("latin").cloned().unwrap_or_default();
-
-        for ch in cleaned_text.chars() {
-            if !ch.is_whitespace() {
-                current_cleaned_non_ws_count += 1;
-            }
-            if scripts_for_percentage_and_specific_counts.contains(&"greek".to_string())
-                && greek_set.contains(&ch)
-            {
-                current_greek_count += 1;
-            }
-            if scripts_for_percentage_and_specific_counts.contains(&"latin".to_string())
-                && latin_set.contains(&ch)
-            {
-                current_latin_count += 1;
-            }
+        if include_greek {
+            greek_char_count_cleaned = Some(metrics.greek_char_count as usize);
         }
-        greek_char_count_cleaned = Some(current_greek_count);
-        latin_char_count_cleaned = Some(current_latin_count);
-        cleaned_non_whitespace_chars_val = Some(current_cleaned_non_ws_count);
+        if include_latin {
+            latin_char_count_cleaned = Some(metrics.latin_char_count as usize);
+        }
+        cleaned_non_whitespace_chars_val = Some(metrics.non_whitespace_chars as usize);
     } else {
         cleaned_non_whitespace_chars_val =
             Some(cleaned_text.chars().filter(|c| !c.is_whitespace()).count());
