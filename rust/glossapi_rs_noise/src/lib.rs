@@ -5,7 +5,8 @@ mod noise_metrics;
 use noise_metrics::{
     annotate_numeric_debug_page_internal, evaluate_page_character_noise_internal,
     export_numeric_match_debug_pages_internal, export_ocr_match_debug_pages_internal,
-    find_hybrid_repeat_spans_internal, find_numeric_debug_page_spans_internal,
+    find_hybrid_repeat_spans_internal, find_labeled_shared_repeat_spans_internal,
+    find_numeric_debug_page_spans_internal,
     find_word_repeat_spans_internal,
     score_markdown_directory_detailed_internal,
     score_markdown_directory_internal, score_markdown_directory_ocr_profile_internal,
@@ -385,6 +386,31 @@ fn find_hybrid_repeat_spans(py: Python<'_>, analysis_text: &str) -> PyResult<Vec
 }
 
 #[pyfunction]
+#[pyo3(signature = (analysis_text, rep_threshold=4, min_period=3, window=96))]
+fn find_labeled_shared_repeat_spans(
+    py: Python<'_>,
+    analysis_text: &str,
+    rep_threshold: usize,
+    min_period: usize,
+    window: usize,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let spans =
+        find_labeled_shared_repeat_spans_internal(analysis_text, rep_threshold, min_period, window);
+    let mut out: Vec<Py<PyDict>> = Vec::with_capacity(spans.len());
+    for span in spans {
+        let item = PyDict::new(py);
+        item.set_item("start", span.start)?;
+        item.set_item("end", span.end)?;
+        item.set_item("period", span.period)?;
+        item.set_item("repetitions", span.repetitions)?;
+        item.set_item("tail_chars", span.tail_chars)?;
+        item.set_item("match_type", span.match_type)?;
+        out.push(item.into());
+    }
+    Ok(out)
+}
+
+#[pyfunction]
 fn evaluate_page_character_noise(py: Python<'_>, page: &str) -> PyResult<Py<PyDict>> {
     let metrics = evaluate_page_character_noise_internal(page);
     let item = PyDict::new(py);
@@ -411,6 +437,7 @@ fn glossapi_rs_noise(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(find_numeric_debug_page_spans, m)?)?;
     m.add_function(wrap_pyfunction!(find_word_repeat_spans, m)?)?;
     m.add_function(wrap_pyfunction!(find_hybrid_repeat_spans, m)?)?;
+    m.add_function(wrap_pyfunction!(find_labeled_shared_repeat_spans, m)?)?;
     m.add_function(wrap_pyfunction!(evaluate_page_character_noise, m)?)?;
     Ok(())
 }

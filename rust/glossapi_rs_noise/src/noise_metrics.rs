@@ -255,6 +255,16 @@ pub struct HybridRepeatSpan {
     pub cycle_len: Option<usize>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LabeledSharedRepeatSpan {
+    pub start: usize,
+    pub end: usize,
+    pub period: usize,
+    pub repetitions: usize,
+    pub tail_chars: usize,
+    pub match_type: &'static str,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PageCharacterNoise {
     pub total_chars: u64,
@@ -2244,6 +2254,95 @@ pub fn find_hybrid_repeat_spans_internal(analysis_text: &str) -> Vec<HybridRepea
         deduped.push(span);
     }
     deduped
+}
+
+fn normalize_alnum_with_map_skip_tags_internal(text: &str) -> (String, Vec<usize>) {
+    let mut normalized = String::with_capacity(text.len());
+    let mut raw_char_indices: Vec<usize> = Vec::with_capacity(text.len());
+    let mut in_tag = false;
+
+    for (raw_idx, ch) in text.chars().enumerate() {
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+            }
+            continue;
+        }
+        if ch == '<' {
+            in_tag = true;
+            continue;
+        }
+        let mut casefolded = String::new();
+        for lower in ch.to_lowercase() {
+            match lower {
+                'ς' => casefolded.push('σ'),
+                'ß' => {
+                    casefolded.push('s');
+                    casefolded.push('s');
+                }
+                'ſ' => casefolded.push('s'),
+                _ => casefolded.push(lower),
+            }
+        }
+        for sub in casefolded.nfd() {
+            if sub.is_alphanumeric() {
+                let mapped = match sub {
+                    'ο' => 'o',
+                    'κ' => 'k',
+                    _ => sub,
+                };
+                normalized.push(mapped);
+                raw_char_indices.push(raw_idx);
+            }
+        }
+    }
+
+    (normalized, raw_char_indices)
+}
+
+pub fn find_labeled_shared_repeat_spans_internal(
+    text: &str,
+    rep_threshold: usize,
+    min_period: usize,
+    window: usize,
+) -> Vec<LabeledSharedRepeatSpan> {
+    let (normalized_text, raw_map) = normalize_alnum_with_map_skip_tags_internal(text);
+    let normalized_chars: Vec<char> = normalized_text.chars().collect();
+    let spans = find_word_repeat_spans_internal(&normalized_text, rep_threshold, min_period, window);
+    let mut labeled: Vec<LabeledSharedRepeatSpan> = Vec::new();
+
+    for span in spans {
+        if span.end <= span.start || span.start >= raw_map.len() {
+            continue;
+        }
+        let mut has_letter = false;
+        let mut has_digit = false;
+        for ch in &normalized_chars[span.start..span.end] {
+            if ch.is_alphabetic() {
+                has_letter = true;
+            }
+            if ch.is_ascii_digit() {
+                has_digit = true;
+            }
+        }
+        let match_type = if has_letter {
+            "word_repeat"
+        } else if has_digit {
+            "numeric_repeat"
+        } else {
+            continue;
+        };
+        labeled.push(LabeledSharedRepeatSpan {
+            start: raw_map[span.start],
+            end: raw_map[span.end - 1] + 1,
+            period: span.period,
+            repetitions: span.repetitions,
+            tail_chars: span.tail_chars,
+            match_type,
+        });
+    }
+
+    labeled
 }
 
 fn word_repeat_hash_slice(pref: &[u64], pw: &[u64], start: usize, end: usize) -> u64 {

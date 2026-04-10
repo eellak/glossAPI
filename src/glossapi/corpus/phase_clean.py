@@ -1749,6 +1749,25 @@ def _find_labeled_shared_repeat_spans(
         analysis_text = _filter_latex_preserve_layout(analysis_text)
         analysis_text = _blank_existing_match_regions_preserve_layout(analysis_text)
     analysis_text = _blank_raw_spans_preserve_layout(analysis_text, blocked_spans)
+    rust_mod = _get_word_repeat_rust_module()
+    if rust_mod is not None and hasattr(rust_mod, "find_labeled_shared_repeat_spans"):
+        return [
+            {
+                "start": int(item["start"]),
+                "end": int(item["end"]),
+                "period": int(item["period"]),
+                "repetitions": int(item["repetitions"]),
+                "tail_chars": int(item["tail_chars"]),
+                "match_types": [str(item["match_type"])],
+                "category": MATCH_CATEGORY_BY_TYPE[str(item["match_type"])],
+            }
+            for item in rust_mod.find_labeled_shared_repeat_spans(
+                analysis_text,
+                int(rep_threshold),
+                int(min_period),
+                int(window),
+            )
+        ]
     normalized_text, raw_map = _normalize_alnum_with_map_skip_tags(analysis_text)
     normalized_spans = _find_word_repeat_spans(
         normalized_text,
