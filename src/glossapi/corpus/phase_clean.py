@@ -703,16 +703,19 @@ def _parse_hybrid_numeric_value(token: str) -> Optional[float]:
     return None
 
 
-def _extract_hybrid_numbered_items(
+def _prepare_hybrid_analysis_text(
     page_text: str,
     *,
     blocked_spans: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+) -> str:
     analysis_text = _filter_tables_preserve_layout(page_text)
     analysis_text = _filter_latex_preserve_layout(analysis_text)
     analysis_text = _blank_existing_match_regions_preserve_layout(analysis_text)
     analysis_text = _blank_raw_spans_preserve_layout(analysis_text, blocked_spans)
+    return analysis_text
 
+
+def _extract_hybrid_numbered_items_from_analysis_text(analysis_text: str) -> List[Dict[str, Any]]:
     candidates: List[Dict[str, Any]] = []
     for match in HYBRID_PREFIX_RE.finditer(analysis_text):
         field = _classify_hybrid_numeric_field(match.group("prefix"))
@@ -756,16 +759,7 @@ def _extract_hybrid_numbered_items(
     return items
 
 
-def _extract_hybrid_inline_numeric_items(
-    page_text: str,
-    *,
-    blocked_spans: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    analysis_text = _filter_tables_preserve_layout(page_text)
-    analysis_text = _filter_latex_preserve_layout(analysis_text)
-    analysis_text = _blank_existing_match_regions_preserve_layout(analysis_text)
-    analysis_text = _blank_raw_spans_preserve_layout(analysis_text, blocked_spans)
-
+def _extract_hybrid_inline_numeric_items_from_analysis_text(analysis_text: str) -> List[Dict[str, Any]]:
     clause_ranges: List[Tuple[int, int]] = []
     clause_start = 0
     for match in HYBRID_INLINE_CLAUSE_DELIMITER_RE.finditer(analysis_text):
@@ -1110,11 +1104,16 @@ def _find_hybrid_numbered_repeat_spans(
     page_text: str,
     *,
     blocked_spans: List[Dict[str, Any]],
+    analysis_text: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    items = _extract_hybrid_numbered_items(page_text, blocked_spans=blocked_spans)
+    if analysis_text is None:
+        analysis_text = _prepare_hybrid_analysis_text(page_text, blocked_spans=blocked_spans)
+    else:
+        analysis_text = _blank_raw_spans_preserve_layout(analysis_text, blocked_spans)
+    items = _extract_hybrid_numbered_items_from_analysis_text(analysis_text)
     spans = _find_hybrid_same_body_progression_spans(items)
     spans.extend(_find_hybrid_cycle_progression_spans(items))
-    inline_items = _extract_hybrid_inline_numeric_items(page_text, blocked_spans=blocked_spans)
+    inline_items = _extract_hybrid_inline_numeric_items_from_analysis_text(analysis_text)
     spans.extend(_find_hybrid_inline_progression_spans(inline_items))
     spans.sort(key=lambda item: (int(item["start"]), -(int(item["end"]) - int(item["start"]))))
 
@@ -1454,9 +1453,11 @@ def _find_latex_repeat_spans(
     rep_threshold: int,
     min_period: int,
     window: int,
+    analysis_text: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    analysis_text = _filter_tables_preserve_layout(page_text)
-    analysis_text = _blank_existing_match_regions_preserve_layout(analysis_text)
+    if analysis_text is None:
+        analysis_text = _filter_tables_preserve_layout(page_text)
+        analysis_text = _blank_existing_match_regions_preserve_layout(analysis_text)
     analysis_text = _blank_raw_spans_preserve_layout(analysis_text, blocked_spans)
 
     labeled_spans: List[Dict[str, Any]] = []
@@ -1529,9 +1530,11 @@ def _find_latex_slot_progression_spans(
     page_text: str,
     *,
     blocked_spans: List[Dict[str, Any]],
+    analysis_text: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    analysis_text = _filter_tables_preserve_layout(page_text)
-    analysis_text = _blank_existing_match_regions_preserve_layout(analysis_text)
+    if analysis_text is None:
+        analysis_text = _filter_tables_preserve_layout(page_text)
+        analysis_text = _blank_existing_match_regions_preserve_layout(analysis_text)
     analysis_text = _blank_raw_spans_preserve_layout(analysis_text, blocked_spans)
 
     segments = _extract_latex_segments(analysis_text)
@@ -1725,10 +1728,12 @@ def _find_labeled_shared_repeat_spans(
     rep_threshold: int,
     min_period: int,
     window: int,
+    analysis_text: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    analysis_text = _filter_tables_preserve_layout(page_text)
-    analysis_text = _filter_latex_preserve_layout(analysis_text)
-    analysis_text = _blank_existing_match_regions_preserve_layout(analysis_text)
+    if analysis_text is None:
+        analysis_text = _filter_tables_preserve_layout(page_text)
+        analysis_text = _filter_latex_preserve_layout(analysis_text)
+        analysis_text = _blank_existing_match_regions_preserve_layout(analysis_text)
     analysis_text = _blank_raw_spans_preserve_layout(analysis_text, blocked_spans)
     normalized_text, raw_map = _normalize_alnum_with_map_skip_tags(analysis_text)
     normalized_spans = _find_word_repeat_spans(
@@ -1782,8 +1787,12 @@ def _render_combined_ocr_page(
     table_spans = _find_table_repeat_spans(page_text)
     table_elapsed = time.perf_counter() - table_start
 
-    numeric_analysis_page = _filter_tables_preserve_layout(page_text)
-    numeric_analysis_page = _filter_latex_preserve_layout(numeric_analysis_page)
+    page_without_tables = _filter_tables_preserve_layout(page_text)
+    page_without_tables_existing = _blank_existing_match_regions_preserve_layout(page_without_tables)
+    page_without_tables_latex = _filter_latex_preserve_layout(page_without_tables)
+    page_without_tables_latex_existing = _blank_existing_match_regions_preserve_layout(
+        page_without_tables_latex
+    )
 
     numeric_start = time.perf_counter()
     numeric_spans = [
@@ -1794,7 +1803,7 @@ def _render_combined_ocr_page(
             "category": MATCH_CATEGORY_BY_TYPE[str(item["match_type"])],
         }
         for item in noise_mod.find_numeric_debug_page_spans(
-            numeric_analysis_page,
+            page_without_tables_latex,
             int(min_progress_steps),
             int(min_repeat_steps),
             int(min_same_digit_steps),
@@ -1809,6 +1818,7 @@ def _render_combined_ocr_page(
         rep_threshold=int(word_rep_threshold),
         min_period=int(word_min_period),
         window=int(word_window),
+        analysis_text=page_without_tables_existing,
     )
     latex_elapsed = time.perf_counter() - latex_start
 
@@ -1816,6 +1826,7 @@ def _render_combined_ocr_page(
     hybrid_spans = _find_hybrid_numbered_repeat_spans(
         page_text,
         blocked_spans=table_spans + numeric_spans + latex_spans,
+        analysis_text=page_without_tables_latex_existing,
     )
     hybrid_elapsed = time.perf_counter() - hybrid_start
 
@@ -1826,6 +1837,7 @@ def _render_combined_ocr_page(
         rep_threshold=int(word_rep_threshold),
         min_period=int(word_min_period),
         window=int(word_window),
+        analysis_text=page_without_tables_latex_existing,
     )
     shared_elapsed = time.perf_counter() - shared_start
 
