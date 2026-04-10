@@ -411,6 +411,8 @@ def _clean_fill_for_removed_span(page_text: str, start: int, end: int) -> str:
 
 
 def _find_table_repeat_spans(page_text: str) -> List[Dict[str, Any]]:
+    if "<table" not in page_text.lower():
+        return []
     analysis_text = _blank_existing_match_regions_preserve_layout(page_text)
     spans: List[Dict[str, Any]] = []
     for table_match in HTML_TABLE_BLOCK_RE.finditer(analysis_text):
@@ -1193,6 +1195,8 @@ def _find_hybrid_numbered_repeat_spans(
     blocked_spans: List[Dict[str, Any]],
     analysis_text: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    if not any(ch.isdigit() for ch in page_text):
+        return []
     if analysis_text is None:
         analysis_text = _prepare_hybrid_analysis_text(page_text, blocked_spans=blocked_spans)
     else:
@@ -1559,6 +1563,13 @@ def _find_latex_repeat_spans(
     if analysis_text is None:
         analysis_text = _filter_tables_preserve_layout(page_text)
         analysis_text = _blank_existing_match_regions_preserve_layout(analysis_text)
+    if (
+        "$" not in analysis_text
+        and "\\" not in analysis_text
+        and "<sub>" not in analysis_text
+        and "<sup>" not in analysis_text
+    ):
+        return []
     analysis_text = _blank_raw_spans_preserve_layout(analysis_text, blocked_spans)
 
     labeled_spans: List[Dict[str, Any]] = []
