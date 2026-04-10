@@ -179,7 +179,7 @@ def _blank_non_newlines(text: str) -> str:
 
 
 def _init_combined_ocr_worker() -> None:
-    global _COMBINED_OCR_WORKER_NOISE_MOD
+    global _COMBINED_OCR_WORKER_NOISE_MOD, _WORD_REPEAT_RUST_MOD, _WORD_REPEAT_RUST_IMPORT_ATTEMPTED
     noise_mod = importlib.import_module("glossapi_rs_noise")
     missing = [
         attr for attr in _COMBINED_OCR_WORKER_REQUIRED_ATTRS if not hasattr(noise_mod, attr)
@@ -190,6 +190,8 @@ def _init_combined_ocr_worker() -> None:
             + ", ".join(missing)
         )
     _COMBINED_OCR_WORKER_NOISE_MOD = noise_mod
+    _WORD_REPEAT_RUST_IMPORT_ATTEMPTED = True
+    _WORD_REPEAT_RUST_MOD = noise_mod if hasattr(noise_mod, "find_word_repeat_spans") else None
 
 
 def _get_combined_ocr_worker_noise_mod() -> Any:
@@ -197,6 +199,14 @@ def _get_combined_ocr_worker_noise_mod() -> Any:
     if _COMBINED_OCR_WORKER_NOISE_MOD is None:
         _init_combined_ocr_worker()
     return _COMBINED_OCR_WORKER_NOISE_MOD
+
+
+def _prime_word_repeat_rust_module(module_name: str, module: Any) -> Any:
+    global _WORD_REPEAT_RUST_MOD, _WORD_REPEAT_RUST_IMPORT_ATTEMPTED
+    if module_name == "glossapi_rs_noise":
+        _WORD_REPEAT_RUST_IMPORT_ATTEMPTED = True
+        _WORD_REPEAT_RUST_MOD = module if hasattr(module, "find_word_repeat_spans") else None
+    return module
 
 
 def _can_use_combined_ocr_process_pool(noise_mod: Any, render_workers: int) -> bool:
@@ -2332,14 +2342,12 @@ class CleanPhaseMixin:
                 raise last_error
             raise ModuleNotFoundError(module_name)
 
-        _build_extension_once()
-
         needs_build = False
         try:
             module = _import_module_with_fallback()
             missing = _missing_attrs(module)
             if not missing:
-                return module
+                return _prime_word_repeat_rust_module(module_name, module)
             self.logger.warning(
                 "Rust extension %s is missing required attributes %s; attempting in-place build via maturin …",
                 module_name,
@@ -2352,6 +2360,16 @@ class CleanPhaseMixin:
                 module_name,
             )
             needs_build = True
+
+        if needs_build:
+            _build_extension_once()
+            try:
+                module = _import_module_with_fallback()
+                missing = _missing_attrs(module)
+                if not missing:
+                    return _prime_word_repeat_rust_module(module_name, module)
+            except ModuleNotFoundError:
+                pass
 
         if not needs_build:
             raise RuntimeError(f"Unexpected load state for Rust extension {module_name}")
@@ -2400,7 +2418,7 @@ class CleanPhaseMixin:
                 raise RuntimeError(
                     f"Built {module_name} but it is still missing required attributes: {missing}"
                 )
-            return module
+            return _prime_word_repeat_rust_module(module_name, module)
         except Exception as build_err:
             raise RuntimeError(
                 f"Automatic build of {module_name} failed: {build_err}"
