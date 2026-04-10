@@ -325,12 +325,14 @@ fn find_numeric_debug_page_spans(
     min_repeat_steps: u64,
     min_same_digit_steps: u64,
 ) -> PyResult<Vec<Py<PyDict>>> {
-    let spans = find_numeric_debug_page_spans_internal(
-        page,
-        min_progress_steps,
-        min_repeat_steps,
-        min_same_digit_steps,
-    );
+    let spans = py.allow_threads(|| {
+        find_numeric_debug_page_spans_internal(
+            page,
+            min_progress_steps,
+            min_repeat_steps,
+            min_same_digit_steps,
+        )
+    });
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(spans.len());
     for span in spans {
         let item = PyDict::new(py);
@@ -351,7 +353,8 @@ fn find_word_repeat_spans(
     min_period: usize,
     window: usize,
 ) -> PyResult<Vec<Py<PyDict>>> {
-    let spans = find_word_repeat_spans_internal(normalized_text, rep_threshold, min_period, window);
+    let spans =
+        py.allow_threads(|| find_word_repeat_spans_internal(normalized_text, rep_threshold, min_period, window));
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(spans.len());
     for span in spans {
         let item = PyDict::new(py);
@@ -367,7 +370,7 @@ fn find_word_repeat_spans(
 
 #[pyfunction]
 fn find_hybrid_repeat_spans(py: Python<'_>, analysis_text: &str) -> PyResult<Vec<Py<PyDict>>> {
-    let spans = find_hybrid_repeat_spans_internal(analysis_text);
+    let spans = py.allow_threads(|| find_hybrid_repeat_spans_internal(analysis_text));
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(spans.len());
     for span in spans {
         let item = PyDict::new(py);
@@ -394,8 +397,9 @@ fn find_labeled_shared_repeat_spans(
     min_period: usize,
     window: usize,
 ) -> PyResult<Vec<Py<PyDict>>> {
-    let spans =
-        find_labeled_shared_repeat_spans_internal(analysis_text, rep_threshold, min_period, window);
+    let spans = py.allow_threads(|| {
+        find_labeled_shared_repeat_spans_internal(analysis_text, rep_threshold, min_period, window)
+    });
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(spans.len());
     for span in spans {
         let item = PyDict::new(py);
@@ -412,7 +416,7 @@ fn find_labeled_shared_repeat_spans(
 
 #[pyfunction]
 fn evaluate_page_character_noise(py: Python<'_>, page: &str) -> PyResult<Py<PyDict>> {
-    let metrics = evaluate_page_character_noise_internal(page);
+    let metrics = py.allow_threads(|| evaluate_page_character_noise_internal(page));
     let item = PyDict::new(py);
     item.set_item("total_chars", metrics.total_chars)?;
     item.set_item("bad_char_count", metrics.bad_char_count)?;
