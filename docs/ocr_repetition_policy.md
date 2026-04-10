@@ -12,9 +12,13 @@ This document pins the intended default repetition thresholds for OCR-cleaner de
 These defaults apply to the combined OCR debug annotator:
 - `Corpus.clean_ocr_numeric_word_debug_docs(...)`
 
+The same analyzer now also drives real clean-mode rendering in `clean_ocr()`;
+debug and clean differ only in rendering, not in span discovery.
+
 In that pipeline:
-- numeric detection runs first
-- LaTeX detection runs second
+- tables are handled first
+- numeric detection runs before generic text ownership
+- LaTeX and hybrid structural detection run before shared text repetition
 - shared repeat detection runs last on the remaining untagged text
 
 ## Scope
@@ -33,3 +37,5 @@ They do not override numeric-specific detectors, which have their own thresholds
 - A default of `4` is meant to reduce borderline `3`-repeat matches.
 - Locality matters more than page-wide reuse, especially for LaTeX.
 - Repeated symbols or notation used normally across a page should not be treated as cleaner targets by default.
+- Numeric progression should be handled by numeric or hybrid logic before text repetition sees it.
+- Table cleanup includes structural cases that are not repetition problems, so table policy is documented separately in `docs/architecture/ocr_cleaning_runtime.md`.

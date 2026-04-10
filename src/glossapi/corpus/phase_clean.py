@@ -1,7 +1,15 @@
-"""Cleaning and filtering helpers split from Corpus."""
+"""Cleaning and filtering helpers split from Corpus.
+
+This module now primarily owns OCR orchestration:
+- page-level analyzer ordering
+- shared clean/debug rendering
+- worker/process orchestration
+
+Specialized policy modules, like HTML-table handling, live alongside it so the
+main pipeline can stay focused on span ownership and mode selection.
+"""
 from __future__ import annotations
 
-import html
 import importlib
 import json
 import logging
@@ -29,12 +37,15 @@ import pandas as pd
 
 from .._naming import canonical_stem
 from ..gloss_downloader import GlossDownloader
-from ..scripts.table_markdown_audit import (
-    _expand_rows as _audit_expand_table_rows,
-    _parse_table_rows as _audit_parse_table_rows,
-    audit_table as _audit_table_html,
-)
 # Avoid importing section/classifier here; cleaning phase does not use them.
+from .ocr_table import (
+    HTML_TABLE_BLOCK_RE,
+    HTML_TABLE_LINE_RE,
+    find_table_repeat_spans as _find_table_repeat_spans_impl,
+    render_table_html_for_clean as _render_table_html_for_clean,
+    render_table_html_for_output as _render_table_html_for_output,
+    replace_html_tables_with_markdown as _replace_html_tables_with_markdown,
+)
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch
@@ -43,11 +54,6 @@ PAGE_SPLIT_MARKER = "<--- Page Split --->"
 WORD_REPEAT_HASH_MASK = (1 << 64) - 1
 WORD_REPEAT_HASH_BASE = 1469598103934665603
 WORD_REPEAT_MERGE_NONWHITESPACE_GAP = 10
-HTML_TABLE_BLOCK_RE = re.compile(r"(?is)<table\b.*?</table\s*>")
-HTML_TABLE_LINE_RE = re.compile(r"(?i)</?(?:table|thead|tbody|tfoot|tr|td|th)\b")
-HTML_TABLE_ROW_RE = re.compile(r"(?is)<tr\b.*?>.*?</tr\s*>")
-HTML_TABLE_CELL_RE = re.compile(r"(?is)<t[dh]\b.*?>(.*?)</t[dh]\s*>")
-HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
 EXISTING_MATCH_BLOCK_RE = re.compile(r"(?is)<match\b[^>]*>.*?</match\s*>")
 LATEX_BLOCK_RE = re.compile(r"(?is)\$\$.*?\$\$")
 LATEX_BRACKET_RE = re.compile(r"(?is)\\\[.*?\\\]")
@@ -142,15 +148,6 @@ LATEX_SYMBOL_SLOT_COMMANDS = (
     r"\tau",
     r"\omega",
 )
-TABLE_EMPTY_MIN_ROWS = 6
-TABLE_EMPTY_MIN_CELLS = 18
-TABLE_EMPTY_MAX_NONEMPTY_RATIO = 0.15
-TABLE_REPEAT_MIN_ROWS = 4
-TABLE_REPEAT_MIN_NONEMPTY_CELLS = 2
-TABLE_REPEAT_MIN_ROW_TEXT_CHARS = 6
-TABLE_REPEAT_MIN_DUPLICATE_ROWS = 2
-TABLE_SENTENCE_SHELL_MIN_WORDS = 6
-TABLE_SENTENCE_SHELL_MIN_CHARS = 40
 MATCH_CATEGORY_BY_TYPE = {
     "ascending_numeric_sequence": "numeric",
     "repeat_numeric_run": "numeric",
@@ -318,95 +315,6 @@ def _extract_latex_segments(text: str) -> List[Dict[str, Any]]:
     return segments
 
 
-def _normalize_table_cell_text(cell_html: str) -> str:
-    text = HTML_TAG_RE.sub(" ", cell_html)
-    text = html.unescape(text)
-    return " ".join(text.split())
-
-
-def _table_cell_has_content(cell_text: str) -> bool:
-    return any(ch.isalnum() for ch in cell_text)
-
-
-def _extract_html_table_rows(table_text: str) -> List[List[str]]:
-    rows: List[List[str]] = []
-    for row_match in HTML_TABLE_ROW_RE.finditer(table_text):
-        cells = [
-            _normalize_table_cell_text(cell_match.group(1))
-            for cell_match in HTML_TABLE_CELL_RE.finditer(row_match.group(0))
-        ]
-        if cells:
-            rows.append(cells)
-    return rows
-
-
-@lru_cache(maxsize=2048)
-def _extract_html_table_rows_cached(table_text: str) -> Tuple[Tuple[str, ...], ...]:
-    return tuple(tuple(row) for row in _extract_html_table_rows(table_text))
-
-
-def _flatten_html_table_nonempty_cells(table_text: str) -> List[str]:
-    parsed_rows, _ = _audit_parse_table_rows(table_text)
-    grid, _ = _audit_expand_table_rows(parsed_rows)
-    if not grid:
-        return []
-    nonempty: List[str] = []
-    for row in grid:
-        for cell in row:
-            normalized = " ".join(cell.split())
-            if any(ch.isalnum() for ch in normalized):
-                nonempty.append(normalized)
-    return nonempty
-
-
-@lru_cache(maxsize=2048)
-def _flatten_html_table_nonempty_cells_cached(table_text: str) -> Tuple[str, ...]:
-    return tuple(_flatten_html_table_nonempty_cells(table_text))
-
-
-def _extract_sentence_shell_table_text(table_text: str) -> Optional[str]:
-    nonempty_cells = _flatten_html_table_nonempty_cells_cached(table_text)
-    if len(nonempty_cells) != 1:
-        return None
-    candidate = nonempty_cells[0].strip()
-    if len(candidate) < TABLE_SENTENCE_SHELL_MIN_CHARS:
-        return None
-    if len(re.findall(r"[^\W\d_]+", candidate, re.UNICODE)) < TABLE_SENTENCE_SHELL_MIN_WORDS:
-        return None
-    return candidate
-
-
-@lru_cache(maxsize=2048)
-def _render_table_html_for_output_cached(table_text: str, match_kind: Optional[str]) -> str:
-    sentence_shell = _extract_sentence_shell_table_text(table_text)
-    if sentence_shell and match_kind == "sentence_shell_table":
-        return sentence_shell
-
-    audit = _audit_table_html(Path("/tmp/table_fragment.md"), 0, 0, table_text)
-    if audit.markdown:
-        return audit.markdown
-    return table_text
-
-
-def _render_table_html_for_output(table_text: str, *, match_kind: Optional[str] = None) -> str:
-    return _render_table_html_for_output_cached(table_text, match_kind)
-
-
-def _replace_html_tables_with_markdown(text: str) -> str:
-    if "<table" not in text.lower():
-        return text
-    return HTML_TABLE_BLOCK_RE.sub(
-        lambda match: _render_table_html_for_output(match.group(0)),
-        text,
-    )
-
-
-def _render_table_html_for_clean(table_text: str, *, match_kind: Optional[str] = None) -> str:
-    if match_kind in {"sentence_shell_table", "empty_table_collapse", "repeated_rows"}:
-        return ""
-    return _render_table_html_for_output(table_text, match_kind=match_kind)
-
-
 def _clean_fill_for_removed_span(page_text: str, start: int, end: int) -> str:
     removed = page_text[start:end]
     prev_char = page_text[start - 1] if start > 0 else ""
@@ -421,86 +329,11 @@ def _clean_fill_for_removed_span(page_text: str, start: int, end: int) -> str:
 
 
 def _find_table_repeat_spans(page_text: str) -> List[Dict[str, Any]]:
-    if "<table" not in page_text.lower():
-        return []
-    analysis_text = _blank_existing_match_regions_preserve_layout(page_text)
-    spans: List[Dict[str, Any]] = []
-    for table_match in HTML_TABLE_BLOCK_RE.finditer(analysis_text):
-        raw_table = page_text[table_match.start() : table_match.end()]
-        sentence_shell = _extract_sentence_shell_table_text(raw_table)
-        if sentence_shell is not None:
-            spans.append(
-                {
-                    "start": table_match.start(),
-                    "end": table_match.end(),
-                    "match_types": ["table_repeat"],
-                    "category": MATCH_CATEGORY_BY_TYPE["table_repeat"],
-                    "kind": "sentence_shell_table",
-                    "word_count": len(re.findall(r"[^\W\d_]+", sentence_shell, re.UNICODE)),
-                    "char_count": len(sentence_shell),
-                }
-            )
-            continue
-
-        rows = _extract_html_table_rows_cached(raw_table)
-        if not rows:
-            continue
-
-        row_count = len(rows)
-        cell_count = sum(len(row) for row in rows)
-        nonempty_cells = sum(
-            1 for row in rows for cell in row if _table_cell_has_content(cell)
-        )
-        nonempty_ratio = (nonempty_cells / cell_count) if cell_count else 0.0
-
-        if (
-            row_count >= TABLE_EMPTY_MIN_ROWS
-            and cell_count >= TABLE_EMPTY_MIN_CELLS
-            and nonempty_ratio <= TABLE_EMPTY_MAX_NONEMPTY_RATIO
-        ):
-            spans.append(
-                {
-                    "start": table_match.start(),
-                    "end": table_match.end(),
-                    "match_types": ["table_repeat"],
-                    "category": MATCH_CATEGORY_BY_TYPE["table_repeat"],
-                    "kind": "empty_table_collapse",
-                    "row_count": row_count,
-                    "cell_count": cell_count,
-                    "nonempty_ratio": round(nonempty_ratio, 3),
-                }
-            )
-            continue
-
-        row_keys: List[Tuple[str, ...]] = []
-        for row in rows:
-            nonempty_cells_in_row = [cell for cell in row if _table_cell_has_content(cell)]
-            if len(nonempty_cells_in_row) < TABLE_REPEAT_MIN_NONEMPTY_CELLS:
-                continue
-            row_text = " ".join(nonempty_cells_in_row)
-            if len(row_text) < TABLE_REPEAT_MIN_ROW_TEXT_CHARS:
-                continue
-            row_keys.append(tuple(cell.casefold() for cell in row))
-
-        if row_count < TABLE_REPEAT_MIN_ROWS or not row_keys:
-            continue
-
-        row_counts = Counter(row_keys)
-        duplicate_rows = sum(freq - 1 for freq in row_counts.values() if freq >= 2)
-        if duplicate_rows >= TABLE_REPEAT_MIN_DUPLICATE_ROWS:
-            spans.append(
-                {
-                    "start": table_match.start(),
-                    "end": table_match.end(),
-                    "match_types": ["table_repeat"],
-                    "category": MATCH_CATEGORY_BY_TYPE["table_repeat"],
-                    "kind": "repeated_rows",
-                    "row_count": row_count,
-                    "duplicate_rows": duplicate_rows,
-                }
-            )
-
-    return spans
+    """Keep phase_clean's old call shape while table policy lives in ocr_table."""
+    return _find_table_repeat_spans_impl(
+        page_text,
+        match_category=MATCH_CATEGORY_BY_TYPE["table_repeat"],
+    )
 
 
 def _normalize_latex_repeat_with_map(text: str) -> Tuple[str, List[int]]:
@@ -1743,6 +1576,16 @@ def _render_page_with_labeled_spans(
     *,
     mode: str = "debug",
 ) -> Tuple[str, List[str], int, int, int, int, int]:
+    """Render one page from a shared span plan.
+
+    `debug` and `clean` intentionally share the exact same merged span plan.
+    The only difference is how that plan is rendered:
+    - debug wraps the matched source surface in `<match ...>` tags
+    - clean removes or rewrites the matched surface according to policy
+
+    Keeping both modes on one renderer prevents the real cleaner from drifting
+    away from the reviewed debug output.
+    """
     if mode not in {"debug", "clean"}:
         raise ValueError(f"Unsupported OCR render mode: {mode}")
     merged_spans = _merge_labeled_raw_spans(page_text, spans)
@@ -1918,6 +1761,20 @@ def _render_combined_ocr_page(
     word_window: int,
     mode: str = "debug",
 ) -> Dict[str, Any]:
+    """Analyze one OCR page in the shared ownership order.
+
+    The ordering is a policy decision, not an implementation accident:
+    1. tables first, because table shells distort every later text pass
+    2. numeric second, because numeric progressions should not be stolen by
+       generic word repetition
+    3. LaTeX and hybrid structural passes next, because they operate on more
+       specialized local structure
+    4. shared text repetition last, on the remaining visible surface only
+
+    That ownership model keeps the matcher family specific and reduces the
+    false positives that appear when a single fuzzy text matcher sees
+    everything at once.
+    """
     page_start = time.perf_counter()
 
     char_eval_start = time.perf_counter()
@@ -1928,6 +1785,8 @@ def _render_combined_ocr_page(
     table_spans = _find_table_repeat_spans(page_text)
     table_elapsed = time.perf_counter() - table_start
 
+    # Reuse progressively filtered page views so later passes do not rebuild the
+    # same blanked surfaces repeatedly.
     page_without_tables = _filter_tables_preserve_layout(page_text)
     page_without_tables_existing = _blank_existing_match_regions_preserve_layout(page_without_tables)
     page_without_tables_latex = _filter_latex_preserve_layout(page_without_tables)
@@ -2271,7 +2130,16 @@ class CleanPhaseMixin:
         *,
         required_attrs: Optional[Iterable[str]] = None,
     ):
-        """Import a Rust extension, building it with maturin if necessary."""
+        """Import a Rust extension, building it with maturin if necessary.
+
+        The load path is intentionally import-first:
+        - fast path: import an already-built extension and return immediately
+        - fallback: build in place only if the module is missing or incomplete
+
+        That keeps ordinary OCR runs from paying a `maturin develop` startup tax
+        in every fresh process while still letting a developer bootstrap a local
+        checkout without separate setup steps.
+        """
         import importlib
 
         required = tuple(required_attrs or ())
@@ -3134,6 +3002,9 @@ class CleanPhaseMixin:
                 with _combined_ocr_process_pool_warning_ctx():
                     with ProcessPoolExecutor(
                         max_workers=render_workers,
+                        # Linux workers inherit the already-imported Rust
+                        # extension cheaply under `fork`, which keeps the
+                        # document-level renderer fast without changing output.
                         mp_context=mp.get_context("fork"),
                         initializer=_init_combined_ocr_worker,
                     ) as executor:
@@ -3487,6 +3358,8 @@ class CleanPhaseMixin:
                 with _combined_ocr_process_pool_warning_ctx():
                     with ProcessPoolExecutor(
                         max_workers=render_workers,
+                        # Match the clean-mode executor policy so debug and
+                        # clean keep the same performance shape and worker init.
                         mp_context=mp.get_context("fork"),
                         initializer=_init_combined_ocr_worker,
                     ) as executor:

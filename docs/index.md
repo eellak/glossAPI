@@ -12,6 +12,7 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 - [Pipeline Overview](pipeline.md) explains each stage and the emitted artifacts.
 - [OCR & Math Enrichment](ocr_and_math_enhancement.md) covers DeepSeek OCR remediation and Docling-based enrichment.
 - [OCR Repetition Policy](ocr_repetition_policy.md) pins the default repetition thresholds for word and LaTeX cleaning.
+- [OCR Cleaning Runtime](architecture/ocr_cleaning_runtime.md) explains the shared clean/debug analyzer, ordering, and why the cleaner separates tables, numeric, LaTeX, hybrid, and text ownership.
 - [Multi-GPU & Benchmarking](multi_gpu.md) shares scaling and scheduling tips.
 
 ## Configure and debug
