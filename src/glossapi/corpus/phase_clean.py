@@ -2021,14 +2021,6 @@ def _process_combined_ocr_debug_document(
     word_match_count = 0
     doc_match_types: Set[str] = set()
     page_metric_rows: List[Dict[str, Any]] = []
-    total_page_times: List[float] = []
-    table_page_times: List[float] = []
-    numeric_page_times: List[float] = []
-    latex_page_times: List[float] = []
-    shared_page_times: List[float] = []
-    hybrid_page_times: List[float] = []
-    char_eval_times: List[float] = []
-    bad_char_ratios: List[float] = []
 
     for page_index, page in enumerate(pages, start=1):
         page_result = _render_combined_ocr_debug_page(
@@ -2056,15 +2048,6 @@ def _process_combined_ocr_debug_document(
         hybrid_elapsed = float(page_result["hybrid_seconds"])
         shared_elapsed = float(page_result["shared_repeat_seconds"])
         page_total_time = float(page_result["total_page_seconds"])
-
-        char_eval_times.append(char_eval_elapsed)
-        bad_char_ratios.append(float(page_noise_metrics.get("bad_char_ratio", 0.0)))
-        table_page_times.append(table_elapsed)
-        numeric_page_times.append(numeric_elapsed)
-        latex_page_times.append(latex_elapsed)
-        hybrid_page_times.append(hybrid_elapsed)
-        shared_page_times.append(shared_elapsed)
-        total_page_times.append(page_total_time)
 
         page_match_total = (
             page_table_count + page_numeric_count + page_word_count + page_latex_count + page_hybrid_count
@@ -2126,14 +2109,6 @@ def _process_combined_ocr_debug_document(
     return {
         "row": row,
         "page_metric_rows": page_metric_rows,
-        "total_page_times": total_page_times,
-        "table_page_times": table_page_times,
-        "numeric_page_times": numeric_page_times,
-        "latex_page_times": latex_page_times,
-        "shared_page_times": shared_page_times,
-        "hybrid_page_times": hybrid_page_times,
-        "char_eval_times": char_eval_times,
-        "bad_char_ratios": bad_char_ratios,
     }
 
 
@@ -3420,7 +3395,6 @@ class CleanPhaseMixin:
         )
 
         rows: List[Dict[str, Any]] = []
-        page_metric_rows: List[Dict[str, Any]] = []
         total_page_times: List[float] = []
         table_page_times: List[float] = []
         numeric_page_times: List[float] = []
@@ -3429,6 +3403,19 @@ class CleanPhaseMixin:
         hybrid_page_times: List[float] = []
         char_eval_times: List[float] = []
         bad_char_ratios: List[float] = []
+        def _consume_doc_result(doc_result: Dict[str, Any], *, page_metrics_handle: Any) -> None:
+            rows.append(dict(doc_result["row"]))
+            for page_row in doc_result["page_metric_rows"]:
+                page_metrics_handle.write(json.dumps(page_row, ensure_ascii=False))
+                page_metrics_handle.write("\n")
+                total_page_times.append(float(page_row["total_page_seconds"]))
+                table_page_times.append(float(page_row["table_seconds"]))
+                numeric_page_times.append(float(page_row["numeric_seconds"]))
+                latex_page_times.append(float(page_row["latex_seconds"]))
+                hybrid_page_times.append(float(page_row["hybrid_seconds"]))
+                shared_page_times.append(float(page_row["shared_repeat_seconds"]))
+                char_eval_times.append(float(page_row["char_eval_seconds"]))
+                bad_char_ratios.append(float(page_row["bad_char_ratio"]))
         if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
             jobs = [
                 (
@@ -3444,24 +3431,16 @@ class CleanPhaseMixin:
                 for source_path in source_paths
             ]
             iterator: Iterable[Dict[str, Any]]
-            with _combined_ocr_process_pool_warning_ctx():
-                with ProcessPoolExecutor(
-                    max_workers=render_workers,
-                    mp_context=mp.get_context("fork"),
-                    initializer=_init_combined_ocr_worker,
-                ) as executor:
-                    iterator = executor.map(_process_combined_ocr_debug_document_job, jobs)
-                    for doc_result in iterator:
-                        rows.append(dict(doc_result["row"]))
-                        page_metric_rows.extend(list(doc_result["page_metric_rows"]))
-                        total_page_times.extend(list(doc_result["total_page_times"]))
-                        table_page_times.extend(list(doc_result["table_page_times"]))
-                        numeric_page_times.extend(list(doc_result["numeric_page_times"]))
-                        latex_page_times.extend(list(doc_result["latex_page_times"]))
-                        hybrid_page_times.extend(list(doc_result["hybrid_page_times"]))
-                        shared_page_times.extend(list(doc_result["shared_page_times"]))
-                        char_eval_times.extend(list(doc_result["char_eval_times"]))
-                        bad_char_ratios.extend(list(doc_result["bad_char_ratios"]))
+            with page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle:
+                with _combined_ocr_process_pool_warning_ctx():
+                    with ProcessPoolExecutor(
+                        max_workers=render_workers,
+                        mp_context=mp.get_context("fork"),
+                        initializer=_init_combined_ocr_worker,
+                    ) as executor:
+                        iterator = executor.map(_process_combined_ocr_debug_document_job, jobs)
+                        for doc_result in iterator:
+                            _consume_doc_result(doc_result, page_metrics_handle=page_metrics_handle)
         else:
             def _run_debug_doc(source_path: Path) -> Dict[str, Any]:
                 return _process_combined_ocr_debug_document(
@@ -3476,26 +3455,13 @@ class CleanPhaseMixin:
                     word_window=int(word_window),
                 )
 
-            with ThreadPoolExecutor(max_workers=render_workers) as executor:
-                for doc_result in executor.map(_run_debug_doc, source_paths):
-                    rows.append(dict(doc_result["row"]))
-                    page_metric_rows.extend(list(doc_result["page_metric_rows"]))
-                    total_page_times.extend(list(doc_result["total_page_times"]))
-                    table_page_times.extend(list(doc_result["table_page_times"]))
-                    numeric_page_times.extend(list(doc_result["numeric_page_times"]))
-                    latex_page_times.extend(list(doc_result["latex_page_times"]))
-                    hybrid_page_times.extend(list(doc_result["hybrid_page_times"]))
-                    shared_page_times.extend(list(doc_result["shared_page_times"]))
-                    char_eval_times.extend(list(doc_result["char_eval_times"]))
-                    bad_char_ratios.extend(list(doc_result["bad_char_ratios"]))
+            with page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle:
+                with ThreadPoolExecutor(max_workers=render_workers) as executor:
+                    for doc_result in executor.map(_run_debug_doc, source_paths):
+                        _consume_doc_result(doc_result, page_metrics_handle=page_metrics_handle)
 
         with manifest_path.open("w", encoding="utf-8") as handle:
             for row in rows:
-                handle.write(json.dumps(row, ensure_ascii=False))
-                handle.write("\n")
-
-        with page_metrics_path.open("w", encoding="utf-8") as handle:
-            for row in page_metric_rows:
                 handle.write(json.dumps(row, ensure_ascii=False))
                 handle.write("\n")
 
