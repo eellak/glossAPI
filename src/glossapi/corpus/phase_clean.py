@@ -16,6 +16,7 @@ import sys
 import time
 import unicodedata
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
@@ -1932,6 +1933,176 @@ def _render_combined_ocr_debug_page(
     )
 
 
+def _process_combined_ocr_debug_document(
+    source_path: Path,
+    output_path: Path,
+    *,
+    noise_mod: Any,
+    min_progress_steps: int,
+    min_repeat_steps: int,
+    min_same_digit_steps: int,
+    word_rep_threshold: int,
+    word_min_period: int,
+    word_window: int,
+) -> Dict[str, Any]:
+    text = source_path.read_text(encoding="utf-8")
+    pages = text.split(PAGE_SPLIT_MARKER)
+    annotated_pages: List[str] = []
+    matched_page_count = 0
+    table_match_count = 0
+    numeric_match_count = 0
+    latex_match_count = 0
+    hybrid_match_count = 0
+    word_match_count = 0
+    doc_match_types: Set[str] = set()
+    page_metric_rows: List[Dict[str, Any]] = []
+    total_page_times: List[float] = []
+    table_page_times: List[float] = []
+    numeric_page_times: List[float] = []
+    latex_page_times: List[float] = []
+    shared_page_times: List[float] = []
+    hybrid_page_times: List[float] = []
+    char_eval_times: List[float] = []
+    bad_char_ratios: List[float] = []
+
+    for page_index, page in enumerate(pages, start=1):
+        page_result = _render_combined_ocr_debug_page(
+            page,
+            noise_mod=noise_mod,
+            min_progress_steps=int(min_progress_steps),
+            min_repeat_steps=int(min_repeat_steps),
+            min_same_digit_steps=int(min_same_digit_steps),
+            word_rep_threshold=int(word_rep_threshold),
+            word_min_period=int(word_min_period),
+            word_window=int(word_window),
+        )
+        annotated_page = str(page_result["annotated_page"])
+        page_types = list(page_result["page_types"])
+        page_numeric_count = int(page_result["page_numeric_count"])
+        page_word_count = int(page_result["page_word_count"])
+        page_latex_count = int(page_result["page_latex_count"])
+        page_table_count = int(page_result["page_table_count"])
+        page_hybrid_count = int(page_result["page_hybrid_count"])
+        page_noise_metrics = dict(page_result["page_noise_metrics"])
+        char_eval_elapsed = float(page_result["char_eval_seconds"])
+        table_elapsed = float(page_result["table_seconds"])
+        numeric_elapsed = float(page_result["numeric_seconds"])
+        latex_elapsed = float(page_result["latex_seconds"])
+        hybrid_elapsed = float(page_result["hybrid_seconds"])
+        shared_elapsed = float(page_result["shared_repeat_seconds"])
+        page_total_time = float(page_result["total_page_seconds"])
+
+        char_eval_times.append(char_eval_elapsed)
+        bad_char_ratios.append(float(page_noise_metrics.get("bad_char_ratio", 0.0)))
+        table_page_times.append(table_elapsed)
+        numeric_page_times.append(numeric_elapsed)
+        latex_page_times.append(latex_elapsed)
+        hybrid_page_times.append(hybrid_elapsed)
+        shared_page_times.append(shared_elapsed)
+        total_page_times.append(page_total_time)
+
+        page_match_total = (
+            page_table_count + page_numeric_count + page_word_count + page_latex_count + page_hybrid_count
+        )
+        if page_match_total:
+            matched_page_count += 1
+        table_match_count += page_table_count
+        numeric_match_count += page_numeric_count
+        latex_match_count += page_latex_count
+        hybrid_match_count += page_hybrid_count
+        word_match_count += page_word_count
+        doc_match_types.update(page_types)
+        annotated_pages.append(annotated_page)
+
+        page_metric_rows.append(
+            {
+                "source_path": str(source_path),
+                "source_stem": source_path.stem,
+                "page_number": page_index,
+                "page_index_in_file": page_index,
+                "total_chars": int(page_noise_metrics.get("total_chars", 0)),
+                "bad_char_count": int(page_noise_metrics.get("bad_char_count", 0)),
+                "bad_char_ratio": float(page_noise_metrics.get("bad_char_ratio", 0.0)),
+                "control_count": int(page_noise_metrics.get("control_count", 0)),
+                "private_use_count": int(page_noise_metrics.get("private_use_count", 0)),
+                "cjk_count": int(page_noise_metrics.get("cjk_count", 0)),
+                "replacement_count": int(page_noise_metrics.get("replacement_count", 0)),
+                "table_match_count": page_table_count,
+                "numeric_match_count": page_numeric_count,
+                "latex_match_count": page_latex_count,
+                "hybrid_match_count": page_hybrid_count,
+                "word_match_count": page_word_count,
+                "match_types": ",".join(page_types),
+                "char_eval_seconds": char_eval_elapsed,
+                "table_seconds": table_elapsed,
+                "numeric_seconds": numeric_elapsed,
+                "latex_seconds": latex_elapsed,
+                "hybrid_seconds": hybrid_elapsed,
+                "shared_repeat_seconds": shared_elapsed,
+                "total_page_seconds": page_total_time,
+            }
+        )
+
+    output_path.write_text(PAGE_SPLIT_MARKER.join(annotated_pages), encoding="utf-8")
+    row = {
+        "source_path": str(source_path),
+        "output_path": str(output_path),
+        "source_stem": source_path.stem,
+        "base_stem": canonical_stem(source_path.stem),
+        "page_count": len(pages),
+        "matched_page_count": matched_page_count,
+        "table_match_count": table_match_count,
+        "numeric_match_count": numeric_match_count,
+        "latex_match_count": latex_match_count,
+        "hybrid_match_count": hybrid_match_count,
+        "word_match_count": word_match_count,
+        "match_types": ",".join(sorted(doc_match_types)),
+    }
+    return {
+        "row": row,
+        "page_metric_rows": page_metric_rows,
+        "total_page_times": total_page_times,
+        "table_page_times": table_page_times,
+        "numeric_page_times": numeric_page_times,
+        "latex_page_times": latex_page_times,
+        "shared_page_times": shared_page_times,
+        "hybrid_page_times": hybrid_page_times,
+        "char_eval_times": char_eval_times,
+        "bad_char_ratios": bad_char_ratios,
+    }
+
+
+def _process_combined_ocr_clean_document(
+    source_path: Path,
+    output_path: Path,
+    *,
+    noise_mod: Any,
+    min_progress_steps: int,
+    min_repeat_steps: int,
+    min_same_digit_steps: int,
+    word_rep_threshold: int,
+    word_min_period: int,
+    word_window: int,
+) -> None:
+    text = source_path.read_text(encoding="utf-8")
+    pages = text.split(PAGE_SPLIT_MARKER)
+    cleaned_pages: List[str] = []
+    for page in pages:
+        page_result = _render_combined_ocr_page(
+            page,
+            noise_mod=noise_mod,
+            min_progress_steps=int(min_progress_steps),
+            min_repeat_steps=int(min_repeat_steps),
+            min_same_digit_steps=int(min_same_digit_steps),
+            word_rep_threshold=int(word_rep_threshold),
+            word_min_period=int(word_min_period),
+            word_window=int(word_window),
+            mode="clean",
+        )
+        cleaned_pages.append(str(page_result["annotated_page"]))
+    output_path.write_text(PAGE_SPLIT_MARKER.join(cleaned_pages), encoding="utf-8")
+
+
 def _summarize_metric(values: List[float]) -> Dict[str, float]:
     if not values:
         return {"count": 0, "p50": 0.0, "p95": 0.0, "max": 0.0}
@@ -2784,38 +2955,33 @@ class CleanPhaseMixin:
             ),
         )
         n_threads = int(num_threads or os.cpu_count() or 4)
+        render_workers = max(1, min(4, n_threads))
         md_files = sorted(input_dir.glob("*.md"))
         if write_cleaned_files:
             if self.cleaned_markdown_dir.exists():
                 shutil.rmtree(self.cleaned_markdown_dir)
             self.cleaned_markdown_dir.mkdir(parents=True, exist_ok=True)
             self.logger.info(
-                "Cleaning OCR markdown with shared combined loop into %s for %d markdown files…",
+                "Cleaning OCR markdown with shared combined loop into %s for %d markdown files (workers=%d)…",
                 self.cleaned_markdown_dir,
                 len(md_files),
+                render_workers,
             )
-            for source_path in md_files:
-                text = source_path.read_text(encoding="utf-8")
-                pages = text.split(PAGE_SPLIT_MARKER)
-                cleaned_pages: List[str] = []
-                for page in pages:
-                    page_result = _render_combined_ocr_page(
-                        page,
-                        noise_mod=noise_mod,
-                        min_progress_steps=int(min_progress_steps),
-                        min_repeat_steps=int(min_repeat_steps),
-                        min_same_digit_steps=int(min_same_digit_steps),
-                        word_rep_threshold=int(word_rep_threshold),
-                        word_min_period=int(word_min_period),
-                        word_window=int(word_window),
-                        mode="clean",
-                    )
-                    cleaned_pages.append(str(page_result["annotated_page"]))
-                output_path = self.cleaned_markdown_dir / source_path.name
-                output_path.write_text(
-                    PAGE_SPLIT_MARKER.join(cleaned_pages),
-                    encoding="utf-8",
+            def _run_clean_doc(source_path: Path) -> None:
+                _process_combined_ocr_clean_document(
+                    source_path,
+                    self.cleaned_markdown_dir / source_path.name,
+                    noise_mod=noise_mod,
+                    min_progress_steps=int(min_progress_steps),
+                    min_repeat_steps=int(min_repeat_steps),
+                    min_same_digit_steps=int(min_same_digit_steps),
+                    word_rep_threshold=int(word_rep_threshold),
+                    word_min_period=int(word_min_period),
+                    word_window=int(word_window),
                 )
+
+            with ThreadPoolExecutor(max_workers=render_workers) as executor:
+                list(executor.map(_run_clean_doc, md_files))
 
         self.logger.info(
             "Scoring OCR markdown files with glossapi_rs_noise OCR profile on %d markdown files…",
@@ -3050,6 +3216,7 @@ class CleanPhaseMixin:
         *,
         max_docs: Optional[int] = 100,
         doc_offset: int = 0,
+        doc_workers: Optional[int] = None,
         min_progress_steps: int = 10,
         min_repeat_steps: int = 8,
         min_same_digit_steps: int = 10,
@@ -3092,13 +3259,15 @@ class CleanPhaseMixin:
             source_paths = all_source_paths[doc_offset : doc_offset + int(max_docs)]
         else:
             source_paths = all_source_paths[doc_offset:]
+        render_workers = max(1, int(doc_workers or min(4, os.cpu_count() or 1)))
 
         self.logger.info(
-            "Exporting combined OCR table+numeric+latex+hybrid+word debug docs from %s into %s for %d documents (offset=%d)",
+            "Exporting combined OCR table+numeric+latex+hybrid+word debug docs from %s into %s for %d documents (offset=%d, workers=%d)",
             input_dir,
             output_dir,
             len(source_paths),
             doc_offset,
+            render_workers,
         )
 
         rows: List[Dict[str, Any]] = []
@@ -3111,113 +3280,31 @@ class CleanPhaseMixin:
         hybrid_page_times: List[float] = []
         char_eval_times: List[float] = []
         bad_char_ratios: List[float] = []
-        for source_path in source_paths:
-            text = source_path.read_text(encoding="utf-8")
-            pages = text.split(PAGE_SPLIT_MARKER)
-            annotated_pages: List[str] = []
-            matched_page_count = 0
-            table_match_count = 0
-            numeric_match_count = 0
-            latex_match_count = 0
-            hybrid_match_count = 0
-            word_match_count = 0
-            doc_match_types: Set[str] = set()
+        def _run_debug_doc(source_path: Path) -> Dict[str, Any]:
+            return _process_combined_ocr_debug_document(
+                source_path,
+                output_dir / source_path.name,
+                noise_mod=noise_mod,
+                min_progress_steps=int(min_progress_steps),
+                min_repeat_steps=int(min_repeat_steps),
+                min_same_digit_steps=int(min_same_digit_steps),
+                word_rep_threshold=int(word_rep_threshold),
+                word_min_period=int(word_min_period),
+                word_window=int(word_window),
+            )
 
-            for page_index, page in enumerate(pages, start=1):
-                page_result = _render_combined_ocr_debug_page(
-                    page,
-                    noise_mod=noise_mod,
-                    min_progress_steps=int(min_progress_steps),
-                    min_repeat_steps=int(min_repeat_steps),
-                    min_same_digit_steps=int(min_same_digit_steps),
-                    word_rep_threshold=int(word_rep_threshold),
-                    word_min_period=int(word_min_period),
-                    word_window=int(word_window),
-                )
-                annotated_page = str(page_result["annotated_page"])
-                page_types = list(page_result["page_types"])
-                page_numeric_count = int(page_result["page_numeric_count"])
-                page_word_count = int(page_result["page_word_count"])
-                page_latex_count = int(page_result["page_latex_count"])
-                page_table_count = int(page_result["page_table_count"])
-                page_hybrid_count = int(page_result["page_hybrid_count"])
-                page_noise_metrics = dict(page_result["page_noise_metrics"])
-                char_eval_elapsed = float(page_result["char_eval_seconds"])
-                table_elapsed = float(page_result["table_seconds"])
-                numeric_elapsed = float(page_result["numeric_seconds"])
-                latex_elapsed = float(page_result["latex_seconds"])
-                hybrid_elapsed = float(page_result["hybrid_seconds"])
-                shared_elapsed = float(page_result["shared_repeat_seconds"])
-                page_total_time = float(page_result["total_page_seconds"])
-
-                char_eval_times.append(char_eval_elapsed)
-                bad_char_ratios.append(float(page_noise_metrics.get("bad_char_ratio", 0.0)))
-                table_page_times.append(table_elapsed)
-                numeric_page_times.append(numeric_elapsed)
-                latex_page_times.append(latex_elapsed)
-                hybrid_page_times.append(hybrid_elapsed)
-                shared_page_times.append(shared_elapsed)
-                total_page_times.append(page_total_time)
-
-                page_match_total = (
-                    page_table_count + page_numeric_count + page_word_count + page_latex_count + page_hybrid_count
-                )
-                if page_match_total:
-                    matched_page_count += 1
-                table_match_count += page_table_count
-                numeric_match_count += page_numeric_count
-                latex_match_count += page_latex_count
-                hybrid_match_count += page_hybrid_count
-                word_match_count += page_word_count
-                doc_match_types.update(page_types)
-                annotated_pages.append(annotated_page)
-
-                page_metric_rows.append(
-                    {
-                        "source_path": str(source_path),
-                        "source_stem": source_path.stem,
-                        "page_number": page_index,
-                        "page_index_in_file": page_index,
-                        "total_chars": int(page_noise_metrics.get("total_chars", 0)),
-                        "bad_char_count": int(page_noise_metrics.get("bad_char_count", 0)),
-                        "bad_char_ratio": float(page_noise_metrics.get("bad_char_ratio", 0.0)),
-                        "control_count": int(page_noise_metrics.get("control_count", 0)),
-                        "private_use_count": int(page_noise_metrics.get("private_use_count", 0)),
-                        "cjk_count": int(page_noise_metrics.get("cjk_count", 0)),
-                        "replacement_count": int(page_noise_metrics.get("replacement_count", 0)),
-                        "table_match_count": page_table_count,
-                        "numeric_match_count": page_numeric_count,
-                        "latex_match_count": page_latex_count,
-                        "hybrid_match_count": page_hybrid_count,
-                        "word_match_count": page_word_count,
-                        "match_types": ",".join(page_types),
-                        "char_eval_seconds": char_eval_elapsed,
-                        "table_seconds": table_elapsed,
-                        "numeric_seconds": numeric_elapsed,
-                        "latex_seconds": latex_elapsed,
-                        "hybrid_seconds": hybrid_elapsed,
-                        "shared_repeat_seconds": shared_elapsed,
-                        "total_page_seconds": page_total_time,
-                    }
-                )
-
-            output_path = output_dir / source_path.name
-            output_path.write_text(PAGE_SPLIT_MARKER.join(annotated_pages), encoding="utf-8")
-            row = {
-                "source_path": str(source_path),
-                "output_path": str(output_path),
-                "source_stem": source_path.stem,
-                "base_stem": canonical_stem(source_path.stem),
-                "page_count": len(pages),
-                "matched_page_count": matched_page_count,
-                "table_match_count": table_match_count,
-                "numeric_match_count": numeric_match_count,
-                "latex_match_count": latex_match_count,
-                "hybrid_match_count": hybrid_match_count,
-                "word_match_count": word_match_count,
-                "match_types": ",".join(sorted(doc_match_types)),
-            }
-            rows.append(row)
+        with ThreadPoolExecutor(max_workers=render_workers) as executor:
+            for doc_result in executor.map(_run_debug_doc, source_paths):
+                rows.append(dict(doc_result["row"]))
+                page_metric_rows.extend(list(doc_result["page_metric_rows"]))
+                total_page_times.extend(list(doc_result["total_page_times"]))
+                table_page_times.extend(list(doc_result["table_page_times"]))
+                numeric_page_times.extend(list(doc_result["numeric_page_times"]))
+                latex_page_times.extend(list(doc_result["latex_page_times"]))
+                hybrid_page_times.extend(list(doc_result["hybrid_page_times"]))
+                shared_page_times.extend(list(doc_result["shared_page_times"]))
+                char_eval_times.extend(list(doc_result["char_eval_times"]))
+                bad_char_ratios.extend(list(doc_result["bad_char_ratios"]))
 
         with manifest_path.open("w", encoding="utf-8") as handle:
             for row in rows:
