@@ -1110,6 +1110,20 @@ def _find_hybrid_numbered_repeat_spans(
         analysis_text = _prepare_hybrid_analysis_text(page_text, blocked_spans=blocked_spans)
     else:
         analysis_text = _blank_raw_spans_preserve_layout(analysis_text, blocked_spans)
+    rust_mod = _get_word_repeat_rust_module()
+    if rust_mod is not None and hasattr(rust_mod, "find_hybrid_repeat_spans"):
+        return [
+            {
+                "start": int(item["start"]),
+                "end": int(item["end"]),
+                "match_types": list(item["match_types"]),
+                "category": str(item["category"]),
+                "kind": str(item["kind"]),
+                "item_count": int(item["item_count"]),
+                **({"cycle_len": int(item["cycle_len"])} if "cycle_len" in item else {}),
+            }
+            for item in rust_mod.find_hybrid_repeat_spans(analysis_text)
+        ]
     items = _extract_hybrid_numbered_items_from_analysis_text(analysis_text)
     spans = _find_hybrid_same_body_progression_spans(items)
     spans.extend(_find_hybrid_cycle_progression_spans(items))

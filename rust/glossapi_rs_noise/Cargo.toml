@@ -22,3 +22,4 @@ anyhow = "1"
 regex = "1.10"
 glossapi_rs_common = { path = "../glossapi_rs_common" }
 rand = { version = "0.8", features = ["std_rng"] }
+unicode-normalization = "0.1"

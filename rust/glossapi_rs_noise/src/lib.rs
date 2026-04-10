@@ -5,7 +5,8 @@ mod noise_metrics;
 use noise_metrics::{
     annotate_numeric_debug_page_internal, evaluate_page_character_noise_internal,
     export_numeric_match_debug_pages_internal, export_ocr_match_debug_pages_internal,
-    find_numeric_debug_page_spans_internal, find_word_repeat_spans_internal,
+    find_hybrid_repeat_spans_internal, find_numeric_debug_page_spans_internal,
+    find_word_repeat_spans_internal,
     score_markdown_directory_detailed_internal,
     score_markdown_directory_internal, score_markdown_directory_ocr_profile_internal,
     score_markdown_file_detailed_internal, score_markdown_file_internal,
@@ -364,6 +365,26 @@ fn find_word_repeat_spans(
 }
 
 #[pyfunction]
+fn find_hybrid_repeat_spans(py: Python<'_>, analysis_text: &str) -> PyResult<Vec<Py<PyDict>>> {
+    let spans = find_hybrid_repeat_spans_internal(analysis_text);
+    let mut out: Vec<Py<PyDict>> = Vec::with_capacity(spans.len());
+    for span in spans {
+        let item = PyDict::new(py);
+        item.set_item("start", span.start)?;
+        item.set_item("end", span.end)?;
+        item.set_item("match_types", vec!["hybrid_repeat"])?;
+        item.set_item("category", "hybrid")?;
+        item.set_item("kind", span.kind)?;
+        item.set_item("item_count", span.item_count)?;
+        if let Some(cycle_len) = span.cycle_len {
+            item.set_item("cycle_len", cycle_len)?;
+        }
+        out.push(item.into());
+    }
+    Ok(out)
+}
+
+#[pyfunction]
 fn evaluate_page_character_noise(py: Python<'_>, page: &str) -> PyResult<Py<PyDict>> {
     let metrics = evaluate_page_character_noise_internal(page);
     let item = PyDict::new(py);
@@ -389,6 +410,7 @@ fn glossapi_rs_noise(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(annotate_numeric_debug_page, m)?)?;
     m.add_function(wrap_pyfunction!(find_numeric_debug_page_spans, m)?)?;
     m.add_function(wrap_pyfunction!(find_word_repeat_spans, m)?)?;
+    m.add_function(wrap_pyfunction!(find_hybrid_repeat_spans, m)?)?;
     m.add_function(wrap_pyfunction!(evaluate_page_character_noise, m)?)?;
     Ok(())
 }
