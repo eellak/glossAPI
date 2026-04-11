@@ -11,6 +11,7 @@ from glossapi import Corpus
 from glossapi.corpus.phase_clean import (
     _find_word_repeat_spans,
     _find_word_repeat_spans_python,
+    _merge_labeled_raw_spans,
     _normalize_alnum_with_map_skip_tags,
 )
 from glossapi.scripts.table_markdown_audit import audit_table, write_clean_markdown_file
@@ -163,6 +164,28 @@ def _run_clean_ocr_latex_slot_progression_debug_export(
     debug_dir = corpus.output_dir / "ocr_latex_slot_progression_debug"
     rows = corpus.clean_ocr_latex_slot_progression_debug(debug_dir, max_docs=max_docs)
     return rows, debug_dir
+
+
+def test_merge_labeled_raw_spans_merges_same_type_with_gap_of_40() -> None:
+    text = "A" * 10 + ("x" * 40) + "B" * 10
+    spans = [
+        {"start": 0, "end": 10, "match_types": ["word_repeat"], "category": "word"},
+        {"start": 50, "end": 60, "match_types": ["word_repeat"], "category": "word"},
+    ]
+    merged = _merge_labeled_raw_spans(text, spans)
+    assert len(merged) == 1
+    assert merged[0]["start"] == 0
+    assert merged[0]["end"] == 60
+
+
+def test_merge_labeled_raw_spans_does_not_merge_same_type_with_gap_of_41() -> None:
+    text = "A" * 10 + ("x" * 41) + "B" * 10
+    spans = [
+        {"start": 0, "end": 10, "match_types": ["word_repeat"], "category": "word"},
+        {"start": 51, "end": 61, "match_types": ["word_repeat"], "category": "word"},
+    ]
+    merged = _merge_labeled_raw_spans(text, spans)
+    assert len(merged) == 2
 
 
 def test_clean_skips_latex_blocks_for_mojibake(tmp_path: Path) -> None:

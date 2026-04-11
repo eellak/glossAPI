@@ -53,7 +53,10 @@ from .corpus_utils import _maybe_import_torch
 PAGE_SPLIT_MARKER = "<--- Page Split --->"
 WORD_REPEAT_HASH_MASK = (1 << 64) - 1
 WORD_REPEAT_HASH_BASE = 1469598103934665603
-WORD_REPEAT_MERGE_NONWHITESPACE_GAP = 10
+# Neighboring same-category spans may be merged when the visible separator is
+# still small enough to read as one corrupted region rather than two separate
+# failures. This is intentionally more permissive than the older 10-char rule.
+WORD_REPEAT_MERGE_MAX_NONWHITESPACE_GAP = 40
 EXISTING_MATCH_BLOCK_RE = re.compile(r"(?is)<match\b[^>]*>.*?</match\s*>")
 LATEX_BLOCK_RE = re.compile(r"(?is)\$\$.*?\$\$")
 LATEX_BRACKET_RE = re.compile(r"(?is)\\\[.*?\\\]")
@@ -1248,6 +1251,18 @@ def _gap_has_fewer_than_n_nonwhitespace_chars(text: str, start: int, end: int, l
     return True
 
 
+def _gap_has_at_most_n_nonwhitespace_chars(text: str, start: int, end: int, limit: int) -> bool:
+    if start >= end:
+        return True
+    count = 0
+    for ch in text[start:end]:
+        if not ch.isspace():
+            count += 1
+            if count > limit:
+                return False
+    return True
+
+
 def _latex_segments_are_local(page_text: str, left: Dict[str, Any], right: Dict[str, Any]) -> bool:
     return _gap_has_fewer_than_n_nonwhitespace_chars(
         page_text,
@@ -1531,11 +1546,11 @@ def _merge_labeled_raw_spans(text: str, spans: List[Dict[str, Any]]) -> List[Dic
             not overlaps
             and previous["category"] == span["category"]
             and previous["category"] != "table"
-            and _gap_has_fewer_than_n_nonwhitespace_chars(
+            and _gap_has_at_most_n_nonwhitespace_chars(
                 text,
                 previous["end"],
                 span["start"],
-                WORD_REPEAT_MERGE_NONWHITESPACE_GAP,
+                WORD_REPEAT_MERGE_MAX_NONWHITESPACE_GAP,
             )
         )
         if overlaps or close_gap:
