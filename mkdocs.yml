@@ -22,6 +22,8 @@ nav:
       - Metadata, Artifacts, and Run Diagnostics: architecture/metadata_artifacts_and_run_diagnostics.md
       - Artifact Layout and Stage Handoffs: architecture/artifact_layout_and_stage_handoffs.md
       - Resumability, Recovery, and Retention: architecture/resumability_recovery_and_retention.md
+      - Corpus OCR Stack: architecture/corpus_ocr_stack.md
+      - DeepSeek Runner Stack: architecture/deepseek_runner_stack.md
   - Pipeline:
       - Pipeline Overview: pipeline.md
       - OCR & Math Enrichment: ocr_and_math_enhancement.md
@@ -39,6 +41,7 @@ nav:
       - Configuration: configuration.md
       - AWS Job Distribution: aws_job_distribution.md
       - DeepSeek GCP A100 Setup: operations/deepseek_gcp_a100_setup.md
+      - DeepSeek Runtime Contract: operations/deepseek_runtime_contract.md
       - DeepSeek Single-GPU Benchmarking: operations/deepseek_single_gpu_benchmarking.md
       - OCR Changes 2026-04-01 to 2026-04-03: operations/ocr_changes_2026-04-01_to_2026-04-03.md
       - OpenArchives OCR Rollout Plan: operations/openarchives_ocr_rollout_plan.md

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
-import calendar
 import json
 import logging
 import os
-import re
 import signal
 import subprocess
 import threading
@@ -29,14 +27,9 @@ from glossapi.ocr.deepseek.defaults import (
     resolve_render_dpi,
 )
 from glossapi.ocr.deepseek.launcher import _build_cli_command, _build_env, _run_cli
-from glossapi.ocr.deepseek.scheduling import (
-    SourceDocument,
-    assign_batches_to_lanes,
-    build_exact_fill_batches,
-    build_fixed_shard_slices,
-    build_whole_document_slices,
-    pack_slices_into_batches,
-)
+from glossapi.ocr.deepseek import runner_planning as _planning
+from glossapi.ocr.deepseek import runner_reassembly as _reassembly
+from glossapi.ocr.deepseek import runner_runtime_support as _runtime_support
 from glossapi.ocr.deepseek.runtime_paths import resolve_deepseek_python
 from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _join_page_outputs, _split_page_outputs, _write_outputs
 from glossapi.ocr.deepseek.work_queue import (
@@ -48,94 +41,28 @@ from glossapi.ocr.deepseek.work_queue import (
     work_queue_counts,
 )
 
-try:
-    import pypdfium2 as _pypdfium2
-except Exception:  # pragma: no cover - optional dependency
-    _pypdfium2 = None
-
 LOGGER = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_transformers.py"
 DEFAULT_VLLM_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_vllm.py"
-AUTO_VLLM_BATCH_PAGE_CAP = DEFAULT_TARGET_BATCH_PAGES
+AUTO_VLLM_BATCH_PAGE_CAP = _planning.AUTO_VLLM_BATCH_PAGE_CAP
 DEFAULT_WORKER_RESPAWN_CAP = 3
 DEFAULT_WORK_ITEM_MAX_ATTEMPTS = 2
 DEFAULT_WORK_STALE_AFTER_SEC = 900.0
 DEFAULT_WORK_HEARTBEAT_SEC = 10.0
 DEFAULT_TELEMETRY_INTERVAL_SEC = 15.0
-SHARD_STEM_RE = re.compile(r"^(?P<source_stem>.+)__p(?P<start>\d{5})-(?P<end>\d{5})$")
-REASSEMBLED_CONFIG_KEYS = (
-    "ocr_profile",
-    "attn_backend",
-    "runtime_backend",
-    "base_size",
-    "image_size",
-    "crop_mode",
-    "render_dpi",
-    "max_new_tokens",
-    "batch_size",
-    "gpu_memory_utilization",
-    "disable_fp8_kv",
-    "repair_mode",
-)
 
 
 def _page_count(pdf_path: Path) -> int:
-    if _pypdfium2 is None:
-        return 0
-    try:
-        return len(_pypdfium2.PdfDocument(str(pdf_path)))
-    except Exception:
-        return 0
+    return _planning.page_count(pdf_path)
 
 
 def _parse_device_index(device: Optional[str]) -> Optional[int]:
-    if not device:
-        return None
-    value = str(device).strip().lower()
-    if value.startswith("cuda:"):
-        suffix = value.split(":", 1)[1]
-        if suffix.isdigit():
-            return int(suffix)
-    return None
+    return _planning.parse_device_index(device)
 
 
 def _detect_visible_gpus() -> List[int]:
-    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
-    if visible:
-        parsed = [piece.strip() for piece in visible.split(",") if piece.strip()]
-        if parsed and all(piece.isdigit() for piece in parsed):
-            return [int(piece) for piece in parsed]
-    torch_mod = None
-    try:  # pragma: no cover - best effort
-        import torch as torch_mod  # type: ignore
-    except Exception:  # pragma: no cover - optional import
-        torch_mod = None
-    if torch_mod is not None:
-        try:
-            if torch_mod.cuda.is_available():
-                return list(range(torch_mod.cuda.device_count()))
-        except Exception:
-            pass
-    try:  # pragma: no cover - shell fallback
-        proc = subprocess.run(
-            ["nvidia-smi", "-L"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        devices: List[int] = []
-        if proc.returncode == 0:
-            for line in proc.stdout.splitlines():
-                if line.startswith("GPU "):
-                    prefix = line.split(":", 1)[0]
-                    idx = prefix.split()[1]
-                    if idx.isdigit():
-                        devices.append(int(idx))
-        return devices
-    except Exception:
-        return []
+    return _planning.detect_visible_gpus()
 
 
 def _resolve_lane_devices(
@@ -145,50 +72,18 @@ def _resolve_lane_devices(
     workers_per_gpu: int,
     device: Optional[str],
 ) -> List[int]:
-    if devices:
-        resolved = [int(dev) for dev in devices]
-        if resolved:
-            return resolved
-    if str(use_gpus or "single").strip().lower() == "multi":
-        resolved = _detect_visible_gpus()
-        if resolved:
-            return resolved
-    if workers_per_gpu > 1:
-        from_device = _parse_device_index(device)
-        if from_device is not None:
-            return [from_device]
-        visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
-        if visible:
-            first = visible.split(",", 1)[0].strip()
-            if first.isdigit():
-                return [int(first)]
-        return [0]
-    return []
+    return _planning.resolve_lane_devices(
+        use_gpus=use_gpus,
+        devices=devices,
+        workers_per_gpu=workers_per_gpu,
+        device=device,
+        detect_visible_gpus_fn=_detect_visible_gpus,
+        parse_device_index_fn=_parse_device_index,
+    )
 
 
 def _effective_page_count(pdf_path: Path, max_pages: Optional[int]) -> int:
-    count = _page_count(pdf_path)
-    if max_pages is not None and count > 0:
-        return min(count, int(max_pages))
-    return max(1, count)
-
-
-def _source_documents(
-    *,
-    file_list: List[str],
-    input_root: Path,
-    max_pages: Optional[int],
-) -> List[SourceDocument]:
-    documents: List[SourceDocument] = []
-    for name in file_list:
-        pdf_path = (input_root / name).resolve()
-        documents.append(
-            SourceDocument(
-                name=str(name),
-                pages=int(_effective_page_count(pdf_path, max_pages)),
-            )
-        )
-    return documents
+    return _planning.effective_page_count(pdf_path, max_pages, page_count_fn=_page_count)
 
 
 def _plan_lanes(
@@ -199,33 +94,14 @@ def _plan_lanes(
     workers_per_gpu: int,
     max_pages: Optional[int],
 ) -> List[Dict[str, Any]]:
-    lanes: List[Dict[str, Any]] = []
-    lane_id = 0
-    for visible_device in lane_devices:
-        for _ in range(max(1, int(workers_per_gpu))):
-            lanes.append(
-                {
-                    "lane_id": lane_id,
-                    "visible_device": int(visible_device),
-                    "files": [],
-                    "weight": 0,
-                }
-            )
-            lane_id += 1
-    if not lanes:
-        return []
-
-    weighted_files = []
-    for name in file_list:
-        pdf_path = (input_root / name).resolve()
-        weighted_files.append((name, _effective_page_count(pdf_path, max_pages)))
-    weighted_files.sort(key=lambda item: (-item[1], item[0]))
-
-    for name, weight in weighted_files:
-        lane = min(lanes, key=lambda item: int(item["weight"]))
-        lane["files"].append(name)
-        lane["weight"] = int(lane["weight"]) + int(weight)
-    return lanes
+    return _planning.plan_lanes(
+        file_list=file_list,
+        input_root=input_root,
+        lane_devices=lane_devices,
+        workers_per_gpu=workers_per_gpu,
+        max_pages=max_pages,
+        page_count_fn=_page_count,
+    )
 
 
 def _resolve_scheduler(
@@ -235,16 +111,12 @@ def _resolve_scheduler(
     lane_devices: List[int],
     workers_per_gpu: int,
 ) -> str:
-    scheduler_norm = str(scheduler or "auto").strip().lower()
-    if scheduler_norm not in {"auto", "whole_doc", "fixed_shard", "exact_fill"}:
-        raise ValueError("scheduler must be one of 'auto', 'whole_doc', 'fixed_shard', or 'exact_fill'")
-    if scheduler_norm != "auto":
-        return scheduler_norm
-    runtime_backend_norm = str(runtime_backend or "transformers").strip().lower()
-    lane_count = max(1, len(lane_devices)) * max(1, int(workers_per_gpu))
-    if runtime_backend_norm == "vllm" and lane_count > 1:
-        return "exact_fill"
-    return "whole_doc"
+    return _planning.resolve_scheduler(
+        scheduler=scheduler,
+        runtime_backend=runtime_backend,
+        lane_devices=lane_devices,
+        workers_per_gpu=workers_per_gpu,
+    )
 
 
 def _plan_lane_batches(
@@ -260,41 +132,19 @@ def _plan_lane_batches(
     shard_pages: int,
     shard_threshold_pages: int,
 ) -> List[Dict[str, Any]]:
-    documents = _source_documents(
+    return _planning.plan_lane_batches(
         file_list=file_list,
         input_root=input_root,
-        max_pages=max_pages,
-    )
-    scheduler_norm = _resolve_scheduler(
-        scheduler=scheduler,
-        runtime_backend=runtime_backend,
         lane_devices=lane_devices,
         workers_per_gpu=workers_per_gpu,
+        max_pages=max_pages,
+        runtime_backend=runtime_backend,
+        scheduler=scheduler,
+        target_batch_pages=target_batch_pages,
+        shard_pages=shard_pages,
+        shard_threshold_pages=shard_threshold_pages,
+        page_count_fn=_page_count,
     )
-    if scheduler_norm == "exact_fill":
-        batches = build_exact_fill_batches(
-            documents,
-            target_batch_pages=max(1, int(target_batch_pages)),
-        )
-    else:
-        if scheduler_norm == "fixed_shard":
-            slices = build_fixed_shard_slices(
-                documents,
-                shard_pages=max(1, int(shard_pages)),
-                shard_threshold_pages=max(0, int(shard_threshold_pages)),
-            )
-        else:
-            slices = build_whole_document_slices(documents)
-        batches = pack_slices_into_batches(
-            slices,
-            target_batch_pages=max(1, int(target_batch_pages)),
-        )
-    lanes = assign_batches_to_lanes(
-        batches,
-        devices=lane_devices,
-        workers_per_gpu=workers_per_gpu,
-    )
-    return [lane.to_dict() for lane in lanes if lane.batches]
 
 
 def _plan_work_batches(
@@ -310,36 +160,19 @@ def _plan_work_batches(
     shard_pages: int,
     shard_threshold_pages: int,
 ) -> List[Dict[str, Any]]:
-    documents = _source_documents(
+    return _planning.plan_work_batches(
         file_list=file_list,
         input_root=input_root,
         max_pages=max_pages,
-    )
-    scheduler_norm = _resolve_scheduler(
-        scheduler=scheduler,
         runtime_backend=runtime_backend,
+        scheduler=scheduler,
         lane_devices=lane_devices,
         workers_per_gpu=workers_per_gpu,
+        target_batch_pages=target_batch_pages,
+        shard_pages=shard_pages,
+        shard_threshold_pages=shard_threshold_pages,
+        page_count_fn=_page_count,
     )
-    if scheduler_norm == "exact_fill":
-        batches = build_exact_fill_batches(
-            documents,
-            target_batch_pages=max(1, int(target_batch_pages)),
-        )
-    else:
-        if scheduler_norm == "fixed_shard":
-            slices = build_fixed_shard_slices(
-                documents,
-                shard_pages=max(1, int(shard_pages)),
-                shard_threshold_pages=max(0, int(shard_threshold_pages)),
-            )
-        else:
-            slices = build_whole_document_slices(documents)
-        batches = pack_slices_into_batches(
-            slices,
-            target_batch_pages=max(1, int(target_batch_pages)),
-        )
-    return [batch.to_dict() for batch in batches if int(batch.pages) > 0]
 
 
 def _auto_vllm_batch_size(
@@ -349,282 +182,115 @@ def _auto_vllm_batch_size(
     input_root: Path,
     max_pages: Optional[int],
 ) -> Optional[int]:
-    if str(runtime_backend or "").strip().lower() != "vllm":
-        return None
-    total_pages = 0
-    for name in file_list:
-        pdf_path = (input_root / name).resolve()
-        total_pages += int(_effective_page_count(pdf_path, max_pages))
-    if total_pages <= 0:
-        return 1
-    return min(int(total_pages), int(AUTO_VLLM_BATCH_PAGE_CAP))
+    return _planning.auto_vllm_batch_size(
+        runtime_backend=runtime_backend,
+        file_list=file_list,
+        input_root=input_root,
+        max_pages=max_pages,
+        page_count_fn=_page_count,
+    )
 
 
 def _auto_vllm_batch_size_for_pages(*, runtime_backend: str, pages: int) -> Optional[int]:
-    if str(runtime_backend or "").strip().lower() != "vllm":
-        return None
-    if int(pages) <= 0:
-        return 1
-    return min(int(pages), int(AUTO_VLLM_BATCH_PAGE_CAP))
+    return _planning.auto_vllm_batch_size_for_pages(runtime_backend=runtime_backend, pages=pages)
 
 
 def _flatten_lane_batches(lane: Dict[str, Any]) -> Dict[str, Any]:
-    files: List[str] = []
-    page_ranges: List[str] = []
-    pages = 0
-    planned_batch_pages: List[int] = []
-    for batch in list(lane.get("batches") or []):
-        batch_pages = int(batch.get("pages", 0))
-        pages += batch_pages
-        planned_batch_pages.append(batch_pages)
-        files.extend(list(batch.get("files") or []))
-        page_ranges.extend(list(batch.get("page_ranges") or []))
-    return {
-        "files": files,
-        "page_ranges": page_ranges,
-        "pages": int(pages),
-        "planned_batch_count": len(planned_batch_pages),
-        "planned_batch_pages": planned_batch_pages,
-    }
+    return _planning.flatten_lane_batches(lane)
 
 
 def _utc_now_iso(now_ts: Optional[float] = None) -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(now_ts) if now_ts is not None else time.time()))
+    return _runtime_support.utc_now_iso(now_ts)
 
 
 def _parse_utc_iso(value: Optional[str]) -> Optional[float]:
-    if not value:
-        return None
-    try:
-        return float(calendar.timegm(time.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ")))
-    except Exception:
-        return None
+    return _runtime_support.parse_utc_iso(value)
 
 
 def _run_text_command(cmd: List[str]) -> str:
-    proc = subprocess.run(cmd, check=True, capture_output=True, text=True)  # nosec: controlled args
-    return str(proc.stdout or "").strip()
+    return _runtime_support.run_text_command(cmd, subprocess_run_fn=subprocess.run)
 
 
 def _process_group_members(pgid: int) -> List[int]:
-    proc = subprocess.run(["pgrep", "-g", str(int(pgid))], check=False, capture_output=True, text=True)  # nosec: controlled args
-    if int(proc.returncode) not in {0, 1}:
-        return []
-    members: List[int] = []
-    for line in str(proc.stdout or "").splitlines():
-        line = line.strip()
-        if line:
-            try:
-                members.append(int(line))
-            except ValueError:
-                continue
-    return members
+    return _runtime_support.process_group_members(pgid, subprocess_run_fn=subprocess.run)
 
 
 def _wait_for_process_group_exit(pgid: int, *, timeout_sec: float) -> bool:
-    deadline = time.time() + float(max(0.0, timeout_sec))
-    while time.time() <= deadline:
-        if not _process_group_members(pgid):
-            return True
-        time.sleep(0.2)
-    return not _process_group_members(pgid)
+    return _runtime_support.wait_for_process_group_exit(
+        pgid,
+        timeout_sec=timeout_sec,
+        process_group_members_fn=_process_group_members,
+    )
 
 
 def _terminate_worker_process_group(worker: Dict[str, Any]) -> bool:
-    pgid = int(worker["proc"].pid)
-    worker_id = str(worker["worker_id"])
-    for sig, grace_sec in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)):
-        try:
-            os.killpg(pgid, sig)
-        except ProcessLookupError:
-            return True
-        except Exception as exc:
-            LOGGER.warning("Failed to signal worker process group %s pgid=%s: %s", worker_id, pgid, exc)
-            return False
-        if _wait_for_process_group_exit(pgid, timeout_sec=grace_sec):
-            return True
-    LOGGER.warning("Worker process group %s pgid=%s did not exit cleanly", worker_id, pgid)
-    return False
+    return _runtime_support.terminate_worker_process_group(
+        worker,
+        killpg_fn=os.killpg,
+        wait_for_process_group_exit_fn=lambda pgid: _wait_for_process_group_exit(pgid, timeout_sec=5.0),
+        logger=LOGGER,
+        signal_mod=signal,
+    )
 
 
 def _launch_worker_process(cmd: List[str], *, fh, env: Dict[str, str]) -> subprocess.Popen:
-    return subprocess.Popen(
+    return _runtime_support.launch_worker_process(
         cmd,
-        stdout=fh,
-        stderr=subprocess.STDOUT,
+        fh=fh,
         env=env,
-        start_new_session=True,
-    )  # nosec: controlled args
+        subprocess_popen_fn=subprocess.Popen,
+    )
 
 
 def _parse_csv_table(text: str, columns: List[str]) -> List[Dict[str, str]]:
-    rows: List[Dict[str, str]] = []
-    for raw_line in str(text or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        parts = [piece.strip() for piece in line.split(",")]
-        if len(parts) < len(columns):
-            parts.extend([""] * (len(columns) - len(parts)))
-        rows.append({name: str(parts[idx]) for idx, name in enumerate(columns)})
-    return rows
+    return _runtime_support.parse_csv_table(text, columns)
 
 
 def _collect_gpu_snapshot(*, visible_devices: List[int]) -> Dict[str, Any]:
-    gpu_text = _run_text_command(
-        [
-            "nvidia-smi",
-            f"--id={','.join(str(device) for device in visible_devices)}",
-            "--query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,persistence_mode",
-            "--format=csv,noheader,nounits",
-        ]
+    return _runtime_support.collect_gpu_snapshot(
+        visible_devices=visible_devices,
+        run_text_command_fn=_run_text_command,
     )
-    process_text = _run_text_command(
-        [
-            "nvidia-smi",
-            "--query-compute-apps=gpu_uuid,pid,process_name,used_memory",
-            "--format=csv,noheader,nounits",
-        ]
-    )
-    return {
-        "captured_at": _utc_now_iso(),
-        "gpus": _parse_csv_table(
-            gpu_text,
-            [
-                "index",
-                "name",
-                "utilization_gpu",
-                "memory_used_mib",
-                "memory_total_mib",
-                "temperature_c",
-                "power_draw_w",
-                "persistence_mode",
-            ],
-        ),
-        "processes": _parse_csv_table(
-            process_text,
-            [
-                "gpu_uuid",
-                "pid",
-                "process_name",
-                "used_memory_mib",
-            ],
-        ),
-    }
 
 
 def _read_worker_runtime(runtime_path: Path) -> Dict[str, Any]:
-    try:
-        return json.loads(Path(runtime_path).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return _runtime_support.read_worker_runtime(runtime_path)
 
 
 def _write_runtime_summary(*, runtime_dir: Path, db_path: Path) -> Path:
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    workers = []
-    first_batch_started = []
-    last_batch_finished = []
-    engine_ready = []
-    for path in sorted(runtime_dir.glob("worker_*.runtime.json")):
-        data = _read_worker_runtime(path)
-        workers.append(data)
-        first_batch_started_ts = _parse_utc_iso(data.get("first_batch_started_at"))
-        last_batch_finished_ts = _parse_utc_iso(data.get("last_batch_finished_at"))
-        engine_ready_ts = _parse_utc_iso(data.get("engine_ready_at"))
-        if first_batch_started_ts is not None:
-            first_batch_started.append(first_batch_started_ts)
-        if last_batch_finished_ts is not None:
-            last_batch_finished.append(last_batch_finished_ts)
-        if engine_ready_ts is not None:
-            engine_ready.append(engine_ready_ts)
-    steady_summary = {
-        "first_batch_started_at": _utc_now_iso(min(first_batch_started)) if first_batch_started else None,
-        "last_batch_finished_at": _utc_now_iso(max(last_batch_finished)) if last_batch_finished else None,
-        "all_workers_ready_at": _utc_now_iso(max(engine_ready)) if engine_ready else None,
-        "first_batch_to_last_batch_window_sec": (
-            float(max(last_batch_finished) - min(first_batch_started))
-            if first_batch_started and last_batch_finished
-            else None
-        ),
-        "all_workers_ready_to_last_batch_window_sec": (
-            float(max(last_batch_finished) - max(engine_ready))
-            if engine_ready and last_batch_finished
-            else None
-        ),
-    }
-    summary_path = runtime_dir / "runtime_summary.json"
-    summary_path.write_text(
-        json.dumps(
-            {
-                "generated_at": _utc_now_iso(),
-                "queue_counts": work_queue_counts(db_path),
-                "work_items": list(iter_work_items(db_path)),
-                "workers": workers,
-                "steady_state": steady_summary,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
+    return _runtime_support.write_runtime_summary(
+        runtime_dir=runtime_dir,
+        db_path=db_path,
+        read_worker_runtime_fn=_read_worker_runtime,
+        parse_utc_iso_fn=_parse_utc_iso,
+        utc_now_iso_fn=_utc_now_iso,
+        work_queue_counts_fn=work_queue_counts,
+        iter_work_items_fn=iter_work_items,
     )
-    return summary_path
 
 
 def _query_persistence_mode(*, visible_devices: List[int]) -> List[Dict[str, str]]:
-    raw = _run_text_command(
-        [
-            "nvidia-smi",
-            f"--id={','.join(str(device) for device in visible_devices)}",
-            "--query-gpu=index,persistence_mode",
-            "--format=csv,noheader,nounits",
-        ]
+    return _runtime_support.query_persistence_mode(
+        visible_devices=visible_devices,
+        run_text_command_fn=_run_text_command,
     )
-    return _parse_csv_table(raw, ["index", "persistence_mode"])
 
 
 def _ensure_gpu_preflight(*, visible_devices: List[int], mode: str) -> Dict[str, Any]:
-    mode_norm = str(mode or "warn").strip().lower()
-    status = {
-        "mode": mode_norm,
-        "checked_at": _utc_now_iso(),
-        "before": _query_persistence_mode(visible_devices=visible_devices),
-        "changed": False,
-    }
-    disabled = [item for item in status["before"] if str(item.get("persistence_mode", "")).lower() != "enabled"]
-    if not disabled or mode_norm == "off":
-        status["after"] = list(status["before"])
-        return status
-    if mode_norm == "ensure":
-        try:
-            subprocess.run(["sudo", "-n", "nvidia-smi", "-pm", "1"], check=True, capture_output=True, text=True)  # nosec: controlled args
-            status["changed"] = True
-        except Exception as exc:
-            status["ensure_error"] = str(exc)
-    status["after"] = _query_persistence_mode(visible_devices=visible_devices)
-    return status
+    return _runtime_support.ensure_gpu_preflight(
+        visible_devices=visible_devices,
+        mode=mode,
+        query_persistence_mode_fn=_query_persistence_mode,
+        subprocess_run_fn=subprocess.run,
+        utc_now_iso_fn=_utc_now_iso,
+    )
 
 
 def _collect_xid_faults(*, start_utc_iso: str) -> Dict[str, Any]:
-    cmd = [
-        "journalctl",
-        "-k",
-        "--since",
-        str(start_utc_iso),
-        "--no-pager",
-    ]
-    try:
-        output = _run_text_command(cmd)
-    except Exception as exc:
-        return {
-            "supported": False,
-            "error": str(exc),
-            "faults": [],
-        }
-    faults = [line for line in output.splitlines() if "NVRM: Xid" in line]
-    return {
-        "supported": True,
-        "faults": faults,
-    }
+    return _runtime_support.collect_xid_faults(
+        start_utc_iso=start_utc_iso,
+        run_text_command_fn=_run_text_command,
+    )
 
 
 def _start_gpu_telemetry(
@@ -634,47 +300,34 @@ def _start_gpu_telemetry(
     interval_sec: float,
     stop_event: threading.Event,
 ) -> threading.Thread:
-    telemetry_path.parent.mkdir(parents=True, exist_ok=True)
-
-    def _loop() -> None:
-        while not stop_event.wait(float(max(1.0, interval_sec))):
-            try:
-                with telemetry_path.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps({"kind": "sample", **_collect_gpu_snapshot(visible_devices=visible_devices)}) + "\n")
-            except Exception as exc:  # pragma: no cover - best effort logging
-                LOGGER.warning("GPU telemetry sample failed: %s", exc)
-
-    thread = threading.Thread(target=_loop, name="deepseek-gpu-telemetry", daemon=True)
-    thread.start()
-    return thread
+    return _runtime_support.start_gpu_telemetry(
+        telemetry_path=telemetry_path,
+        visible_devices=visible_devices,
+        interval_sec=interval_sec,
+        stop_event=stop_event,
+        collect_gpu_snapshot_fn=_collect_gpu_snapshot,
+        logger=LOGGER,
+    )
 
 
 def _parse_shard_stem(stem: str) -> Optional[Dict[str, Any]]:
-    match = SHARD_STEM_RE.match(str(stem))
-    if match is None:
-        return None
-    return {
-        "source_stem": str(match.group("source_stem")),
-        "start_page": int(match.group("start")),
-        "end_page": int(match.group("end")),
-    }
+    return _reassembly.parse_shard_stem(stem)
 
 
 def _split_markdown_pages(markdown_text: str, *, expected_pages: int) -> List[str]:
-    pages = _split_page_outputs(markdown_text)
-    if len(pages) < int(expected_pages):
-        pages.extend([""] * (int(expected_pages) - len(pages)))
-    elif len(pages) > int(expected_pages):
-        pages = pages[: int(expected_pages)]
-    return pages
+    return _reassembly.split_markdown_pages(
+        markdown_text,
+        expected_pages=expected_pages,
+        split_page_outputs_fn=_split_page_outputs,
+    )
 
 
 def _archive_shard_artifact(*, out_root: Path, source_path: Path, relative_path: Path) -> None:
-    archive_path = out_root / "sidecars" / "ocr_shards" / relative_path
-    archive_path.parent.mkdir(parents=True, exist_ok=True)
-    if archive_path.exists():
-        archive_path.unlink()
-    source_path.replace(archive_path)
+    return _reassembly.archive_shard_artifact(
+        out_root=out_root,
+        source_path=source_path,
+        relative_path=relative_path,
+    )
 
 
 def _reassemble_canonical_output_for_source(
@@ -683,137 +336,27 @@ def _reassemble_canonical_output_for_source(
     pdf_path: Path,
     source_name: str,
 ) -> bool:
-    md_dir = out_root / "markdown"
-    metrics_dir = out_root / "json" / "metrics"
-    source_stem = Path(source_name).stem
-    canonical_md = md_dir / f"{source_stem}.md"
-    canonical_metrics = metrics_dir / f"{source_stem}.metrics.json"
-    if canonical_md.exists() and canonical_metrics.exists():
-        return True
-
-    shard_records: List[Dict[str, Any]] = []
-    for metrics_path in sorted(metrics_dir.glob(f"{source_stem}__p*.metrics.json")):
-        shard_stem = metrics_path.name.removesuffix(".metrics.json")
-        shard_md = md_dir / f"{shard_stem}.md"
-        if not shard_md.exists():
-            continue
-        shard_meta = _parse_shard_stem(shard_stem)
-        if shard_meta is None:
-            continue
-        metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-        start_page = int(metrics.get("source_start_page", shard_meta["start_page"]))
-        end_page = int(metrics.get("source_end_page", shard_meta["end_page"]))
-        shard_records.append(
-            {
-                "stem": shard_stem,
-                "md_path": shard_md,
-                "metrics_path": metrics_path,
-                "metrics": metrics,
-                "start_page": start_page,
-                "end_page": end_page,
-            }
-        )
-
-    if not shard_records:
-        return False
-
-    shard_records.sort(key=lambda item: (int(item["start_page"]), int(item["end_page"]), str(item["stem"])))
-    page_count = max(int(_page_count(pdf_path)), max(int(item["end_page"]) for item in shard_records))
-    merged_pages = [""] * int(page_count)
-    merged_page_metrics: List[Optional[Dict[str, Any]]] = [None] * int(page_count)
-    merged_extra_metrics: Dict[str, Any] = {}
-    repair_totals: Dict[str, int] = {}
-    render_sec_total = 0.0
-    infer_sec_total = 0.0
-    wall_time_sec_total = 0.0
-    reassembled_ranges: List[Dict[str, int]] = []
-
-    for shard in shard_records:
-        metrics = dict(shard["metrics"])
-        start_page = int(shard["start_page"])
-        end_page = int(shard["end_page"])
-        expected_pages = max(0, end_page - start_page + 1)
-        reassembled_ranges.append({"start_page": start_page, "end_page": end_page})
-
-        shard_pages = _split_markdown_pages(
-            shard["md_path"].read_text(encoding="utf-8"),
-            expected_pages=expected_pages,
-        )
-        for offset, page_text in enumerate(shard_pages):
-            merged_pages[start_page - 1 + offset] = page_text
-
-        for idx, page_metric in enumerate(list(metrics.get("page_metrics") or []), start=1):
-            absolute_page = start_page + int(page_metric.get("page_number", idx)) - 1
-            if absolute_page <= 0 or absolute_page > int(page_count):
-                continue
-            merged_metric = dict(page_metric)
-            merged_metric["page_number"] = int(absolute_page)
-            merged_page_metrics[absolute_page - 1] = merged_metric
-
-        render_sec_total += float(metrics.get("render_sec", 0.0))
-        infer_sec_total += float(metrics.get("infer_sec_total", 0.0))
-        wall_time_sec_total += float(metrics.get("wall_time_sec", 0.0))
-        for key, value in dict(metrics.get("repair_summary") or {}).items():
-            if key == "repair_mode":
-                continue
-            repair_totals[key] = int(repair_totals.get(key, 0)) + int(value)
-        for key in REASSEMBLED_CONFIG_KEYS:
-            if key in metrics and key not in merged_extra_metrics:
-                merged_extra_metrics[key] = metrics[key]
-
-    merged_extra_metrics.update(
-        {
-            "source_file": str(source_name),
-            "source_stem": str(source_stem),
-            "source_start_page": 1,
-            "source_end_page": int(page_count),
-            "reassembled_from_shards": True,
-            "reassembled_shard_count": len(shard_records),
-            "reassembled_source_ranges": reassembled_ranges,
-            "render_sec": float(render_sec_total),
-            "infer_sec_total": float(infer_sec_total),
-            "wall_time_sec": float(wall_time_sec_total),
-            "wall_time_sec_semantics": "sum_of_shard_wall_times",
-            "page_metrics": [item for item in merged_page_metrics if item is not None],
-        }
+    return _reassembly.reassemble_canonical_output_for_source(
+        out_root=out_root,
+        pdf_path=pdf_path,
+        source_name=source_name,
+        page_count_fn=_page_count,
+        split_page_outputs_fn=_split_page_outputs,
+        join_page_outputs_fn=_join_page_outputs,
+        write_outputs_fn=_write_outputs,
     )
-    if repair_totals:
-        merged_extra_metrics["repair_summary"] = {
-            "repair_mode": str(merged_extra_metrics.get("repair_mode", "unknown")),
-            **{key: int(value) for key, value in repair_totals.items()},
-        }
-
-    merged_markdown = _join_page_outputs(merged_pages) if merged_pages else "[[Blank page]]"
-    _write_outputs(
-        output_dir=out_root,
-        stem=source_stem,
-        markdown=merged_markdown,
-        page_count=int(page_count),
-        extra_metrics=merged_extra_metrics,
-    )
-    for shard in shard_records:
-        _archive_shard_artifact(
-            out_root=out_root,
-            source_path=Path(shard["md_path"]),
-            relative_path=Path("markdown") / Path(shard["md_path"]).name,
-        )
-        _archive_shard_artifact(
-            out_root=out_root,
-            source_path=Path(shard["metrics_path"]),
-            relative_path=Path("json") / "metrics" / Path(shard["metrics_path"]).name,
-        )
-    return True
 
 
 def _ensure_canonical_outputs(*, out_root: Path, pdf_root: Path, file_list: List[str]) -> None:
-    for name in file_list:
-        pdf_path = (pdf_root / name).resolve()
-        if _reassemble_canonical_output_for_source(
-            out_root=out_root,
-            pdf_path=pdf_path,
-            source_name=name,
-        ):
-            continue
+    return _reassembly.ensure_canonical_outputs(
+        out_root=out_root,
+        pdf_root=pdf_root,
+        file_list=file_list,
+        page_count_fn=_page_count,
+        split_page_outputs_fn=_split_page_outputs,
+        join_page_outputs_fn=_join_page_outputs,
+        write_outputs_fn=_write_outputs,
+    )
 
 
 

@@ -25,6 +25,12 @@ These values are now shared in code through:
 - `src/glossapi/ocr/deepseek/launcher.py`
 - `src/glossapi/ocr/deepseek/runner.py`
 
+If you need the ownership map for those files, read:
+
+- `docs/architecture/corpus_ocr_stack.md`
+- `docs/architecture/deepseek_runner_stack.md`
+- `docs/operations/deepseek_runtime_contract.md`
+
 ## Environment Requirements
 
 Use the dedicated DeepSeek uv runtime:

@@ -77,6 +77,9 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
 - Purpose:
   - rerun OCR only for documents marked bad by the cleaner
   - optionally decode formula/code regions from Docling JSON into markdown
+- Architecture boundary:
+  - corpus-side policy and parquet updates now live in `src/glossapi/corpus/ocr/`
+  - runtime execution stays in `src/glossapi/ocr/deepseek/`
 - Modes:
   - `ocr_bad`
   - `math_only`
@@ -84,6 +87,11 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
 - Main outputs:
   - refreshed `markdown/<stem>.md`
   - `json/<stem>.latex_map.jsonl` when math/code enrichment runs
+- Read this next if you are changing OCR internals:
+  - `architecture/corpus_ocr_stack.md`
+  - `architecture/deepseek_runner_stack.md`
+  - `operations/deepseek_runtime_contract.md`
+  - `operations/deepseek_single_gpu_benchmarking.md`
 
 ### 5. Section and Annotate
 

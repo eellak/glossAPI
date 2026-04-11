@@ -173,3 +173,5 @@ These pressure points are documented separately in:
 
 - [Artifact Layout and Stage Handoffs](artifact_layout_and_stage_handoffs.md)
 - [Resumability, Recovery, and Retention](resumability_recovery_and_retention.md)
+- [Corpus OCR Stack](corpus_ocr_stack.md)
+- [DeepSeek Runner Stack](deepseek_runner_stack.md)

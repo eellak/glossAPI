@@ -142,6 +142,9 @@ See the refreshed docs (`docs/index.md`) for detailed environment notes, CUDA/OR
 ## Repo Landmarks
 - `docs/code_map.md`: fast map from pipeline ideas to implementing classes and files.
 - `docs/pipeline.md`: stage contracts, key parameters, and artifact outputs.
+- `docs/architecture/corpus_ocr_stack.md`: corpus-side OCR package boundaries and call flow.
+- `docs/architecture/deepseek_runner_stack.md`: DeepSeek runner internals and safe extension points.
+- `docs/operations/deepseek_runtime_contract.md`: supported OCR runtime/defaults contract and benchmark expectations.
 - `samples/lightweight_pdf_corpus/`: 20 one-page PDFs with manifest + expected Markdown.
 - `src/glossapi/`: Corpus pipeline, cleaners, and orchestration logic.
 - `tests/test_pipeline_smoke.py`: Minimal regression entry point (uses the lightweight corpus).
