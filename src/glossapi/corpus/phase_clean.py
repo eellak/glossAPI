@@ -1955,7 +1955,21 @@ def _merge_labeled_raw_spans(text: str, spans: List[Dict[str, Any]]) -> List[Dic
     if not spans:
         return []
 
-    spans = sorted(spans, key=lambda item: (item["start"], item["end"]))
+    text_len = len(text)
+    sanitized_spans: List[Dict[str, Any]] = []
+    for span in spans:
+        start = max(0, int(span["start"]))
+        end = min(text_len, int(span["end"]))
+        if start >= text_len or end <= start:
+            continue
+        sanitized = dict(span)
+        sanitized["start"] = start
+        sanitized["end"] = end
+        sanitized_spans.append(sanitized)
+    if not sanitized_spans:
+        return []
+
+    spans = sorted(sanitized_spans, key=lambda item: (item["start"], item["end"]))
     merged: List[Dict[str, Any]] = []
     for span in spans:
         if not merged:
