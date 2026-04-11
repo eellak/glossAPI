@@ -111,6 +111,12 @@ LATEX_INTERNAL_REPEAT_COMMANDS = {
     r"\tilde",
     r"\bar",
 }
+LATEX_INTERNAL_SMALL_VOCAB_COMMANDS = {
+    r"\cdots",
+    r"\ldots",
+    r"\vdots",
+    r"\ddots",
+}
 LATEX_SHORT_REPEAT_ATOM_COMMANDS = {
     r"\Delta",
     r"\hat",
@@ -141,6 +147,9 @@ LATEX_SEGMENT_SKELETON_RUN_MIN = 4
 LATEX_SEGMENT_ALTERNATING_RUN_MIN = 6
 LATEX_SEGMENT_SLOT_PROGRESS_RUN_MIN = 4
 LATEX_SHORT_ATOM_BLOCK_REPEAT_MIN_ITEMS = 12
+LATEX_SHORT_ATOM_EXACT_SEGMENT_MIN_TOKENS = 2
+LATEX_SHORT_ATOM_CHAIN_MIN_TOKENS = 6
+LATEX_INTERNAL_SMALL_VOCAB_RUN_MIN_COMMANDS = 24
 LATEX_SHORT_SEGMENT_MAX_NORM = 32
 LATEX_LONG_SEGMENT_MIN_NORM = 24
 LATEX_INTERNAL_REPEAT_MIN_COMMAND_DUP = 3
@@ -439,10 +448,116 @@ def _latex_short_atom_block_key(raw_segment: str) -> Optional[str]:
     return None
 
 
+def _consume_latex_short_atom_script(body: str, pos: int) -> Optional[int]:
+    while pos < len(body) and body[pos] in "_^":
+        pos += 1
+        if pos >= len(body):
+            return None
+        if body[pos] == "{":
+            end = body.find("}", pos + 1)
+            if end == -1 or end == pos + 1:
+                return None
+            content = body[pos + 1 : end]
+            if any(ch.isspace() for ch in content) or "{" in content or "}" in content:
+                return None
+            pos = end + 1
+            continue
+        if body[pos] == "\\":
+            match = re.match(r"\\[A-Za-z]+", body[pos:])
+            if match is None:
+                return None
+            pos += len(match.group(0))
+            continue
+        if body[pos].isalnum():
+            pos += 1
+            continue
+        return None
+    return pos
+
+
+def _latex_short_atom_sequence_tokens(
+    raw_segment: str,
+    *,
+    allow_truncated_tail: bool = False,
+) -> Optional[List[str]]:
+    body = "".join(ch for ch in _strip_latex_outer_delimiters(raw_segment) if not ch.isspace())
+    if not body:
+        return None
+
+    base_commands = sorted(LATEX_SHORT_ATOM_BLOCK_BASE_COMMANDS, key=len, reverse=True)
+    decorator_commands = sorted(LATEX_SHORT_ATOM_BLOCK_DECORATOR_COMMANDS, key=len, reverse=True)
+    tokens: List[str] = []
+    pos = 0
+    while pos < len(body):
+        token: Optional[str] = None
+        for decorator in decorator_commands:
+            prefix = decorator + "{"
+            if not body.startswith(prefix, pos):
+                continue
+            inner_pos = pos + len(prefix)
+            base = next((candidate for candidate in base_commands if body.startswith(candidate, inner_pos)), None)
+            if base is None:
+                continue
+            end_pos = inner_pos + len(base)
+            if end_pos >= len(body) or body[end_pos] != "}":
+                continue
+            token = f"{decorator}{{{base}}}"
+            pos = end_pos + 1
+            break
+
+        if token is None:
+            base = next((candidate for candidate in base_commands if body.startswith(candidate, pos)), None)
+            if base is not None:
+                token = base
+                pos += len(base)
+
+        if token is None:
+            remaining = body[pos:]
+            if allow_truncated_tail and tokens and len(remaining) >= 4 and any(command.startswith(remaining) for command in base_commands):
+                break
+            return None
+
+        while pos < len(body) and body[pos] == "'":
+            token += "'"
+            pos += 1
+
+        script_end = _consume_latex_short_atom_script(body, pos)
+        if script_end is None:
+            return None
+        token += body[pos:script_end]
+        pos = script_end
+
+        while pos < len(body) and body[pos] == "'":
+            token += "'"
+            pos += 1
+
+        tokens.append(token)
+
+    return tokens or None
+
+
+def _is_short_latex_whitelist_segment(raw_segment: str) -> bool:
+    normalized = _normalize_latex_segment_exact(raw_segment)
+    if len(normalized) > LATEX_SHORT_SEGMENT_MAX_NORM:
+        return False
+    tokens = _latex_short_atom_sequence_tokens(raw_segment)
+    return tokens is not None and len(tokens) >= LATEX_SHORT_ATOM_EXACT_SEGMENT_MIN_TOKENS
+
+
+def _is_latex_short_atom_chain_segment(raw_segment: str) -> bool:
+    tokens = _latex_short_atom_sequence_tokens(raw_segment, allow_truncated_tail=True)
+    if tokens is None or len(tokens) < LATEX_SHORT_ATOM_CHAIN_MIN_TOKENS:
+        return False
+    counts = Counter(tokens)
+    return max(counts.values(), default=0) >= LATEX_SEGMENT_EXACT_RUN_MIN and len(counts) <= 3
+
+
 def _is_suspicious_internal_latex_repeat(raw_segment: str) -> bool:
     if not raw_segment:
         return False
     if "<sub>" in raw_segment or "<sup>" in raw_segment:
+        return True
+    if _is_latex_short_atom_chain_segment(raw_segment):
         return True
 
     command_tokens = LATEX_COMMAND_RE.findall(raw_segment)
@@ -450,6 +565,9 @@ def _is_suspicious_internal_latex_repeat(raw_segment: str) -> bool:
         return len(command_tokens) >= 8 or len(raw_segment) >= 60
 
     counts = Counter(command_tokens)
+    if set(command_tokens).issubset(LATEX_INTERNAL_SMALL_VOCAB_COMMANDS):
+        if len(command_tokens) >= LATEX_INTERNAL_SMALL_VOCAB_RUN_MIN_COMMANDS and len(counts) <= 3:
+            return True
     if any(command in LATEX_INTERNAL_REPEAT_COMMANDS for command in counts):
         return max(counts.values(), default=0) >= LATEX_INTERNAL_REPEAT_MIN_COMMAND_DUP
 
@@ -1369,21 +1487,23 @@ def _find_local_latex_segment_block_spans(
 
             run_length = end_idx - idx
             exact_run = group[idx:end_idx]
+            is_short_repeat_atom = _is_short_latex_repeat_atom(str(group[idx]["text"]))
+            is_short_whitelist_segment = _is_short_latex_whitelist_segment(str(group[idx]["text"]))
             if run_length >= LATEX_SEGMENT_EXACT_RUN_MIN and (
                 len(exact_key) >= LATEX_LONG_SEGMENT_MIN_NORM
-                or (
-                    _is_short_latex_repeat_atom(str(group[idx]["text"]))
-                    and _short_atom_run_has_clean_gaps(page_text, exact_run)
-                )
+                or (is_short_repeat_atom and _short_atom_run_has_clean_gaps(page_text, exact_run))
+                or (is_short_whitelist_segment and _short_atom_run_has_clean_gaps(page_text, exact_run))
             ):
-                labeled_spans.append(
-                    {
-                        "start": int(exact_run[0]["start"]),
-                        "end": int(exact_run[-1]["end"]),
-                        "match_types": ["latex_repeat"],
-                        "category": MATCH_CATEGORY_BY_TYPE["latex_repeat"],
-                    }
-                )
+                span = {
+                    "start": int(exact_run[0]["start"]),
+                    "end": int(exact_run[-1]["end"]),
+                    "match_types": ["latex_repeat"],
+                    "category": MATCH_CATEGORY_BY_TYPE["latex_repeat"],
+                }
+                if is_short_whitelist_segment and not is_short_repeat_atom:
+                    span["kind"] = "short_atom_segment_repeat"
+                    span["item_count"] = len(exact_run)
+                labeled_spans.append(span)
             idx = end_idx
 
         idx = 0
@@ -1556,6 +1676,115 @@ def _find_local_latex_short_atom_block_spans(
     return labeled_spans
 
 
+def _find_raw_latex_small_vocab_command_spans(page_text: str) -> List[Dict[str, Any]]:
+    labeled_spans: List[Dict[str, Any]] = []
+    command_matches = list(LATEX_COMMAND_RE.finditer(page_text))
+    run_start: Optional[int] = None
+    run_end: Optional[int] = None
+    run_commands: List[str] = []
+    previous_end = 0
+
+    def flush_run() -> None:
+        if run_start is None or run_end is None or not run_commands:
+            return
+        counts = Counter(run_commands)
+        if (
+            len(run_commands) >= LATEX_INTERNAL_SMALL_VOCAB_RUN_MIN_COMMANDS
+            and len(counts) <= 3
+            and max(counts.values(), default=0) >= LATEX_SEGMENT_EXACT_RUN_MIN
+        ):
+            labeled_spans.append(
+                {
+                    "start": run_start,
+                    "end": run_end,
+                    "match_types": ["latex_repeat"],
+                    "category": MATCH_CATEGORY_BY_TYPE["latex_repeat"],
+                    "kind": "internal_small_vocab_command_run",
+                    "item_count": len(run_commands),
+                }
+            )
+
+    for command_match in command_matches:
+        command = command_match.group(0)
+        gap = page_text[previous_end : command_match.start()]
+        can_extend_run = not any(ch.isalnum() for ch in gap)
+        if command in LATEX_INTERNAL_SMALL_VOCAB_COMMANDS and (not run_commands or can_extend_run):
+            if not run_commands:
+                run_start = command_match.start()
+            run_end = command_match.end()
+            run_commands.append(command)
+        else:
+            flush_run()
+            run_start = None
+            run_end = None
+            run_commands = []
+            if command in LATEX_INTERNAL_SMALL_VOCAB_COMMANDS:
+                run_start = command_match.start()
+                run_end = command_match.end()
+                run_commands = [command]
+        previous_end = command_match.end()
+    flush_run()
+
+    return labeled_spans
+
+
+def _find_internal_latex_small_vocab_command_spans(
+    page_text: str,
+    segments: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    labeled_spans: List[Dict[str, Any]] = []
+    for segment in segments:
+        raw_text = str(segment["text"])
+        command_matches = list(LATEX_COMMAND_RE.finditer(raw_text))
+        run_start: Optional[int] = None
+        run_end: Optional[int] = None
+        run_commands: List[str] = []
+        previous_end = 0
+
+        def flush_run() -> None:
+            if run_start is None or run_end is None or not run_commands:
+                return
+            counts = Counter(run_commands)
+            if (
+                len(run_commands) >= LATEX_INTERNAL_SMALL_VOCAB_RUN_MIN_COMMANDS
+                and len(counts) <= 3
+                and max(counts.values(), default=0) >= LATEX_SEGMENT_EXACT_RUN_MIN
+            ):
+                labeled_spans.append(
+                    {
+                        "start": int(segment["start"]) + run_start,
+                        "end": int(segment["start"]) + run_end,
+                        "match_types": ["latex_repeat"],
+                        "category": MATCH_CATEGORY_BY_TYPE["latex_repeat"],
+                        "kind": "internal_small_vocab_command_run",
+                        "item_count": len(run_commands),
+                    }
+                )
+
+        for command_match in command_matches:
+            command = command_match.group(0)
+            gap = raw_text[previous_end : command_match.start()]
+            can_extend_run = not any(ch.isalnum() for ch in gap)
+            if command in LATEX_INTERNAL_SMALL_VOCAB_COMMANDS and (not run_commands or can_extend_run):
+                if not run_commands:
+                    run_start = command_match.start()
+                run_end = command_match.end()
+                run_commands.append(command)
+            else:
+                flush_run()
+                run_start = None
+                run_end = None
+                run_commands = []
+                if command in LATEX_INTERNAL_SMALL_VOCAB_COMMANDS:
+                    run_start = command_match.start()
+                    run_end = command_match.end()
+                    run_commands = [command]
+            previous_end = command_match.end()
+        flush_run()
+
+    return labeled_spans
+
+
 def _find_local_latex_slot_progression_spans(
     page_text: str,
     segments: List[Dict[str, Any]],
@@ -1645,6 +1874,8 @@ def _find_latex_repeat_spans(
             }
         )
 
+    labeled_spans.extend(_find_raw_latex_small_vocab_command_spans(analysis_text))
+
     segments = _extract_latex_segments(analysis_text)
     for segment in segments:
         raw_text = str(segment["text"])
@@ -1654,6 +1885,7 @@ def _find_latex_repeat_spans(
 
     labeled_spans.extend(_find_local_latex_segment_block_spans(page_text, segments))
     labeled_spans.extend(_find_local_latex_short_atom_block_spans(page_text, segments))
+    labeled_spans.extend(_find_internal_latex_small_vocab_command_spans(page_text, segments))
 
     for segment in segments:
         normalized_text, raw_map = _normalize_latex_repeat_with_map(segment["text"])
@@ -1671,17 +1903,18 @@ def _find_latex_repeat_spans(
             raw_span = page_text[start:end]
             if not _is_suspicious_internal_latex_repeat(raw_span):
                 continue
-            labeled_spans.append(
-                {
-                    "start": start,
-                    "end": end,
-                    "period": span["period"],
-                    "repetitions": span["repetitions"],
-                    "tail_chars": span["tail_chars"],
-                    "match_types": ["latex_repeat"],
-                    "category": MATCH_CATEGORY_BY_TYPE["latex_repeat"],
-                }
-            )
+            labeled_span = {
+                "start": start,
+                "end": end,
+                "period": span["period"],
+                "repetitions": span["repetitions"],
+                "tail_chars": span["tail_chars"],
+                "match_types": ["latex_repeat"],
+                "category": MATCH_CATEGORY_BY_TYPE["latex_repeat"],
+            }
+            if _is_latex_short_atom_chain_segment(raw_span):
+                labeled_span["kind"] = "short_atom_chain_segment"
+            labeled_spans.append(labeled_span)
     return labeled_spans
 
 
@@ -1750,6 +1983,12 @@ def _merge_labeled_raw_spans(text: str, spans: List[Dict[str, Any]]) -> List[Dic
             previous["match_types"] = sorted(
                 set(previous.get("match_types", [])) | set(span.get("match_types", []))
             )
+            if (
+                previous.get("kind") is None
+                and span.get("kind") is not None
+                and previous.get("match_types", []) == span.get("match_types", [])
+            ):
+                previous["kind"] = span.get("kind")
             if "period" in span:
                 previous["period"] = min(previous.get("period", span["period"]), span["period"])
             if "repetitions" in span:
