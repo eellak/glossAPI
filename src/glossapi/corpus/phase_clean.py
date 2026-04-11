@@ -2013,36 +2013,48 @@ def _merge_labeled_raw_spans(text: str, spans: List[Dict[str, Any]]) -> List[Dic
     return merged
 
 
-def _render_page_with_labeled_spans(
-    page_text: str,
-    spans: List[Dict[str, Any]],
-    *,
-    mode: str = "debug",
-) -> Tuple[str, List[str], int, int, int, int, int]:
-    """Render one page from a shared span plan.
-
-    `debug` and `clean` intentionally share the exact same merged span plan.
-    The only difference is how that plan is rendered:
-    - debug wraps the matched source surface in `<match ...>` tags
-    - clean removes or rewrites the matched surface according to policy
-
-    Keeping both modes on one renderer prevents the real cleaner from drifting
-    away from the reviewed debug output.
-    """
-    if mode not in {"debug", "clean"}:
-        raise ValueError(f"Unsupported OCR render mode: {mode}")
-    merged_spans = _merge_labeled_raw_spans(page_text, spans)
-    if not merged_spans:
-        return _replace_html_tables_with_markdown(page_text), [], 0, 0, 0, 0, 0
-
-    parts: List[str] = []
-    pos = 0
+def _summarize_merged_labeled_spans(
+    merged_spans: List[Dict[str, Any]],
+) -> Tuple[List[str], int, int, int, int, int]:
     seen_types: Set[str] = set()
     numeric_count = 0
     word_count = 0
     latex_count = 0
     table_count = 0
     hybrid_count = 0
+    for span in merged_spans:
+        seen_types.update(span.get("match_types", []))
+        if span["category"] == "numeric":
+            numeric_count += 1
+        elif span["category"] == "word":
+            word_count += 1
+        elif span["category"] == "latex":
+            latex_count += 1
+        elif span["category"] == "table":
+            table_count += 1
+        elif span["category"] == "hybrid":
+            hybrid_count += 1
+    return (
+        sorted(seen_types),
+        numeric_count,
+        word_count,
+        latex_count,
+        table_count,
+        hybrid_count,
+    )
+
+
+def _render_page_from_merged_labeled_spans(
+    page_text: str,
+    merged_spans: List[Dict[str, Any]],
+    *,
+    mode: str,
+) -> str:
+    if not merged_spans:
+        return _replace_html_tables_with_markdown(page_text)
+
+    parts: List[str] = []
+    pos = 0
     for span in merged_spans:
         start = span["start"]
         end = span["end"]
@@ -2101,20 +2113,71 @@ def _render_page_with_labeled_spans(
             else:
                 parts.append(_clean_fill_for_removed_span(page_text, start, end))
         pos = end
-        seen_types.update(match_types)
-        if span["category"] == "numeric":
-            numeric_count += 1
-        elif span["category"] == "word":
-            word_count += 1
-        elif span["category"] == "latex":
-            latex_count += 1
-        elif span["category"] == "table":
-            table_count += 1
-        elif span["category"] == "hybrid":
-            hybrid_count += 1
     if pos < len(page_text):
         parts.append(_replace_html_tables_with_markdown(page_text[pos:]))
-    return "".join(parts), sorted(seen_types), numeric_count, word_count, latex_count, table_count, hybrid_count
+    return "".join(parts)
+
+
+def _render_page_with_labeled_spans_result(
+    page_text: str,
+    spans: List[Dict[str, Any]],
+    *,
+    mode: str = "debug",
+) -> Dict[str, Any]:
+    if mode not in {"debug", "clean"}:
+        raise ValueError(f"Unsupported OCR render mode: {mode}")
+    merged_spans = _merge_labeled_raw_spans(page_text, spans)
+    (
+        page_types,
+        numeric_count,
+        word_count,
+        latex_count,
+        table_count,
+        hybrid_count,
+    ) = _summarize_merged_labeled_spans(merged_spans)
+    rendered_page = _render_page_from_merged_labeled_spans(
+        page_text,
+        merged_spans,
+        mode=mode,
+    )
+    return {
+        "rendered_page": rendered_page,
+        "merged_spans": merged_spans,
+        "page_types": page_types,
+        "page_numeric_count": numeric_count,
+        "page_word_count": word_count,
+        "page_latex_count": latex_count,
+        "page_table_count": table_count,
+        "page_hybrid_count": hybrid_count,
+    }
+
+
+def _render_page_with_labeled_spans(
+    page_text: str,
+    spans: List[Dict[str, Any]],
+    *,
+    mode: str = "debug",
+) -> Tuple[str, List[str], int, int, int, int, int]:
+    """Render one page from a shared span plan.
+
+    `debug` and `clean` intentionally share the exact same merged span plan.
+    The only difference is how that plan is rendered:
+    - debug wraps the matched source surface in `<match ...>` tags
+    - clean removes or rewrites the matched surface according to policy
+
+    Keeping both modes on one renderer prevents the real cleaner from drifting
+    away from the reviewed debug output.
+    """
+    result = _render_page_with_labeled_spans_result(page_text, spans, mode=mode)
+    return (
+        str(result["rendered_page"]),
+        list(result["page_types"]),
+        int(result["page_numeric_count"]),
+        int(result["page_word_count"]),
+        int(result["page_latex_count"]),
+        int(result["page_table_count"]),
+        int(result["page_hybrid_count"]),
+    )
 
 
 def _annotate_page_with_labeled_spans(
@@ -2127,6 +2190,77 @@ def _annotate_page_with_labeled_spans(
 def _count_hybrid_matches_in_page(page_text: str, spans: List[Dict[str, Any]]) -> int:
     merged_spans = _merge_labeled_raw_spans(page_text, spans)
     return sum(1 for span in merged_spans if span.get("category") == "hybrid")
+
+
+def _utf8_prefix_byte_offsets(text: str) -> List[int]:
+    offsets = [0]
+    total = 0
+    for char in text:
+        total += len(char.encode("utf-8"))
+        offsets.append(total)
+    return offsets
+
+
+def _span_repeat_count(span: Dict[str, Any]) -> Optional[int]:
+    if span.get("repetitions") is not None:
+        return int(span["repetitions"])
+    if span.get("item_count") is not None:
+        return int(span["item_count"])
+    if span.get("duplicate_rows") is not None:
+        return int(span["duplicate_rows"])
+    return None
+
+
+def _build_match_index_rows(
+    page_text: str,
+    merged_spans: List[Dict[str, Any]],
+    *,
+    source_path: Path,
+    page_number: int,
+    debug_output_path: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    if not merged_spans:
+        return []
+    byte_offsets = _utf8_prefix_byte_offsets(page_text)
+    rows: List[Dict[str, Any]] = []
+    for match_index, span in enumerate(merged_spans, start=1):
+        start = int(span["start"])
+        end = int(span["end"])
+        match_text = page_text[start:end]
+        rows.append(
+            {
+                "match_id": f"{source_path.stem}:page:{page_number}:match:{match_index}",
+                "source_path": str(source_path),
+                "source_stem": source_path.stem,
+                "debug_output_path": None if debug_output_path is None else str(debug_output_path),
+                "page_number": int(page_number),
+                "page_index_in_file": int(page_number),
+                "match_index_in_page": int(match_index),
+                "start_char": start,
+                "end_char": end,
+                "start_byte": int(byte_offsets[start]),
+                "end_byte": int(byte_offsets[end]),
+                "match_length_chars": int(end - start),
+                "match_length_bytes": int(byte_offsets[end] - byte_offsets[start]),
+                "match_types": list(span.get("match_types", [])),
+                "match_type": ",".join(span.get("match_types", [])),
+                "category": str(span.get("category", "")),
+                "kind": span.get("kind"),
+                "repeat_count": _span_repeat_count(span),
+                "period": span.get("period"),
+                "repetitions": span.get("repetitions"),
+                "tail_chars": span.get("tail_chars"),
+                "item_count": span.get("item_count"),
+                "cycle_len": span.get("cycle_len"),
+                "row_count": span.get("row_count"),
+                "duplicate_rows": span.get("duplicate_rows"),
+                "nonempty_ratio": span.get("nonempty_ratio"),
+                "word_count": span.get("word_count"),
+                "char_count": span.get("char_count"),
+                "matched_text": match_text,
+            }
+        )
+    return rows
 
 
 def _find_labeled_shared_repeat_spans(
@@ -2192,7 +2326,7 @@ def _find_labeled_shared_repeat_spans(
     return labeled_spans
 
 
-def _render_combined_ocr_page(
+def _analyze_combined_ocr_page(
     page_text: str,
     *,
     noise_mod: Any,
@@ -2202,22 +2336,7 @@ def _render_combined_ocr_page(
     word_rep_threshold: int,
     word_min_period: int,
     word_window: int,
-    mode: str = "debug",
 ) -> Dict[str, Any]:
-    """Analyze one OCR page in the shared ownership order.
-
-    The ordering is a policy decision, not an implementation accident:
-    1. tables first, because table shells distort every later text pass
-    2. numeric second, because numeric progressions should not be stolen by
-       generic word repetition
-    3. LaTeX and hybrid structural passes next, because they operate on more
-       specialized local structure
-    4. shared text repetition last, on the remaining visible surface only
-
-    That ownership model keeps the matcher family specific and reduces the
-    false positives that appear when a single fuzzy text matcher sees
-    everything at once.
-    """
     page_start = time.perf_counter()
 
     char_eval_start = time.perf_counter()
@@ -2284,29 +2403,9 @@ def _render_combined_ocr_page(
     )
     shared_elapsed = time.perf_counter() - shared_start
 
-    (
-        annotated_page,
-        page_types,
-        page_numeric_count,
-        page_word_count,
-        page_latex_count,
-        page_table_count,
-        page_hybrid_count,
-    ) = _render_page_with_labeled_spans(
-        page_text,
-        table_spans + numeric_spans + latex_spans + hybrid_spans + shared_spans,
-        mode=mode,
-    )
-
     page_total_time = time.perf_counter() - page_start
     return {
-        "annotated_page": annotated_page,
-        "page_types": page_types,
-        "page_numeric_count": page_numeric_count,
-        "page_word_count": page_word_count,
-        "page_latex_count": page_latex_count,
-        "page_table_count": page_table_count,
-        "page_hybrid_count": page_hybrid_count,
+        "spans": table_spans + numeric_spans + latex_spans + hybrid_spans + shared_spans,
         "page_noise_metrics": page_noise_metrics,
         "char_eval_seconds": char_eval_elapsed,
         "table_seconds": table_elapsed,
@@ -2315,6 +2414,108 @@ def _render_combined_ocr_page(
         "hybrid_seconds": hybrid_elapsed,
         "shared_repeat_seconds": shared_elapsed,
         "total_page_seconds": page_total_time,
+    }
+
+
+def _render_combined_ocr_page(
+    page_text: str,
+    *,
+    noise_mod: Any,
+    min_progress_steps: int,
+    min_repeat_steps: int,
+    min_same_digit_steps: int,
+    word_rep_threshold: int,
+    word_min_period: int,
+    word_window: int,
+    mode: str = "debug",
+) -> Dict[str, Any]:
+    """Analyze one OCR page in the shared ownership order.
+
+    The ordering is a policy decision, not an implementation accident:
+    1. tables first, because table shells distort every later text pass
+    2. numeric second, because numeric progressions should not be stolen by
+       generic word repetition
+    3. LaTeX and hybrid structural passes next, because they operate on more
+       specialized local structure
+    4. shared text repetition last, on the remaining visible surface only
+
+    That ownership model keeps the matcher family specific and reduces the
+    false positives that appear when a single fuzzy text matcher sees
+    everything at once.
+    """
+    analysis = _analyze_combined_ocr_page(
+        page_text,
+        noise_mod=noise_mod,
+        min_progress_steps=min_progress_steps,
+        min_repeat_steps=min_repeat_steps,
+        min_same_digit_steps=min_same_digit_steps,
+        word_rep_threshold=word_rep_threshold,
+        word_min_period=word_min_period,
+        word_window=word_window,
+    )
+    render_result = _render_page_with_labeled_spans_result(
+        page_text,
+        list(analysis["spans"]),
+        mode=mode,
+    )
+    return {
+        "annotated_page": render_result["rendered_page"],
+        "merged_spans": render_result["merged_spans"],
+        "page_types": render_result["page_types"],
+        "page_numeric_count": render_result["page_numeric_count"],
+        "page_word_count": render_result["page_word_count"],
+        "page_latex_count": render_result["page_latex_count"],
+        "page_table_count": render_result["page_table_count"],
+        "page_hybrid_count": render_result["page_hybrid_count"],
+        **analysis,
+    }
+
+
+def _render_combined_ocr_page_modes(
+    page_text: str,
+    *,
+    noise_mod: Any,
+    min_progress_steps: int,
+    min_repeat_steps: int,
+    min_same_digit_steps: int,
+    word_rep_threshold: int,
+    word_min_period: int,
+    word_window: int,
+    modes: Iterable[str],
+) -> Dict[str, Any]:
+    analysis = _analyze_combined_ocr_page(
+        page_text,
+        noise_mod=noise_mod,
+        min_progress_steps=min_progress_steps,
+        min_repeat_steps=min_repeat_steps,
+        min_same_digit_steps=min_same_digit_steps,
+        word_rep_threshold=word_rep_threshold,
+        word_min_period=word_min_period,
+        word_window=word_window,
+    )
+    merged_spans = _merge_labeled_raw_spans(page_text, list(analysis["spans"]))
+    (
+        page_types,
+        page_numeric_count,
+        page_word_count,
+        page_latex_count,
+        page_table_count,
+        page_hybrid_count,
+    ) = _summarize_merged_labeled_spans(merged_spans)
+    rendered_pages = {
+        str(mode): _render_page_from_merged_labeled_spans(page_text, merged_spans, mode=str(mode))
+        for mode in modes
+    }
+    return {
+        "rendered_pages": rendered_pages,
+        "merged_spans": merged_spans,
+        "page_types": page_types,
+        "page_numeric_count": page_numeric_count,
+        "page_word_count": page_word_count,
+        "page_latex_count": page_latex_count,
+        "page_table_count": page_table_count,
+        "page_hybrid_count": page_hybrid_count,
+        **analysis,
     }
 
 
@@ -2342,10 +2543,11 @@ def _render_combined_ocr_debug_page(
     )
 
 
-def _process_combined_ocr_debug_document(
+def _process_combined_ocr_document(
     source_path: Path,
-    output_path: Path,
     *,
+    clean_output_path: Optional[Path],
+    debug_output_path: Optional[Path],
     noise_mod: Optional[Any],
     min_progress_steps: int,
     min_repeat_steps: int,
@@ -2353,12 +2555,15 @@ def _process_combined_ocr_debug_document(
     word_rep_threshold: int,
     word_min_period: int,
     word_window: int,
+    include_page_metrics: bool,
+    include_match_index: bool,
 ) -> Dict[str, Any]:
     if noise_mod is None:
         noise_mod = _get_combined_ocr_worker_noise_mod()
     text = source_path.read_text(encoding="utf-8")
     pages = text.split(PAGE_SPLIT_MARKER)
-    annotated_pages: List[str] = []
+    cleaned_pages: List[str] = []
+    debug_pages: List[str] = []
     matched_page_count = 0
     table_match_count = 0
     numeric_match_count = 0
@@ -2367,19 +2572,53 @@ def _process_combined_ocr_debug_document(
     word_match_count = 0
     doc_match_types: Set[str] = set()
     page_metric_rows: List[Dict[str, Any]] = []
+    match_index_rows: List[Dict[str, Any]] = []
 
     for page_index, page in enumerate(pages, start=1):
-        page_result = _render_combined_ocr_debug_page(
-            page,
-            noise_mod=noise_mod,
-            min_progress_steps=int(min_progress_steps),
-            min_repeat_steps=int(min_repeat_steps),
-            min_same_digit_steps=int(min_same_digit_steps),
-            word_rep_threshold=int(word_rep_threshold),
-            word_min_period=int(word_min_period),
-            word_window=int(word_window),
-        )
-        annotated_page = str(page_result["annotated_page"])
+        if clean_output_path is not None and debug_output_path is not None:
+            page_result = _render_combined_ocr_page_modes(
+                page,
+                noise_mod=noise_mod,
+                min_progress_steps=int(min_progress_steps),
+                min_repeat_steps=int(min_repeat_steps),
+                min_same_digit_steps=int(min_same_digit_steps),
+                word_rep_threshold=int(word_rep_threshold),
+                word_min_period=int(word_min_period),
+                word_window=int(word_window),
+                modes=("clean", "debug"),
+            )
+            cleaned_page = str(page_result["rendered_pages"]["clean"])
+            debug_page = str(page_result["rendered_pages"]["debug"])
+        elif debug_output_path is not None:
+            page_result = _render_combined_ocr_page(
+                page,
+                noise_mod=noise_mod,
+                min_progress_steps=int(min_progress_steps),
+                min_repeat_steps=int(min_repeat_steps),
+                min_same_digit_steps=int(min_same_digit_steps),
+                word_rep_threshold=int(word_rep_threshold),
+                word_min_period=int(word_min_period),
+                word_window=int(word_window),
+                mode="debug",
+            )
+            cleaned_page = ""
+            debug_page = str(page_result["annotated_page"])
+        else:
+            page_result = _render_combined_ocr_page(
+                page,
+                noise_mod=noise_mod,
+                min_progress_steps=int(min_progress_steps),
+                min_repeat_steps=int(min_repeat_steps),
+                min_same_digit_steps=int(min_same_digit_steps),
+                word_rep_threshold=int(word_rep_threshold),
+                word_min_period=int(word_min_period),
+                word_window=int(word_window),
+                mode="clean",
+            )
+            cleaned_page = str(page_result["annotated_page"])
+            debug_page = ""
+
+        merged_spans = list(page_result.get("merged_spans", []))
         page_types = list(page_result["page_types"])
         page_numeric_count = int(page_result["page_numeric_count"])
         page_word_count = int(page_result["page_word_count"])
@@ -2395,6 +2634,11 @@ def _process_combined_ocr_debug_document(
         shared_elapsed = float(page_result["shared_repeat_seconds"])
         page_total_time = float(page_result["total_page_seconds"])
 
+        if clean_output_path is not None:
+            cleaned_pages.append(cleaned_page)
+        if debug_output_path is not None:
+            debug_pages.append(debug_page)
+
         page_match_total = (
             page_table_count + page_numeric_count + page_word_count + page_latex_count + page_hybrid_count
         )
@@ -2406,41 +2650,59 @@ def _process_combined_ocr_debug_document(
         hybrid_match_count += page_hybrid_count
         word_match_count += page_word_count
         doc_match_types.update(page_types)
-        annotated_pages.append(annotated_page)
 
-        page_metric_rows.append(
-            {
-                "source_path": str(source_path),
-                "source_stem": source_path.stem,
-                "page_number": page_index,
-                "page_index_in_file": page_index,
-                "total_chars": int(page_noise_metrics.get("total_chars", 0)),
-                "bad_char_count": int(page_noise_metrics.get("bad_char_count", 0)),
-                "bad_char_ratio": float(page_noise_metrics.get("bad_char_ratio", 0.0)),
-                "control_count": int(page_noise_metrics.get("control_count", 0)),
-                "private_use_count": int(page_noise_metrics.get("private_use_count", 0)),
-                "cjk_count": int(page_noise_metrics.get("cjk_count", 0)),
-                "replacement_count": int(page_noise_metrics.get("replacement_count", 0)),
-                "table_match_count": page_table_count,
-                "numeric_match_count": page_numeric_count,
-                "latex_match_count": page_latex_count,
-                "hybrid_match_count": page_hybrid_count,
-                "word_match_count": page_word_count,
-                "match_types": ",".join(page_types),
-                "char_eval_seconds": char_eval_elapsed,
-                "table_seconds": table_elapsed,
-                "numeric_seconds": numeric_elapsed,
-                "latex_seconds": latex_elapsed,
-                "hybrid_seconds": hybrid_elapsed,
-                "shared_repeat_seconds": shared_elapsed,
-                "total_page_seconds": page_total_time,
-            }
-        )
+        if include_page_metrics:
+            page_metric_rows.append(
+                {
+                    "source_path": str(source_path),
+                    "source_stem": source_path.stem,
+                    "page_number": page_index,
+                    "page_index_in_file": page_index,
+                    "total_chars": int(page_noise_metrics.get("total_chars", 0)),
+                    "bad_char_count": int(page_noise_metrics.get("bad_char_count", 0)),
+                    "bad_char_ratio": float(page_noise_metrics.get("bad_char_ratio", 0.0)),
+                    "control_count": int(page_noise_metrics.get("control_count", 0)),
+                    "private_use_count": int(page_noise_metrics.get("private_use_count", 0)),
+                    "cjk_count": int(page_noise_metrics.get("cjk_count", 0)),
+                    "replacement_count": int(page_noise_metrics.get("replacement_count", 0)),
+                    "table_match_count": page_table_count,
+                    "numeric_match_count": page_numeric_count,
+                    "latex_match_count": page_latex_count,
+                    "hybrid_match_count": page_hybrid_count,
+                    "word_match_count": page_word_count,
+                    "match_types": ",".join(page_types),
+                    "char_eval_seconds": char_eval_elapsed,
+                    "table_seconds": table_elapsed,
+                    "numeric_seconds": numeric_elapsed,
+                    "latex_seconds": latex_elapsed,
+                    "hybrid_seconds": hybrid_elapsed,
+                    "shared_repeat_seconds": shared_elapsed,
+                    "total_page_seconds": page_total_time,
+                }
+            )
 
-    output_path.write_text(PAGE_SPLIT_MARKER.join(annotated_pages), encoding="utf-8")
+        if include_match_index:
+            match_index_rows.extend(
+                _build_match_index_rows(
+                    page,
+                    merged_spans,
+                    source_path=source_path,
+                    page_number=page_index,
+                    debug_output_path=debug_output_path,
+                )
+            )
+
+    if clean_output_path is not None:
+        clean_output_path.write_text(PAGE_SPLIT_MARKER.join(cleaned_pages), encoding="utf-8")
+    if debug_output_path is not None:
+        debug_output_path.write_text(PAGE_SPLIT_MARKER.join(debug_pages), encoding="utf-8")
+
+    output_path = debug_output_path or clean_output_path
     row = {
         "source_path": str(source_path),
-        "output_path": str(output_path),
+        "output_path": None if output_path is None else str(output_path),
+        "clean_output_path": None if clean_output_path is None else str(clean_output_path),
+        "debug_output_path": None if debug_output_path is None else str(debug_output_path),
         "source_stem": source_path.stem,
         "base_stem": canonical_stem(source_path.stem),
         "page_count": len(pages),
@@ -2450,12 +2712,42 @@ def _process_combined_ocr_debug_document(
         "latex_match_count": latex_match_count,
         "hybrid_match_count": hybrid_match_count,
         "word_match_count": word_match_count,
+        "match_count": int(len(match_index_rows)),
         "match_types": ",".join(sorted(doc_match_types)),
     }
     return {
         "row": row,
         "page_metric_rows": page_metric_rows,
+        "match_index_rows": match_index_rows,
     }
+
+
+def _process_combined_ocr_debug_document(
+    source_path: Path,
+    output_path: Path,
+    *,
+    noise_mod: Optional[Any],
+    min_progress_steps: int,
+    min_repeat_steps: int,
+    min_same_digit_steps: int,
+    word_rep_threshold: int,
+    word_min_period: int,
+    word_window: int,
+) -> Dict[str, Any]:
+    return _process_combined_ocr_document(
+        source_path,
+        clean_output_path=None,
+        debug_output_path=output_path,
+        noise_mod=noise_mod,
+        min_progress_steps=min_progress_steps,
+        min_repeat_steps=min_repeat_steps,
+        min_same_digit_steps=min_same_digit_steps,
+        word_rep_threshold=word_rep_threshold,
+        word_min_period=word_min_period,
+        word_window=word_window,
+        include_page_metrics=True,
+        include_match_index=True,
+    )
 
 
 def _process_combined_ocr_clean_document(
@@ -2470,25 +2762,20 @@ def _process_combined_ocr_clean_document(
     word_min_period: int,
     word_window: int,
 ) -> None:
-    if noise_mod is None:
-        noise_mod = _get_combined_ocr_worker_noise_mod()
-    text = source_path.read_text(encoding="utf-8")
-    pages = text.split(PAGE_SPLIT_MARKER)
-    cleaned_pages: List[str] = []
-    for page in pages:
-        page_result = _render_combined_ocr_page(
-            page,
-            noise_mod=noise_mod,
-            min_progress_steps=int(min_progress_steps),
-            min_repeat_steps=int(min_repeat_steps),
-            min_same_digit_steps=int(min_same_digit_steps),
-            word_rep_threshold=int(word_rep_threshold),
-            word_min_period=int(word_min_period),
-            word_window=int(word_window),
-            mode="clean",
-        )
-        cleaned_pages.append(str(page_result["annotated_page"]))
-    output_path.write_text(PAGE_SPLIT_MARKER.join(cleaned_pages), encoding="utf-8")
+    _process_combined_ocr_document(
+        source_path,
+        clean_output_path=output_path,
+        debug_output_path=None,
+        noise_mod=noise_mod,
+        min_progress_steps=min_progress_steps,
+        min_repeat_steps=min_repeat_steps,
+        min_same_digit_steps=min_same_digit_steps,
+        word_rep_threshold=word_rep_threshold,
+        word_min_period=word_min_period,
+        word_window=word_window,
+        include_page_metrics=False,
+        include_match_index=False,
+    )
 
 
 def _process_combined_ocr_debug_document_job(
@@ -2540,6 +2827,36 @@ def _process_combined_ocr_clean_document_job(
         word_rep_threshold=int(word_rep_threshold),
         word_min_period=int(word_min_period),
         word_window=int(word_window),
+    )
+
+
+def _process_combined_ocr_dual_document_job(
+    job: Tuple[str, str, str, int, int, int, int, int, int]
+) -> Dict[str, Any]:
+    (
+        source_path_str,
+        clean_output_path_str,
+        debug_output_path_str,
+        min_progress_steps,
+        min_repeat_steps,
+        min_same_digit_steps,
+        word_rep_threshold,
+        word_min_period,
+        word_window,
+    ) = job
+    return _process_combined_ocr_document(
+        Path(source_path_str),
+        clean_output_path=Path(clean_output_path_str),
+        debug_output_path=Path(debug_output_path_str),
+        noise_mod=None,
+        min_progress_steps=int(min_progress_steps),
+        min_repeat_steps=int(min_repeat_steps),
+        min_same_digit_steps=int(min_same_digit_steps),
+        word_rep_threshold=int(word_rep_threshold),
+        word_min_period=int(word_min_period),
+        word_window=int(word_window),
+        include_page_metrics=True,
+        include_match_index=True,
     )
 
 
@@ -3375,6 +3692,8 @@ class CleanPhaseMixin:
         *,
         min_repeat_run: int = 6,
         write_cleaned_files: bool = True,
+        write_debug_files: bool = False,
+        debug_output_dir: Union[str, Path, None] = None,
         min_progress_steps: int = 10,
         min_repeat_steps: int = 8,
         min_same_digit_steps: int = 10,
@@ -3386,10 +3705,11 @@ class CleanPhaseMixin:
 
         The OCR profile keeps the existing canonical script metrics columns
         (`percentage_greek`, `latin_percentage`, `polytonic_ratio`) and adds
-        OCR-specific noise diagnostics. When ``write_cleaned_files`` is enabled,
-        the same combined page analyzer used by the debugger is applied in
-        ``mode="clean"`` and the cleaned markdown is written to
-        ``self.cleaned_markdown_dir``.
+        OCR-specific noise diagnostics. The same combined page analyzer drives
+        both clean and debug outputs:
+        - clean mode writes pipeline-ready markdown to ``self.cleaned_markdown_dir``
+        - debug mode writes annotated markdown and a structured match index under
+          ``debug_output_dir`` (default: ``self.output_dir / "debug"``)
         """
         from glossapi.parquet_schema import ParquetSchema
 
@@ -3418,56 +3738,224 @@ class CleanPhaseMixin:
             max_workers=n_threads,
         )
         md_files = sorted(input_dir.glob("*.md"))
+        debug_dir: Optional[Path] = None
+        debug_manifest_path: Optional[Path] = None
+        debug_page_metrics_path: Optional[Path] = None
+        debug_match_index_path: Optional[Path] = None
+        debug_summary_path: Optional[Path] = None
+        if write_debug_files:
+            debug_dir = Path(debug_output_dir) if debug_output_dir is not None else (self.output_dir / "debug")
+            if debug_dir.exists():
+                shutil.rmtree(debug_dir)
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_manifest_path = debug_dir / "manifest.jsonl"
+            debug_page_metrics_path = debug_dir / "page_metrics.jsonl"
+            debug_match_index_path = debug_dir / "match_index.jsonl"
+            debug_summary_path = debug_dir / "summary.json"
+
         if write_cleaned_files:
             if self.cleaned_markdown_dir.exists():
                 shutil.rmtree(self.cleaned_markdown_dir)
             self.cleaned_markdown_dir.mkdir(parents=True, exist_ok=True)
+
+        if write_cleaned_files or write_debug_files:
+            mode_label = "clean+debug" if write_cleaned_files and write_debug_files else ("debug" if write_debug_files else "clean")
             self.logger.info(
-                "Cleaning OCR markdown with shared combined loop into %s for %d markdown files (workers=%d)…",
-                self.cleaned_markdown_dir,
+                "Running shared OCR %s loop over %d markdown files (workers=%d)…",
+                mode_label,
                 len(md_files),
                 render_workers,
             )
-            if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
-                jobs = [
-                    (
-                        str(source_path),
-                        str(self.cleaned_markdown_dir / source_path.name),
-                        int(min_progress_steps),
-                        int(min_repeat_steps),
-                        int(min_same_digit_steps),
-                        int(word_rep_threshold),
-                        int(word_min_period),
-                        int(word_window),
-                    )
-                    for source_path in md_files
-                ]
-                with _combined_ocr_process_pool_warning_ctx():
-                    with ProcessPoolExecutor(
-                        max_workers=render_workers,
-                        # Linux workers inherit the already-imported Rust
-                        # extension cheaply under `fork`, which keeps the
-                        # document-level renderer fast without changing output.
-                        mp_context=mp.get_context("fork"),
-                        initializer=_init_combined_ocr_worker,
-                    ) as executor:
-                        list(executor.map(_process_combined_ocr_clean_document_job, jobs))
-            else:
-                def _run_clean_doc(source_path: Path) -> None:
-                    _process_combined_ocr_clean_document(
-                        source_path,
-                        self.cleaned_markdown_dir / source_path.name,
-                        noise_mod=noise_mod,
-                        min_progress_steps=int(min_progress_steps),
-                        min_repeat_steps=int(min_repeat_steps),
-                        min_same_digit_steps=int(min_same_digit_steps),
-                        word_rep_threshold=int(word_rep_threshold),
-                        word_min_period=int(word_min_period),
-                        word_window=int(word_window),
-                    )
 
-                with ThreadPoolExecutor(max_workers=render_workers) as executor:
-                    list(executor.map(_run_clean_doc, md_files))
+            if write_debug_files:
+                rows: List[Dict[str, Any]] = []
+                total_page_times: List[float] = []
+                table_page_times: List[float] = []
+                numeric_page_times: List[float] = []
+                latex_page_times: List[float] = []
+                shared_page_times: List[float] = []
+                hybrid_page_times: List[float] = []
+                char_eval_times: List[float] = []
+                bad_char_ratios: List[float] = []
+
+                def _consume_debug_doc_result(
+                    doc_result: Dict[str, Any],
+                    *,
+                    page_metrics_handle: Any,
+                    match_index_handle: Any,
+                ) -> None:
+                    rows.append(dict(doc_result["row"]))
+                    for page_row in doc_result["page_metric_rows"]:
+                        page_metrics_handle.write(json.dumps(page_row, ensure_ascii=False))
+                        page_metrics_handle.write("\n")
+                        total_page_times.append(float(page_row["total_page_seconds"]))
+                        table_page_times.append(float(page_row["table_seconds"]))
+                        numeric_page_times.append(float(page_row["numeric_seconds"]))
+                        latex_page_times.append(float(page_row["latex_seconds"]))
+                        hybrid_page_times.append(float(page_row["hybrid_seconds"]))
+                        shared_page_times.append(float(page_row["shared_repeat_seconds"]))
+                        char_eval_times.append(float(page_row["char_eval_seconds"]))
+                        bad_char_ratios.append(float(page_row["bad_char_ratio"]))
+                    for match_row in doc_result["match_index_rows"]:
+                        match_index_handle.write(json.dumps(match_row, ensure_ascii=False))
+                        match_index_handle.write("\n")
+
+                if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
+                    if write_cleaned_files:
+                        jobs = [
+                            (
+                                str(source_path),
+                                str(self.cleaned_markdown_dir / source_path.name),
+                                str(debug_dir / source_path.name),
+                                int(min_progress_steps),
+                                int(min_repeat_steps),
+                                int(min_same_digit_steps),
+                                int(word_rep_threshold),
+                                int(word_min_period),
+                                int(word_window),
+                            )
+                            for source_path in md_files
+                        ]
+                    else:
+                        jobs = [
+                            (
+                                str(source_path),
+                                str(debug_dir / source_path.name),
+                                int(min_progress_steps),
+                                int(min_repeat_steps),
+                                int(min_same_digit_steps),
+                                int(word_rep_threshold),
+                                int(word_min_period),
+                                int(word_window),
+                            )
+                            for source_path in md_files
+                        ]
+                    with debug_page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, debug_match_index_path.open("w", encoding="utf-8") as match_index_handle:
+                        with _combined_ocr_process_pool_warning_ctx():
+                            with ProcessPoolExecutor(
+                                max_workers=render_workers,
+                                mp_context=mp.get_context("fork"),
+                                initializer=_init_combined_ocr_worker,
+                            ) as executor:
+                                if write_cleaned_files:
+                                    iterator = executor.map(_process_combined_ocr_dual_document_job, jobs)
+                                else:
+                                    iterator = executor.map(_process_combined_ocr_debug_document_job, jobs)
+                                for doc_result in iterator:
+                                    _consume_debug_doc_result(
+                                        doc_result,
+                                        page_metrics_handle=page_metrics_handle,
+                                        match_index_handle=match_index_handle,
+                                    )
+                else:
+                    if write_cleaned_files:
+                        def _run_dual_doc(source_path: Path) -> Dict[str, Any]:
+                            return _process_combined_ocr_document(
+                                source_path,
+                                clean_output_path=self.cleaned_markdown_dir / source_path.name,
+                                debug_output_path=debug_dir / source_path.name,
+                                noise_mod=noise_mod,
+                                min_progress_steps=int(min_progress_steps),
+                                min_repeat_steps=int(min_repeat_steps),
+                                min_same_digit_steps=int(min_same_digit_steps),
+                                word_rep_threshold=int(word_rep_threshold),
+                                word_min_period=int(word_min_period),
+                                word_window=int(word_window),
+                                include_page_metrics=True,
+                                include_match_index=True,
+                            )
+                        run_doc = _run_dual_doc
+                    else:
+                        def _run_debug_doc(source_path: Path) -> Dict[str, Any]:
+                            return _process_combined_ocr_debug_document(
+                                source_path,
+                                debug_dir / source_path.name,
+                                noise_mod=noise_mod,
+                                min_progress_steps=int(min_progress_steps),
+                                min_repeat_steps=int(min_repeat_steps),
+                                min_same_digit_steps=int(min_same_digit_steps),
+                                word_rep_threshold=int(word_rep_threshold),
+                                word_min_period=int(word_min_period),
+                                word_window=int(word_window),
+                            )
+                        run_doc = _run_debug_doc
+
+                    with debug_page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, debug_match_index_path.open("w", encoding="utf-8") as match_index_handle:
+                        with ThreadPoolExecutor(max_workers=render_workers) as executor:
+                            for doc_result in executor.map(run_doc, md_files):
+                                _consume_debug_doc_result(
+                                    doc_result,
+                                    page_metrics_handle=page_metrics_handle,
+                                    match_index_handle=match_index_handle,
+                                )
+
+                with debug_manifest_path.open("w", encoding="utf-8") as handle:
+                    for row in rows:
+                        handle.write(json.dumps(row, ensure_ascii=False))
+                        handle.write("\n")
+
+                debug_summary = {
+                    "doc_count": len(rows),
+                    "matched_doc_count": sum(1 for row in rows if int(row["matched_page_count"]) > 0),
+                    "matched_page_count": int(sum(int(row["matched_page_count"]) for row in rows)),
+                    "match_count": int(sum(int(row.get("match_count", 0)) for row in rows)),
+                    "table_match_count": int(sum(int(row["table_match_count"]) for row in rows)),
+                    "numeric_match_count": int(sum(int(row["numeric_match_count"]) for row in rows)),
+                    "latex_match_count": int(sum(int(row["latex_match_count"]) for row in rows)),
+                    "hybrid_match_count": int(sum(int(row["hybrid_match_count"]) for row in rows)),
+                    "word_match_count": int(sum(int(row["word_match_count"]) for row in rows)),
+                    "word_rep_threshold": int(word_rep_threshold),
+                    "word_min_period": int(word_min_period),
+                    "word_window": int(word_window),
+                    "total_page_seconds": _summarize_metric(total_page_times),
+                    "table_seconds": _summarize_metric(table_page_times),
+                    "numeric_seconds": _summarize_metric(numeric_page_times),
+                    "latex_seconds": _summarize_metric(latex_page_times),
+                    "hybrid_seconds": _summarize_metric(hybrid_page_times),
+                    "shared_repeat_seconds": _summarize_metric(shared_page_times),
+                    "char_eval_seconds": _summarize_metric(char_eval_times),
+                    "bad_char_ratio": _summarize_metric(bad_char_ratios),
+                }
+                debug_summary_path.write_text(json.dumps(debug_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+            else:
+                if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
+                    jobs = [
+                        (
+                            str(source_path),
+                            str(self.cleaned_markdown_dir / source_path.name),
+                            int(min_progress_steps),
+                            int(min_repeat_steps),
+                            int(min_same_digit_steps),
+                            int(word_rep_threshold),
+                            int(word_min_period),
+                            int(word_window),
+                        )
+                        for source_path in md_files
+                    ]
+                    with _combined_ocr_process_pool_warning_ctx():
+                        with ProcessPoolExecutor(
+                            max_workers=render_workers,
+                            mp_context=mp.get_context("fork"),
+                            initializer=_init_combined_ocr_worker,
+                        ) as executor:
+                            list(executor.map(_process_combined_ocr_clean_document_job, jobs))
+                else:
+                    def _run_clean_doc(source_path: Path) -> None:
+                        _process_combined_ocr_clean_document(
+                            source_path,
+                            self.cleaned_markdown_dir / source_path.name,
+                            noise_mod=noise_mod,
+                            min_progress_steps=int(min_progress_steps),
+                            min_repeat_steps=int(min_repeat_steps),
+                            min_same_digit_steps=int(min_same_digit_steps),
+                            word_rep_threshold=int(word_rep_threshold),
+                            word_min_period=int(word_min_period),
+                            word_window=int(word_window),
+                        )
+
+                    with ThreadPoolExecutor(max_workers=render_workers) as executor:
+                        list(executor.map(_run_clean_doc, md_files))
+
 
         self.logger.info(
             "Scoring OCR markdown files with glossapi_rs_noise OCR profile on %d markdown files…",
@@ -3729,6 +4217,9 @@ class CleanPhaseMixin:
         page_metrics_path = output_dir / "page_metrics.jsonl"
         if page_metrics_path.exists():
             page_metrics_path.unlink()
+        match_index_path = output_dir / "match_index.jsonl"
+        if match_index_path.exists():
+            match_index_path.unlink()
         summary_path = output_dir / "summary.json"
         if summary_path.exists():
             summary_path.unlink()
@@ -3769,7 +4260,12 @@ class CleanPhaseMixin:
         hybrid_page_times: List[float] = []
         char_eval_times: List[float] = []
         bad_char_ratios: List[float] = []
-        def _consume_doc_result(doc_result: Dict[str, Any], *, page_metrics_handle: Any) -> None:
+        def _consume_doc_result(
+            doc_result: Dict[str, Any],
+            *,
+            page_metrics_handle: Any,
+            match_index_handle: Any,
+        ) -> None:
             rows.append(dict(doc_result["row"]))
             for page_row in doc_result["page_metric_rows"]:
                 page_metrics_handle.write(json.dumps(page_row, ensure_ascii=False))
@@ -3782,6 +4278,9 @@ class CleanPhaseMixin:
                 shared_page_times.append(float(page_row["shared_repeat_seconds"]))
                 char_eval_times.append(float(page_row["char_eval_seconds"]))
                 bad_char_ratios.append(float(page_row["bad_char_ratio"]))
+            for match_row in doc_result["match_index_rows"]:
+                match_index_handle.write(json.dumps(match_row, ensure_ascii=False))
+                match_index_handle.write("\n")
         if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
             jobs = [
                 (
@@ -3797,7 +4296,7 @@ class CleanPhaseMixin:
                 for source_path in source_paths
             ]
             iterator: Iterable[Dict[str, Any]]
-            with page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle:
+            with page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, match_index_path.open("w", encoding="utf-8") as match_index_handle:
                 with _combined_ocr_process_pool_warning_ctx():
                     with ProcessPoolExecutor(
                         max_workers=render_workers,
@@ -3808,7 +4307,11 @@ class CleanPhaseMixin:
                     ) as executor:
                         iterator = executor.map(_process_combined_ocr_debug_document_job, jobs)
                         for doc_result in iterator:
-                            _consume_doc_result(doc_result, page_metrics_handle=page_metrics_handle)
+                            _consume_doc_result(
+                                doc_result,
+                                page_metrics_handle=page_metrics_handle,
+                                match_index_handle=match_index_handle,
+                            )
         else:
             def _run_debug_doc(source_path: Path) -> Dict[str, Any]:
                 return _process_combined_ocr_debug_document(
@@ -3823,10 +4326,14 @@ class CleanPhaseMixin:
                     word_window=int(word_window),
                 )
 
-            with page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle:
+            with page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, match_index_path.open("w", encoding="utf-8") as match_index_handle:
                 with ThreadPoolExecutor(max_workers=render_workers) as executor:
                     for doc_result in executor.map(_run_debug_doc, source_paths):
-                        _consume_doc_result(doc_result, page_metrics_handle=page_metrics_handle)
+                        _consume_doc_result(
+                            doc_result,
+                            page_metrics_handle=page_metrics_handle,
+                            match_index_handle=match_index_handle,
+                        )
 
         with manifest_path.open("w", encoding="utf-8") as handle:
             for row in rows:
@@ -3837,6 +4344,7 @@ class CleanPhaseMixin:
             "doc_count": len(rows),
             "matched_doc_count": sum(1 for row in rows if int(row["matched_page_count"]) > 0),
             "matched_page_count": int(sum(int(row["matched_page_count"]) for row in rows)),
+            "match_count": int(sum(int(row.get("match_count", 0)) for row in rows)),
             "table_match_count": int(sum(int(row["table_match_count"]) for row in rows)),
             "numeric_match_count": int(sum(int(row["numeric_match_count"]) for row in rows)),
             "latex_match_count": int(sum(int(row["latex_match_count"]) for row in rows)),
