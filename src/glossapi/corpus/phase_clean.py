@@ -117,11 +117,30 @@ LATEX_SHORT_REPEAT_ATOM_COMMANDS = {
     r"\tilde",
     r"\bar",
 }
+LATEX_SHORT_ATOM_BLOCK_BASE_COMMANDS = {
+    r"\alpha",
+    r"\beta",
+    r"\gamma",
+    r"\delta",
+    r"\epsilon",
+    r"\varepsilon",
+    r"\lambda",
+    r"\mu",
+    r"\nu",
+    r"\omega",
+    r"\Delta",
+}
+LATEX_SHORT_ATOM_BLOCK_DECORATOR_COMMANDS = {
+    r"\hat",
+    r"\tilde",
+    r"\bar",
+}
 LATEX_SEGMENT_LOCAL_NONWHITESPACE_GAP = 12
 LATEX_SEGMENT_EXACT_RUN_MIN = 4
 LATEX_SEGMENT_SKELETON_RUN_MIN = 4
 LATEX_SEGMENT_ALTERNATING_RUN_MIN = 6
 LATEX_SEGMENT_SLOT_PROGRESS_RUN_MIN = 4
+LATEX_SHORT_ATOM_BLOCK_REPEAT_MIN_ITEMS = 12
 LATEX_SHORT_SEGMENT_MAX_NORM = 32
 LATEX_LONG_SEGMENT_MIN_NORM = 24
 LATEX_INTERNAL_REPEAT_MIN_COMMAND_DUP = 3
@@ -371,6 +390,53 @@ def _is_short_latex_repeat_atom(raw_segment: str) -> bool:
     if not command_tokens:
         return False
     return set(command_tokens).issubset(LATEX_SHORT_REPEAT_ATOM_COMMANDS)
+
+
+def _strip_latex_outer_delimiters(raw_segment: str) -> str:
+    stripped = raw_segment.strip()
+    wrappers = (
+        (r"\(", r"\)"),
+        (r"\[", r"\]"),
+        ("$$", "$$"),
+        ("$", "$"),
+    )
+    for left, right in wrappers:
+        if stripped.startswith(left) and stripped.endswith(right) and len(stripped) >= len(left) + len(right):
+            return stripped[len(left) : len(stripped) - len(right)].strip()
+    return stripped
+
+
+def _latex_short_atom_block_key(raw_segment: str) -> Optional[str]:
+    body = "".join(ch for ch in _strip_latex_outer_delimiters(raw_segment) if not ch.isspace())
+    if not body or len(body) > LATEX_SHORT_SEGMENT_MAX_NORM:
+        return None
+
+    plain_pattern = (
+        r"^(?P<base>"
+        + "|".join(re.escape(token) for token in sorted(LATEX_SHORT_ATOM_BLOCK_BASE_COMMANDS))
+        + r")(?P<primes>\'+)?$"
+    )
+    match = re.fullmatch(plain_pattern, body)
+    if match:
+        base = match.group("base") or ""
+        primes = match.group("primes") or ""
+        return f"{base}{primes}"
+
+    decorated_pattern = (
+        r"^(?P<decorator>"
+        + "|".join(re.escape(token) for token in sorted(LATEX_SHORT_ATOM_BLOCK_DECORATOR_COMMANDS))
+        + r")\{(?P<base>"
+        + "|".join(re.escape(token) for token in sorted(LATEX_SHORT_ATOM_BLOCK_BASE_COMMANDS))
+        + r")\}(?P<primes>\'+)?$"
+    )
+    match = re.fullmatch(decorated_pattern, body)
+    if match:
+        decorator = match.group("decorator") or ""
+        base = match.group("base") or ""
+        primes = match.group("primes") or ""
+        return f"{decorator}{{{base}}}{primes}"
+
+    return None
 
 
 def _is_suspicious_internal_latex_repeat(raw_segment: str) -> bool:
@@ -1370,6 +1436,88 @@ def _find_local_latex_segment_block_spans(
     return labeled_spans
 
 
+def _find_short_atom_block_repeat_bounds(
+    atom_keys: List[str],
+) -> Optional[Tuple[int, int, int, int]]:
+    n_items = len(atom_keys)
+    if n_items < LATEX_SHORT_ATOM_BLOCK_REPEAT_MIN_ITEMS:
+        return None
+
+    best: Optional[Tuple[int, int, int, int]] = None
+    for period in range(n_items // 2, 1, -1):
+        for start in range(0, n_items - (2 * period) + 1):
+            pattern = atom_keys[start : start + period]
+            if atom_keys[start + period : start + (2 * period)] != pattern:
+                continue
+            if len(set(pattern)) < 2:
+                continue
+
+            left = start
+            while left - period >= 0 and atom_keys[left - period : left] == pattern:
+                left -= period
+
+            right = start + (2 * period)
+            while right + period <= n_items and atom_keys[right : right + period] == pattern:
+                right += period
+
+            repeated_items = right - left
+            repetitions = repeated_items // period
+            if repeated_items < LATEX_SHORT_ATOM_BLOCK_REPEAT_MIN_ITEMS or repetitions < 2:
+                continue
+
+            candidate = (left, right, period, repetitions)
+            if best is None:
+                best = candidate
+                continue
+
+            best_span_len = best[1] - best[0]
+            candidate_span_len = candidate[1] - candidate[0]
+            if candidate_span_len > best_span_len:
+                best = candidate
+                continue
+            if candidate_span_len == best_span_len and candidate[2] > best[2]:
+                best = candidate
+    return best
+
+
+def _find_local_latex_short_atom_block_spans(
+    page_text: str,
+    segments: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    labeled_spans: List[Dict[str, Any]] = []
+    for group in _latex_local_groups(page_text, segments):
+        idx = 0
+        while idx < len(group):
+            if not group[idx].get("short_atom_block_key"):
+                idx += 1
+                continue
+
+            end_idx = idx + 1
+            while end_idx < len(group) and group[end_idx].get("short_atom_block_key"):
+                end_idx += 1
+
+            run = group[idx:end_idx]
+            atom_keys = [str(item["short_atom_block_key"]) for item in run]
+            repeated_bounds = _find_short_atom_block_repeat_bounds(atom_keys)
+            if repeated_bounds is not None:
+                _, _, period_items, repetitions = repeated_bounds
+                labeled_spans.append(
+                    {
+                        "start": int(run[0]["start"]),
+                        "end": int(run[-1]["end"]),
+                        "match_types": ["latex_repeat"],
+                        "category": MATCH_CATEGORY_BY_TYPE["latex_repeat"],
+                        "kind": "short_atom_block_repeat",
+                        "item_count": len(run),
+                        "period_items": int(period_items),
+                        "repetitions": int(repetitions),
+                    }
+                )
+
+            idx = end_idx
+    return labeled_spans
+
+
 def _find_local_latex_slot_progression_spans(
     page_text: str,
     segments: List[Dict[str, Any]],
@@ -1461,10 +1609,13 @@ def _find_latex_repeat_spans(
 
     segments = _extract_latex_segments(analysis_text)
     for segment in segments:
-        segment["exact_key"] = _normalize_latex_segment_exact(str(segment["text"]))
-        segment["skeleton_key"] = _normalize_latex_segment_skeleton(str(segment["text"]))
+        raw_text = str(segment["text"])
+        segment["exact_key"] = _normalize_latex_segment_exact(raw_text)
+        segment["skeleton_key"] = _normalize_latex_segment_skeleton(raw_text)
+        segment["short_atom_block_key"] = _latex_short_atom_block_key(raw_text)
 
     labeled_spans.extend(_find_local_latex_segment_block_spans(page_text, segments))
+    labeled_spans.extend(_find_local_latex_short_atom_block_spans(page_text, segments))
 
     for segment in segments:
         normalized_text, raw_map = _normalize_latex_repeat_with_map(segment["text"])
@@ -3621,6 +3772,113 @@ class CleanPhaseMixin:
 
         self.logger.info(
             "Exported %d LaTeX slot-progression debug pages to %s",
+            len(rows),
+            output_dir,
+        )
+        return rows
+
+    def clean_ocr_latex_debug(
+        self,
+        output_dir: Union[str, Path],
+        input_dir: Union[str, Path] = None,
+        *,
+        max_docs: Optional[int] = 1000,
+        doc_offset: int = 0,
+        word_rep_threshold: int = 4,
+        word_min_period: int = 3,
+        word_window: int = 96,
+    ) -> List[Dict[str, Any]]:
+        """Export only matched pages for all LaTeX repeat classes."""
+        if input_dir is None:
+            input_dir = self.markdown_dir
+        else:
+            input_dir = Path(input_dir)
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for stale in output_dir.glob("*.md"):
+            stale.unlink()
+        manifest_path = output_dir / "manifest.jsonl"
+        if manifest_path.exists():
+            manifest_path.unlink()
+        summary_path = output_dir / "summary.json"
+        if summary_path.exists():
+            summary_path.unlink()
+
+        all_source_paths = sorted(list(Path(input_dir).glob("*.md")) + list(Path(input_dir).glob("*.txt")))
+        doc_offset = max(0, int(doc_offset))
+        if max_docs is not None:
+            source_paths = all_source_paths[doc_offset : doc_offset + int(max_docs)]
+        else:
+            source_paths = all_source_paths[doc_offset:]
+
+        self.logger.info(
+            "Exporting LaTeX debug pages from %s into %s for %d documents (offset=%d)",
+            input_dir,
+            output_dir,
+            len(source_paths),
+            doc_offset,
+        )
+
+        rows: List[Dict[str, Any]] = []
+        page_times: List[float] = []
+
+        for source_path in source_paths:
+            text = source_path.read_text(encoding="utf-8")
+            pages = text.split(PAGE_SPLIT_MARKER)
+            for page_index, page in enumerate(pages, start=1):
+                page_start = time.perf_counter()
+                latex_spans = _find_latex_repeat_spans(
+                    page,
+                    blocked_spans=[],
+                    rep_threshold=int(word_rep_threshold),
+                    min_period=int(word_min_period),
+                    window=int(word_window),
+                )
+                page_elapsed = time.perf_counter() - page_start
+                page_times.append(page_elapsed)
+                if not latex_spans:
+                    continue
+
+                annotated_page, page_types, _, _, latex_count, _, _ = _annotate_page_with_labeled_spans(
+                    page,
+                    latex_spans,
+                )
+                output_name = f"{source_path.stem}__debug_page_{page_index:05d}.md"
+                output_path = output_dir / output_name
+                output_path.write_text(annotated_page, encoding="utf-8")
+                rows.append(
+                    {
+                        "source_path": str(source_path),
+                        "output_path": str(output_path),
+                        "source_stem": source_path.stem,
+                        "base_stem": canonical_stem(source_path.stem),
+                        "page_number": page_index,
+                        "page_index_in_file": page_index,
+                        "latex_match_count": latex_count,
+                        "match_types": ",".join(page_types),
+                        "page_seconds": page_elapsed,
+                    }
+                )
+
+        with manifest_path.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False))
+                handle.write("\n")
+
+        summary = {
+            "doc_count": len(source_paths),
+            "matched_page_count": len(rows),
+            "latex_match_count": int(sum(int(row["latex_match_count"]) for row in rows)),
+            "word_rep_threshold": int(word_rep_threshold),
+            "word_min_period": int(word_min_period),
+            "word_window": int(word_window),
+            "page_seconds": _summarize_metric(page_times),
+        }
+        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        self.logger.info(
+            "Exported %d LaTeX debug pages to %s",
             len(rows),
             output_dir,
         )
