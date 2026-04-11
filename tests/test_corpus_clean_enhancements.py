@@ -166,6 +166,20 @@ def _run_clean_ocr_latex_slot_progression_debug_export(
     return rows, debug_dir
 
 
+def _run_clean_ocr_latex_debug_export(
+    corpus: Corpus,
+    markdown_text: str,
+    *,
+    stem: str = "sample",
+    max_docs: int | None = 1000,
+) -> tuple[list[dict], Path]:
+    md_path = corpus.markdown_dir / f"{stem}.md"
+    md_path.write_text(markdown_text, encoding="utf-8")
+    debug_dir = corpus.output_dir / "ocr_latex_debug"
+    rows = corpus.clean_ocr_latex_debug(debug_dir, max_docs=max_docs)
+    return rows, debug_dir
+
+
 def test_merge_labeled_raw_spans_merges_same_type_with_gap_of_40() -> None:
     text = "A" * 10 + ("x" * 40) + "B" * 10
     spans = [
@@ -1016,6 +1030,71 @@ def test_clean_ocr_numeric_word_debug_docs_ignores_diagrammatic_short_latex_symb
     assert "<match of type latex_repeat" not in content
 
 
+def test_clean_ocr_numeric_word_debug_docs_flags_latex_short_atom_block_repeat(
+    tmp_path: Path,
+) -> None:
+    corpus = _build_corpus(tmp_path)
+    warmup = [r"\( \alpha \)", r"\( \beta \)", r"\( \gamma \)", r"\( \gamma \)"]
+    block = [
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \beta \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \gamma \)",
+    ]
+    repeated = "   ".join(warmup + block + block)
+    rows, debug_dir = _run_clean_ocr_numeric_word_debug_docs(
+        corpus,
+        repeated + "\n",
+        stem="ocr-latex-short-atom-block",
+        max_docs=1,
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["latex_match_count"] >= 1
+    content = (debug_dir / "ocr-latex-short-atom-block.md").read_text(encoding="utf-8")
+    assert "<match of type latex_repeat kind=short_atom_block_repeat" in content
+    assert content.count("<match of type latex_repeat") == 1
+    assert r"\( \alpha \)   \( \beta \)   \( \gamma \)   \( \gamma \)" in content
+
+
+def test_clean_ocr_numeric_word_debug_docs_ignores_nonrepeating_short_atom_inventory(
+    tmp_path: Path,
+) -> None:
+    corpus = _build_corpus(tmp_path)
+    repeated = "   ".join(
+        [
+            r"\( \alpha \)",
+            r"\( \beta \)",
+            r"\( \gamma \)",
+            r"\( \delta \)",
+            r"\( \omega \)",
+            r"\( \mu \)",
+            r"\( \nu \)",
+            r"\( \lambda \)",
+        ]
+    )
+    rows, debug_dir = _run_clean_ocr_numeric_word_debug_docs(
+        corpus,
+        repeated + "\n",
+        stem="ocr-latex-short-atom-inventory-ignore",
+        max_docs=1,
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["latex_match_count"] == 0
+    content = (debug_dir / "ocr-latex-short-atom-inventory-ignore.md").read_text(encoding="utf-8")
+    assert "<match of type latex_repeat kind=short_atom_block_repeat" not in content
+
+
 def test_clean_ocr_numeric_word_debug_docs_grows_derivative_ladder_template_run(
     tmp_path: Path,
 ) -> None:
@@ -1316,6 +1395,49 @@ def test_clean_ocr_hybrid_debug_ignores_markup_number_progression(tmp_path: Path
     )
     assert rows == []
     assert not any(debug_dir.glob("*.md"))
+
+
+def test_clean_ocr_latex_debug_exports_short_atom_block_pages(
+    tmp_path: Path,
+) -> None:
+    corpus = _build_corpus(tmp_path)
+    warmup = [r"\( \alpha \)", r"\( \beta \)", r"\( \gamma \)", r"\( \gamma \)"]
+    block = [
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \beta \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \alpha \)",
+        r"\( \gamma \)",
+    ]
+    markdown_text = (
+        "Κανονική πρώτη σελίδα.\n"
+        "<--- Page Split --->\n"
+        + "   ".join(warmup + block + block)
+        + "\n"
+        "<--- Page Split --->\n"
+        "Κανονική τρίτη σελίδα.\n"
+    )
+    rows, debug_dir = _run_clean_ocr_latex_debug_export(
+        corpus,
+        markdown_text,
+        stem="ocr-latex-debug-short-atom",
+        max_docs=1,
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["page_number"] == 2
+    assert row["latex_match_count"] >= 1
+    content = (debug_dir / "ocr-latex-debug-short-atom__debug_page_00002.md").read_text(encoding="utf-8")
+    assert "<match of type latex_repeat kind=short_atom_block_repeat" in content
+    assert r"\( \alpha \)   \( \beta \)   \( \gamma \)   \( \gamma \)" in content
 
 
 def test_clean_ocr_latex_slot_progression_debug_flags_derivative_ladder(
