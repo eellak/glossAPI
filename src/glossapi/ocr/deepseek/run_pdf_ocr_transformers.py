@@ -18,6 +18,7 @@ SRC_ROOT = Path(__file__).resolve().parents[3]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from glossapi.ocr.deepseek.defaults import DEFAULT_MAX_NEW_TOKENS, DEFAULT_RENDER_DPI
 from glossapi.ocr.utils.cleaning import (  # noqa: E402
     apply_early_stop,
     canonicalize_markdown,
@@ -30,7 +31,6 @@ PROMPT_GROUNDED_MARKDOWN = "<image>\n<|grounding|>Convert the document to markdo
 PROMPT_PLAIN_OCR = "<image>\nExtract the text from the document page in reading order."
 PAGE_SPLIT = "\n<--- Page Split --->\n"
 PAGE_SPLIT_RE = re.compile(r"(?:^|\n)(?:<!-- page:\d+ -->\n)?<--- Page Split --->\n?")
-DEFAULT_MAX_NEW_TOKENS = 2048
 
 
 def _profile_defaults(profile: str) -> dict:
@@ -64,7 +64,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--attn-backend", default="auto", choices=["auto", "flash_attention_2", "sdpa", "eager"])
     parser.add_argument("--base-size", type=int, default=None)
     parser.add_argument("--image-size", type=int, default=None)
-    parser.add_argument("--render-dpi", type=int, default=144)
+    parser.add_argument("--render-dpi", type=int, default=DEFAULT_RENDER_DPI)
     parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
     parser.add_argument("--repetition-penalty", type=float, default=None)
     parser.add_argument("--no-repeat-ngram-size", type=int, default=None)

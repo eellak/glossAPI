@@ -18,8 +18,13 @@ SRC_ROOT = Path(__file__).resolve().parents[3]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from glossapi.ocr.deepseek.run_pdf_ocr_transformers import (
+from glossapi.ocr.deepseek.defaults import (
+    DEFAULT_GPU_MEMORY_UTILIZATION,
     DEFAULT_MAX_NEW_TOKENS,
+    DEFAULT_RENDER_DPI,
+    DEFAULT_REPAIR_MODE,
+)
+from glossapi.ocr.deepseek.run_pdf_ocr_transformers import (
     _join_page_outputs,
     _count_rendered_pages,
     _iter_pdf_jobs,
@@ -68,7 +73,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--attn-backend", default="vllm")
     parser.add_argument("--base-size", type=int, default=None)
     parser.add_argument("--image-size", type=int, default=None)
-    parser.add_argument("--render-dpi", type=int, default=144)
+    parser.add_argument("--render-dpi", type=int, default=DEFAULT_RENDER_DPI)
     parser.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
     parser.add_argument("--repetition-penalty", type=float, default=None)
     parser.add_argument("--no-repeat-ngram-size", type=int, default=None)
@@ -76,9 +81,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--no-crop-mode", dest="crop_mode", action="store_false")
     parser.set_defaults(crop_mode=None)
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--gpu-memory-utilization", type=float, default=0.9)
+    parser.add_argument("--gpu-memory-utilization", type=float, default=DEFAULT_GPU_MEMORY_UTILIZATION)
     parser.add_argument("--disable-fp8-kv", action="store_true")
-    parser.add_argument("--repair-mode", default="auto", choices=["auto", "off"])
+    parser.add_argument("--repair-mode", default=DEFAULT_REPAIR_MODE, choices=["auto", "off"])
     parser.add_argument("--content-debug", action="store_true")
     parser.add_argument("--work-db", default=None)
     parser.add_argument("--worker-id", default=None)

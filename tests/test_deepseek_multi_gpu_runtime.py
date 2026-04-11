@@ -10,8 +10,10 @@ def test_build_env_adds_wheel_managed_cuda_lib_dirs(tmp_path):
     python_bin = venv_root / "bin" / "python"
     python_bin.parent.mkdir(parents=True, exist_ok=True)
     python_bin.write_text("")
+    torch_lib = venv_root / "lib" / "python3.11" / "site-packages" / "torch" / "lib"
     cuda_runtime_lib = venv_root / "lib" / "python3.11" / "site-packages" / "nvidia" / "cuda_runtime" / "lib"
     cublas_lib = venv_root / "lib" / "python3.11" / "site-packages" / "nvidia" / "cublas" / "lib"
+    torch_lib.mkdir(parents=True, exist_ok=True)
     cuda_runtime_lib.mkdir(parents=True, exist_ok=True)
     cublas_lib.mkdir(parents=True, exist_ok=True)
 
@@ -19,6 +21,7 @@ def test_build_env_adds_wheel_managed_cuda_lib_dirs(tmp_path):
 
     assert env["CUDA_VISIBLE_DEVICES"] == "1"
     ld_entries = env["LD_LIBRARY_PATH"].split(":")
+    assert str(torch_lib) in ld_entries
     assert str(cuda_runtime_lib) in ld_entries
     assert str(cublas_lib) in ld_entries
 

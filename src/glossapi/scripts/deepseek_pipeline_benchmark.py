@@ -9,6 +9,15 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from glossapi.ocr.deepseek.defaults import (
+    DEFAULT_GPU_MEMORY_UTILIZATION,
+    DEFAULT_MAX_NEW_TOKENS,
+    DEFAULT_OCR_PROFILE,
+    DEFAULT_RENDER_DPI,
+    DEFAULT_REPAIR_MODE,
+    DEFAULT_TARGET_BATCH_PAGES,
+    DEFAULT_WORKERS_PER_GPU,
+)
 from glossapi.ocr.deepseek.scheduling import (
     SourceDocument,
     assign_batches_to_lanes,
@@ -47,25 +56,25 @@ def _parse_args() -> argparse.Namespace:
         choices=["whole_doc", "fixed_shard", "exact_fill"],
     )
     p.add_argument("--devices", default="0,1,2,3,4,5,6,7")
-    p.add_argument("--workers-per-gpu", type=int, default=1)
+    p.add_argument("--workers-per-gpu", type=int, default=DEFAULT_WORKERS_PER_GPU)
     p.add_argument("--max-docs", type=int, default=None)
     p.add_argument("--doc-order", default="name", choices=["name", "random", "largest_first"])
     p.add_argument("--seed", type=int, default=20260330)
-    p.add_argument("--target-batch-pages", type=int, default=160)
-    p.add_argument("--stream-batch-pages", type=int, default=160)
+    p.add_argument("--target-batch-pages", type=int, default=DEFAULT_TARGET_BATCH_PAGES)
+    p.add_argument("--stream-batch-pages", type=int, default=DEFAULT_TARGET_BATCH_PAGES)
     p.add_argument("--shard-pages", type=int, default=0)
     p.add_argument("--shard-threshold-pages", type=int, default=0)
     p.add_argument("--runtime-backend", default="vllm", choices=["transformers", "vllm"])
-    p.add_argument("--ocr-profile", default="markdown_grounded", choices=["markdown_grounded", "plain_ocr"])
+    p.add_argument("--ocr-profile", default=DEFAULT_OCR_PROFILE, choices=["markdown_grounded", "plain_ocr"])
     p.add_argument("--prompt-override", default=None)
-    p.add_argument("--repair-mode", default="auto", choices=["auto", "off"])
+    p.add_argument("--repair-mode", default=DEFAULT_REPAIR_MODE, choices=["auto", "off"])
     p.add_argument("--attn-backend", default="auto")
     p.add_argument("--base-size", type=int, default=None)
     p.add_argument("--image-size", type=int, default=None)
-    p.add_argument("--render-dpi", type=int, default=144)
-    p.add_argument("--max-new-tokens", type=int, default=2048)
+    p.add_argument("--render-dpi", type=int, default=DEFAULT_RENDER_DPI)
+    p.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
     p.add_argument("--vllm-batch-size", type=int, default=None)
-    p.add_argument("--gpu-memory-utilization", type=float, default=0.9)
+    p.add_argument("--gpu-memory-utilization", type=float, default=DEFAULT_GPU_MEMORY_UTILIZATION)
     p.add_argument("--disable-fp8-kv", action="store_true")
     p.add_argument("--clean", action="store_true")
     return p.parse_args()

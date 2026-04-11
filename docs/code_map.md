@@ -30,7 +30,12 @@ without reading the entire repo.
 | --- | --- |
 | `src/glossapi/ocr/docling/pipeline.py` | Canonical builder for the layout-only Docling Phase-1 pipeline, including runtime tuning knobs for the current Docling API. |
 | `src/glossapi/ocr/docling_pipeline.py` | Compatibility re-export for the canonical Docling pipeline builder. |
-| `src/glossapi/ocr/deepseek/runner.py` | Launches the DeepSeek OCR remediation path from `Corpus.ocr()`. |
+| `src/glossapi/ocr/deepseek/defaults.py` | Shared DeepSeek OCR defaults used by the Corpus API, lane runner, and CLI entrypoints. |
+| `src/glossapi/ocr/deepseek/launcher.py` | Owns subprocess command/env construction for DeepSeek OCR workers, including runtime library-path setup. |
+| `src/glossapi/ocr/deepseek/runner.py` | High-level DeepSeek OCR orchestration from `Corpus.ocr()`, including lane planning, worker supervision, and canonical output checks. |
+| `src/glossapi/ocr/deepseek/runtime_paths.py` | Resolves which Python interpreter should be used for the DeepSeek runtime. |
+| `src/glossapi/ocr/deepseek/scheduling.py` | Builds whole-document, fixed-shard, and exact-fill OCR work plans. |
+| `src/glossapi/ocr/deepseek/work_queue.py` | Persists worker queue state, retries, and repair batches for vLLM OCR runs. |
 | `src/glossapi/ocr/utils/json_io.py` | Writes and reads compressed Docling JSON artifacts. |
 | `src/glossapi/corpus/phase_ocr_math.py` | Runs DeepSeek OCR remediation, math/code enrichment, and parquet status updates. |
 | `src/glossapi/metrics.py` | Computes per-page parse/OCR/formula metrics from Docling conversions. |
@@ -50,11 +55,14 @@ without reading the entire repo.
 | `tests/test_corpus_guards.py` | Shows the contract around backend selection and GPU preflight. |
 | `tests/test_jsonl_export.py` | Shows how final JSONL export merges cleaned markdown, parquet metadata, and math metrics. |
 | `tests/test_ocr_dispatch_backends.py` | Covers the DeepSeek-only OCR dispatch contract and backend validation. |
+| `tests/test_deepseek_runner_contract.py` | Covers DeepSeek launcher defaults, CLI wiring, and canonical output guarantees. |
+| `tests/test_deepseek_multi_gpu_runtime.py` | Covers worker env setup, runtime-library discovery, and durable queue behavior. |
 
 ## If You Need To Change...
 
 - Download scheduling or resume behavior: start in `src/glossapi/gloss_downloader.py`.
 - Phase-1 parsing, worker fanout, or artifact generation: start in `src/glossapi/corpus/phase_extract.py`, `src/glossapi/corpus/corpus_orchestrator.py`, and `src/glossapi/gloss_extract.py`.
 - Docling pipeline wiring or runtime tuning: start in `src/glossapi/ocr/docling/pipeline.py` and `src/glossapi/gloss_extract.py`.
+- DeepSeek OCR defaults, launch envs, or benchmark wiring: start in `src/glossapi/ocr/deepseek/defaults.py`, `src/glossapi/ocr/deepseek/launcher.py`, `src/glossapi/ocr/deepseek/runner.py`, and `src/glossapi/scripts/openarchives_ocr_run_node.py`.
 - Section labels or section-annotation rules: start in `src/glossapi/gloss_section_classifier.py`.
 - Output folder contracts or stage sequencing: start in `src/glossapi/corpus/corpus_orchestrator.py`.

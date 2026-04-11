@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from glossapi.ocr.deepseek.defaults import DEFAULT_GPU_MEMORY_UTILIZATION, DEFAULT_RENDER_DPI
 
 
 def _mk_corpus(tmp_path: Path):
@@ -86,6 +87,42 @@ def test_deepseek_backend_forwards_repair_exec_batch_controls(tmp_path, monkeypa
     assert calls.get("files") == [fname]
     assert calls["kwargs"]["repair_exec_batch_target_pages"] == 64
     assert calls["kwargs"]["repair_exec_batch_target_items"] == 24
+
+
+def test_deepseek_backend_forwards_standard_vllm_defaults(tmp_path, monkeypatch):
+    corpus = _mk_corpus(tmp_path)
+
+    dl_dir = corpus.output_dir / "download_results"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    fname = "doc.pdf"
+    df = pd.DataFrame([
+        {"filename": fname, corpus.url_column: "", "needs_ocr": True, "ocr_success": False}
+    ])
+    df.to_parquet(dl_dir / "download_results.parquet", index=False)
+    (corpus.input_dir / fname).write_bytes(b"%PDF-1.4\n%stub\n")
+
+    from glossapi.ocr.deepseek import runner
+
+    calls = {}
+
+    def fake_run_for_files(self_ref, files, **kwargs):
+        calls["files"] = list(files)
+        calls["kwargs"] = dict(kwargs)
+        return {"doc": {"page_count": 1}}
+
+    monkeypatch.setattr(runner, "run_for_files", fake_run_for_files)
+
+    corpus.ocr(
+        backend="deepseek",
+        fix_bad=True,
+        math_enhance=False,
+        mode="ocr_bad",
+        runtime_backend="vllm",
+    )
+
+    assert calls.get("files") == [fname]
+    assert calls["kwargs"]["render_dpi"] == DEFAULT_RENDER_DPI
+    assert calls["kwargs"]["gpu_memory_utilization"] == DEFAULT_GPU_MEMORY_UTILIZATION
 
 
 def test_invalid_backend_is_rejected(tmp_path):

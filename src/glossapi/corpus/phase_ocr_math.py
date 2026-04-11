@@ -22,6 +22,19 @@ import pandas as pd
 from .._naming import canonical_stem
 from ..gloss_downloader import GlossDownloader
 from ..gloss_section import GlossSection
+from ..ocr.deepseek.defaults import (
+    DEFAULT_ATTN_BACKEND,
+    DEFAULT_GPU_MEMORY_UTILIZATION,
+    DEFAULT_MAX_NEW_TOKENS,
+    DEFAULT_OCR_PROFILE,
+    DEFAULT_RENDER_DPI,
+    DEFAULT_REPAIR_MODE,
+    DEFAULT_RUNTIME_BACKEND,
+    DEFAULT_TARGET_BATCH_PAGES,
+    DEFAULT_WORKERS_PER_GPU,
+    resolve_gpu_memory_utilization,
+    resolve_render_dpi,
+)
 # Avoid importing classifier here; OCR/math phase does not require it at import time.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
@@ -145,26 +158,26 @@ class OcrMathPhaseMixin:
         limit: Optional[int] = None,
         dpi: Optional[int] = None,        # reserved for future use
         precision: Optional[str] = None,  # reserved for future use ("fp16","bf16")
-        workers_per_gpu: int = 1,
-        runtime_backend: str = "transformers",
-        ocr_profile: str = "markdown_grounded",
+        workers_per_gpu: int = DEFAULT_WORKERS_PER_GPU,
+        runtime_backend: str = DEFAULT_RUNTIME_BACKEND,
+        ocr_profile: str = DEFAULT_OCR_PROFILE,
         prompt_override: Optional[str] = None,
-        attn_backend: str = "auto",
+        attn_backend: str = DEFAULT_ATTN_BACKEND,
         base_size: Optional[int] = None,
         image_size: Optional[int] = None,
         crop_mode: Optional[bool] = None,
-        render_dpi: Optional[int] = None,
-        max_new_tokens: Optional[int] = 2048,
+        render_dpi: Optional[int] = DEFAULT_RENDER_DPI,
+        max_new_tokens: Optional[int] = DEFAULT_MAX_NEW_TOKENS,
         repetition_penalty: Optional[float] = None,
         no_repeat_ngram_size: Optional[int] = None,
         vllm_batch_size: Optional[int] = None,
-        gpu_memory_utilization: Optional[float] = None,
+        gpu_memory_utilization: Optional[float] = DEFAULT_GPU_MEMORY_UTILIZATION,
         disable_fp8_kv: bool = False,
-        repair_mode: str = "auto",
+        repair_mode: str = DEFAULT_REPAIR_MODE,
         repair_exec_batch_target_pages: Optional[int] = None,
         repair_exec_batch_target_items: Optional[int] = None,
         scheduler: str = "auto",
-        target_batch_pages: int = 160,
+        target_batch_pages: int = DEFAULT_TARGET_BATCH_PAGES,
         shard_pages: int = 0,
         shard_threshold_pages: int = 0,
         # Integrated math enrichment controls
@@ -298,6 +311,10 @@ class OcrMathPhaseMixin:
                     pass
             reprocess_flag = desired
         reprocess_completed = reprocess_flag
+        render_dpi = resolve_render_dpi(render_dpi)
+        max_new_tokens = int(DEFAULT_MAX_NEW_TOKENS if max_new_tokens is None else max_new_tokens)
+        gpu_memory_utilization = resolve_gpu_memory_utilization(gpu_memory_utilization)
+        repair_mode = str(repair_mode or DEFAULT_REPAIR_MODE)
 
         # DeepSeek semantics note
         if backend_norm == "deepseek" and mode_norm in {"ocr_bad", "ocr_bad_then_math"}:

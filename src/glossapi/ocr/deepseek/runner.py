@@ -9,14 +9,26 @@ import logging
 import os
 import re
 import signal
-import shutil
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from glossapi.ocr.deepseek.defaults import (
+    DEFAULT_ATTN_BACKEND,
+    DEFAULT_GPU_MEMORY_UTILIZATION,
+    DEFAULT_MAX_NEW_TOKENS,
+    DEFAULT_OCR_PROFILE,
+    DEFAULT_RENDER_DPI,
+    DEFAULT_REPAIR_MODE,
+    DEFAULT_RUNTIME_BACKEND,
+    DEFAULT_TARGET_BATCH_PAGES,
+    DEFAULT_WORKERS_PER_GPU,
+    resolve_gpu_memory_utilization,
+    resolve_render_dpi,
+)
+from glossapi.ocr.deepseek.launcher import _build_cli_command, _build_env, _run_cli
 from glossapi.ocr.deepseek.scheduling import (
     SourceDocument,
     assign_batches_to_lanes,
@@ -45,8 +57,7 @@ LOGGER = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_transformers.py"
 DEFAULT_VLLM_SCRIPT = REPO_ROOT / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_vllm.py"
-AUTO_VLLM_BATCH_PAGE_CAP = 160
-DEFAULT_MAX_NEW_TOKENS = 2048
+AUTO_VLLM_BATCH_PAGE_CAP = DEFAULT_TARGET_BATCH_PAGES
 DEFAULT_WORKER_RESPAWN_CAP = 3
 DEFAULT_WORK_ITEM_MAX_ATTEMPTS = 2
 DEFAULT_WORK_STALE_AFTER_SEC = 900.0
@@ -76,242 +87,6 @@ def _page_count(pdf_path: Path) -> int:
         return len(_pypdfium2.PdfDocument(str(pdf_path)))
     except Exception:
         return 0
-
-
-def _build_cli_command(
-    input_dir: Path,
-    output_dir: Path,
-    *,
-    files: List[str],
-    page_ranges: Optional[List[str]],
-    model_dir: Path,
-    python_bin: Optional[Path],
-    script: Path,
-    max_pages: Optional[int],
-    content_debug: bool,
-    device: Optional[str],
-    ocr_profile: str,
-    prompt_override: Optional[str],
-    attn_backend: str,
-    base_size: Optional[int],
-    image_size: Optional[int],
-    crop_mode: Optional[bool],
-    render_dpi: Optional[int],
-    max_new_tokens: Optional[int],
-    repetition_penalty: Optional[float],
-    no_repeat_ngram_size: Optional[int],
-    runtime_backend: str,
-    vllm_batch_size: Optional[int],
-    gpu_memory_utilization: Optional[float],
-    disable_fp8_kv: bool,
-    repair_mode: Optional[str],
-    repair_exec_batch_target_pages: Optional[int] = None,
-    repair_exec_batch_target_items: Optional[int] = None,
-    work_db: Optional[Path] = None,
-    worker_id: Optional[str] = None,
-    worker_runtime_file: Optional[Path] = None,
-    work_stale_after_sec: Optional[float] = None,
-    work_heartbeat_sec: Optional[float] = None,
-    work_max_attempts: Optional[int] = None,
-) -> List[str]:
-    python_exe = Path(python_bin) if python_bin else Path(sys.executable)
-    cmd: List[str] = [
-        str(python_exe),
-        str(script),
-        "--input-dir",
-        str(input_dir),
-        "--output-dir",
-        str(output_dir),
-        "--model-dir",
-        str(model_dir),
-    ]
-    if files:
-        cmd += ["--files", *files]
-    if page_ranges:
-        cmd += ["--page-ranges", *page_ranges]
-    if max_pages is not None:
-        cmd += ["--max-pages", str(max_pages)]
-    if content_debug:
-        cmd.append("--content-debug")
-    if device:
-        cmd += ["--device", str(device)]
-    if ocr_profile:
-        cmd += ["--ocr-profile", str(ocr_profile)]
-    if prompt_override:
-        cmd += ["--prompt-override", str(prompt_override)]
-    if attn_backend:
-        cmd += ["--attn-backend", str(attn_backend)]
-    if base_size is not None:
-        cmd += ["--base-size", str(int(base_size))]
-    if image_size is not None:
-        cmd += ["--image-size", str(int(image_size))]
-    if crop_mode is True:
-        cmd.append("--crop-mode")
-    elif crop_mode is False:
-        cmd.append("--no-crop-mode")
-    if render_dpi is not None:
-        cmd += ["--render-dpi", str(int(render_dpi))]
-    if max_new_tokens is not None:
-        cmd += ["--max-new-tokens", str(int(max_new_tokens))]
-    if work_db is not None:
-        cmd += ["--work-db", str(work_db)]
-    if worker_id:
-        cmd += ["--worker-id", str(worker_id)]
-    if worker_runtime_file is not None:
-        cmd += ["--worker-runtime-file", str(worker_runtime_file)]
-    if work_stale_after_sec is not None:
-        cmd += ["--work-stale-after-sec", str(float(work_stale_after_sec))]
-    if work_heartbeat_sec is not None:
-        cmd += ["--work-heartbeat-sec", str(float(work_heartbeat_sec))]
-    if work_max_attempts is not None:
-        cmd += ["--work-max-attempts", str(int(work_max_attempts))]
-    if repetition_penalty is not None:
-        cmd += ["--repetition-penalty", str(float(repetition_penalty))]
-    if no_repeat_ngram_size is not None:
-        cmd += ["--no-repeat-ngram-size", str(int(no_repeat_ngram_size))]
-    runtime_backend_norm = str(runtime_backend or "transformers").strip().lower()
-    if runtime_backend_norm == "vllm":
-        if vllm_batch_size is not None:
-            cmd += ["--batch-size", str(int(vllm_batch_size))]
-        if gpu_memory_utilization is not None:
-            cmd += ["--gpu-memory-utilization", str(float(gpu_memory_utilization))]
-        if disable_fp8_kv:
-            cmd.append("--disable-fp8-kv")
-        if repair_mode:
-            cmd += ["--repair-mode", str(repair_mode)]
-        if repair_exec_batch_target_pages is not None:
-            cmd += ["--repair-exec-batch-target-pages", str(int(repair_exec_batch_target_pages))]
-        if repair_exec_batch_target_items is not None:
-            cmd += ["--repair-exec-batch-target-items", str(int(repair_exec_batch_target_items))]
-    return cmd
-
-
-def _build_env(
-    *,
-    python_bin: Optional[Path],
-    visible_device: Optional[int] = None,
-    script: Optional[Path] = None,
-) -> Dict[str, str]:
-    env = os.environ.copy()
-    if python_bin:
-        python_path = Path(python_bin).expanduser()
-        venv_bin = str(python_path.parent)
-        env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
-        env["VIRTUAL_ENV"] = str(python_path.parent.parent)
-    if script is not None:
-        script_path = Path(script).expanduser().resolve()
-        src_root = next((parent for parent in script_path.parents if (parent / "glossapi").is_dir()), None)
-        if src_root is not None:
-            src_root_str = str(src_root)
-            existing_pythonpath = str(env.get("PYTHONPATH", "")).strip()
-            pythonpath_entries = [src_root_str]
-            if existing_pythonpath:
-                pythonpath_entries.extend(
-                    entry
-                    for entry in existing_pythonpath.split(os.pathsep)
-                    if entry and entry != src_root_str
-                )
-            env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
-    env.pop("PYTHONHOME", None)
-    if visible_device is not None:
-        env["CUDA_VISIBLE_DEVICES"] = str(visible_device)
-    if shutil.which("cc1plus", path=env.get("PATH", "")) is None:
-        for candidate in sorted(Path("/usr/lib/gcc/x86_64-linux-gnu").glob("*/cc1plus")):
-            env["PATH"] = f"{candidate.parent}:{env.get('PATH', '')}"
-            break
-    ld_entries: List[str] = []
-    if python_bin:
-        # Keep the venv path semantics instead of resolving the interpreter symlink
-        # back to `/usr/bin/python...`; the wheel-managed CUDA libs live under the
-        # virtualenv tree, not under the system interpreter location.
-        venv_root = Path(python_bin).expanduser().parent.parent
-        for site_packages in sorted((venv_root / "lib").glob("python*/site-packages")):
-            nvidia_root = site_packages / "nvidia"
-            if not nvidia_root.is_dir():
-                continue
-            for lib_dir in sorted(nvidia_root.glob("*/lib")):
-                if lib_dir.is_dir():
-                    ld_entries.append(str(lib_dir))
-    ld_path = env.get("GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH")
-    if ld_path:
-        ld_entries.extend(entry for entry in str(ld_path).split(os.pathsep) if entry)
-    existing_ld = str(env.get("LD_LIBRARY_PATH", "")).strip()
-    if existing_ld:
-        ld_entries.extend(entry for entry in existing_ld.split(os.pathsep) if entry)
-    if ld_entries:
-        deduped: List[str] = []
-        seen: Set[str] = set()
-        for entry in ld_entries:
-            if entry and entry not in seen:
-                seen.add(entry)
-                deduped.append(entry)
-        env["LD_LIBRARY_PATH"] = os.pathsep.join(deduped)
-    return env
-
-
-def _run_cli(
-    input_dir: Path,
-    output_dir: Path,
-    *,
-    files: List[str],
-    model_dir: Path,
-    python_bin: Optional[Path],
-    script: Path,
-    max_pages: Optional[int],
-    content_debug: bool,
-    device: Optional[str],
-    ocr_profile: str,
-    prompt_override: Optional[str],
-    attn_backend: str,
-    base_size: Optional[int],
-    image_size: Optional[int],
-    crop_mode: Optional[bool],
-    render_dpi: Optional[int],
-    max_new_tokens: Optional[int],
-    repetition_penalty: Optional[float],
-    no_repeat_ngram_size: Optional[int],
-    runtime_backend: str,
-    vllm_batch_size: Optional[int],
-    gpu_memory_utilization: Optional[float],
-    disable_fp8_kv: bool,
-    repair_mode: Optional[str],
-    repair_exec_batch_target_pages: Optional[int],
-    repair_exec_batch_target_items: Optional[int],
-    visible_device: Optional[int] = None,
-) -> None:
-    cmd = _build_cli_command(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        files=files,
-        page_ranges=None,
-        model_dir=model_dir,
-        python_bin=python_bin,
-        script=script,
-        max_pages=max_pages,
-        content_debug=content_debug,
-        device=device,
-        ocr_profile=ocr_profile,
-        prompt_override=prompt_override,
-        attn_backend=attn_backend,
-        base_size=base_size,
-        image_size=image_size,
-        crop_mode=crop_mode,
-        render_dpi=render_dpi,
-        max_new_tokens=max_new_tokens,
-        repetition_penalty=repetition_penalty,
-        no_repeat_ngram_size=no_repeat_ngram_size,
-        runtime_backend=runtime_backend,
-        vllm_batch_size=vllm_batch_size,
-        gpu_memory_utilization=gpu_memory_utilization,
-        disable_fp8_kv=disable_fp8_kv,
-        repair_mode=repair_mode,
-        repair_exec_batch_target_pages=repair_exec_batch_target_pages,
-        repair_exec_batch_target_items=repair_exec_batch_target_items,
-    )
-    env = _build_env(python_bin=python_bin, visible_device=visible_device, script=script)
-
-    LOGGER.info("Running DeepSeek OCR CLI: %s", " ".join(cmd))
-    subprocess.run(cmd, check=True, env=env)  # nosec: controlled arguments
 
 
 def _parse_device_index(device: Optional[str]) -> Optional[int]:
@@ -1361,24 +1136,24 @@ def run_for_files(
     persist_engine: bool = True,  # placeholder for future session reuse
     precision: Optional[str] = None,  # reserved
     device: Optional[str] = None,
-    runtime_backend: str = "transformers",
-    ocr_profile: str = "markdown_grounded",
+    runtime_backend: str = DEFAULT_RUNTIME_BACKEND,
+    ocr_profile: str = DEFAULT_OCR_PROFILE,
     prompt_override: Optional[str] = None,
-    attn_backend: str = "auto",
+    attn_backend: str = DEFAULT_ATTN_BACKEND,
     base_size: Optional[int] = None,
     image_size: Optional[int] = None,
     crop_mode: Optional[bool] = None,
-    render_dpi: Optional[int] = None,
+    render_dpi: Optional[int] = DEFAULT_RENDER_DPI,
     max_new_tokens: Optional[int] = DEFAULT_MAX_NEW_TOKENS,
     repetition_penalty: Optional[float] = None,
     no_repeat_ngram_size: Optional[int] = None,
     use_gpus: Optional[str] = None,
     devices: Optional[List[int]] = None,
-    workers_per_gpu: int = 1,
-    gpu_memory_utilization: Optional[float] = None,
+    workers_per_gpu: int = DEFAULT_WORKERS_PER_GPU,
+    gpu_memory_utilization: Optional[float] = DEFAULT_GPU_MEMORY_UTILIZATION,
     disable_fp8_kv: bool = False,
     vllm_batch_size: Optional[int] = None,
-    repair_mode: str = "auto",
+    repair_mode: str = DEFAULT_REPAIR_MODE,
     repair_exec_batch_target_pages: Optional[int] = None,
     repair_exec_batch_target_items: Optional[int] = None,
     scheduler: str = "auto",
@@ -1398,10 +1173,14 @@ def run_for_files(
         )
 
     runtime_backend_norm = str(
-        runtime_backend or os.environ.get("GLOSSAPI_DEEPSEEK_RUNTIME_BACKEND", "transformers")
+        runtime_backend or os.environ.get("GLOSSAPI_DEEPSEEK_RUNTIME_BACKEND", DEFAULT_RUNTIME_BACKEND)
     ).strip().lower()
     if runtime_backend_norm not in {"transformers", "vllm"}:
         raise ValueError("runtime_backend must be 'transformers' or 'vllm'")
+    resolved_render_dpi = resolve_render_dpi(render_dpi)
+    resolved_max_new_tokens = int(DEFAULT_MAX_NEW_TOKENS if max_new_tokens is None else max_new_tokens)
+    resolved_gpu_memory_utilization = resolve_gpu_memory_utilization(gpu_memory_utilization)
+    resolved_repair_mode = str(repair_mode or DEFAULT_REPAIR_MODE)
 
     file_list = [str(f) for f in files or []]
     if not file_list:
@@ -1464,15 +1243,15 @@ def run_for_files(
             base_size=base_size,
             image_size=image_size,
             crop_mode=crop_mode,
-            render_dpi=render_dpi,
-            max_new_tokens=max_new_tokens,
+            render_dpi=resolved_render_dpi,
+            max_new_tokens=resolved_max_new_tokens,
             repetition_penalty=repetition_penalty,
             no_repeat_ngram_size=no_repeat_ngram_size,
             runtime_backend=runtime_backend_norm,
             vllm_batch_size=vllm_batch_size,
-            gpu_memory_utilization=gpu_memory_utilization,
+            gpu_memory_utilization=resolved_gpu_memory_utilization,
             disable_fp8_kv=disable_fp8_kv,
-            repair_mode=repair_mode,
+            repair_mode=resolved_repair_mode,
             repair_exec_batch_target_pages=repair_exec_batch_target_pages,
             repair_exec_batch_target_items=repair_exec_batch_target_items,
             scheduler=scheduler,
@@ -1508,15 +1287,15 @@ def run_for_files(
             base_size=base_size,
             image_size=image_size,
             crop_mode=crop_mode,
-            render_dpi=render_dpi,
-            max_new_tokens=max_new_tokens,
+            render_dpi=resolved_render_dpi,
+            max_new_tokens=resolved_max_new_tokens,
             repetition_penalty=repetition_penalty,
             no_repeat_ngram_size=no_repeat_ngram_size,
             runtime_backend=runtime_backend_norm,
             vllm_batch_size=resolved_vllm_batch_size,
-            gpu_memory_utilization=gpu_memory_utilization,
+            gpu_memory_utilization=resolved_gpu_memory_utilization,
             disable_fp8_kv=disable_fp8_kv,
-            repair_mode=repair_mode,
+            repair_mode=resolved_repair_mode,
             repair_exec_batch_target_pages=repair_exec_batch_target_pages,
             repair_exec_batch_target_items=repair_exec_batch_target_items,
         )

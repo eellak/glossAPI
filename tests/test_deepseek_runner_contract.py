@@ -199,6 +199,46 @@ def test_deepseek_default_max_new_tokens_is_standardized():
     assert runner.DEFAULT_MAX_NEW_TOKENS == 2048
 
 
+def test_runner_resolves_standard_vllm_defaults_when_omitted(tmp_path, monkeypatch):
+    from glossapi.ocr.deepseek import runner
+    from glossapi.ocr.deepseek.defaults import DEFAULT_GPU_MEMORY_UTILIZATION, DEFAULT_RENDER_DPI
+
+    corpus = _mk_corpus(tmp_path)
+    (corpus.input_dir / "doc.pdf").write_bytes(b"%PDF-1.4\n%real\n")
+
+    calls = {}
+
+    def fake_run_cli(input_dir, output_dir, **kwargs):
+        calls["input_dir"] = input_dir
+        calls["kwargs"] = dict(kwargs)
+        md_dir = output_dir / "markdown"
+        metrics_dir = output_dir / "json" / "metrics"
+        md_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        (md_dir / "doc.md").write_text("ok\n", encoding="utf-8")
+        (metrics_dir / "doc.metrics.json").write_text('{"page_count": 1}', encoding="utf-8")
+
+    monkeypatch.setattr(runner, "_run_cli", fake_run_cli)
+    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_MODEL_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT",
+        str(Path(runner.__file__).resolve().parent / "run_pdf_ocr_vllm.py"),
+    )
+    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_PYTHON", sys.executable)
+
+    runner.run_for_files(
+        corpus,
+        ["doc.pdf"],
+        runtime_backend="vllm",
+        render_dpi=None,
+        gpu_memory_utilization=None,
+    )
+
+    assert calls["input_dir"] == corpus.input_dir.resolve()
+    assert calls["kwargs"]["render_dpi"] == DEFAULT_RENDER_DPI
+    assert calls["kwargs"]["gpu_memory_utilization"] == DEFAULT_GPU_MEMORY_UTILIZATION
+
+
 def test_build_cli_command_includes_vllm_flags(tmp_path):
     from glossapi.ocr.deepseek.runner import _build_cli_command
 

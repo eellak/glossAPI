@@ -50,6 +50,9 @@ export GLOSSAPI_DEEPSEEK_MODEL_DIR="/path/to/deepseek-ocr-2-model/DeepSeek-OCR-2
 
 The OCR runtime should not silently drift between ad hoc virtual environments during benchmarking. If a benchmark uses a different DeepSeek venv, treat the result as a different runtime stack.
 
+For the standardized OA-style single-GPU benchmark method and exactness check,
+see [DeepSeek Single-GPU Benchmarking](operations/deepseek_single_gpu_benchmarking.md).
+
 Verify GPU readiness before forcing OCR or math:
 
 ```bash

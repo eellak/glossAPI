@@ -13,6 +13,12 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from glossapi import Corpus
+from glossapi.ocr.deepseek.defaults import (
+    DEFAULT_GPU_MEMORY_UTILIZATION,
+    DEFAULT_MAX_NEW_TOKENS,
+    DEFAULT_RENDER_DPI,
+    DEFAULT_TARGET_BATCH_PAGES,
+)
 from glossapi.parquet_schema import ParquetSchema
 
 
@@ -44,18 +50,18 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--skip-download", action="store_true")
     p.add_argument("--scheduler", default="whole_doc")
-    p.add_argument("--target-batch-pages", type=int, default=160)
+    p.add_argument("--target-batch-pages", type=int, default=DEFAULT_TARGET_BATCH_PAGES)
     p.add_argument("--shard-pages", type=int, default=0)
     p.add_argument("--shard-threshold-pages", type=int, default=0)
     p.add_argument("--workers-per-gpu", type=int, default=1)
     p.add_argument("--runtime-backend", default="vllm")
     p.add_argument("--ocr-profile", default="markdown_grounded")
-    p.add_argument("--max-new-tokens", type=int, default=2048)
-    p.add_argument("--render-dpi", type=int, default=144)
+    p.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
+    p.add_argument("--render-dpi", type=int, default=DEFAULT_RENDER_DPI)
     p.add_argument("--repair-mode", default="auto")
     p.add_argument("--repair-exec-batch-target-pages", type=int, default=None)
     p.add_argument("--repair-exec-batch-target-items", type=int, default=None)
-    p.add_argument("--gpu-memory-utilization", type=float, default=0.9)
+    p.add_argument("--gpu-memory-utilization", type=float, default=DEFAULT_GPU_MEMORY_UTILIZATION)
     return p.parse_args(argv)
 
 

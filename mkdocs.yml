@@ -39,6 +39,7 @@ nav:
       - Configuration: configuration.md
       - AWS Job Distribution: aws_job_distribution.md
       - DeepSeek GCP A100 Setup: operations/deepseek_gcp_a100_setup.md
+      - DeepSeek Single-GPU Benchmarking: operations/deepseek_single_gpu_benchmarking.md
       - OCR Changes 2026-04-01 to 2026-04-03: operations/ocr_changes_2026-04-01_to_2026-04-03.md
       - OpenArchives OCR Rollout Plan: operations/openarchives_ocr_rollout_plan.md
       - Troubleshooting: troubleshooting.md

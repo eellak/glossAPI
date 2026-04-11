@@ -5,6 +5,7 @@ description = "UV-managed runtime for GlossAPI DeepSeek-OCR-2 execution"
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "glossapi[deepseek]",
+    "nvidia-cuda-runtime-cu12==12.9.79",
     "torch==2.10.0",
     "torchvision==0.25.0",
     "torchaudio==2.10.0",
