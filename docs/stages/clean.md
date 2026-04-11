@@ -20,7 +20,12 @@ The clean stage normalizes extracted Markdown and evaluates its quality.
 ## Main outputs
 
 - cleaned Markdown in `clean_markdown/`
-- debug-marked Markdown when using the debug helpers
+- debug-marked Markdown under `debug/` when debug output is requested
+- debug manifests under `debug/`:
+  - `manifest.jsonl`
+  - `page_metrics.jsonl`
+  - `match_index.jsonl`
+  - `summary.json`
 - quality metrics and reports
 - metadata updates including OCR-related decisions
 
@@ -46,8 +51,11 @@ The stage now uses one shared analyzer for both:
 
 - `debug` mode
   - shows exact match placement with `<match ...>` tags
+  - records merged-span match metadata in `match_index.jsonl`
 - `clean` mode
   - removes or rewrites those exact same matched regions
+- `clean + debug`
+  - writes pipeline-ready cleaned Markdown and the parallel debug artifacts from the same span plan in one run
 
 ## Important operational outputs
 

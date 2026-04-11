@@ -301,6 +301,63 @@ def test_clean_ocr_supports_score_only_mode(tmp_path: Path) -> None:
     assert corpus.markdown_dir == corpus.output_dir / "markdown"
 
 
+def test_clean_ocr_supports_combined_clean_and_debug_outputs(tmp_path: Path) -> None:
+    corpus = _build_corpus(tmp_path)
+    stem = "ocr-clean-debug"
+    source_text = (
+        "Πρόλογος\n"
+        "<table><tr><td rowspan=\"2\">Η οινοφόρος άμπελος αναπτύχθηκε στην Αρμενία, νότια της Κασπίας</td><td></td></tr><tr><td></td></tr></table>\n"
+        "<--- Page Split --->\n"
+        "των εργασιών των εργασιών των εργασιών των εργασιών των εργασιώ\n"
+    )
+    md_path = corpus.markdown_dir / f"{stem}.md"
+    md_path.write_text(source_text, encoding="utf-8")
+
+    corpus.clean_ocr(write_cleaned_files=True, write_debug_files=True)
+
+    cleaned_path = corpus.cleaned_markdown_dir / f"{stem}.md"
+    debug_dir = corpus.output_dir / "debug"
+    debug_path = debug_dir / f"{stem}.md"
+    assert cleaned_path.exists()
+    assert debug_path.exists()
+
+    cleaned_text = cleaned_path.read_text(encoding="utf-8")
+    debug_text = debug_path.read_text(encoding="utf-8")
+    assert "<match of type" not in cleaned_text
+    assert "Η οινοφόρος άμπελος" not in cleaned_text
+    assert "<match of type table_repeat kind=sentence_shell_table" in debug_text
+    assert "<match of type word_repeat" in debug_text
+
+    manifest_rows = [
+        json.loads(line)
+        for line in (debug_dir / "manifest.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    ]
+    assert len(manifest_rows) == 1
+    manifest_row = manifest_rows[0]
+    assert manifest_row["clean_output_path"] == str(cleaned_path)
+    assert manifest_row["debug_output_path"] == str(debug_path)
+    assert manifest_row["match_count"] >= 2
+
+    match_rows = [
+        json.loads(line)
+        for line in (debug_dir / "match_index.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    ]
+    assert len(match_rows) >= 2
+    source_pages = source_text.split("<--- Page Split --->")
+    for row in match_rows:
+        page_text = source_pages[int(row["page_number"]) - 1]
+        assert page_text[int(row["start_char"]):int(row["end_char"])] == row["matched_text"]
+    word_row = next(row for row in match_rows if row["match_type"] == "word_repeat")
+    assert int(word_row["repeat_count"]) >= 3
+    assert int(word_row["period"]) > 0
+
+    page_metrics_rows = (debug_dir / "page_metrics.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(page_metrics_rows) == 2
+    summary = json.loads((debug_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["doc_count"] == 1
+    assert summary["match_count"] >= 2
+
+
 def test_clean_ocr_ignores_numeric_lists_and_dotted_values(tmp_path: Path) -> None:
     corpus = _build_corpus(tmp_path)
     row = _run_clean_ocr_and_read_row(
@@ -645,11 +702,18 @@ def test_clean_ocr_numeric_word_debug_docs_runs_numeric_then_word(tmp_path: Path
 
     summary = json.loads((debug_dir / "summary.json").read_text(encoding="utf-8"))
     assert summary["doc_count"] == 1
+    assert summary["match_count"] >= 2
     assert summary["numeric_match_count"] >= 1
     assert summary["word_match_count"] >= 1
 
     page_metrics = (debug_dir / "page_metrics.jsonl").read_text(encoding="utf-8").strip().splitlines()
     assert len(page_metrics) == 2
+    match_index = [
+        json.loads(line)
+        for line in (debug_dir / "match_index.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    ]
+    assert any(row["match_type"] == "same_digit_numeric_run" for row in match_index)
+    assert any(row["match_type"] == "word_repeat" for row in match_index)
 
 
 def test_rust_word_repeat_spans_match_python_reference(tmp_path: Path) -> None:
