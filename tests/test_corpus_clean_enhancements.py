@@ -1050,7 +1050,7 @@ def test_clean_ocr_numeric_word_debug_docs_flags_latex_short_atom_block_repeat(
         r"\( \alpha \)",
         r"\( \gamma \)",
     ]
-    repeated = "   ".join(warmup + block + block)
+    repeated = "   ".join(warmup + block + block) + "   \\( \\alpha"
     rows, debug_dir = _run_clean_ocr_numeric_word_debug_docs(
         corpus,
         repeated + "\n",
@@ -1064,6 +1064,8 @@ def test_clean_ocr_numeric_word_debug_docs_flags_latex_short_atom_block_repeat(
     assert "<match of type latex_repeat kind=short_atom_block_repeat" in content
     assert content.count("<match of type latex_repeat") == 1
     assert r"\( \alpha \)   \( \beta \)   \( \gamma \)   \( \gamma \)" in content
+    assert r"</match>   \( \alpha" not in content
+    assert r"\( \alpha</match>" in content
 
 
 def test_clean_ocr_numeric_word_debug_docs_ignores_nonrepeating_short_atom_inventory(
@@ -1421,6 +1423,7 @@ def test_clean_ocr_latex_debug_exports_short_atom_block_pages(
         "Κανονική πρώτη σελίδα.\n"
         "<--- Page Split --->\n"
         + "   ".join(warmup + block + block)
+        + "   \\( \\alpha"
         + "\n"
         "<--- Page Split --->\n"
         "Κανονική τρίτη σελίδα.\n"
@@ -1438,6 +1441,8 @@ def test_clean_ocr_latex_debug_exports_short_atom_block_pages(
     content = (debug_dir / "ocr-latex-debug-short-atom__debug_page_00002.md").read_text(encoding="utf-8")
     assert "<match of type latex_repeat kind=short_atom_block_repeat" in content
     assert r"\( \alpha \)   \( \beta \)   \( \gamma \)   \( \gamma \)" in content
+    assert r"</match>   \( \alpha" not in content
+    assert r"\( \alpha</match>" in content
 
 
 def test_clean_ocr_latex_slot_progression_debug_flags_derivative_ladder(

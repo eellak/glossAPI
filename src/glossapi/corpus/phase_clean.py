@@ -1480,6 +1480,43 @@ def _find_short_atom_block_repeat_bounds(
     return best
 
 
+def _extend_latex_short_atom_block_partial_tail(
+    page_text: str,
+    run: List[Dict[str, Any]],
+    repeated_bounds: Tuple[int, int, int, int],
+) -> int:
+    if not run:
+        return 0
+
+    left, _, period, _ = repeated_bounds
+    if period <= 0 or left >= len(run):
+        return int(run[-1]["end"])
+
+    expected_idx = left + ((len(run) - left) % period)
+    if expected_idx >= len(run):
+        return int(run[-1]["end"])
+
+    expected_text = str(run[expected_idx]["text"])
+    segment_end = int(run[-1]["end"])
+    cursor = segment_end
+    while cursor < len(page_text) and page_text[cursor].isspace():
+        cursor += 1
+    if cursor >= len(page_text):
+        return segment_end
+
+    prefix_len = 0
+    while (
+        cursor + prefix_len < len(page_text)
+        and prefix_len < len(expected_text)
+        and page_text[cursor + prefix_len] == expected_text[prefix_len]
+    ):
+        prefix_len += 1
+
+    if prefix_len == 0 or prefix_len >= len(expected_text):
+        return segment_end
+    return cursor + prefix_len
+
+
 def _find_local_latex_short_atom_block_spans(
     page_text: str,
     segments: List[Dict[str, Any]],
@@ -1501,10 +1538,11 @@ def _find_local_latex_short_atom_block_spans(
             repeated_bounds = _find_short_atom_block_repeat_bounds(atom_keys)
             if repeated_bounds is not None:
                 _, _, period_items, repetitions = repeated_bounds
+                span_end = _extend_latex_short_atom_block_partial_tail(page_text, run, repeated_bounds)
                 labeled_spans.append(
                     {
                         "start": int(run[0]["start"]),
-                        "end": int(run[-1]["end"]),
+                        "end": int(span_end),
                         "match_types": ["latex_repeat"],
                         "category": MATCH_CATEGORY_BY_TYPE["latex_repeat"],
                         "kind": "short_atom_block_repeat",
