@@ -1097,6 +1097,78 @@ def test_clean_ocr_numeric_word_debug_docs_ignores_nonrepeating_short_atom_inven
     assert "<match of type latex_repeat kind=short_atom_block_repeat" not in content
 
 
+def test_clean_ocr_numeric_word_debug_docs_flags_short_atom_segment_repeat(
+    tmp_path: Path,
+) -> None:
+    corpus = _build_corpus(tmp_path)
+    repeated = "   ".join(
+        [
+            r"\( \alpha\beta\gamma\delta \)",
+            r"\( \alpha\beta\gamma\delta \)",
+            r"\( \alpha\beta\gamma\delta \)",
+            r"\( \alpha\beta\gamma\delta \)",
+            r"\( \alpha\beta\gamma \)",
+            r"\( \alpha\beta\gamma \)",
+            r"\( \alpha\beta\gamma \)",
+            r"\( \alpha\beta\gamma \)",
+            r"\( \alpha\beta\gamma \)",
+        ]
+    )
+    rows, debug_dir = _run_clean_ocr_numeric_word_debug_docs(
+        corpus,
+        repeated + "\n",
+        stem="ocr-latex-short-atom-segment-repeat",
+        max_docs=1,
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["latex_match_count"] >= 1
+    content = (debug_dir / "ocr-latex-short-atom-segment-repeat.md").read_text(encoding="utf-8")
+    assert "<match of type latex_repeat kind=short_atom_segment_repeat" in content
+    assert content.count("<match of type latex_repeat") == 1
+    assert r"\( \alpha\beta\gamma\delta \)   \( \alpha\beta\gamma\delta \)" in content
+    assert r"\( \alpha\beta\gamma \)   \( \alpha\beta\gamma \)" in content
+
+
+def test_clean_ocr_numeric_word_debug_docs_flags_short_atom_chain_segment(
+    tmp_path: Path,
+) -> None:
+    corpus = _build_corpus(tmp_path)
+    repeated = r"\( \Delta_{i}\Delta_{i}\Delta_{i}\Delta_{i}\Delta_{i}\Delta_{i}\Delta_{i}\Delta \)"
+    rows, debug_dir = _run_clean_ocr_numeric_word_debug_docs(
+        corpus,
+        repeated + "\n",
+        stem="ocr-latex-short-atom-chain-segment",
+        max_docs=1,
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["latex_match_count"] >= 1
+    content = (debug_dir / "ocr-latex-short-atom-chain-segment.md").read_text(encoding="utf-8")
+    assert "<match of type latex_repeat kind=short_atom_chain_segment" in content
+    assert content.count("<match of type latex_repeat") == 1
+
+
+def test_clean_ocr_numeric_word_debug_docs_flags_internal_small_vocab_command_run(
+    tmp_path: Path,
+) -> None:
+    corpus = _build_corpus(tmp_path)
+    command_run = (r"\cdots" * 18) + (r"\vdots") + (r"\cdots" * 18) + (r"\ddots") + (r"\cdots" * 18)
+    repeated = rf"\[ \begin{{aligned}}{command_run}\end{{aligned}} \]"
+    rows, debug_dir = _run_clean_ocr_numeric_word_debug_docs(
+        corpus,
+        repeated + "\n",
+        stem="ocr-latex-internal-small-vocab-command-run",
+        max_docs=1,
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["latex_match_count"] >= 1
+    content = (debug_dir / "ocr-latex-internal-small-vocab-command-run.md").read_text(encoding="utf-8")
+    assert "<match of type latex_repeat kind=internal_small_vocab_command_run" in content
+    assert content.count("<match of type latex_repeat") == 1
+
+
 def test_clean_ocr_numeric_word_debug_docs_grows_derivative_ladder_template_run(
     tmp_path: Path,
 ) -> None:
