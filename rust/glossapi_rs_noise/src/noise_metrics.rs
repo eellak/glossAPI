@@ -2014,7 +2014,12 @@ fn hybrid_header_progresses(previous: &HybridNumberedItem, current: &HybridNumbe
         && !previous.numbers.is_empty()
         && previous.numbers.len() == current.numbers.len()
         && previous.numbers[..previous.numbers.len() - 1] == current.numbers[..current.numbers.len() - 1]
-        && current.numbers.last().copied() == previous.numbers.last().copied().map(|value| value + 1)
+        && current.numbers.last().copied()
+            == previous
+                .numbers
+                .last()
+                .copied()
+                .and_then(|value| value.checked_add(1))
 }
 
 fn hybrid_header_is_parent(previous: &HybridNumberedItem, current: &HybridNumberedItem) -> bool {

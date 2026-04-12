@@ -112,3 +112,53 @@ def test_deepseek_backend_forwards_parallelism_controls(tmp_path, monkeypatch):
     assert calls["kwargs"]["max_new_tokens"] == 2048
     assert calls["kwargs"]["repetition_penalty"] == 1.08
     assert calls["kwargs"]["no_repeat_ngram_size"] == 12
+
+
+def test_deepseek_rerun_refreshes_with_clean_ocr_then_score_only_clean(tmp_path, monkeypatch):
+    corpus = _mk_corpus(tmp_path)
+
+    dl_dir = corpus.output_dir / "download_results"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    fname = "doc.pdf"
+    pd.DataFrame(
+        [{"filename": fname, corpus.url_column: "", "needs_ocr": True, "ocr_success": False}]
+    ).to_parquet(dl_dir / "download_results.parquet", index=False)
+    (corpus.input_dir / fname).write_bytes(b"%PDF-1.4\n%stub\n")
+
+    from glossapi.ocr.deepseek import runner
+
+    def fake_run_for_files(self_ref, files, **kwargs):
+        markdown_dir = self_ref.output_dir / "markdown"
+        metrics_dir = self_ref.output_dir / "json" / "metrics"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        for current in files:
+            stem = Path(current).stem
+            (markdown_dir / f"{stem}.md").write_text("ocr text\n", encoding="utf-8")
+            (metrics_dir / f"{stem}.metrics.json").write_text("{\"page_count\": 1}\n", encoding="utf-8")
+        return {"doc": {"page_count": 1}}
+
+    monkeypatch.setattr(runner, "run_for_files", fake_run_for_files)
+
+    calls = []
+    original_markdown_dir = corpus.markdown_dir
+
+    def fake_clean_ocr(*args, **kwargs):
+        calls.append(("clean_ocr", kwargs.get("input_dir"), kwargs.get("write_cleaned_files", True)))
+        corpus.cleaned_markdown_dir.mkdir(parents=True, exist_ok=True)
+        corpus.markdown_dir = corpus.cleaned_markdown_dir
+
+    def fake_clean(*args, **kwargs):
+        calls.append(("clean", kwargs.get("input_dir"), kwargs.get("write_cleaned_files", True)))
+
+    monkeypatch.setattr(corpus, "clean_ocr", fake_clean_ocr)
+    monkeypatch.setattr(corpus, "clean", fake_clean)
+
+    corpus.ocr(backend="deepseek", fix_bad=True, math_enhance=False)
+
+    assert calls[0][0] == "clean_ocr"
+    assert Path(str(calls[0][1])) == original_markdown_dir
+    assert calls[0][2] is True
+    assert calls[1][0] == "clean"
+    assert Path(str(calls[1][1])) == corpus.cleaned_markdown_dir
+    assert calls[1][2] is False

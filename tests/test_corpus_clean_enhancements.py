@@ -9,6 +9,8 @@ import pytest
 
 from glossapi import Corpus
 from glossapi.corpus.phase_clean import (
+    _extract_latex_segments,
+    _filter_latex_preserve_layout,
     _find_word_repeat_spans,
     _find_word_repeat_spans_python,
     _merge_labeled_raw_spans,
@@ -273,6 +275,34 @@ def test_clean_ocr_writes_cleaned_markdown_with_combined_loop(tmp_path: Path) ->
     assert corpus.markdown_dir == corpus.cleaned_markdown_dir
 
 
+def test_clean_ocr_scores_char_count_from_cleaned_text(tmp_path: Path) -> None:
+    corpus = _build_corpus(tmp_path)
+    row = _run_clean_ocr_and_read_row(
+        corpus,
+        "1111 1 1 1 1 1 1 1 1 1 1\n",
+        stem="ocr-clean-char-count",
+    )
+    cleaned_path = corpus.cleaned_markdown_dir / "ocr-clean-char-count.md"
+    assert cleaned_path.exists()
+    assert cleaned_path.read_text(encoding="utf-8").strip() == ""
+    assert int(row.get("char_count_no_comments")) == 0
+    assert bool(row.get("is_empty")) is True
+
+
+def test_clean_ocr_score_only_char_count_uses_source_text(tmp_path: Path) -> None:
+    corpus = _build_corpus(tmp_path)
+    md_path = corpus.markdown_dir / "ocr-clean-score-only-char.md"
+    md_path.write_text("1111 1 1 1 1 1 1 1 1 1 1\n", encoding="utf-8")
+    corpus.clean_ocr(write_cleaned_files=False)
+    parquet = corpus.output_dir / "download_results" / "download_results.parquet"
+    df = pd.read_parquet(parquet)
+    row = df[df["filename"] == "ocr-clean-score-only-char.pdf"].iloc[0]
+    assert pd.notna(row.get("char_count_no_comments"))
+    assert int(row.get("char_count_no_comments") or 0) > 0
+    assert bool(row.get("is_empty")) is False
+    assert not any(corpus.cleaned_markdown_dir.glob("*.md"))
+
+
 def test_clean_ocr_drops_sentence_shell_and_repeated_row_tables(tmp_path: Path) -> None:
     corpus = _build_corpus(tmp_path)
     content = _run_clean_ocr_and_read_cleaned_text(
@@ -385,10 +415,12 @@ def test_clean_ocr_flags_repeated_phrase_noise(tmp_path: Path) -> None:
     )
     assert bool(row.get("ocr_noise_suspect", False))
     assert int(row.get("ocr_repeat_phrase_run_max") or 0) >= 6
-    assert int(row.get("ocr_repeat_line_run_max") or 0) >= 6
+    # clean_ocr now scores the cleaned publish surface when it writes clean files,
+    # so line-level runs removed by the cleaner no longer survive into parquet.
+    assert int(row.get("ocr_repeat_line_run_max") or 0) == 0
     flags = row.get("ocr_noise_flags") or ""
     assert "repeat_phrase_run" in flags
-    assert "repeat_line_run" in flags
+    assert "repeat_line_run" not in flags
     assert "ocr_noise" in (row.get("filter") or "")
     assert "ocr-repeat-noise" not in corpus.good_files
 
@@ -1003,6 +1035,28 @@ def test_clean_ocr_numeric_word_debug_docs_ignores_latex_delimiter_bookkeeping(
     assert "<match of type latex_repeat" not in content
 
 
+def test_extract_latex_segments_matches_inline_dollar_without_crossing_newlines() -> None:
+    text = r"prefix $a+b$ mid $$block$$ and \(x\) escaped \$nope and bad $line" + "\n" + r"wrap$ tail"
+    segments = _extract_latex_segments(text)
+    kinds_and_text = [(segment["kind"], segment["text"]) for segment in segments]
+    assert ("inline_dollar", "$a+b$") in kinds_and_text
+    assert ("display_dollar", "$$block$$") in kinds_and_text
+    assert ("inline_paren", r"\(x\)") in kinds_and_text
+    assert not any(segment_text == "$line\nwrap$" for _kind, segment_text in kinds_and_text)
+    assert not any(segment_text == "$nope and bad $" for _kind, segment_text in kinds_and_text)
+
+
+def test_filter_latex_preserve_layout_blanks_manual_inline_dollar_spans() -> None:
+    text = r"keep $a+b$ here" + "\n" + r"next line $$block$$ and \(x\) done"
+    filtered = _filter_latex_preserve_layout(text)
+    assert len(filtered) == len(text)
+    assert filtered.count("\n") == text.count("\n")
+    assert "$a+b$" not in filtered
+    assert "$$block$$" not in filtered
+    assert r"\(x\)" not in filtered
+    assert "keep" in filtered and "done" in filtered
+
+
 def test_clean_ocr_numeric_word_debug_docs_flags_consecutive_repeated_latex_segments(
     tmp_path: Path,
 ) -> None:
@@ -1436,6 +1490,21 @@ def test_clean_ocr_hybrid_debug_flags_hierarchical_heading_progression(tmp_path:
     content = (debug_dir / "ocr-hybrid-hierarchical__debug_page_00001.md").read_text(encoding="utf-8")
     assert "<match of type hybrid_repeat kind=same_body_progression" in content
     assert "1.1.5 Hypergeometric function" in content
+
+
+def test_clean_ocr_hybrid_debug_does_not_panic_on_max_u32_counter(tmp_path: Path) -> None:
+    corpus = _build_corpus(tmp_path)
+    rows, debug_dir = _run_clean_ocr_hybrid_debug_export(
+        corpus,
+        (
+            "4294967295. Hypergeometric function "
+            "4294967295. Hypergeometric function\n"
+        ),
+        stem="ocr-hybrid-max-u32",
+        max_docs=1,
+    )
+    assert rows == []
+    assert not (debug_dir / "ocr-hybrid-max-u32__debug_page_00001.md").exists()
 
 
 def test_clean_ocr_hybrid_debug_extends_partial_tail_of_progression(tmp_path: Path) -> None:

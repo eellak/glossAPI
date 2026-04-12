@@ -1,12 +1,14 @@
 """Cleaning and filtering helpers split from Corpus.
 
-This module now primarily owns OCR orchestration:
+This module primarily owns OCR orchestration:
 - page-level analyzer ordering
-- shared clean/debug rendering
 - worker/process orchestration
+- clean/debug mode selection over one shared span plan
 
-Specialized policy modules, like HTML-table handling, live alongside it so the
-main pipeline can stay focused on span ownership and mode selection.
+Specialized helpers live alongside it so the main pipeline stays focused on
+span ownership and mode selection:
+- ``ocr_table.py`` handles HTML-table structural cleanup and conversion
+- ``ocr_render.py`` handles merged-span rendering and match-index generation
 """
 from __future__ import annotations
 
@@ -42,10 +44,17 @@ from .ocr_table import (
     HTML_TABLE_BLOCK_RE,
     HTML_TABLE_LINE_RE,
     find_table_repeat_spans as _find_table_repeat_spans_impl,
-    render_table_html_for_clean as _render_table_html_for_clean,
-    render_table_html_for_output as _render_table_html_for_output,
-    replace_html_tables_with_markdown as _replace_html_tables_with_markdown,
 )
+from .ocr_render import (
+    _annotate_page_with_labeled_spans,
+    _build_match_index_rows,
+    _merge_labeled_raw_spans,
+    _render_page_from_merged_labeled_spans,
+    _render_page_with_labeled_spans,
+    _render_page_with_labeled_spans_result,
+    _summarize_merged_labeled_spans,
+)
+from .text_surface_metrics import sanitized_char_count
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch
@@ -53,17 +62,15 @@ from .corpus_utils import _maybe_import_torch
 PAGE_SPLIT_MARKER = "<--- Page Split --->"
 WORD_REPEAT_HASH_MASK = (1 << 64) - 1
 WORD_REPEAT_HASH_BASE = 1469598103934665603
-# Neighboring same-category spans may be merged when the visible separator is
-# still small enough to read as one corrupted region rather than two separate
-# failures. This is intentionally more permissive than the older 10-char rule.
-WORD_REPEAT_MERGE_MAX_NONWHITESPACE_GAP = 40
 EXISTING_MATCH_BLOCK_RE = re.compile(r"(?is)<match\b[^>]*>.*?</match\s*>")
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
 LATEX_BLOCK_RE = re.compile(r"(?is)\$\$.*?\$\$")
 LATEX_BRACKET_RE = re.compile(r"(?is)\\\[.*?\\\]")
 LATEX_BEGIN_END_RE = re.compile(r"(?is)\\begin\{([^\n{}]+)\}.*?\\end\{\1\}")
 LATEX_INLINE_PAREN_RE = re.compile(r"(?is)\\\(.*?\\\)")
 LATEX_INLINE_DOLLAR_RE = re.compile(r"(?s)(?<!\$)\$(?!\$)(?:\\.|[^$\n])+\$(?!\$)")
 LATEX_COMMAND_RE = re.compile(r"\\[A-Za-z]+")
+INLINE_DISPLAY_MATH_RE = re.compile(r"(\\\[.*?\\\])|(\\\(.*?\\\))|(\$\$.*?\$\$)", re.S)
 LATEX_TEXT_WRAPPER_BODY_RE = re.compile(
     r"\\(?:mathrm|text|operatorname|mathit|mathbf)\{([^{}]*)\}"
 )
@@ -293,17 +300,65 @@ def _filter_tables_preserve_layout(text: str) -> str:
     return "".join(kept)
 
 
+def _find_inline_dollar_latex_spans(text: str) -> List[Tuple[int, int, str]]:
+    spans: List[Tuple[int, int, str]] = []
+    n = len(text)
+    i = 0
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 2 if i + 1 < n else 1
+            continue
+        if ch != "$":
+            i += 1
+            continue
+        if i > 0 and text[i - 1] == "$":
+            i += 1
+            continue
+        if i + 1 < n and text[i + 1] == "$":
+            i += 2
+            continue
+
+        start_idx = i
+        j = i + 1
+        matched = False
+        while j < n:
+            cj = text[j]
+            if cj == "\\":
+                j += 2 if j + 1 < n else 1
+                continue
+            if cj == "\n":
+                break
+            if cj == "$":
+                if j + 1 < n and text[j + 1] == "$":
+                    break
+                spans.append((start_idx, j + 1, text[start_idx : j + 1]))
+                i = j + 1
+                matched = True
+                break
+            j += 1
+        if not matched:
+            i = start_idx + 1
+    return spans
+
+
 def _filter_latex_preserve_layout(text: str) -> str:
     if "$" not in text and "\\" not in text:
         return text
-    for pattern in (
-        LATEX_BEGIN_END_RE,
-        LATEX_BLOCK_RE,
-        LATEX_BRACKET_RE,
-        LATEX_INLINE_PAREN_RE,
-        LATEX_INLINE_DOLLAR_RE,
-    ):
-        text = _blank_regex_matches_preserve_layout(text, pattern)
+    if "\\begin{" in text:
+        text = _blank_regex_matches_preserve_layout(text, LATEX_BEGIN_END_RE)
+    if "$$" in text:
+        text = _blank_regex_matches_preserve_layout(text, LATEX_BLOCK_RE)
+    if "\\[" in text:
+        text = _blank_regex_matches_preserve_layout(text, LATEX_BRACKET_RE)
+    if "\\(" in text:
+        text = _blank_regex_matches_preserve_layout(text, LATEX_INLINE_PAREN_RE)
+    if "$" in text:
+        inline_dollar_spans = [
+            {"start": start_idx, "end": end_idx}
+            for start_idx, end_idx, _body in _find_inline_dollar_latex_spans(text)
+        ]
+        text = _blank_raw_spans_preserve_layout(text, inline_dollar_spans)
     return text
 
 
@@ -329,36 +384,33 @@ def _blank_raw_spans_preserve_layout(text: str, spans: List[Dict[str, Any]]) -> 
 
 def _extract_latex_segments(text: str) -> List[Dict[str, Any]]:
     raw: List[Tuple[int, int, str, str]] = []
-    for name, pattern in LATEX_SEGMENT_PATTERNS:
-        for match in pattern.finditer(text):
-            raw.append((match.start(), match.end(), name, match.group(0)))
+    if "\\begin{" in text:
+        for match in LATEX_BEGIN_END_RE.finditer(text):
+            raw.append((match.start(), match.end(), "begin_end", match.group(0)))
+    if "$$" in text:
+        for match in LATEX_BLOCK_RE.finditer(text):
+            raw.append((match.start(), match.end(), "display_dollar", match.group(0)))
+    if "\\[" in text:
+        for match in LATEX_BRACKET_RE.finditer(text):
+            raw.append((match.start(), match.end(), "display_bracket", match.group(0)))
+    if "\\(" in text:
+        for match in LATEX_INLINE_PAREN_RE.finditer(text):
+            raw.append((match.start(), match.end(), "inline_paren", match.group(0)))
+    if "$" in text:
+        for start_idx, end_idx, body in _find_inline_dollar_latex_spans(text):
+            raw.append((start_idx, end_idx, "inline_dollar", body))
 
     raw.sort(key=lambda item: (item[0], -(item[1] - item[0]), item[2]))
     segments: List[Dict[str, Any]] = []
     last_end = -1
-    for start, end, kind, body in raw:
-        if segments and start >= segments[-1]["start"] and end <= segments[-1]["end"]:
+    for start_idx, end_idx, kind, body in raw:
+        if segments and start_idx >= segments[-1]["start"] and end_idx <= segments[-1]["end"]:
             continue
-        if start < last_end:
+        if start_idx < last_end:
             continue
-        segments.append({"start": start, "end": end, "kind": kind, "text": body})
-        last_end = end
+        segments.append({"start": start_idx, "end": end_idx, "kind": kind, "text": body})
+        last_end = end_idx
     return segments
-
-
-def _clean_fill_for_removed_span(page_text: str, start: int, end: int) -> str:
-    removed = page_text[start:end]
-    prev_char = page_text[start - 1] if start > 0 else ""
-    next_char = page_text[end] if end < len(page_text) else ""
-    if "\n" in removed:
-        if prev_char == "\n" or next_char == "\n":
-            return ""
-        return "\n"
-    if prev_char and next_char and not prev_char.isspace() and not next_char.isspace():
-        return " "
-    return ""
-
-
 def _find_table_repeat_spans(page_text: str) -> List[Dict[str, Any]]:
     """Keep phase_clean's old call shape while table policy lives in ocr_table."""
     return _find_table_repeat_spans_impl(
@@ -1433,20 +1485,6 @@ def _gap_has_fewer_than_n_nonwhitespace_chars(text: str, start: int, end: int, l
             if count >= limit:
                 return False
     return True
-
-
-def _gap_has_at_most_n_nonwhitespace_chars(text: str, start: int, end: int, limit: int) -> bool:
-    if start >= end:
-        return True
-    count = 0
-    for ch in text[start:end]:
-        if not ch.isspace():
-            count += 1
-            if count > limit:
-                return False
-    return True
-
-
 def _latex_segments_are_local(page_text: str, left: Dict[str, Any], right: Dict[str, Any]) -> bool:
     return _gap_has_fewer_than_n_nonwhitespace_chars(
         page_text,
@@ -1896,7 +1934,11 @@ def _find_latex_repeat_spans(
             window=window,
         )
         for span in normalized_spans:
-            if span["end"] <= span["start"] or span["start"] >= len(raw_map):
+            if (
+                span["end"] <= span["start"]
+                or span["start"] >= len(raw_map)
+                or span["end"] - 1 >= len(raw_map)
+            ):
                 continue
             start = segment["start"] + raw_map[span["start"]]
             end = segment["start"] + raw_map[span["end"] - 1] + 1
@@ -1949,334 +1991,6 @@ def _shared_repeat_match_type(segment: str) -> Optional[str]:
     if has_digit:
         return "numeric_repeat"
     return None
-
-
-def _merge_labeled_raw_spans(text: str, spans: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    if not spans:
-        return []
-
-    text_len = len(text)
-    sanitized_spans: List[Dict[str, Any]] = []
-    for span in spans:
-        start = max(0, int(span["start"]))
-        end = min(text_len, int(span["end"]))
-        if start >= text_len or end <= start:
-            continue
-        sanitized = dict(span)
-        sanitized["start"] = start
-        sanitized["end"] = end
-        sanitized_spans.append(sanitized)
-    if not sanitized_spans:
-        return []
-
-    spans = sorted(sanitized_spans, key=lambda item: (item["start"], item["end"]))
-    merged: List[Dict[str, Any]] = []
-    for span in spans:
-        if not merged:
-            merged.append(dict(span))
-            continue
-
-        previous = merged[-1]
-        overlaps = span["start"] <= previous["end"]
-        close_gap = (
-            not overlaps
-            and previous["category"] == span["category"]
-            and previous["category"] != "table"
-            and _gap_has_at_most_n_nonwhitespace_chars(
-                text,
-                previous["end"],
-                span["start"],
-                WORD_REPEAT_MERGE_MAX_NONWHITESPACE_GAP,
-            )
-        )
-        if overlaps or close_gap:
-            same_single_type = previous.get("match_types", []) == span.get("match_types", [])
-            same_kind = previous.get("kind") == span.get("kind")
-            previous["start"] = min(previous["start"], span["start"])
-            previous["end"] = max(previous["end"], span["end"])
-            previous["match_types"] = sorted(
-                set(previous.get("match_types", [])) | set(span.get("match_types", []))
-            )
-            if (
-                previous.get("kind") is None
-                and span.get("kind") is not None
-                and previous.get("match_types", []) == span.get("match_types", [])
-            ):
-                previous["kind"] = span.get("kind")
-            if "period" in span:
-                previous["period"] = min(previous.get("period", span["period"]), span["period"])
-            if "repetitions" in span:
-                previous["repetitions"] = max(
-                    previous.get("repetitions", span["repetitions"]),
-                    span["repetitions"],
-                )
-            if "tail_chars" in span:
-                previous["tail_chars"] = max(
-                    previous.get("tail_chars", 0),
-                    span.get("tail_chars", 0),
-                )
-            if (
-                same_single_type
-                and same_kind
-                and previous.get("item_count") is not None
-                and span.get("item_count") is not None
-            ):
-                previous["item_count"] = int(previous["item_count"]) + int(span["item_count"])
-            continue
-        merged.append(dict(span))
-    return merged
-
-
-def _summarize_merged_labeled_spans(
-    merged_spans: List[Dict[str, Any]],
-) -> Tuple[List[str], int, int, int, int, int]:
-    seen_types: Set[str] = set()
-    numeric_count = 0
-    word_count = 0
-    latex_count = 0
-    table_count = 0
-    hybrid_count = 0
-    for span in merged_spans:
-        seen_types.update(span.get("match_types", []))
-        if span["category"] == "numeric":
-            numeric_count += 1
-        elif span["category"] == "word":
-            word_count += 1
-        elif span["category"] == "latex":
-            latex_count += 1
-        elif span["category"] == "table":
-            table_count += 1
-        elif span["category"] == "hybrid":
-            hybrid_count += 1
-    return (
-        sorted(seen_types),
-        numeric_count,
-        word_count,
-        latex_count,
-        table_count,
-        hybrid_count,
-    )
-
-
-def _render_page_from_merged_labeled_spans(
-    page_text: str,
-    merged_spans: List[Dict[str, Any]],
-    *,
-    mode: str,
-) -> str:
-    if not merged_spans:
-        return _replace_html_tables_with_markdown(page_text)
-
-    parts: List[str] = []
-    pos = 0
-    for span in merged_spans:
-        start = span["start"]
-        end = span["end"]
-        if start > pos:
-            parts.append(_replace_html_tables_with_markdown(page_text[pos:start]))
-        match_types = list(span.get("match_types", []))
-        if mode == "debug":
-            open_tag = f'<match of type {",".join(match_types)}'
-            if match_types == ["word_repeat"]:
-                open_tag += f' period={span.get("period", 0)} reps={span.get("repetitions", 0)}'
-            elif match_types == ["latex_repeat"]:
-                if span.get("kind"):
-                    open_tag += f' kind={span.get("kind")}'
-                if span.get("item_count") is not None:
-                    open_tag += f' items={span.get("item_count")}'
-            elif match_types == ["table_repeat"]:
-                if span.get("kind"):
-                    open_tag += f' kind={span.get("kind")}'
-                if span.get("row_count") is not None:
-                    open_tag += f' rows={span.get("row_count")}'
-                if span.get("duplicate_rows") is not None:
-                    open_tag += f' dup_rows={span.get("duplicate_rows")}'
-                if span.get("nonempty_ratio") is not None:
-                    open_tag += f' nonempty_ratio={span.get("nonempty_ratio")}'
-                if span.get("word_count") is not None:
-                    open_tag += f' words={span.get("word_count")}'
-                if span.get("char_count") is not None:
-                    open_tag += f' chars={span.get("char_count")}'
-            elif match_types == ["hybrid_repeat"]:
-                if span.get("kind"):
-                    open_tag += f' kind={span.get("kind")}'
-                if span.get("item_count") is not None:
-                    open_tag += f' items={span.get("item_count")}'
-                if span.get("cycle_len") is not None:
-                    open_tag += f' cycle={span.get("cycle_len")}'
-            open_tag += ">"
-            parts.append(open_tag)
-            if match_types == ["table_repeat"]:
-                parts.append(
-                    _render_table_html_for_output(
-                        page_text[start:end],
-                        match_kind=span.get("kind"),
-                    )
-                )
-            else:
-                parts.append(page_text[start:end])
-            parts.append("</match>")
-        else:
-            if match_types == ["table_repeat"]:
-                parts.append(
-                    _render_table_html_for_clean(
-                        page_text[start:end],
-                        match_kind=span.get("kind"),
-                    )
-                )
-            else:
-                parts.append(_clean_fill_for_removed_span(page_text, start, end))
-        pos = end
-    if pos < len(page_text):
-        parts.append(_replace_html_tables_with_markdown(page_text[pos:]))
-    return "".join(parts)
-
-
-def _render_page_with_labeled_spans_result(
-    page_text: str,
-    spans: List[Dict[str, Any]],
-    *,
-    mode: str = "debug",
-) -> Dict[str, Any]:
-    if mode not in {"debug", "clean"}:
-        raise ValueError(f"Unsupported OCR render mode: {mode}")
-    merged_spans = _merge_labeled_raw_spans(page_text, spans)
-    (
-        page_types,
-        numeric_count,
-        word_count,
-        latex_count,
-        table_count,
-        hybrid_count,
-    ) = _summarize_merged_labeled_spans(merged_spans)
-    rendered_page = _render_page_from_merged_labeled_spans(
-        page_text,
-        merged_spans,
-        mode=mode,
-    )
-    return {
-        "rendered_page": rendered_page,
-        "merged_spans": merged_spans,
-        "page_types": page_types,
-        "page_numeric_count": numeric_count,
-        "page_word_count": word_count,
-        "page_latex_count": latex_count,
-        "page_table_count": table_count,
-        "page_hybrid_count": hybrid_count,
-    }
-
-
-def _render_page_with_labeled_spans(
-    page_text: str,
-    spans: List[Dict[str, Any]],
-    *,
-    mode: str = "debug",
-) -> Tuple[str, List[str], int, int, int, int, int]:
-    """Render one page from a shared span plan.
-
-    `debug` and `clean` intentionally share the exact same merged span plan.
-    The only difference is how that plan is rendered:
-    - debug wraps the matched source surface in `<match ...>` tags
-    - clean removes or rewrites the matched surface according to policy
-
-    Keeping both modes on one renderer prevents the real cleaner from drifting
-    away from the reviewed debug output.
-    """
-    result = _render_page_with_labeled_spans_result(page_text, spans, mode=mode)
-    return (
-        str(result["rendered_page"]),
-        list(result["page_types"]),
-        int(result["page_numeric_count"]),
-        int(result["page_word_count"]),
-        int(result["page_latex_count"]),
-        int(result["page_table_count"]),
-        int(result["page_hybrid_count"]),
-    )
-
-
-def _annotate_page_with_labeled_spans(
-    page_text: str,
-    spans: List[Dict[str, Any]],
-) -> Tuple[str, List[str], int, int, int, int, int]:
-    return _render_page_with_labeled_spans(page_text, spans, mode="debug")
-
-
-def _count_hybrid_matches_in_page(page_text: str, spans: List[Dict[str, Any]]) -> int:
-    merged_spans = _merge_labeled_raw_spans(page_text, spans)
-    return sum(1 for span in merged_spans if span.get("category") == "hybrid")
-
-
-def _utf8_prefix_byte_offsets(text: str) -> List[int]:
-    offsets = [0]
-    total = 0
-    for char in text:
-        total += len(char.encode("utf-8"))
-        offsets.append(total)
-    return offsets
-
-
-def _span_repeat_count(span: Dict[str, Any]) -> Optional[int]:
-    if span.get("repetitions") is not None:
-        return int(span["repetitions"])
-    if span.get("item_count") is not None:
-        return int(span["item_count"])
-    if span.get("duplicate_rows") is not None:
-        return int(span["duplicate_rows"])
-    return None
-
-
-def _build_match_index_rows(
-    page_text: str,
-    merged_spans: List[Dict[str, Any]],
-    *,
-    source_path: Path,
-    page_number: int,
-    debug_output_path: Optional[Path] = None,
-) -> List[Dict[str, Any]]:
-    if not merged_spans:
-        return []
-    byte_offsets = _utf8_prefix_byte_offsets(page_text)
-    rows: List[Dict[str, Any]] = []
-    for match_index, span in enumerate(merged_spans, start=1):
-        start = int(span["start"])
-        end = int(span["end"])
-        match_text = page_text[start:end]
-        rows.append(
-            {
-                "match_id": f"{source_path.stem}:page:{page_number}:match:{match_index}",
-                "source_path": str(source_path),
-                "source_stem": source_path.stem,
-                "debug_output_path": None if debug_output_path is None else str(debug_output_path),
-                "page_number": int(page_number),
-                "page_index_in_file": int(page_number),
-                "match_index_in_page": int(match_index),
-                "start_char": start,
-                "end_char": end,
-                "start_byte": int(byte_offsets[start]),
-                "end_byte": int(byte_offsets[end]),
-                "match_length_chars": int(end - start),
-                "match_length_bytes": int(byte_offsets[end] - byte_offsets[start]),
-                "match_types": list(span.get("match_types", [])),
-                "match_type": ",".join(span.get("match_types", [])),
-                "category": str(span.get("category", "")),
-                "kind": span.get("kind"),
-                "repeat_count": _span_repeat_count(span),
-                "period": span.get("period"),
-                "repetitions": span.get("repetitions"),
-                "tail_chars": span.get("tail_chars"),
-                "item_count": span.get("item_count"),
-                "cycle_len": span.get("cycle_len"),
-                "row_count": span.get("row_count"),
-                "duplicate_rows": span.get("duplicate_rows"),
-                "nonempty_ratio": span.get("nonempty_ratio"),
-                "word_count": span.get("word_count"),
-                "char_count": span.get("char_count"),
-                "matched_text": match_text,
-            }
-        )
-    return rows
-
-
 def _find_labeled_shared_repeat_spans(
     page_text: str,
     *,
@@ -2319,7 +2033,11 @@ def _find_labeled_shared_repeat_spans(
     )
     labeled_spans: List[Dict[str, Any]] = []
     for span in normalized_spans:
-        if span["end"] <= span["start"] or span["start"] >= len(raw_map):
+        if (
+            span["end"] <= span["start"]
+            or span["start"] >= len(raw_map)
+            or span["end"] - 1 >= len(raw_map)
+        ):
             continue
         match_type = _shared_repeat_match_type(normalized_text[span["start"] : span["end"]])
         if match_type is None:
@@ -2485,6 +2203,11 @@ def _render_combined_ocr_page(
     }
 
 
+def _count_hybrid_matches_in_page(page_text: str, spans: List[Dict[str, Any]]) -> int:
+    merged_spans = _merge_labeled_raw_spans(page_text, spans)
+    return sum(1 for span in merged_spans if span.get("category") == "hybrid")
+
+
 def _render_combined_ocr_page_modes(
     page_text: str,
     *,
@@ -2587,6 +2310,8 @@ def _process_combined_ocr_document(
     doc_match_types: Set[str] = set()
     page_metric_rows: List[Dict[str, Any]] = []
     match_index_rows: List[Dict[str, Any]] = []
+    clean_char_count_no_comments: Optional[int] = None
+    clean_is_empty: Optional[bool] = None
 
     for page_index, page in enumerate(pages, start=1):
         if clean_output_path is not None and debug_output_path is not None:
@@ -2707,7 +2432,12 @@ def _process_combined_ocr_document(
             )
 
     if clean_output_path is not None:
-        clean_output_path.write_text(PAGE_SPLIT_MARKER.join(cleaned_pages), encoding="utf-8")
+        cleaned_doc_text = PAGE_SPLIT_MARKER.join(cleaned_pages)
+        # Compute cleaned-surface char metrics while the full document text is
+        # already in memory. This avoids a second Python file-read pass over
+        # every cleaned markdown file after rendering.
+        clean_char_count_no_comments, clean_is_empty = sanitized_char_count(cleaned_doc_text)
+        clean_output_path.write_text(cleaned_doc_text, encoding="utf-8")
     if debug_output_path is not None:
         debug_output_path.write_text(PAGE_SPLIT_MARKER.join(debug_pages), encoding="utf-8")
 
@@ -2728,6 +2458,8 @@ def _process_combined_ocr_document(
         "word_match_count": word_match_count,
         "match_count": int(len(match_index_rows)),
         "match_types": ",".join(sorted(doc_match_types)),
+        "char_count_no_comments": clean_char_count_no_comments,
+        "is_empty": clean_is_empty,
     }
     return {
         "row": row,
@@ -2775,8 +2507,8 @@ def _process_combined_ocr_clean_document(
     word_rep_threshold: int,
     word_min_period: int,
     word_window: int,
-) -> None:
-    _process_combined_ocr_document(
+) -> Dict[str, Any]:
+    return _process_combined_ocr_document(
         source_path,
         clean_output_path=output_path,
         debug_output_path=None,
@@ -2820,7 +2552,7 @@ def _process_combined_ocr_debug_document_job(
 
 def _process_combined_ocr_clean_document_job(
     job: Tuple[str, str, int, int, int, int, int, int]
-) -> None:
+) -> Dict[str, Any]:
     (
         source_path_str,
         output_path_str,
@@ -2831,7 +2563,7 @@ def _process_combined_ocr_clean_document_job(
         word_min_period,
         word_window,
     ) = job
-    _process_combined_ocr_clean_document(
+    return _process_combined_ocr_clean_document(
         Path(source_path_str),
         Path(output_path_str),
         noise_mod=None,
@@ -3698,6 +3430,183 @@ class CleanPhaseMixin:
         if write_cleaned_files:
             self.markdown_dir = self.cleaned_markdown_dir
 
+    def _collect_clean_ocr_char_rows(
+        self,
+        *,
+        write_cleaned_files: bool,
+        write_debug_files: bool,
+        score_files: List[Path],
+        clean_rows: Optional[List[Dict[str, Any]]] = None,
+        debug_clean_rows: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Collect cleaned-surface char-count rows for OCR parquet updates.
+
+        When `clean_ocr()` writes cleaned markdown, the cleaned text is already
+        in memory inside the render workers, so we reuse those values instead of
+        reopening every file. Score-only mode still reads the source files once.
+        """
+
+        if write_cleaned_files:
+            source_rows = debug_clean_rows if write_debug_files else clean_rows
+            return [
+                {
+                    "filename": f"{Path(str(row['source_path'])).stem}.pdf",
+                    "char_count_no_comments": int(row["char_count_no_comments"]),
+                    "is_empty": bool(row["is_empty"]),
+                }
+                for row in (source_rows or [])
+                if row.get("char_count_no_comments") is not None and row.get("is_empty") is not None
+            ]
+
+        char_rows: List[Dict[str, Any]] = []
+        for md_path in score_files:
+            char_count_no_comments, is_empty = sanitized_char_count(
+                md_path.read_text(encoding="utf-8")
+            )
+            char_rows.append(
+                {
+                    "filename": f"{md_path.stem}.pdf",
+                    "char_count_no_comments": int(char_count_no_comments),
+                    "is_empty": bool(is_empty),
+                }
+            )
+        return char_rows
+
+    def _score_clean_ocr_surface(
+        self,
+        *,
+        noise_mod: Any,
+        score_dir: Path,
+        n_threads: int,
+        min_repeat_run: int,
+        write_cleaned_files: bool,
+        write_debug_files: bool,
+        clean_rows: Optional[List[Dict[str, Any]]] = None,
+        debug_clean_rows: Optional[List[Dict[str, Any]]] = None,
+    ) -> pd.DataFrame:
+        """Score the exact markdown surface that `clean_ocr()` publishes."""
+
+        score_files = sorted(score_dir.glob("*.md"))
+        self.logger.info(
+            "Scoring OCR markdown files with glossapi_rs_noise OCR profile on %d markdown files from %s…",
+            len(score_files),
+            score_dir,
+        )
+
+        results = noise_mod.score_markdown_directory_ocr_profile(
+            str(score_dir),
+            n_threads,
+            int(min_repeat_run),
+        )
+        df_updates = pd.DataFrame(list(results))
+        if df_updates.empty:
+            return df_updates
+
+        df_updates["filename"] = df_updates["path"].apply(
+            lambda value: f"{Path(str(value)).stem}.pdf"
+        )
+        df_updates["polytonic_ratio"] = pd.to_numeric(
+            df_updates["polytonic_ratio"], errors="coerce"
+        ).round(2)
+        df_updates["percentage_greek"] = pd.to_numeric(
+            df_updates["percentage_greek"], errors="coerce"
+        ).round(3)
+        df_updates["latin_percentage"] = pd.to_numeric(
+            df_updates["latin_percentage"], errors="coerce"
+        ).round(3)
+        df_updates["ocr_repeat_suspicious_line_ratio"] = pd.to_numeric(
+            df_updates["ocr_repeat_suspicious_line_ratio"], errors="coerce"
+        ).round(4)
+        df_updates["ocr_noise_flags"] = (
+            df_updates["ocr_noise_flags"].fillna("").astype(str)
+        )
+
+        char_rows = self._collect_clean_ocr_char_rows(
+            write_cleaned_files=write_cleaned_files,
+            write_debug_files=write_debug_files,
+            score_files=score_files,
+            clean_rows=clean_rows,
+            debug_clean_rows=debug_clean_rows,
+        )
+        if char_rows:
+            df_chars = pd.DataFrame(char_rows)
+            df_updates = df_updates.merge(df_chars, on="filename", how="left")
+        return df_updates
+
+    def _merge_clean_ocr_metrics_into_parquet(
+        self,
+        *,
+        parquet_schema: Any,
+        parquet_path: Path,
+        df_updates: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """Merge OCR-specific cleaned-surface metrics into the metadata parquet."""
+
+        update_columns = [
+            "filename",
+            "percentage_greek",
+            "latin_percentage",
+            "polytonic_ratio",
+            "char_count_no_comments",
+            "is_empty",
+            "ocr_noise_suspect",
+            "ocr_noise_flags",
+            "ocr_repeat_phrase_run_max",
+            "ocr_repeat_line_run_max",
+            "ocr_repeat_suspicious_line_count",
+            "ocr_repeat_suspicious_line_ratio",
+        ]
+
+        df = self._load_metrics_dataframe(parquet_path, df_updates.get("filename"))
+        self._ensure_metric_columns(
+            df,
+            {
+                "filter": "ok",
+                "percentage_greek": pd.NA,
+                "latin_percentage": pd.NA,
+                "polytonic_ratio": pd.NA,
+                "char_count_no_comments": pd.NA,
+                "is_empty": pd.NA,
+                "ocr_noise_suspect": False,
+                "ocr_noise_flags": "",
+                "ocr_repeat_phrase_run_max": pd.NA,
+                "ocr_repeat_line_run_max": pd.NA,
+                "ocr_repeat_suspicious_line_count": pd.NA,
+                "ocr_repeat_suspicious_line_ratio": pd.NA,
+            },
+        )
+        df = self._merge_metric_dataframe(df, df_updates[update_columns])
+        if "char_count_no_comments" in df.columns:
+            df["char_count_no_comments"] = pd.to_numeric(
+                df["char_count_no_comments"],
+                errors="coerce",
+            )
+        if "is_empty" in df.columns:
+            df["is_empty"] = df["is_empty"].fillna(False).astype(bool)
+
+        if "filter" not in df.columns:
+            df["filter"] = "ok"
+        else:
+            df["filter"] = df["filter"].fillna("ok").astype(str)
+
+        suspect_mask = df["ocr_noise_suspect"].fillna(False).astype(bool)
+        if bool(suspect_mask.any()):
+            current = df.loc[suspect_mask, "filter"].astype(str)
+
+            def _append_ocr_noise(value: str) -> str:
+                if value == "ok" or not value:
+                    return "ocr_noise"
+                tokens = [token for token in value.split(";") if token]
+                if "ocr_noise" not in tokens:
+                    tokens.append("ocr_noise")
+                return ";".join(tokens)
+
+            df.loc[suspect_mask, "filter"] = current.apply(_append_ocr_noise)
+
+        parquet_schema.write_metadata_parquet(df, parquet_path)
+        self.logger.info("OCR metrics updated in %s", parquet_path)
+        return df
+
     def clean_ocr(
         self,
         input_dir: Union[str, Path] = None,
@@ -3782,7 +3691,16 @@ class CleanPhaseMixin:
             )
 
             if write_debug_files:
-                rows: List[Dict[str, Any]] = []
+                debug_clean_rows: List[Dict[str, Any]] = []
+                doc_count = 0
+                matched_doc_count = 0
+                matched_page_count_total = 0
+                match_count_total = 0
+                table_match_count_total = 0
+                numeric_match_count_total = 0
+                latex_match_count_total = 0
+                hybrid_match_count_total = 0
+                word_match_count_total = 0
                 total_page_times: List[float] = []
                 table_page_times: List[float] = []
                 numeric_page_times: List[float] = []
@@ -3795,10 +3713,33 @@ class CleanPhaseMixin:
                 def _consume_debug_doc_result(
                     doc_result: Dict[str, Any],
                     *,
+                    manifest_handle: Any,
                     page_metrics_handle: Any,
                     match_index_handle: Any,
                 ) -> None:
-                    rows.append(dict(doc_result["row"]))
+                    nonlocal doc_count
+                    nonlocal matched_doc_count
+                    nonlocal matched_page_count_total
+                    nonlocal match_count_total
+                    nonlocal table_match_count_total
+                    nonlocal numeric_match_count_total
+                    nonlocal latex_match_count_total
+                    nonlocal hybrid_match_count_total
+                    nonlocal word_match_count_total
+                    row = dict(doc_result["row"])
+                    debug_clean_rows.append(row)
+                    manifest_handle.write(json.dumps(row, ensure_ascii=False))
+                    manifest_handle.write("\n")
+                    doc_count += 1
+                    if int(row["matched_page_count"]) > 0:
+                        matched_doc_count += 1
+                    matched_page_count_total += int(row["matched_page_count"])
+                    match_count_total += int(row.get("match_count", 0))
+                    table_match_count_total += int(row["table_match_count"])
+                    numeric_match_count_total += int(row["numeric_match_count"])
+                    latex_match_count_total += int(row["latex_match_count"])
+                    hybrid_match_count_total += int(row["hybrid_match_count"])
+                    word_match_count_total += int(row["word_match_count"])
                     for page_row in doc_result["page_metric_rows"]:
                         page_metrics_handle.write(json.dumps(page_row, ensure_ascii=False))
                         page_metrics_handle.write("\n")
@@ -3844,7 +3785,7 @@ class CleanPhaseMixin:
                             )
                             for source_path in md_files
                         ]
-                    with debug_page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, debug_match_index_path.open("w", encoding="utf-8") as match_index_handle:
+                    with debug_manifest_path.open("w", encoding="utf-8") as manifest_handle, debug_page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, debug_match_index_path.open("w", encoding="utf-8") as match_index_handle:
                         with _combined_ocr_process_pool_warning_ctx():
                             with ProcessPoolExecutor(
                                 max_workers=render_workers,
@@ -3858,6 +3799,7 @@ class CleanPhaseMixin:
                                 for doc_result in iterator:
                                     _consume_debug_doc_result(
                                         doc_result,
+                                        manifest_handle=manifest_handle,
                                         page_metrics_handle=page_metrics_handle,
                                         match_index_handle=match_index_handle,
                                     )
@@ -3894,30 +3836,26 @@ class CleanPhaseMixin:
                             )
                         run_doc = _run_debug_doc
 
-                    with debug_page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, debug_match_index_path.open("w", encoding="utf-8") as match_index_handle:
+                    with debug_manifest_path.open("w", encoding="utf-8") as manifest_handle, debug_page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, debug_match_index_path.open("w", encoding="utf-8") as match_index_handle:
                         with ThreadPoolExecutor(max_workers=render_workers) as executor:
                             for doc_result in executor.map(run_doc, md_files):
                                 _consume_debug_doc_result(
                                     doc_result,
+                                    manifest_handle=manifest_handle,
                                     page_metrics_handle=page_metrics_handle,
                                     match_index_handle=match_index_handle,
                                 )
 
-                with debug_manifest_path.open("w", encoding="utf-8") as handle:
-                    for row in rows:
-                        handle.write(json.dumps(row, ensure_ascii=False))
-                        handle.write("\n")
-
                 debug_summary = {
-                    "doc_count": len(rows),
-                    "matched_doc_count": sum(1 for row in rows if int(row["matched_page_count"]) > 0),
-                    "matched_page_count": int(sum(int(row["matched_page_count"]) for row in rows)),
-                    "match_count": int(sum(int(row.get("match_count", 0)) for row in rows)),
-                    "table_match_count": int(sum(int(row["table_match_count"]) for row in rows)),
-                    "numeric_match_count": int(sum(int(row["numeric_match_count"]) for row in rows)),
-                    "latex_match_count": int(sum(int(row["latex_match_count"]) for row in rows)),
-                    "hybrid_match_count": int(sum(int(row["hybrid_match_count"]) for row in rows)),
-                    "word_match_count": int(sum(int(row["word_match_count"]) for row in rows)),
+                    "doc_count": int(doc_count),
+                    "matched_doc_count": int(matched_doc_count),
+                    "matched_page_count": int(matched_page_count_total),
+                    "match_count": int(match_count_total),
+                    "table_match_count": int(table_match_count_total),
+                    "numeric_match_count": int(numeric_match_count_total),
+                    "latex_match_count": int(latex_match_count_total),
+                    "hybrid_match_count": int(hybrid_match_count_total),
+                    "word_match_count": int(word_match_count_total),
                     "word_rep_threshold": int(word_rep_threshold),
                     "word_min_period": int(word_min_period),
                     "word_window": int(word_window),
@@ -3932,6 +3870,7 @@ class CleanPhaseMixin:
                 }
                 debug_summary_path.write_text(json.dumps(debug_summary, ensure_ascii=False, indent=2), encoding="utf-8")
             else:
+                clean_rows: List[Dict[str, Any]] = []
                 if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
                     jobs = [
                         (
@@ -3952,10 +3891,11 @@ class CleanPhaseMixin:
                             mp_context=mp.get_context("fork"),
                             initializer=_init_combined_ocr_worker,
                         ) as executor:
-                            list(executor.map(_process_combined_ocr_clean_document_job, jobs))
+                            for doc_result in executor.map(_process_combined_ocr_clean_document_job, jobs):
+                                clean_rows.append(dict(doc_result["row"]))
                 else:
-                    def _run_clean_doc(source_path: Path) -> None:
-                        _process_combined_ocr_clean_document(
+                    def _run_clean_doc(source_path: Path) -> Dict[str, Any]:
+                        return _process_combined_ocr_clean_document(
                             source_path,
                             self.cleaned_markdown_dir / source_path.name,
                             noise_mod=noise_mod,
@@ -3968,96 +3908,30 @@ class CleanPhaseMixin:
                         )
 
                     with ThreadPoolExecutor(max_workers=render_workers) as executor:
-                        list(executor.map(_run_clean_doc, md_files))
+                        for doc_result in executor.map(_run_clean_doc, md_files):
+                            clean_rows.append(dict(doc_result["row"]))
 
 
-        self.logger.info(
-            "Scoring OCR markdown files with glossapi_rs_noise OCR profile on %d markdown files…",
-            len(md_files),
+        score_dir = self.cleaned_markdown_dir if write_cleaned_files else input_dir
+        df_updates = self._score_clean_ocr_surface(
+            noise_mod=noise_mod,
+            score_dir=score_dir,
+            n_threads=n_threads,
+            min_repeat_run=int(min_repeat_run),
+            write_cleaned_files=write_cleaned_files,
+            write_debug_files=write_debug_files,
+            clean_rows=clean_rows if write_cleaned_files and not write_debug_files else None,
+            debug_clean_rows=debug_clean_rows if write_debug_files else None,
         )
-
-        results = noise_mod.score_markdown_directory_ocr_profile(
-            str(input_dir),
-            n_threads,
-            int(min_repeat_run),
-        )
-        df_updates = pd.DataFrame(list(results))
         if df_updates.empty:
             self.good_files = []
-            self.logger.info("OCR cleaning found no markdown files under %s", input_dir)
+            self.logger.info("OCR cleaning found no markdown files under %s", score_dir)
             return
-
-        df_updates["filename"] = df_updates["path"].apply(
-            lambda value: f"{Path(str(value)).stem}.pdf"
+        df = self._merge_clean_ocr_metrics_into_parquet(
+            parquet_schema=parquet_schema,
+            parquet_path=parquet_path,
+            df_updates=df_updates,
         )
-        df_updates["polytonic_ratio"] = pd.to_numeric(
-            df_updates["polytonic_ratio"], errors="coerce"
-        ).round(2)
-        df_updates["percentage_greek"] = pd.to_numeric(
-            df_updates["percentage_greek"], errors="coerce"
-        ).round(3)
-        df_updates["latin_percentage"] = pd.to_numeric(
-            df_updates["latin_percentage"], errors="coerce"
-        ).round(3)
-        df_updates["ocr_repeat_suspicious_line_ratio"] = pd.to_numeric(
-            df_updates["ocr_repeat_suspicious_line_ratio"], errors="coerce"
-        ).round(4)
-        df_updates["ocr_noise_flags"] = (
-            df_updates["ocr_noise_flags"].fillna("").astype(str)
-        )
-
-        update_columns = [
-            "filename",
-            "percentage_greek",
-            "latin_percentage",
-            "polytonic_ratio",
-            "ocr_noise_suspect",
-            "ocr_noise_flags",
-            "ocr_repeat_phrase_run_max",
-            "ocr_repeat_line_run_max",
-            "ocr_repeat_suspicious_line_count",
-            "ocr_repeat_suspicious_line_ratio",
-        ]
-
-        df = self._load_metrics_dataframe(parquet_path, df_updates.get("filename"))
-        self._ensure_metric_columns(
-            df,
-            {
-                "filter": "ok",
-                "percentage_greek": pd.NA,
-                "latin_percentage": pd.NA,
-                "polytonic_ratio": pd.NA,
-                "ocr_noise_suspect": False,
-                "ocr_noise_flags": "",
-                "ocr_repeat_phrase_run_max": pd.NA,
-                "ocr_repeat_line_run_max": pd.NA,
-                "ocr_repeat_suspicious_line_count": pd.NA,
-                "ocr_repeat_suspicious_line_ratio": pd.NA,
-            },
-        )
-        df = self._merge_metric_dataframe(df, df_updates[update_columns])
-
-        if "filter" not in df.columns:
-            df["filter"] = "ok"
-        else:
-            df["filter"] = df["filter"].fillna("ok").astype(str)
-
-        suspect_mask = df["ocr_noise_suspect"].fillna(False).astype(bool)
-        if bool(suspect_mask.any()):
-            current = df.loc[suspect_mask, "filter"].astype(str)
-
-            def _append_ocr_noise(value: str) -> str:
-                if value == "ok" or not value:
-                    return "ocr_noise"
-                tokens = [token for token in value.split(";") if token]
-                if "ocr_noise" not in tokens:
-                    tokens.append("ocr_noise")
-                return ";".join(tokens)
-
-            df.loc[suspect_mask, "filter"] = current.apply(_append_ocr_noise)
-
-        parquet_schema.write_metadata_parquet(df, parquet_path)
-        self.logger.info("OCR metrics updated in %s", parquet_path)
 
         filenames = df.get("filename", pd.Series(dtype=str))
         if drop_bad:

@@ -34,7 +34,7 @@ They do not override numeric-specific detectors, which have their own thresholds
 
 ## Design Intent
 
-- Neighboring same-type spans may merge when their separator has `40` non-whitespace characters or less; this keeps fragmented OCR loops from being split into multiple tiny matches.
+- Neighboring same-type spans may merge when their separator has `40` non-whitespace characters or less; this keeps fragmented OCR loops from being split into multiple tiny matches. The merge policy lives in `src/glossapi/corpus/ocr_render.py` because it is part of reviewed surface rendering, not detector ownership.
 - A default of `4` is meant to reduce borderline `3`-repeat matches.
 - Locality matters more than page-wide reuse, especially for LaTeX.
 - Repeated symbols or notation used normally across a page should not be treated as cleaner targets by default.

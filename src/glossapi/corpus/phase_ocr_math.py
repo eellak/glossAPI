@@ -28,6 +28,35 @@ from .corpus_utils import _maybe_import_torch
 
 
 class OcrMathPhaseMixin:
+    def _refresh_metrics_after_ocr_rerun(self) -> None:
+        """Refresh OCR-owned and export-owned metrics after OCR remediation.
+
+        `clean_ocr()` and `clean()` remain separate stages on purpose:
+
+        - `clean_ocr()` owns OCR artifact removal and OCR-specific metrics.
+        - `clean()` owns the broader export-facing clean metrics.
+
+        After OCR reruns we intentionally execute both stages in sequence on the
+        OCR-cleaned text surface instead of treating one stage as a synonym for
+        the other.
+        """
+
+        self.logger.info(
+            "Re-running OCR cleaner after OCR rerun to refresh cleaned text and OCR metrics"
+        )
+        self.clean_ocr(
+            input_dir=self.markdown_dir,
+            drop_bad=False,
+        )
+        self.logger.info(
+            "Re-running Rust cleaner in score-only mode on OCR-cleaned markdown to refresh export metrics"
+        )
+        self.clean(
+            input_dir=self.cleaned_markdown_dir,
+            drop_bad=False,
+            write_cleaned_files=False,
+        )
+
     def ocr(
         self,
         *,
@@ -676,11 +705,7 @@ class OcrMathPhaseMixin:
 
         if reran_ocr:
             try:
-                self.logger.info("Re-running Rust cleaner after OCR rerun to refresh metrics")
-                self.clean(
-                    input_dir=self.markdown_dir,
-                    drop_bad=False,
-                )
+                self._refresh_metrics_after_ocr_rerun()
             except Exception as _e:
                 self.logger.warning("Cleaner refresh after OCR failed: %s", _e)
 
