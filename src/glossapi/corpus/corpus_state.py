@@ -52,6 +52,18 @@ class _ProcessingStateManager:
                 continue
         return stems
 
+    @staticmethod
+    def _text_or_empty(value: object) -> str:
+        if value is None:
+            return ""
+        try:
+            is_missing = pd.isna(value)
+        except Exception:
+            is_missing = False
+        if isinstance(is_missing, bool) and is_missing:
+            return ""
+        return str(value)
+
     def _metadata_path(self) -> Optional[Path]:
         try:
             return self.schema.ensure_metadata_parquet(self.base_dir)
@@ -60,7 +72,7 @@ class _ProcessingStateManager:
             return None
 
     def _mark_stage(self, current: str, stage: str) -> str:
-        parts = [p for p in (current or "").split(",") if p]
+        parts = [p for p in self._text_or_empty(current).split(",") if p]
         if stage and stage not in parts:
             parts.append(stage)
         return ",".join(parts)
@@ -110,8 +122,8 @@ class _ProcessingStateManager:
             stem = _stem_for(row)
             if not stem:
                 continue
-            status_raw = str(row.get("extract_status") or "").strip().lower()
-            stage_raw = str(row.get("processing_stage") or "")
+            status_raw = self._text_or_empty(row.get("extract_status")).strip().lower()
+            stage_raw = self._text_or_empty(row.get("processing_stage"))
             if status_raw in success_markers or "extract" in stage_raw.split(","):
                 processed.add(stem)
                 continue
@@ -175,7 +187,7 @@ class _ProcessingStateManager:
                     filename, exists = self._guess_filename(stem)
                     file_ext = Path(filename).suffix.lstrip(".")
                     row = {col: pd.NA for col in df.columns}
-                    row[self.url_column] = row.get(self.url_column, "") or ""
+                    row[self.url_column] = self._text_or_empty(row.get(self.url_column, ""))
                     row["filename"] = filename
                     row["file_ext"] = file_ext
                     row["filename_base"] = stem
