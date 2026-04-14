@@ -1,0 +1,2778 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Academic document processing pipeline (Docling + DeepSeek + Rust)">
+      
+      
+      
+      
+        <link rel="prev" href="../ocr_changes_2026-04-01_to_2026-04-03/">
+      
+      
+        <link rel="next" href="../../troubleshooting/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>OpenArchives OCR Rollout Plan - GlossAPI</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#openarchives-ocr-rollout-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="GlossAPI" class="md-header__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            GlossAPI
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              OpenArchives OCR Rollout Plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting_started/" class="md-tabs__link">
+          
+  
+  
+  Onboarding
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../pipeline/" class="md-tabs__link">
+          
+  
+  
+  Pipeline
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../configuration/" class="md-tabs__link">
+          
+  
+  
+  Configuration & Ops
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../code_map/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="GlossAPI" class="md-nav__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    GlossAPI
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Onboarding
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../lightweight_corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lightweight PDF Corpus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/core_design_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/docling_throughput_and_batching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docling Throughput and Batching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/docling_failure_recovery_and_skiplist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Failure Recovery and Skiplist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/greek_text_validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Greek Text Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/metadata_artifacts_and_run_diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metadata, Artifacts, and Run Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/artifact_layout_and_stage_handoffs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Artifact Layout and Stage Handoffs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/resumability_recovery_and_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resumability, Recovery, and Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Pipeline
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ocr_and_math_enhancement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR & Math Enrichment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../multi_gpu/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-GPU & Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Stage Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/download/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Download
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/extract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/clean/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Clean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/ocr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/section/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Section
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/annotate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Annotate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration & Ops
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration & Ops
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../aws_job_distribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWS Job Distribution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deepseek_gcp_a100_setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DeepSeek GCP A100 Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ocr_changes_2026-04-01_to_2026-04-03/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Changes 2026-04-01 to 2026-04-03
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenArchives OCR Rollout Plan
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenArchives OCR Rollout Plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#implemented-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implemented tooling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#executed-result-on-2026-03-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Executed result on 2026-03-31
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-runner-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node runner contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-validated-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current validated baseline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-aws-capacity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current AWS capacity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-1-recover-or-regenerate-the-canonical-ocr-routing-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Recover or regenerate the canonical OCR routing state
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 1: Recover or regenerate the canonical OCR routing state">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1a-check-the-stopped-ocr-instance-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1A. Check the stopped OCR instance first
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1b-fallback-regenerate-the-routing-state-on-a-cpu-instance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1B. Fallback: regenerate the routing state on a CPU instance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-2-quantify-the-actual-ocr-workload" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Quantify the actual OCR workload
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-3-shard-across-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Shard across nodes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 3: Shard across nodes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#coordinator-manifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coordinator manifest
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node-local-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node-local execution
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-4-merge-back-into-the-canonical-corpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: Merge back into the canonical corpus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-5-standardize-all-ocr-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5: Standardize all OCR nodes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#instance-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Instance options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-6-eta" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 6: ETA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-7-deployment-and-monitoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 7: Deployment and monitoring
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 7: Deployment and monitoring">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#monitoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#immediate-next-actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Immediate next actions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../testing/compatibility_matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility And Regression Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../code_map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Corpus API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api_corpus_tmp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy Corpus API Notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../math_enrichment_runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math Enrichment Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#implemented-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implemented tooling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#executed-result-on-2026-03-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Executed result on 2026-03-31
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-runner-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node runner contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-validated-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current validated baseline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-aws-capacity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current AWS capacity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-1-recover-or-regenerate-the-canonical-ocr-routing-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1: Recover or regenerate the canonical OCR routing state
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 1: Recover or regenerate the canonical OCR routing state">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1a-check-the-stopped-ocr-instance-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1A. Check the stopped OCR instance first
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1b-fallback-regenerate-the-routing-state-on-a-cpu-instance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1B. Fallback: regenerate the routing state on a CPU instance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-2-quantify-the-actual-ocr-workload" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: Quantify the actual OCR workload
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-3-shard-across-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: Shard across nodes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 3: Shard across nodes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#coordinator-manifest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coordinator manifest
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node-local-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node-local execution
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-4-merge-back-into-the-canonical-corpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: Merge back into the canonical corpus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-5-standardize-all-ocr-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5: Standardize all OCR nodes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#instance-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Instance options
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-6-eta" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 6: ETA
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-7-deployment-and-monitoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 7: Deployment and monitoring
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 7: Deployment and monitoring">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#monitoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#immediate-next-actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Immediate next actions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="openarchives-ocr-rollout-plan">OpenArchives OCR Rollout Plan<a class="headerlink" href="#openarchives-ocr-rollout-plan" title="Permanent link">&para;</a></h1>
+<p>This document records the concrete execution plan for running DeepSeek OCR over the OpenArchives subset with <code>needs_ocr=True</code>, including how to recover or regenerate the routing state, how to shard work across AWS nodes, and how to merge results back into the canonical GlossAPI corpus.</p>
+<h2 id="implemented-tooling">Implemented tooling<a class="headerlink" href="#implemented-tooling" title="Permanent link">&para;</a></h2>
+<p>The rollout is backed by concrete scripts in <code>src/glossapi/scripts/</code>:</p>
+<ul>
+<li><code>openarchives_ocr_enrich.py</code></li>
+<li>reads the canonical OpenArchives parquet</li>
+<li>scans raw HF JSONL shards for the target docs</li>
+<li>extracts <code>page_count_source</code>, <code>pages_total_source</code>, and <code>pdf_url</code></li>
+<li>writes a shard-ready enriched parquet for OCR deployment</li>
+<li><code>openarchives_ocr_shards.py</code></li>
+<li>reads the canonical parquet</li>
+<li>filters <code>needs_ocr=True</code></li>
+<li>balances documents across <code>N</code> nodes by page count</li>
+<li>writes one shard manifest parquet per node</li>
+<li>writes a JSON summary with page totals and ETA</li>
+<li><code>openarchives_ocr_merge.py</code></li>
+<li>merges shard-level OCR metadata back into the canonical parquet by <code>filename</code></li>
+<li>can also embed merged OCR <code>text</code> plus artifact linkage fields back into the canonical rows when OCR markdown artifacts are available</li>
+<li>unifies page-range shard markdown back into one canonical document-level markdown artifact per OCR row before downstream handoff</li>
+</ul>
+<p>These scripts are intentionally document-level rather than page-fragment-level so merge stays simple and GlossAPI-compatible.</p>
+<h2 id="executed-result-on-2026-03-31">Executed result on 2026-03-31<a class="headerlink" href="#executed-result-on-2026-03-31" title="Permanent link">&para;</a></h2>
+<p>The CPU fallback path has now been executed successfully on AWS:</p>
+<ul>
+<li>CPU cleaner node:</li>
+<li>instance: <code>c7i.8xlarge</code></li>
+<li>instance id: <code>i-0ccf5ab1a510b31d8</code></li>
+<li>Full OA reevaluation fill:</li>
+<li>input rows: <code>179,845</code></li>
+<li>missing <code>greek_badness_score</code> rows materialized and cleaned: <code>89,892</code></li>
+<li>unique raw JSONL shards needed for the fill subset: <code>108</code></li>
+<li>Filled routing result:</li>
+<li><code>greek_badness_score</code> coverage: <code>179,845 / 179,845</code></li>
+<li><code>needs_ocr == true</code>: <code>45,547</code></li>
+<li>Enriched OCR target manifest:</li>
+<li>OCR-target docs: <code>45,547</code></li>
+<li>OCR-target pages: <code>3,292,392</code></li>
+<li>raw JSONL shards needed for the full OCR target set: <code>218</code></li>
+<li>Balanced 4-node shard result:</li>
+<li><code>4</code> shard manifests</li>
+<li><code>823,098</code> pages per node</li>
+<li><code>11,386</code> or <code>11,387</code> docs per node</li>
+<li>ETA from validated <code>g7e.48xlarge</code> throughput:</li>
+<li>one node: <code>64.94h</code></li>
+<li>four nodes: <code>16.23h</code></li>
+</ul>
+<p>Published artifacts on Hugging Face dataset <code>glossAPI/openarchives.gr</code>:</p>
+<ul>
+<li><code>data/openarchives_ocr_completion/20260331/summary.json</code></li>
+<li><code>data/openarchives_ocr_completion/20260331/filled_document_level.parquet</code></li>
+<li><code>data/openarchives_ocr_completion/20260331/filled_document_quality.parquet</code></li>
+<li><code>data/openarchives_ocr_completion/20260331/ocr_shards/needs_ocr_enriched.parquet</code></li>
+<li><code>data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_node_00.parquet</code></li>
+<li><code>data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_node_01.parquet</code></li>
+<li><code>data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_node_02.parquet</code></li>
+<li><code>data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_node_03.parquet</code></li>
+<li><code>data/openarchives_ocr_completion/20260331/ocr_shards/openarchives_ocr_shard_summary.json</code></li>
+</ul>
+<h2 id="node-runner-contract">Node runner contract<a class="headerlink" href="#node-runner-contract" title="Permanent link">&para;</a></h2>
+<p>Each OCR node should materialize one shard into its own GlossAPI corpus root and
+run DeepSeek OCR through the standard <code>Corpus.ocr(...)</code> API, not through a
+standalone benchmark wrapper.</p>
+<p>Stored runner:</p>
+<ul>
+<li><code>python -m glossapi.scripts.openarchives_ocr_run_node</code></li>
+<li><code>python -m glossapi.scripts.openarchives_download_freeze</code></li>
+</ul>
+<p>The runner does four things in order:</p>
+<ol>
+<li>reads one shard parquet</li>
+<li>downloads the shard PDFs into <code>downloads/</code> using their OA filenames</li>
+<li>writes the shard metadata as canonical <code>download_results/download_results.parquet</code></li>
+<li>runs <code>Corpus.ocr(...)</code> with the validated DeepSeek settings</li>
+</ol>
+<p>The download-freeze runner is the matching download-only entrypoint:</p>
+<ol>
+<li>reads one OA manifest parquet</li>
+<li>downloads the PDFs into <code>downloads/</code> using their OA filenames</li>
+<li>writes canonical <code>download_results/download_results.parquet</code></li>
+<li>stops there, without starting OCR</li>
+</ol>
+<p>Download policy note:</p>
+<ul>
+<li>OpenArchives download should be host-first, not collection-first.</li>
+<li>GlossAPI now supports host-specific download policy overrides in the normal downloader path for:</li>
+<li><code>downloader</code></li>
+<li><code>request_timeout</code></li>
+<li><code>ssl_verify</code></li>
+<li><code>ssl_cafile</code></li>
+<li><code>request_method</code></li>
+<li><code>sleep</code></li>
+<li><code>per_domain_concurrency</code></li>
+<li><code>domain_concurrency_floor</code></li>
+<li><code>domain_concurrency_ceiling</code></li>
+<li><code>skip_failed_after</code></li>
+<li><code>domain_cookies</code></li>
+<li>That means the OA freeze-download phase can stay inside <code>Corpus.download(...)</code>; we do not need a separate downloader implementation.</li>
+<li>Stored OA policy sample:</li>
+<li><code>samples/openarchives_download_policy.yml</code></li>
+<li>Stored OA probe runner:</li>
+<li><code>python -m glossapi.scripts.openarchives_download_probe</code></li>
+<li>OA download runs should use <code>scheduler_mode=per_domain</code> together with <code>parallelize_by=base_domain</code>,
+  otherwise the host-level concurrency policy is mostly inert.</li>
+<li>Probe result on the CPU box:</li>
+<li><code>dspace.lib.ntua.gr</code> succeeds cleanly once OA downloads use <code>scheduler_mode=per_domain</code>
+    and the host is throttled to a single in-flight request</li>
+<li><code>ktisis.cut.ac.cy</code> succeeds with <code>ssl_verify=false</code></li>
+<li><code>repository.academyofathens.gr</code>, <code>repository.ihu.gr</code>, <code>pergamos.lib.uoa.gr</code>,
+    and <code>dione.lib.unipi.gr</code> behaved like standard hosts in the probe</li>
+<li><code>ikee.lib.auth.gr</code> is not just a pre-ping false negative; direct PDF requests hit
+    real connection timeouts</li>
+<li><code>olympias.lib.uoi.gr</code> is not just a pre-ping false negative either; direct PDF
+    requests reach the host but stall on response reads</li>
+<li>Operational recommendation:</li>
+<li>bulk-freeze the good hosts first</li>
+<li>keep <code>ikee.lib.auth.gr</code> and <code>olympias.lib.uoi.gr</code> in a dedicated slow-path download phase
+    so they do not dominate the main corpus freeze run</li>
+</ul>
+<p>Standard node command:</p>
+<pre><code class="language-bash">PYTHONPATH=src /home/ubuntu/venvs/deepseek/bin/python -m glossapi.scripts.openarchives_ocr_run_node \
+  --shard-parquet /data/openarchives/shards/openarchives_ocr_shard_node_00.parquet \
+  --work-root /data/openarchives/node_00 \
+  --heartbeat-path /data/openarchives/heartbeats/node_00.json \
+  --instance-id &quot;$INSTANCE_ID&quot; \
+  --node-id node-00 \
+  --scheduler whole_doc \
+  --runtime-backend vllm \
+  --ocr-profile markdown_grounded \
+  --render-dpi 144 \
+  --max-new-tokens 2048 \
+  --repair-mode auto \
+  --gpu-memory-utilization 0.9
+</code></pre>
+<p>Current rollout note:</p>
+<ul>
+<li>use <code>scheduler=whole_doc</code> for the first production OA pass because that is the
+  last large-run configuration validated cleanly on the standardized stack</li>
+<li>keep <code>exact_fill</code> as the next benchmarking target, but do not silently switch
+  the production rollout to it until the same stack shows a non-regression or
+  improvement</li>
+</ul>
+<h2 id="current-validated-baseline">Current validated baseline<a class="headerlink" href="#current-validated-baseline" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Validated OCR node type: <code>g7e.48xlarge</code></li>
+<li>Validated AMI: <code>ami-052266c3e21dff7db</code></li>
+<li>AMI name: <code>Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 24.04) 20260320</code></li>
+<li>Validated runtime stack on the OCR node:</li>
+<li><code>torch 2.10.0+cu130</code></li>
+<li><code>vllm 0.18.0</code></li>
+<li><code>transformers 4.57.6</code></li>
+<li>Standard DeepSeek settings:</li>
+<li><code>runtime_backend='vllm'</code></li>
+<li><code>ocr_profile='markdown_grounded'</code></li>
+<li><code>max_new_tokens=2048</code></li>
+<li><code>repair_mode='auto'</code></li>
+<li><code>render_dpi=144</code></li>
+<li><code>gpu_memory_utilization=0.9</code></li>
+<li>Restored clean benchmark on the stopped OCR box:</li>
+<li><code>7,624</code> pages in about <code>541s</code></li>
+<li>about <code>0.0710 sec/page</code> overall on one <code>8</code>-GPU node</li>
+<li>about <code>0.3927</code> to <code>0.5000 sec/page/GPU</code></li>
+<li>Derived per-node throughput:</li>
+<li>about <code>14.08 pages/sec</code></li>
+<li>about <code>50,700 pages/hour</code></li>
+</ul>
+<h2 id="current-aws-capacity">Current AWS capacity<a class="headerlink" href="#current-aws-capacity" title="Permanent link">&para;</a></h2>
+<p><code>us-east-1</code> service quotas currently allow:</p>
+<ul>
+<li><code>Running On-Demand G and VT instances = 768</code></li>
+<li><code>Running On-Demand Standard instances = 640</code></li>
+</ul>
+<p>For the validated OCR node:</p>
+<ul>
+<li><code>g7e.48xlarge = 192 vCPU, 8 GPUs</code></li>
+</ul>
+<p>So the current maximum concurrent validated OCR fleet is:</p>
+<ul>
+<li><code>floor(768 / 192) = 4</code> nodes</li>
+<li>total rollout capacity: <code>32 GPUs</code></li>
+</ul>
+<h2 id="phase-1-recover-or-regenerate-the-canonical-ocr-routing-state">Phase 1: Recover or regenerate the canonical OCR routing state<a class="headerlink" href="#phase-1-recover-or-regenerate-the-canonical-ocr-routing-state" title="Permanent link">&para;</a></h2>
+<p>Goal:</p>
+<ul>
+<li>produce one canonical <code>download_results/download_results.parquet</code> for the OpenArchives corpus root</li>
+<li>ensure it contains, at minimum:</li>
+<li><code>filename</code></li>
+<li><code>needs_ocr</code></li>
+<li><code>greek_badness_score</code></li>
+<li><code>mojibake_badness_score</code></li>
+<li><code>ocr_success</code></li>
+<li><code>page_count</code> or <code>pages_total</code></li>
+</ul>
+<p>Decision order:</p>
+<ol>
+<li>Check the stopped GPU OCR instance first.</li>
+<li>If the full corpus parquet is not there, run a dedicated CPU cleaning pass.</li>
+</ol>
+<h3 id="1a-check-the-stopped-ocr-instance-first">1A. Check the stopped OCR instance first<a class="headerlink" href="#1a-check-the-stopped-ocr-instance-first" title="Permanent link">&para;</a></h3>
+<p>Reason:</p>
+<ul>
+<li>the NVMe volume persists across stop/start</li>
+<li>if the full OpenArchives cleaning pass was already run there, this is the fastest path</li>
+</ul>
+<p>Concrete steps:</p>
+<ol>
+<li>Start instance <code>i-0504a326a1fee541f</code>.</li>
+<li>SSH in and search for the full OpenArchives corpus root and canonical parquet:</li>
+<li><code>find /opt /data /home -name download_results.parquet</code></li>
+<li>verify row count is the full OpenArchives set, not the <code>43</code>-document benchmark subset</li>
+<li>Validate that the parquet has the required OCR routing columns listed above.</li>
+<li>If found:</li>
+<li>copy the canonical parquet and any supporting cleaner outputs back to stable storage</li>
+<li>stage a copy on <code>home</code></li>
+<li>upload the parquet artifact to the Hugging Face dataset repo as routing metadata</li>
+</ol>
+<p>Acceptance check:</p>
+<ul>
+<li>row count matches the full OpenArchives working set</li>
+<li><code>needs_ocr=True</code> count is available directly from the parquet</li>
+<li>page totals are available</li>
+</ul>
+<p>Current state on 2026-03-31:</p>
+<ul>
+<li>checked OCR instance <code>i-0504a326a1fee541f</code></li>
+<li>no <code>download_results.parquet</code> was found under <code>/opt</code>, <code>/data</code>, or <code>/home</code></li>
+<li>therefore this path did not recover the canonical OpenArchives routing parquet</li>
+<li>the rollout should proceed with the CPU cleaning-pass fallback below</li>
+</ul>
+<h3 id="1b-fallback-regenerate-the-routing-state-on-a-cpu-instance">1B. Fallback: regenerate the routing state on a CPU instance<a class="headerlink" href="#1b-fallback-regenerate-the-routing-state-on-a-cpu-instance" title="Permanent link">&para;</a></h3>
+<p>If the OCR box does not contain the full canonical parquet:</p>
+<ul>
+<li>launch a dedicated CPU node for the cleaner pass</li>
+<li>recommended instance family: <code>c7i</code> or <code>r7i</code></li>
+<li>recommended first choice: <code>c7i.8xlarge</code> with sufficient gp3 storage for the OpenArchives markdown/output root</li>
+</ul>
+<p>Reason:</p>
+<ul>
+<li><code>Corpus.clean()</code> is CPU-bound and does not need GPUs</li>
+<li>we only need one clean, reproducible routing pass</li>
+</ul>
+<p>Concrete steps:</p>
+<ol>
+<li>Launch one Ubuntu 24.04 CPU instance.</li>
+<li>Clone <code>glossapi-development</code> at <code>development</code>.</li>
+<li>Bootstrap the standard GlossAPI environment.</li>
+<li>Mount or sync the full OpenArchives corpus root.</li>
+<li>Run <code>Corpus.clean()</code> over the full markdown corpus.</li>
+<li>Verify that <code>download_results/download_results.parquet</code> now exists and includes the required OCR routing columns.</li>
+<li>Store the resulting parquet:</li>
+<li>on the corpus root</li>
+<li>on <code>home</code></li>
+<li>in the Hugging Face dataset repo as routing metadata</li>
+</ol>
+<h2 id="phase-2-quantify-the-actual-ocr-workload">Phase 2: Quantify the actual OCR workload<a class="headerlink" href="#phase-2-quantify-the-actual-ocr-workload" title="Permanent link">&para;</a></h2>
+<p>Once the canonical parquet exists:</p>
+<ol>
+<li>Filter <code>needs_ocr == True</code></li>
+<li>Count:</li>
+<li>total documents</li>
+<li>total pages from <code>pages_total</code> or <code>page_count</code></li>
+<li>Also record:</li>
+<li><code>greek_badness_score &gt; 60</code></li>
+<li><code>mojibake_badness_score &gt; 0.1</code></li>
+<li>overlap between those conditions and <code>needs_ocr</code></li>
+</ol>
+<p>This step defines the real production workload and the true ETA.</p>
+<h2 id="phase-3-shard-across-nodes">Phase 3: Shard across nodes<a class="headerlink" href="#phase-3-shard-across-nodes" title="Permanent link">&para;</a></h2>
+<p>Shard across nodes by document, not by page range.</p>
+<p>Reason:</p>
+<ul>
+<li>cross-node merge stays trivial</li>
+<li>node-local GPU scheduling already exists in GlossAPI</li>
+<li>splitting one document across nodes adds complexity without clear benefit</li>
+</ul>
+<h3 id="coordinator-manifest">Coordinator manifest<a class="headerlink" href="#coordinator-manifest" title="Permanent link">&para;</a></h3>
+<p>Build one coordinator manifest from the canonical parquet with:</p>
+<ul>
+<li><code>filename</code></li>
+<li>stable OpenArchives document id or canonical filename</li>
+<li><code>pages_total</code></li>
+<li><code>needs_ocr</code></li>
+</ul>
+<p>Then:</p>
+<ol>
+<li>keep only <code>needs_ocr=True</code></li>
+<li>greedily bin-pack documents across <code>N=4</code> nodes by page count</li>
+<li>write one shard manifest parquet per node</li>
+</ol>
+<p>Each shard manifest should contain:</p>
+<ul>
+<li><code>filename</code></li>
+<li><code>pages_total</code></li>
+<li><code>node_id</code></li>
+<li><code>shard_id</code></li>
+<li>original metadata keys needed for rejoin</li>
+</ul>
+<h3 id="node-local-execution">Node-local execution<a class="headerlink" href="#node-local-execution" title="Permanent link">&para;</a></h3>
+<p>Each node:</p>
+<ol>
+<li>loads only its shard manifest</li>
+<li>runs GlossAPI OCR over that subset</li>
+<li>keeps standard GlossAPI outputs only:</li>
+<li><code>markdown/&lt;stem&gt;.md</code></li>
+<li><code>json/metrics/*.json</code></li>
+<li>shard-local <code>download_results.parquet</code></li>
+</ol>
+<p>Inside each node:</p>
+<ul>
+<li>use the existing GlossAPI DeepSeek path</li>
+<li>let node-local scheduling handle GPU balance</li>
+<li>do not invent a separate OCR metadata format</li>
+</ul>
+<h2 id="phase-4-merge-back-into-the-canonical-corpus">Phase 4: Merge back into the canonical corpus<a class="headerlink" href="#phase-4-merge-back-into-the-canonical-corpus" title="Permanent link">&para;</a></h2>
+<p>Merge rules:</p>
+<ol>
+<li>Markdown:</li>
+<li>copy updated <code>markdown/&lt;stem&gt;.md</code> into the canonical corpus root</li>
+<li>Metrics:</li>
+<li>copy <code>json/metrics/*.json</code> into the canonical corpus root</li>
+<li>Metadata parquet:</li>
+<li>concatenate shard metadata</li>
+<li>upsert by canonical document id / filename into the master parquet</li>
+<li>preserve the standard GlossAPI contract:<ul>
+<li><code>needs_ocr</code></li>
+<li><code>ocr_success</code></li>
+<li><code>processing_stage</code></li>
+<li>page and quality fields</li>
+</ul>
+</li>
+</ol>
+<p>Recommended additional execution metadata:</p>
+<ul>
+<li><code>ocr_node_id</code></li>
+<li><code>ocr_shard_id</code></li>
+<li><code>ocr_started_at</code></li>
+<li><code>ocr_finished_at</code></li>
+<li><code>ocr_attempt_count</code></li>
+</ul>
+<p>These fields are operational and should not replace the existing GlossAPI routing fields.</p>
+<h2 id="phase-5-standardize-all-ocr-nodes">Phase 5: Standardize all OCR nodes<a class="headerlink" href="#phase-5-standardize-all-ocr-nodes" title="Permanent link">&para;</a></h2>
+<p>All OCR nodes should use the exact same:</p>
+<ul>
+<li>AMI</li>
+<li>bootstrap script</li>
+<li>DeepSeek venv setup</li>
+<li>model path</li>
+<li>runtime defaults</li>
+</ul>
+<p>Standard production recipe:</p>
+<ul>
+<li>AMI: <code>ami-052266c3e21dff7db</code></li>
+<li>instance type: <code>g7e.48xlarge</code></li>
+<li>DeepSeek venv created by <code>dependency_setup/setup_deepseek_uv.sh</code></li>
+<li>defaults:</li>
+<li><code>runtime_backend='vllm'</code></li>
+<li><code>ocr_profile='markdown_grounded'</code></li>
+<li><code>max_new_tokens=2048</code></li>
+<li><code>repair_mode='auto'</code></li>
+<li><code>render_dpi=144</code></li>
+<li><code>gpu_memory_utilization=0.9</code></li>
+</ul>
+<p>Do not allow per-node env drift during the rollout.</p>
+<p>Cleaner/fallback venv decision:</p>
+<ul>
+<li>CPU cleaning pass should use the standard GlossAPI environment from <code>development</code></li>
+<li>OCR nodes should use the dedicated DeepSeek venv only</li>
+<li>do not mix the cleaner runtime and the OCR runtime on the same benchmark measurement path</li>
+</ul>
+<h2 id="instance-options">Instance options<a class="headerlink" href="#instance-options" title="Permanent link">&para;</a></h2>
+<p>Primary OCR choice:</p>
+<ul>
+<li><code>g7e.48xlarge</code></li>
+<li>validated benchmarked path</li>
+<li><code>192 vCPU</code></li>
+<li><code>8</code> RTX PRO Server 6000 GPUs</li>
+<li>current recommended production OCR node</li>
+</ul>
+<p>Secondary OCR options, only if we intentionally rebenchmark:</p>
+<ul>
+<li><code>g6e.48xlarge</code></li>
+<li><code>192 vCPU</code></li>
+<li><code>8</code> L40S GPUs</li>
+<li><code>g5.48xlarge</code></li>
+<li><code>192 vCPU</code></li>
+<li><code>8</code> A10G GPUs</li>
+<li><code>p5.48xlarge</code></li>
+<li>technically available, but not the cost/default target for this rollout</li>
+</ul>
+<p>Cleaner node options:</p>
+<ul>
+<li>first choice: <code>c7i.8xlarge</code></li>
+<li><code>32 vCPU</code></li>
+<li>good CPU-bound cleaner candidate</li>
+<li>alternative: <code>r7i.8xlarge</code></li>
+<li><code>32 vCPU</code></li>
+<li>use if the cleaner pass needs more memory headroom</li>
+</ul>
+<h2 id="phase-6-eta">Phase 6: ETA<a class="headerlink" href="#phase-6-eta" title="Permanent link">&para;</a></h2>
+<p>Validated throughput on one node:</p>
+<ul>
+<li>about <code>50,700 pages/hour</code></li>
+</ul>
+<p>With <code>4</code> nodes:</p>
+<ul>
+<li>about <code>202,800 pages/hour</code></li>
+</ul>
+<p>Exact ETA formula:</p>
+<ul>
+<li><code>ETA_hours = total_needs_ocr_pages / 202800</code></li>
+</ul>
+<p>Reference scenarios:</p>
+<ul>
+<li><code>400,000</code> pages: about <code>1.97h</code></li>
+<li><code>600,000</code> pages: about <code>2.96h</code></li>
+<li><code>800,000</code> pages: about <code>3.95h</code></li>
+<li><code>1,000,000</code> pages: about <code>4.93h</code></li>
+</ul>
+<p>Equivalent document scenarios for <code>40,000</code> documents:</p>
+<ul>
+<li>average <code>10</code> pages/doc: about <code>1.97h</code></li>
+<li>average <code>15</code> pages/doc: about <code>2.96h</code></li>
+<li>average <code>20</code> pages/doc: about <code>3.95h</code></li>
+<li>average <code>25</code> pages/doc: about <code>4.93h</code></li>
+</ul>
+<p>The exact ETA should be recalculated once the canonical parquet gives the real total page count for <code>needs_ocr=True</code>.</p>
+<h2 id="phase-7-deployment-and-monitoring">Phase 7: Deployment and monitoring<a class="headerlink" href="#phase-7-deployment-and-monitoring" title="Permanent link">&para;</a></h2>
+<h3 id="deployment">Deployment<a class="headerlink" href="#deployment" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Produce canonical parquet</li>
+<li>Compute shard manifests</li>
+<li>Stage manifests and source data</li>
+<li>Launch <code>4</code> OCR nodes</li>
+<li>Bootstrap the same OCR environment on all nodes</li>
+<li>Run one shard per node</li>
+<li>Collect outputs</li>
+<li>Merge back into the canonical corpus</li>
+</ol>
+<h3 id="monitoring">Monitoring<a class="headerlink" href="#monitoring" title="Permanent link">&para;</a></h3>
+<p>Each node should write a heartbeat JSON at a fixed interval with:</p>
+<ul>
+<li><code>node_id</code></li>
+<li><code>docs_done</code></li>
+<li><code>pages_done</code></li>
+<li>current file</li>
+<li>GPU utilization snapshot</li>
+<li>VRAM usage snapshot</li>
+<li>last successful write time</li>
+<li>error count</li>
+</ul>
+<p>The coordinator should watch:</p>
+<ul>
+<li>stale heartbeat</li>
+<li>zero progress</li>
+<li>failed OCR process</li>
+<li>low GPU utilization for a sustained period</li>
+</ul>
+<h3 id="recovery">Recovery<a class="headerlink" href="#recovery" title="Permanent link">&para;</a></h3>
+<ul>
+<li>rerun only failed shard manifests</li>
+<li>keep shard manifests immutable</li>
+<li>merge is idempotent by canonical document id / filename</li>
+</ul>
+<h2 id="immediate-next-actions">Immediate next actions<a class="headerlink" href="#immediate-next-actions" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Start the stopped OCR instance and search for the full OpenArchives canonical parquet.</li>
+<li>If found, validate and upload the routing parquet to stable storage and Hugging Face.</li>
+<li>If not found, launch one CPU instance and run the full <code>Corpus.clean()</code> pass.</li>
+<li>Compute exact <code>needs_ocr</code> doc/page totals from the canonical parquet.</li>
+<li>Generate the <code>4</code> node shard manifests.</li>
+<li>Launch the <code>4</code> OCR nodes and execute the distributed run.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
