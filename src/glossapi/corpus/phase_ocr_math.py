@@ -22,10 +22,25 @@ import pandas as pd
 from .._naming import canonical_stem
 from ..gloss_downloader import GlossDownloader
 from ..gloss_section import GlossSection
+from ..ocr.deepseek.defaults import (
+    DEFAULT_ATTN_BACKEND,
+    DEFAULT_GPU_MEMORY_UTILIZATION,
+    DEFAULT_MAX_NEW_TOKENS,
+    DEFAULT_OCR_PROFILE,
+    DEFAULT_RENDER_DPI,
+    DEFAULT_REPAIR_MODE,
+    DEFAULT_RUNTIME_BACKEND,
+    DEFAULT_TARGET_BATCH_PAGES,
+    DEFAULT_WORKERS_PER_GPU,
+)
 # Avoid importing classifier here; OCR/math phase does not require it at import time.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch
+from .ocr.config import OcrRequest, normalize_ocr_request
+from .ocr.math_targets import discover_docling_json_stems, filter_math_only_stems
+from .ocr.pipeline import run_ocr_phase
+from .ocr.targets import build_ocr_selection
 
 
 def _build_ocr_stage_artifact_update(
@@ -143,31 +158,30 @@ class OcrMathPhaseMixin:
         max_pages: Optional[int] = None,
         persist_engine: bool = True,
         limit: Optional[int] = None,
-        dpi: Optional[int] = None,        # reserved for future use
-        precision: Optional[str] = None,  # reserved for future use ("fp16","bf16")
-        workers_per_gpu: int = 1,
-        runtime_backend: str = "transformers",
-        ocr_profile: str = "markdown_grounded",
+        dpi: Optional[int] = None,
+        precision: Optional[str] = None,
+        workers_per_gpu: int = DEFAULT_WORKERS_PER_GPU,
+        runtime_backend: str = DEFAULT_RUNTIME_BACKEND,
+        ocr_profile: str = DEFAULT_OCR_PROFILE,
         prompt_override: Optional[str] = None,
-        attn_backend: str = "auto",
+        attn_backend: str = DEFAULT_ATTN_BACKEND,
         base_size: Optional[int] = None,
         image_size: Optional[int] = None,
         crop_mode: Optional[bool] = None,
-        render_dpi: Optional[int] = None,
-        max_new_tokens: Optional[int] = 2048,
+        render_dpi: Optional[int] = DEFAULT_RENDER_DPI,
+        max_new_tokens: Optional[int] = DEFAULT_MAX_NEW_TOKENS,
         repetition_penalty: Optional[float] = None,
         no_repeat_ngram_size: Optional[int] = None,
         vllm_batch_size: Optional[int] = None,
-        gpu_memory_utilization: Optional[float] = None,
+        gpu_memory_utilization: Optional[float] = DEFAULT_GPU_MEMORY_UTILIZATION,
         disable_fp8_kv: bool = False,
-        repair_mode: str = "auto",
+        repair_mode: str = DEFAULT_REPAIR_MODE,
         repair_exec_batch_target_pages: Optional[int] = None,
         repair_exec_batch_target_items: Optional[int] = None,
         scheduler: str = "auto",
-        target_batch_pages: int = 160,
+        target_batch_pages: int = DEFAULT_TARGET_BATCH_PAGES,
         shard_pages: int = 0,
         shard_threshold_pages: int = 0,
-        # Integrated math enrichment controls
         math_enhance: bool = True,
         math_targets: Optional[Dict[str, List[Tuple[int, int]]]] = None,
         math_batch_size: int = 8,
@@ -177,720 +191,373 @@ class OcrMathPhaseMixin:
         force: Optional[bool] = None,
         reprocess_completed: Optional[bool] = None,
         skip_existing: Optional[bool] = None,
-        # Content debug: keep page separators and truncation markers when True
         content_debug: bool = False,
         CONTENT_DEBUG: Optional[bool] = None,
-        # Back-compat aliases (deprecated):
         internal_debug: bool = False,
         INTERNAL_DEBUG: Optional[bool] = None,
     ) -> None:
-        """OCR and/or math enrichment with explicit mode control.
+        """OCR and/or math enrichment with explicit mode control."""
 
-        Parameters
-        - mode: one of
-          - 'ocr_bad': re‑OCR only documents flagged as bad by Rust cleaner (parquet 'filter' != 'ok').
-          - 'math_only': run math enrichment from Docling JSON (generate JSON without OCR when missing).
-          - 'ocr_bad_then_math': re‑OCR bad documents, then run math enrichment on those.
-          If not provided, falls back to legacy flags (fix_bad, math_enhance):
-            fix_bad and math_enhance -> 'ocr_bad_then_math';
-            fix_bad only -> 'ocr_bad';
-            math_enhance only -> 'math_only';
-            neither -> no‑op.
-        - backend: 'deepseek' (default) uses the DeepSeek OCR remediation path.
-                   Docling layout/json remains Phase-1 infrastructure; OCR remediation itself is DeepSeek-only.
-        - fix_bad: re-run OCR on documents marked bad by the cleaner (default True).
-        - math_enhance: run math/code enrichment after OCR (default True).
-        - use_gpus/devices/workers_per_gpu: DeepSeek multi-worker controls. Use
-          ``use_gpus="multi"`` to shard OCR across detected or specified GPUs.
-          Increase ``workers_per_gpu`` above ``1`` to run multiple OCR workers
-          per visible GPU.
-        - scheduler/target_batch_pages/shard_pages/shard_threshold_pages:
-          Multi-GPU scheduling controls. ``scheduler='auto'`` resolves to
-          exact-fill page-range batching for multi-GPU vLLM runs and falls back
-          to whole-document scheduling elsewhere. ``target_batch_pages`` is the
-          per-lane page budget the scheduler tries to fill. ``fixed_shard`` uses
-          ``shard_pages`` and ``shard_threshold_pages`` when explicit shard-based
-          planning is requested.
-        - runtime_backend: ``transformers`` (default) or ``vllm``.
-        - ocr_profile/prompt_override/attn_backend/base_size/image_size/crop_mode/render_dpi:
-          DeepSeek rendering and attention controls used for throughput/quality
-          benchmarking.
-        - max_new_tokens/repetition_penalty/no_repeat_ngram_size:
-          Optional generation controls forwarded to DeepSeek. These are exposed
-          for runtime experiments; leave them unset unless a benchmark calls for
-          them explicitly.
-        - vllm_batch_size/gpu_memory_utilization/disable_fp8_kv/repair_mode:
-          Optional vLLM controls. ``repair_mode='auto'`` enables the markdown-first
-          repair pipeline (plain fallback for garbage pages, tiled fallback for
-          short coverage failures). ``repair_exec_batch_target_pages`` and
-          ``repair_exec_batch_target_items`` control how many pending repair rows
-          a worker tries to execute together once the global repair phase begins.
-          These are ignored by the transformers runtime except for
-          ``prompt_override``.
-        - force: [DEPRECATED] alias for fix_bad retained for backward compatibility.
-        - reprocess_completed: when False, skip documents already flagged as successfully
-          OCRed or math-enriched in metadata. Set True to force reprocessing. Defaults to False
-          unless ``skip_existing`` overrides it.
-        - skip_existing: legacy alias for ``reprocess_completed`` (``skip_existing=True`` equals
-          ``reprocess_completed=False``). Prefer the explicit ``reprocess_completed`` toggle.
-        """
-        # Normalize backend
-        backend_norm = str(backend or "deepseek").strip().lower()
-        if backend_norm != "deepseek":
-            raise ValueError("backend must be 'deepseek'")
+        del limit, dpi
+        request = normalize_ocr_request(
+            logger=self.logger,
+            fix_bad=fix_bad,
+            mode=mode,
+            backend=backend,
+            device=device,
+            model_dir=model_dir,
+            max_pages=max_pages,
+            persist_engine=persist_engine,
+            precision=precision,
+            workers_per_gpu=workers_per_gpu,
+            runtime_backend=runtime_backend,
+            ocr_profile=ocr_profile,
+            prompt_override=prompt_override,
+            attn_backend=attn_backend,
+            base_size=base_size,
+            image_size=image_size,
+            crop_mode=crop_mode,
+            render_dpi=render_dpi,
+            max_new_tokens=max_new_tokens,
+            repetition_penalty=repetition_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
+            vllm_batch_size=vllm_batch_size,
+            gpu_memory_utilization=gpu_memory_utilization,
+            disable_fp8_kv=disable_fp8_kv,
+            repair_mode=repair_mode,
+            repair_exec_batch_target_pages=repair_exec_batch_target_pages,
+            repair_exec_batch_target_items=repair_exec_batch_target_items,
+            scheduler=scheduler,
+            target_batch_pages=target_batch_pages,
+            shard_pages=shard_pages,
+            shard_threshold_pages=shard_threshold_pages,
+            math_enhance=math_enhance,
+            math_targets=math_targets,
+            math_batch_size=math_batch_size,
+            math_dpi_base=math_dpi_base,
+            use_gpus=use_gpus,
+            devices=devices,
+            force=force,
+            reprocess_completed=reprocess_completed,
+            skip_existing=skip_existing,
+            content_debug=content_debug,
+            CONTENT_DEBUG=CONTENT_DEBUG,
+            internal_debug=internal_debug,
+            INTERNAL_DEBUG=INTERNAL_DEBUG,
+        )
+        if request is None:
+            return
+        if request.mode == "math_only":
+            self._run_math_only_request(request)
+            return
+        run_ocr_phase(self, request)
 
-        # CONTENT_DEBUG override (preferred uppercase alias)
-        # Priority: CONTENT_DEBUG > INTERNAL_DEBUG > content_debug/internal_debug flags
-        if CONTENT_DEBUG is not None:
-            content_debug = bool(CONTENT_DEBUG)
-        elif INTERNAL_DEBUG is not None:
-            content_debug = bool(INTERNAL_DEBUG)
-        elif internal_debug:
-            content_debug = True
+    def _run_math_only_request(self, request: OcrRequest) -> None:
+        selection = build_ocr_selection(
+            self,
+            mode=request.mode,
+            reprocess_completed=request.reprocess_completed,
+        )
+        stems = discover_docling_json_stems(self.output_dir)
+        stems = filter_math_only_stems(
+            stems=stems,
+            bad_files=selection.bad_files,
+            math_done_stems=selection.math_done_stems,
+            reprocess_completed=request.reprocess_completed,
+            logger=self.logger,
+        )
+        self._run_math_targets(
+            stems=stems,
+            request=request,
+            skip_mgr=selection.skip_mgr,
+            skiplist_path=selection.skiplist_path,
+        )
 
-        # Normalize mode from explicit value or legacy flags
-        mode_norm = None
-        fix_bad_effective = bool(fix_bad)
-        if force is not None:
-            try:
-                self.logger.warning("Corpus.ocr(force=...) is deprecated; use fix_bad=... instead")
-            except Exception:
-                pass
-            fix_bad_effective = bool(force)
-        if mode:
-            m = str(mode).strip().lower()
-            if m in {"ocr_bad", "math_only", "ocr_bad_then_math"}:
-                mode_norm = m
-            else:
-                self.logger.warning("Unknown mode '%s'; falling back to legacy flags", mode)
-        if mode_norm is None:
-            if fix_bad_effective and math_enhance:
-                mode_norm = "ocr_bad_then_math"
-            elif fix_bad_effective:
-                mode_norm = "ocr_bad"
-            elif math_enhance:
-                mode_norm = "math_only"
-            else:
-                self.logger.info(
-                    "OCR: no operation requested (enable fix_bad and/or math_enhance or set mode='ocr_bad'|'math_only'|'ocr_bad_then_math')"
-                )
-                return
-        reprocess_explicit = reprocess_completed is not None
-        reprocess_flag = bool(reprocess_completed) if reprocess_explicit else False
-        if skip_existing is not None:
-            skip_flag = bool(skip_existing)
-            try:
-                self.logger.warning(
-                    "Corpus.ocr(skip_existing=...) is deprecated; use reprocess_completed=... instead."
-                )
-            except Exception:
-                pass
-            desired = not skip_flag
-            if reprocess_explicit and desired != reprocess_flag:
-                try:
-                    self.logger.info(
-                        "Corpus.ocr(): skip_existing=%s overrides reprocess_completed=%s (effective reprocess_completed=%s).",
-                        skip_flag,
-                        reprocess_flag,
-                        desired,
-                    )
-                except Exception:
-                    pass
-            reprocess_flag = desired
-        reprocess_completed = reprocess_flag
+    def _run_math_targets(
+        self,
+        *,
+        stems: List[str],
+        request: OcrRequest,
+        skip_mgr: Optional[_SkiplistManager],
+        skiplist_path: Path,
+    ) -> None:
+        if not stems:
+            self.logger.info("No Docling JSON found for math enrichment.")
+            return
 
-        # DeepSeek semantics note
-        if backend_norm == "deepseek" and mode_norm in {"ocr_bad", "ocr_bad_then_math"}:
-            try:
-                self.logger.info(
-                    "DeepSeek backend: Phase-2 math is not required; equations are included inline via OCR."
-                )
-            except Exception:
-                pass
-            if mode_norm == "ocr_bad_then_math":
-                try:
-                    self.logger.info(
-                        "DeepSeek OCR does not run Phase-2 math; treating mode='ocr_bad_then_math' as 'ocr_bad'."
-                    )
-                except Exception:
-                    pass
-                mode_norm = "ocr_bad"
-        # Identify bad documents from parquet (Rust cleaner output)
-        bad_files: List[str] = []
-        skipped_completed = 0
-        skipped_skiplist = 0
-        parquet_meta: Optional["pd.DataFrame"] = None
-        ocr_done_files: List[str] = []
-        ocr_done_stems: Set[str] = set()
-        math_done_files: List[str] = []
-        math_done_stems: Set[str] = set()
-        try:
-            from glossapi.parquet_schema import ParquetSchema
-            parquet_schema = ParquetSchema({"url_column": self.url_column})
-            parquet_path = self._resolve_metadata_parquet(parquet_schema, ensure=True, search_input=True)
-            if parquet_path and parquet_path.exists():
-                import pandas as _pd
-                df = _pd.read_parquet(parquet_path)
-                if "filename" in df.columns and "needs_ocr" in df.columns:
-                    bad_files = df.loc[df["needs_ocr"] == True, "filename"].dropna().astype(str).tolist()
-                else:
-                    # No fallback: selection relies strictly on the 'needs_ocr' flag
-                    # populated by the cleaner. If missing, we skip OCR selection.
-                    bad_files = []
-                ocr_done: Set[str] = set()
-                if "ocr_success" in df.columns:
-                    ocr_done_files = df.loc[df["ocr_success"].fillna(False), "filename"].dropna().astype(str).tolist()
-                    ocr_done = {canonical_stem(str(name)) for name in ocr_done_files}
-                    ocr_done_stems = set(ocr_done)
-                if "math_enriched" in df.columns:
-                    math_done_files = df.loc[df["math_enriched"].fillna(False), "filename"].dropna().astype(str).tolist()
-                elif "enriched_math" in df.columns:
-                    math_done_files = df.loc[df["enriched_math"].fillna(False), "filename"].dropna().astype(str).tolist()
-                if math_done_files:
-                    math_done_stems = {canonical_stem(str(name)) for name in math_done_files}
-                if not reprocess_completed and ocr_done:
-                    before = len(bad_files)
-                    bad_files = [name for name in bad_files if canonical_stem(name) not in ocr_done]
-                    removed = before - len(bad_files)
-                    if removed:
-                        skipped_completed = removed
-                        self.logger.info(
-                            "OCR: skipping %d already completed document(s) (reprocess_completed=False).",
-                            removed,
-                        )
-                if reprocess_completed and mode_norm in {"ocr_bad", "ocr_bad_then_math"} and ocr_done_files:
-                    pending = {str(f) for f in bad_files}
-                    for fname in ocr_done_files:
-                        if fname not in pending:
-                            bad_files.append(fname)
-                            pending.add(fname)
-                parquet_meta = df
-            else:
-                parquet_meta = None
-        except Exception:
-            pass
-
-        ocr_candidates_initial = len(bad_files)
-        skiplist_path = _resolve_skiplist_path(self.output_dir, self.logger)
-        skip_mgr = _SkiplistManager(skiplist_path, self.logger)
-        skip_stems = skip_mgr.load()
-        if skip_stems:
-            before = len(bad_files)
-            bad_files = [name for name in bad_files if canonical_stem(name) not in skip_stems]
-            removed = before - len(bad_files)
+        initial_math_targets = len(stems)
+        current_skips = skip_mgr.reload() if skip_mgr else set()
+        if current_skips:
+            before = len(stems)
+            stems = [stem for stem in stems if stem not in current_skips]
+            removed = before - len(stems)
             if removed:
-                skipped_skiplist = removed
                 self.logger.warning(
-                    "Skip-list %s filtered %d document(s) from Phase-3 OCR.",
+                    "Skip-list %s filtered %d document(s) from Phase-2 math.",
                     skiplist_path,
                     removed,
                 )
-        try:
-            normalized_bad_files = _normalize_ocr_target_filenames(
-                filenames=bad_files,
-                input_dir=Path(self.input_dir),
-            )
-            if len(normalized_bad_files) != len(bad_files):
-                self.logger.info(
-                    "OCR: collapsed %d metadata-selected row(s) onto %d real source PDF(s) by canonical stem.",
-                    len(bad_files),
-                    len(normalized_bad_files),
-                )
-            bad_files = normalized_bad_files
-            self.logger.info(
-                "OCR targets: total=%d kept=%d skipped_completed=%d skipped_skiplist=%d",
-                ocr_candidates_initial,
-                len(bad_files),
-                skipped_completed,
-                skipped_skiplist,
-            )
-        except Exception:
-            pass
-
-        # Helper to run Phase‑2 enrichment over stems
-        def _run_math(stems: List[str]) -> None:
             if not stems:
-                self.logger.info("No Docling JSON found for math enrichment.")
+                self.logger.info("All math targets filtered by skip-list; nothing to do.")
                 return
-            initial_math_targets = len(stems)
-            current_skips = skip_mgr.reload() if skip_mgr else set()
-            if current_skips:
-                before = len(stems)
-                stems = [s for s in stems if s not in current_skips]
-                removed = before - len(stems)
-                if removed:
-                    self.logger.warning(
-                        "Skip-list %s filtered %d document(s) from Phase-2 math.",
-                        skiplist_path,
-                        removed,
-                    )
-                if not stems:
-                    self.logger.info("All math targets filtered by skip-list; nothing to do.")
-                    return
+
+        self.logger.info(
+            "Math targets: total=%d kept=%d filtered_skiplist=%d",
+            initial_math_targets,
+            len(stems),
+            initial_math_targets - len(stems),
+        )
+
+        local_targets = None
+        if request.math_targets:
+            local_targets = {stem: request.math_targets.get(stem) for stem in stems if stem in request.math_targets}
+
+        if str(request.use_gpus).lower() != "multi":
+            self.formula_enrich_from_json(
+                files=stems,
+                device=(request.device or "cuda"),
+                batch_size=int(request.math_batch_size),
+                dpi_base=int(request.math_dpi_base),
+                targets_by_stem=local_targets,
+            )
+            return
+
+        devs = list(request.devices or [])
+        if not devs:
             try:
-                self.logger.info(
-                    "Math targets: total=%d kept=%d filtered_skiplist=%d",
-                    initial_math_targets,
-                    len(stems),
-                    initial_math_targets - len(stems),
+                proc = subprocess.run(
+                    ["nvidia-smi", "-L"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=5,
                 )
+                if proc.returncode == 0 and proc.stdout:
+                    for line in proc.stdout.splitlines():
+                        if line.startswith("GPU "):
+                            try:
+                                devs.append(int(line.split(":", 1)[0].split()[1]))
+                            except Exception:
+                                pass
             except Exception:
                 pass
-            local_targets = None
-            if math_targets:
-                local_targets = {s: math_targets.get(s) for s in stems if s in math_targets}
-            if str(use_gpus).lower() == "multi":
-                # Detect GPU devices
-                devs = devices or []
-                if not devs:
-                    try:
-                        import subprocess
-                        p = subprocess.run(["nvidia-smi", "-L"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
-                        if p.returncode == 0 and p.stdout:
-                            for line in p.stdout.splitlines():
-                                if line.startswith("GPU "):
-                                    try:
-                                        idx = int(line.split(":", 1)[0].split()[1])
-                                        devs.append(idx)
-                                    except Exception:
-                                        pass
-                    except Exception:
-                        pass
-                    if not devs:
-                        torch_mod = _maybe_import_torch()
-                        try:
-                            if torch_mod is not None and getattr(torch_mod, "cuda", None) and torch_mod.cuda.is_available():
-                                devs = list(range(torch_mod.cuda.device_count()))
-                        except Exception:
-                            pass
-                if not devs:
-                    msg = "Multi-GPU math requested but no GPUs detected; aborting math enhancement"
-                    self.logger.error(msg)
-                    raise RuntimeError(msg)
-                else:
-                    from multiprocessing import get_context
+            if not devs:
+                torch_mod = _maybe_import_torch()
+                try:
+                    if torch_mod is not None and getattr(torch_mod, "cuda", None) and torch_mod.cuda.is_available():
+                        devs = list(range(torch_mod.cuda.device_count()))
+                except Exception:
+                    pass
 
-                    ctx = get_context("spawn")
-                    work_q = ctx.Queue()
-                    result_q = ctx.Queue()
-                    manager = ctx.Manager()
-                    status_map = manager.dict()
-                    for s in stems:
-                        work_q.put(s)
+        if not devs:
+            msg = "Multi-GPU math requested but no GPUs detected; aborting math enhancement"
+            self.logger.error(msg)
+            raise RuntimeError(msg)
 
-                    worker_log_dir_env = os.environ.get("GLOSSAPI_WORKER_LOG_DIR")
-                    worker_log_dir_to_use = worker_log_dir_env
-                    if not worker_log_dir_to_use:
-                        default_worker_log_dir = self.logs_dir / "math_workers"
-                        try:
-                            default_worker_log_dir.mkdir(parents=True, exist_ok=True)
-                            worker_log_dir_to_use = str(default_worker_log_dir)
-                        except Exception as exc:
-                            self.logger.warning(
-                                "Unable to prepare worker log directory %s: %s",
-                                default_worker_log_dir,
-                                exc,
+        from multiprocessing import get_context
+
+        ctx = get_context("spawn")
+        work_q = ctx.Queue()
+        result_q = ctx.Queue()
+        manager = ctx.Manager()
+        status_map = manager.dict()
+        for stem in stems:
+            work_q.put(stem)
+
+        worker_log_dir_env = os.environ.get("GLOSSAPI_WORKER_LOG_DIR")
+        worker_log_dir_to_use = worker_log_dir_env
+        if not worker_log_dir_to_use:
+            default_worker_log_dir = self.logs_dir / "math_workers"
+            try:
+                default_worker_log_dir.mkdir(parents=True, exist_ok=True)
+                worker_log_dir_to_use = str(default_worker_log_dir)
+            except Exception as exc:
+                self.logger.warning(
+                    "Unable to prepare worker log directory %s: %s",
+                    default_worker_log_dir,
+                    exc,
+                )
+                worker_log_dir_to_use = None
+        if worker_log_dir_to_use:
+            os.environ["GLOSSAPI_WORKER_LOG_DIR"] = worker_log_dir_to_use
+        marker_base = Path(worker_log_dir_to_use) if worker_log_dir_to_use else (self.logs_dir / "math_workers")
+        try:
+            marker_base.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        marker_files: Dict[int, Path] = {dev_id: marker_base / f"gpu{dev_id}.current" for dev_id in devs}
+
+        procs: List[Any] = []
+        active: List[Any] = []
+        proc_gpu: Dict[int, int] = {}
+        try:
+            respawn_cap = int(os.environ.get("GLOSSAPI_MATH_RESPAWN_CAP", "5"))
+        except Exception:
+            respawn_cap = 5
+        respawn_cap = max(0, respawn_cap)
+        respawn_counts: Dict[int, int] = {dev_id: 0 for dev_id in devs}
+
+        for dev_id in devs:
+            proc = ctx.Process(
+                target=_gpu_math_worker,
+                args=(
+                    dev_id,
+                    str(self.input_dir),
+                    str(self.output_dir),
+                    work_q,
+                    int(request.math_batch_size),
+                    int(request.math_dpi_base),
+                    request.device or "cuda",
+                    local_targets or {},
+                    result_q,
+                    status_map,
+                    str(marker_base),
+                ),
+            )
+            proc.start()
+            procs.append(proc)
+            active.append(proc)
+            if proc.pid is not None:
+                proc_gpu[proc.pid] = dev_id
+
+        try:
+            last_summary = time.time()
+            while active:
+                for proc in list(active):
+                    proc.join(timeout=0.05)
+                    if proc.is_alive():
+                        continue
+                    active.remove(proc)
+                    if proc in procs:
+                        procs.remove(proc)
+                    pid = proc.pid or -1
+                    gpu_id = proc_gpu.pop(pid, None)
+                    exitcode = proc.exitcode
+                    stems_for_skip: List[str] = []
+                    if gpu_id is not None:
+                        current_entry = status_map.pop(gpu_id, None)
+                        if current_entry:
+                            if isinstance(current_entry, (list, tuple, set)):
+                                entries = list(current_entry)
+                            else:
+                                entries = [current_entry]
+                            stems_for_skip = [str(item) for item in entries if item]
+                        marker_path = marker_files.get(gpu_id)
+                        if marker_path:
+                            try:
+                                marker_path.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                    if exitcode not in (0, None) and gpu_id is not None:
+                        if stems_for_skip and skip_mgr is not None:
+                            skip_mgr.add(canonical_stem(stem) for stem in stems_for_skip)
+                        self.logger.warning("Math worker GPU%s exited with %s", gpu_id, exitcode)
+                        respawn_counts[gpu_id] = respawn_counts.get(gpu_id, 0) + 1
+                        attempts = respawn_counts[gpu_id]
+                        if respawn_cap and attempts > respawn_cap:
+                            self.logger.error(
+                                "Math worker GPU%s exceeded respawn cap (%s); not respawning",
+                                gpu_id,
+                                respawn_cap,
                             )
-                            worker_log_dir_to_use = None
-                    if worker_log_dir_to_use:
-                        os.environ["GLOSSAPI_WORKER_LOG_DIR"] = worker_log_dir_to_use
-                    marker_base = Path(worker_log_dir_to_use) if worker_log_dir_to_use else (self.logs_dir / "math_workers")
-                    try:
-                        marker_base.mkdir(parents=True, exist_ok=True)
-                    except Exception:
-                        pass
-                    marker_files: Dict[int, Path] = {dev_id: marker_base / f"gpu{dev_id}.current" for dev_id in devs}
-
-                    procs: List[Any] = []
-                    active: List[Any] = []
-                    proc_gpu: Dict[int, int] = {}
-                    try:
-                        respawn_cap = int(os.environ.get("GLOSSAPI_MATH_RESPAWN_CAP", "5"))
-                    except Exception:
-                        respawn_cap = 5
-                    respawn_cap = max(0, respawn_cap)
-                    respawn_counts: Dict[int, int] = {dev_id: 0 for dev_id in devs}
-
-                    for dev_id in devs:
-                        p = ctx.Process(
+                            continue
+                        replacement = ctx.Process(
                             target=_gpu_math_worker,
                             args=(
-                                dev_id,
+                                gpu_id,
                                 str(self.input_dir),
                                 str(self.output_dir),
                                 work_q,
-                                int(math_batch_size),
-                                int(math_dpi_base),
-                                device or "cuda",
+                                int(request.math_batch_size),
+                                int(request.math_dpi_base),
+                                request.device or "cuda",
                                 local_targets or {},
                                 result_q,
                                 status_map,
                                 str(marker_base),
                             ),
                         )
-                        p.start()
-                        procs.append(p)
-                        active.append(p)
-                        if p.pid is not None:
-                            proc_gpu[p.pid] = dev_id
+                        replacement.start()
+                        procs.append(replacement)
+                        active.append(replacement)
+                        if replacement.pid is not None:
+                            proc_gpu[replacement.pid] = gpu_id
+                        continue
 
+                while True:
                     try:
-                        last_summary = time.time()
-                        while active:
-                            for p in list(active):
-                                p.join(timeout=0.05)
-                                if p.is_alive():
-                                    continue
-                                active.remove(p)
-                                if p in procs:
-                                    procs.remove(p)
-                                pid = p.pid or -1
-                                gpu_id = proc_gpu.pop(pid, None)
-                                exitcode = p.exitcode
-                                stems_for_skip: List[str] = []
-                                if gpu_id is not None:
-                                    current_entry = status_map.pop(gpu_id, None)
-                                    if current_entry:
-                                        if isinstance(current_entry, (list, tuple, set)):
-                                            entries = list(current_entry)
-                                        else:
-                                            entries = [current_entry]
-                                        stems_for_skip = [str(item) for item in entries if item]
-                                    marker_path = marker_files.get(gpu_id)
-                                    if marker_path:
-                                        try:
-                                            marker_path.unlink(missing_ok=True)
-                                        except Exception:
-                                            pass
-                                if exitcode not in (0, None) and gpu_id is not None:
-                                    if stems_for_skip:
-                                        skip_mgr.add(canonical_stem(s) for s in stems_for_skip)
-                                    self.logger.warning(
-                                        "Math worker GPU%s exited with %s",
-                                        gpu_id,
-                                        exitcode,
-                                    )
-                                    respawn_counts[gpu_id] = respawn_counts.get(gpu_id, 0) + 1
-                                    attempts = respawn_counts[gpu_id]
-                                    if respawn_cap and attempts > respawn_cap:
-                                        self.logger.error(
-                                            "Math worker GPU%s exceeded respawn cap (%s); not respawning",
-                                            gpu_id,
-                                            respawn_cap,
-                                        )
-                                        continue
-                                    replacement = ctx.Process(
-                                        target=_gpu_math_worker,
-                                        args=(
-                                            gpu_id,
-                                            str(self.input_dir),
-                                            str(self.output_dir),
-                                            work_q,
-                                            int(math_batch_size),
-                                            int(math_dpi_base),
-                                            device or "cuda",
-                                            local_targets or {},
-                                            result_q,
-                                            status_map,
-                                            str(marker_base),
-                                        ),
-                                    )
-                                    replacement.start()
-                                    procs.append(replacement)
-                                    active.append(replacement)
-                                    if replacement.pid is not None:
-                                        proc_gpu[replacement.pid] = gpu_id
-                                    continue
-
-                            while True:
-                                try:
-                                    event = result_q.get_nowait()
-                                except queue.Empty:
-                                    break
-                                if not event:
-                                    continue
-                                if event.get("event") == "math_batch":
-                                    stems_bad = event.get("problematic", [])
-                                    if stems_bad:
-                                        skip_mgr.add(canonical_stem(s) for s in stems_bad)
-                                    worker = event.get("worker")
-                                    try:
-                                        worker_gpu = int(worker)
-                                    except Exception:
-                                        worker_gpu = None
-                                    if worker_gpu is not None:
-                                        status_map.pop(worker_gpu, None)
-                                        marker_path = marker_files.get(worker_gpu)
-                                        if marker_path:
-                                            try:
-                                                marker_path.unlink(missing_ok=True)
-                                            except Exception:
-                                                pass
-                                elif event.get("event") == "exit" and event.get("exitcode", 0) not in (0, None):
-                                    self.logger.warning(
-                                        "Math worker GPU%s reported exit code %s",
-                                        event.get("worker"),
-                                        event.get("exitcode"),
-                                    )
-
-                            now = time.time()
-                            if now - last_summary > 30:
-                                try:
-                                    qsize = work_q.qsize()
-                                except NotImplementedError:
-                                    qsize = -1
-                                self.logger.info(
-                                    "Math progress: queue=%d active_workers=%d",
-                                    qsize,
-                                    len(active),
-                                )
-                                last_summary = now
-
-                            if not active:
-                                break
-                        remaining_after_cap: List[str] = []
+                        event = result_q.get_nowait()
+                    except queue.Empty:
+                        break
+                    if not event:
+                        continue
+                    if event.get("event") == "math_batch":
+                        stems_bad = event.get("problematic", [])
+                        if stems_bad and skip_mgr is not None:
+                            skip_mgr.add(canonical_stem(stem) for stem in stems_bad)
+                        worker = event.get("worker")
                         try:
-                            while True:
-                                item = work_q.get_nowait()
-                                if isinstance(item, str) and item.strip():
-                                    remaining_after_cap.append(item)
-                        except queue.Empty:
-                            pass
-                        if remaining_after_cap:
-                            skip_mgr.add(canonical_stem(s) for s in remaining_after_cap)
-                            self.logger.error(
-                                "No active math workers remain; skipped %d pending item(s)",
-                                len(remaining_after_cap),
-                            )
-                    finally:
-                        for p in procs:
-                            if p.is_alive():
-                                p.join()
-                        try:
-                            manager.shutdown()
+                            worker_gpu = int(worker)
                         except Exception:
-                            pass
-                        if worker_log_dir_env is not None:
-                            os.environ["GLOSSAPI_WORKER_LOG_DIR"] = worker_log_dir_env
-                        else:
-                            os.environ.pop("GLOSSAPI_WORKER_LOG_DIR", None)
-                    return
-            # Single-GPU path
-            self.formula_enrich_from_json(
-                files=stems,
-                device=(device or "cuda"),
-                batch_size=int(math_batch_size),
-                dpi_base=int(math_dpi_base),
-                targets_by_stem=local_targets,
-            )
+                            worker_gpu = None
+                        if worker_gpu is not None:
+                            status_map.pop(worker_gpu, None)
+                            marker_path = marker_files.get(worker_gpu)
+                            if marker_path:
+                                try:
+                                    marker_path.unlink(missing_ok=True)
+                                except Exception:
+                                    pass
+                    elif event.get("event") == "exit" and event.get("exitcode", 0) not in (0, None):
+                        self.logger.warning(
+                            "Math worker GPU%s reported exit code %s",
+                            event.get("worker"),
+                            event.get("exitcode"),
+                        )
 
-        # Branches
-        if mode_norm == "math_only":
-            if not math_enhance:
-                self.logger.info("OCR: fix_bad=False and math_enhance=False → nothing to do")
-                return
-            # Math-only: ensure JSON exists; if not, generate without OCR
-            json_dir = self.output_dir / "json"
-            stems: List[str] = []
-            if json_dir.exists():
-                stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
-            # Do not generate layout JSON here; Phase‑1 is responsible for JSON artifacts.
-            # Never run math on files that need OCR
-            if bad_files:
-                before = len(stems)
-                bad_set = {canonical_stem(s) for s in bad_files}
-                stems = [s for s in stems if s not in bad_set]
-                removed = before - len(stems)
-                if removed:
+                now = time.time()
+                if now - last_summary > 30:
                     try:
-                        self.logger.info(
-                            "Math-only: skipping %d document(s) flagged for OCR",
-                            removed,
-                        )
-                    except Exception:
-                        pass
-            if not reprocess_completed and stems and parquet_meta is not None:
-                if math_done_stems:
-                    before = len(stems)
-                    stems = [s for s in stems if s not in math_done_stems]
-                    removed = before - len(stems)
-                    if removed:
-                        self.logger.info(
-                            "Math enrichment: skipping %d already enriched document(s) (reprocess_completed=False).",
-                            removed,
-                        )
-            _run_math(stems)
-            return
-
-        # 'ocr_bad' and 'ocr_bad_then_math' paths: OCR bad files first
-        if mode_norm in {"ocr_bad", "ocr_bad_then_math"} and not bad_files:
-            self.logger.info("OCR: no bad documents flagged by cleaner; skipping OCR fix")
-            if mode_norm == "ocr_bad_then_math":
-                json_dir = self.output_dir / "json"
-                stems = []
-                if json_dir.exists():
-                    stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
-                _run_math(stems)
-            return
-
-        reran_ocr = False
-
-        if mode_norm in {"ocr_bad", "ocr_bad_then_math"}:
-            if backend_norm == "deepseek":
-                # DeepSeek path: run OCR via dedicated runner (no Docling JSON)
-                from glossapi.ocr.deepseek import runner as _deepseek_runner  # type: ignore
-
-                try:
-                    _deepseek_runner.run_for_files(
-                        self,
-                        bad_files,
-                        model_dir=Path(model_dir) if model_dir else None,
-                        max_pages=max_pages,
-                        persist_engine=bool(persist_engine),
-                        precision=precision,
-                        device=device,
-                        use_gpus=use_gpus,
-                        devices=devices,
-                        workers_per_gpu=int(max(1, workers_per_gpu)),
-                        runtime_backend=runtime_backend,
-                        ocr_profile=ocr_profile,
-                        prompt_override=prompt_override,
-                        attn_backend=attn_backend,
-                        base_size=base_size,
-                        image_size=image_size,
-                        crop_mode=crop_mode,
-                        render_dpi=render_dpi,
-                        max_new_tokens=max_new_tokens,
-                        repetition_penalty=repetition_penalty,
-                        no_repeat_ngram_size=no_repeat_ngram_size,
-                        vllm_batch_size=vllm_batch_size,
-                        gpu_memory_utilization=gpu_memory_utilization,
-                        disable_fp8_kv=disable_fp8_kv,
-                        repair_mode=repair_mode,
-                        repair_exec_batch_target_pages=repair_exec_batch_target_pages,
-                        repair_exec_batch_target_items=repair_exec_batch_target_items,
-                        scheduler=scheduler,
-                        target_batch_pages=int(max(1, target_batch_pages)),
-                        shard_pages=int(max(0, shard_pages)),
-                        shard_threshold_pages=int(max(0, shard_threshold_pages)),
-                        content_debug=bool(content_debug),
+                        qsize = work_q.qsize()
+                    except NotImplementedError:
+                        qsize = -1
+                    self.logger.info(
+                        "Math progress: queue=%d active_workers=%d",
+                        qsize,
+                        len(active),
                     )
-                except Exception as _e:
-                    self.logger.error("DeepSeek OCR runner failed: %s", _e)
-                    raise
-            reran_ocr = True
-            # Update metadata to reflect successful OCR reruns
+                    last_summary = now
+
+                if not active:
+                    break
+
+            remaining_after_cap: List[str] = []
             try:
-                from glossapi.parquet_schema import ParquetSchema as _ParquetSchema
-
-                success_files: List[str] = []
-                for _fname in bad_files:
-                    stem = canonical_stem(_fname)
-                    if (self.markdown_dir / f"{stem}.md").exists():
-                        success_files.append(_fname)
-
-                if success_files:
-                    parquet_schema = _ParquetSchema({"url_column": self.url_column})
-                    parquet_path = self._resolve_metadata_parquet(parquet_schema, ensure=True, search_input=True)
-                    if parquet_path and parquet_path.exists():
-                        import pandas as _pd
-
-                        df_meta = _pd.read_parquet(parquet_path)
-                        df_meta = _apply_ocr_success_updates(
-                            df_meta,
-                            filenames=success_files,
-                            markdown_dir=self.markdown_dir,
-                            metrics_dir=self.output_dir / "json" / "metrics",
-                            backend_norm=backend_norm,
-                        )
-                        self._cache_metadata_parquet(parquet_path)
-                        parquet_schema.write_metadata_parquet(df_meta, parquet_path)
-                    # Keep sectioner in sync with newly recovered files
-                    try:
-                        stems = [canonical_stem(_f) for _f in success_files]
-                        if hasattr(self, "good_files"):
-                            for _stem in stems:
-                                if _stem not in getattr(self, "good_files", []):
-                                    self.good_files.append(_stem)
-                    except Exception:
-                        pass
-            except Exception as _e:
-                self.logger.warning("Failed to update OCR success metadata: %s", _e)
-
-        if reran_ocr:
-            try:
-                self.logger.info("Re-running Rust cleaner after OCR rerun to refresh metrics")
-                self.clean(
-                    input_dir=self.markdown_dir,
-                    drop_bad=False,
+                while True:
+                    item = work_q.get_nowait()
+                    if isinstance(item, str) and item.strip():
+                        remaining_after_cap.append(item)
+            except queue.Empty:
+                pass
+            if remaining_after_cap:
+                if skip_mgr is not None:
+                    skip_mgr.add(canonical_stem(stem) for stem in remaining_after_cap)
+                self.logger.error(
+                    "No active math workers remain; skipped %d pending item(s)",
+                    len(remaining_after_cap),
                 )
-            except Exception as _e:
-                self.logger.warning("Cleaner refresh after OCR failed: %s", _e)
-
-        if mode_norm == "ocr_bad_then_math":
+        finally:
+            for proc in procs:
+                if proc.is_alive():
+                    proc.join()
             try:
-                # Run math only on documents that do NOT require OCR
-                json_dir = self.output_dir / "json"
-                stems: List[str] = []
-                if json_dir.exists():
-                    stems = sorted({canonical_stem(p) for p in json_dir.glob("*.docling.json*")})
-                bad_set = {canonical_stem(f) for f in bad_files}
-                if stems:
-                    # When OCR was rerun we now want math on all stems (bad_set included).
-                    # Only skip bad_set when no rerun happened.
-                    if not reran_ocr:
-                        stems = [s for s in stems if s not in bad_set]
-                if not reprocess_completed:
-                    if math_done_stems:
-                        before = len(stems)
-                        stems = [s for s in stems if s not in math_done_stems]
-                        removed = before - len(stems)
-                        if removed:
-                            self.logger.info(
-                                "Math enrichment: skipping %d already enriched document(s) (reprocess_completed=False).",
-                                removed,
-                            )
-                if not stems:
-                    self.logger.info("Math enrichment: no pending documents after filtering.")
-                    return
-                # Best-effort: ensure placeholder sidecars for metadata-selected math targets
-                try:
-                    from glossapi.parquet_schema import ParquetSchema as _ParquetSchema
-                    _ps = _ParquetSchema({"url_column": self.url_column})
-                    _pq = self._resolve_metadata_parquet(_ps, ensure=True, search_input=True)
-                except Exception:
-                    _pq = None
-                if _pq and _pq.exists():
-                    try:
-                        import pandas as _pd, json as _json
-                        _df = _pd.read_parquet(_pq)
-                        if "filename" in _df.columns:
-                            _df['stem'] = _df['filename'].astype(str).str.replace(r"\.pdf$", "", regex=True)
-                            _phase = _df['phase_recommended'].astype(str) == '2A' if 'phase_recommended' in _df.columns else ((_df['filename'] == _df['filename']) & False)
-                            _ft = (_df['formula_total'].fillna(0).astype('float') > 0) if 'formula_total' in _df.columns else ((_df['filename'] == _df['filename']) & False)
-                            _med = (_df['math_equations_detected'].fillna(0).astype('float') > 0) if 'math_equations_detected' in _df.columns else ((_df['filename'] == _df['filename']) & False)
-                            _mask = _phase | _ft | _med
-                            _parq_stems = set(_df.loc[_mask, 'stem'].dropna().astype(str).tolist())
-                            if _parq_stems:
-                                sc_dir = self.output_dir / 'sidecars' / 'math'
-                                sc_dir.mkdir(parents=True, exist_ok=True)
-                                for _s in (set(stems) | _parq_stems):
-                                    _p = sc_dir / f"{_s}.json"
-                                    if not _p.exists():
-                                        _p.write_text(_json.dumps({"items": 0, "accepted": 0, "time_sec": 0.0}, ensure_ascii=False), encoding='utf-8')
-                    except Exception:
-                        pass
-                try:
-                    self.logger.info("OCR: invoking Phase-2 math for stems: %s", ",".join(stems))
-                except Exception:
-                    pass
-                _run_math(stems)
-                try:
-                    self.logger.info("OCR: Phase-2 math completed for stems: %s", ",".join(stems))
-                except Exception:
-                    pass
-            except Exception as _e:
-                self.logger.warning("Phase‑2 enrichment after OCR failed: %s", _e)
+                manager.shutdown()
+            except Exception:
+                pass
+            if worker_log_dir_env is not None:
+                os.environ["GLOSSAPI_WORKER_LOG_DIR"] = worker_log_dir_env
+            else:
+                os.environ.pop("GLOSSAPI_WORKER_LOG_DIR", None)
 
     def formula_enrich_from_json(
         self,
