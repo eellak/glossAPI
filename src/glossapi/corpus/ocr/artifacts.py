@@ -131,6 +131,11 @@ def persist_ocr_success(
 def refresh_cleaner_after_ocr(context: CorpusOcrContext) -> None:
     """Refresh cleaner metrics after OCR reruns rewrite markdown outputs."""
 
+    refresh = getattr(context, "_refresh_metrics_after_ocr_rerun", None)
+    if callable(refresh):
+        refresh()
+        return
+
     context.logger.info("Re-running Rust cleaner after OCR rerun to refresh metrics")
     context.clean(
         input_dir=context.markdown_dir,
