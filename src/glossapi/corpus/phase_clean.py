@@ -4197,6 +4197,106 @@ class CleanPhaseMixin:
         )
         return [dict(row) for row in rows]
 
+    def clean_token_category_debug(
+        self,
+        output_dir: Union[str, Path],
+        category_specs_path: Union[str, Path],
+        input_dir: Union[str, Path] = None,
+        num_threads: int = None,
+        *,
+        max_pages: Optional[int] = 1000,
+        sample_seed: int = 0,
+        synthetic_page_target_chars: int = 4000,
+        synthetic_page_min_header_chars: int = 1200,
+        synthetic_page_hard_max_chars: int = 6000,
+    ) -> List[Dict[str, Any]]:
+        """Export synthetic-page debug files for token/category review experiments.
+
+        This is the debug substrate for token-noise and normalization review work.
+        It mirrors the OCR debug workflow style: Rust-backed matching, annotated
+        debug pages, manifest output, and a compact summary for later review steps.
+        """
+        if input_dir is None:
+            input_dir = self.markdown_dir
+        else:
+            input_dir = Path(input_dir)
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for stale in output_dir.glob("*.md"):
+            stale.unlink()
+        manifest_path = output_dir / "manifest.jsonl"
+        if manifest_path.exists():
+            manifest_path.unlink()
+        summary_path = output_dir / "summary.json"
+        if summary_path.exists():
+            summary_path.unlink()
+
+        category_specs_path = Path(category_specs_path)
+        noise_mod = self._load_rust_extension(
+            "glossapi_rs_noise",
+            "rust/glossapi_rs_noise/Cargo.toml",
+            required_attrs=("export_token_category_debug_pages",),
+        )
+        n_threads = int(num_threads or os.cpu_count() or 4)
+        self.logger.info(
+            "Exporting token category debug pages from %s into %s using specs %s with glossapi_rs_noise…",
+            input_dir,
+            output_dir,
+            category_specs_path,
+        )
+
+        rows = list(
+            noise_mod.export_token_category_debug_pages(
+                str(input_dir),
+                str(output_dir),
+                str(category_specs_path),
+                n_threads,
+                None if max_pages is None else int(max_pages),
+                int(sample_seed),
+                int(synthetic_page_target_chars),
+                int(synthetic_page_min_header_chars),
+                int(synthetic_page_hard_max_chars),
+            )
+        )
+
+        with manifest_path.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(dict(row), ensure_ascii=False))
+                handle.write("\n")
+
+        category_counter: Counter[str] = Counter()
+        page_kind_counter: Counter[str] = Counter()
+        for row in rows:
+            for category in str(row.get("match_categories", "")).split(","):
+                if category:
+                    category_counter[category] += 1
+            page_kind_counter[str(row.get("page_kind", ""))] += 1
+
+        summary = {
+            "input_dir": str(input_dir),
+            "output_dir": str(output_dir),
+            "category_specs_path": str(category_specs_path),
+            "page_count": len(rows),
+            "match_count": int(sum(int(row.get("match_count", 0)) for row in rows)),
+            "category_page_counts": dict(category_counter),
+            "page_kind_counts": dict(page_kind_counter),
+            "synthetic_page_target_chars": int(synthetic_page_target_chars),
+            "synthetic_page_min_header_chars": int(synthetic_page_min_header_chars),
+            "synthetic_page_hard_max_chars": int(synthetic_page_hard_max_chars),
+        }
+        summary_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        self.logger.info(
+            "Exported %d token category debug pages with matches to %s",
+            len(rows),
+            output_dir,
+        )
+        return [dict(row) for row in rows]
+
     def clean_ocr_numeric_word_debug_docs(
         self,
         output_dir: Union[str, Path],

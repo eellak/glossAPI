@@ -124,6 +124,33 @@ def _run_clean_ocr_numeric_debug_export(
     return rows, debug_dir
 
 
+def _run_clean_token_category_debug_export(
+    corpus: Corpus,
+    markdown_text: str,
+    specs: list[dict],
+    *,
+    stem: str = "sample",
+    max_pages: int | None = 1000,
+    synthetic_page_target_chars: int = 4000,
+    synthetic_page_min_header_chars: int = 1200,
+    synthetic_page_hard_max_chars: int = 6000,
+) -> tuple[list[dict], Path]:
+    md_path = corpus.markdown_dir / f"{stem}.md"
+    md_path.write_text(markdown_text, encoding="utf-8")
+    specs_path = corpus.output_dir / "token_category_specs.json"
+    specs_path.write_text(json.dumps(specs, ensure_ascii=False, indent=2), encoding="utf-8")
+    debug_dir = corpus.output_dir / "token_category_debug"
+    rows = corpus.clean_token_category_debug(
+        debug_dir,
+        specs_path,
+        max_pages=max_pages,
+        synthetic_page_target_chars=synthetic_page_target_chars,
+        synthetic_page_min_header_chars=synthetic_page_min_header_chars,
+        synthetic_page_hard_max_chars=synthetic_page_hard_max_chars,
+    )
+    return rows, debug_dir
+
+
 def _run_clean_ocr_numeric_word_debug_docs(
     corpus: Corpus,
     markdown_text: str,
@@ -446,6 +473,60 @@ def test_clean_ocr_debug_respects_sample_limit(tmp_path: Path) -> None:
     manifest = debug_dir / "manifest.jsonl"
     lines = manifest.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 2
+
+
+def test_clean_token_category_debug_exports_synthetic_pages(tmp_path: Path) -> None:
+    corpus = _build_corpus(tmp_path)
+    rows, debug_dir = _run_clean_token_category_debug_export(
+        corpus,
+        (
+            "# Section One\n\n"
+            "Κανονικό κείμενο χωρίς ύποπτα μοτίβα.\n\n"
+            "# Section Two\n\n"
+            "Intro .................. 15\n"
+            "GLYPH<1> GLYPH<2> GLYPH<3>\n"
+        ),
+        specs=[
+            {
+                "category": "glyph_font_like",
+                "pattern_family": "glyph_marker",
+                "pattern": r"GLYPH<\\d+>",
+            },
+            {
+                "category": "dot_leader_like",
+                "pattern_family": "dot_run",
+                "pattern": r"\\.{4,}",
+            },
+        ],
+        synthetic_page_target_chars=120,
+        synthetic_page_min_header_chars=20,
+        synthetic_page_hard_max_chars=240,
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["page_kind"].startswith("synthetic")
+    assert row["match_count"] >= 2
+    assert "glyph_font_like" in row["match_categories"]
+    assert "dot_leader_like" in row["match_categories"]
+    assert "glyph_marker" in row["match_pattern_families"]
+    assert "dot_run" in row["match_pattern_families"]
+
+    exported = Path(row["output_path"])
+    assert exported.exists()
+    assert exported.parent == debug_dir
+    content = exported.read_text(encoding="utf-8")
+    assert "<match category=" in content
+    assert "GLYPH<1>" in content
+    assert ".................." in content
+
+    manifest = debug_dir / "manifest.jsonl"
+    summary = debug_dir / "summary.json"
+    assert manifest.exists()
+    assert summary.exists()
+    summary_data = json.loads(summary.read_text(encoding="utf-8"))
+    assert summary_data["page_count"] == 1
+    assert summary_data["category_page_counts"]["glyph_font_like"] == 1
 
 
 def test_clean_ocr_numeric_debug_flags_ascending_sequences(tmp_path: Path) -> None:

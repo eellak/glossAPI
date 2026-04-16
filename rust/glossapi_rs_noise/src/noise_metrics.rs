@@ -75,6 +75,8 @@ use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
+use regex::{Regex, RegexBuilder};
+use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -221,6 +223,70 @@ struct OcrDebugPageCandidate {
     base_stem: String,
     page_number: u64,
     page_index_in_file: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct TokenCategorySpec {
+    category: String,
+    pattern: String,
+    #[serde(default)]
+    pattern_family: Option<String>,
+    #[serde(default)]
+    match_kind: Option<String>,
+    #[serde(default)]
+    case_insensitive: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CompiledTokenCategorySpec {
+    category: String,
+    pattern_family: String,
+    regex: Regex,
+}
+
+#[derive(Debug, Clone)]
+struct TokenCategoryRawSpan {
+    start: usize,
+    end: usize,
+    category: String,
+    pattern_family: String,
+}
+
+#[derive(Debug, Clone)]
+struct TokenCategoryMergedSpan {
+    start: usize,
+    end: usize,
+    categories: Vec<String>,
+    pattern_families: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct TokenCategoryDebugPageCandidate {
+    source_path: String,
+    source_stem: String,
+    base_stem: String,
+    page_kind: String,
+    page_number: u64,
+    page_index_in_file: u64,
+    page_char_count: u64,
+    page_text: String,
+    merged_spans: Vec<TokenCategoryMergedSpan>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenCategoryDebugPageRow {
+    pub source_path: String,
+    pub output_path: String,
+    pub source_stem: String,
+    pub base_stem: String,
+    pub page_kind: String,
+    pub page_number: u64,
+    pub page_index_in_file: u64,
+    pub page_char_count: u64,
+    pub match_categories: String,
+    pub match_pattern_families: String,
+    pub match_count: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -1334,6 +1400,358 @@ fn split_pages(text: &str) -> Vec<String> {
     pages
 }
 
+#[derive(Debug, Clone)]
+struct SyntheticPage {
+    kind: String,
+    text: String,
+}
+
+fn load_token_category_specs(specs_path: &Path) -> anyhow::Result<Vec<CompiledTokenCategorySpec>> {
+    let raw = fs::read_to_string(specs_path)?;
+    let specs: Vec<TokenCategorySpec> = serde_json::from_str(&raw)?;
+    let mut compiled = Vec::with_capacity(specs.len());
+    for spec in specs {
+        if spec.match_kind.as_deref().unwrap_or("regex") != "regex" {
+            anyhow::bail!(
+                "Unsupported match_kind for category {}: {:?}",
+                spec.category,
+                spec.match_kind
+            );
+        }
+        let mut builder = RegexBuilder::new(&spec.pattern);
+        builder.case_insensitive(spec.case_insensitive);
+        builder.multi_line(true);
+        let regex = builder.build()?;
+        compiled.push(CompiledTokenCategorySpec {
+            category: spec.category.clone(),
+            pattern_family: spec.pattern_family.unwrap_or_else(|| spec.category.clone()),
+            regex,
+        });
+    }
+    Ok(compiled)
+}
+
+fn split_long_block_by_paragraphs(
+    block: &str,
+    target_chars: usize,
+    hard_max_chars: usize,
+) -> Vec<SyntheticPage> {
+    let mut pages = Vec::new();
+    let mut current = String::new();
+    let mut paragraph_buffer = String::new();
+
+    let flush_current = |pages: &mut Vec<SyntheticPage>, current: &mut String| {
+        if !current.trim().is_empty() {
+            pages.push(SyntheticPage {
+                kind: "synthetic_paragraph".to_string(),
+                text: std::mem::take(current),
+            });
+        }
+    };
+
+    for segment in block.split_inclusive('\n') {
+        paragraph_buffer.push_str(segment);
+        if segment.trim().is_empty() {
+            let para = std::mem::take(&mut paragraph_buffer);
+            if current.len() + para.len() > hard_max_chars && !current.trim().is_empty() {
+                flush_current(&mut pages, &mut current);
+            }
+            if current.len() + para.len() > target_chars && !current.trim().is_empty() {
+                flush_current(&mut pages, &mut current);
+            }
+            if para.len() > hard_max_chars {
+                let mut start = 0usize;
+                let chars: Vec<char> = para.chars().collect();
+                while start < chars.len() {
+                    let end = (start + hard_max_chars).min(chars.len());
+                    let chunk: String = chars[start..end].iter().collect();
+                    pages.push(SyntheticPage {
+                        kind: "synthetic_fallback".to_string(),
+                        text: chunk,
+                    });
+                    start = end;
+                }
+            } else {
+                current.push_str(&para);
+            }
+        }
+    }
+
+    if !paragraph_buffer.is_empty() {
+        let para = std::mem::take(&mut paragraph_buffer);
+        if current.len() + para.len() > hard_max_chars && !current.trim().is_empty() {
+            flush_current(&mut pages, &mut current);
+        }
+        if current.len() + para.len() > target_chars && !current.trim().is_empty() {
+            flush_current(&mut pages, &mut current);
+        }
+        if para.len() > hard_max_chars {
+            let mut start = 0usize;
+            let chars: Vec<char> = para.chars().collect();
+            while start < chars.len() {
+                let end = (start + hard_max_chars).min(chars.len());
+                let chunk: String = chars[start..end].iter().collect();
+                pages.push(SyntheticPage {
+                    kind: "synthetic_fallback".to_string(),
+                    text: chunk,
+                });
+                start = end;
+            }
+        } else {
+            current.push_str(&para);
+        }
+    }
+
+    if !current.trim().is_empty() {
+        pages.push(SyntheticPage {
+            kind: "synthetic_paragraph".to_string(),
+            text: current,
+        });
+    }
+
+    pages
+}
+
+fn split_synthetic_pages(
+    text: &str,
+    target_chars: usize,
+    min_header_chars: usize,
+    hard_max_chars: usize,
+) -> Vec<SyntheticPage> {
+    if text.contains(PAGE_SPLIT_MARKER) {
+        return split_pages(text)
+            .into_iter()
+            .map(|page| SyntheticPage {
+                kind: "real_page".to_string(),
+                text: page,
+            })
+            .collect();
+    }
+
+    let mut header_blocks: Vec<String> = Vec::new();
+    let mut current_block = String::new();
+    for segment in text.split_inclusive('\n') {
+        let trimmed = segment.trim_start();
+        let hash_prefix_len = trimmed.chars().take_while(|ch| *ch == '#').count();
+        let is_header = trimmed.starts_with('#')
+            && (1..=6).contains(&hash_prefix_len)
+            && trimmed
+                .chars()
+                .nth(hash_prefix_len)
+                .map(|ch| ch.is_whitespace())
+                .unwrap_or(false);
+        if is_header && current_block.len() >= min_header_chars {
+            header_blocks.push(std::mem::take(&mut current_block));
+        }
+        current_block.push_str(segment);
+    }
+    if !current_block.is_empty() {
+        header_blocks.push(current_block);
+    }
+
+    let mut pages = Vec::new();
+    for block in header_blocks {
+        if block.len() <= hard_max_chars {
+            pages.push(SyntheticPage {
+                kind: "synthetic_header".to_string(),
+                text: block,
+            });
+        } else {
+            pages.extend(split_long_block_by_paragraphs(
+                &block,
+                target_chars,
+                hard_max_chars,
+            ));
+        }
+    }
+    pages
+}
+
+fn collect_token_category_raw_spans(
+    page_text: &str,
+    specs: &[CompiledTokenCategorySpec],
+) -> Vec<TokenCategoryRawSpan> {
+    let mut spans = Vec::new();
+    for spec in specs {
+        for item in spec.regex.find_iter(page_text) {
+            spans.push(TokenCategoryRawSpan {
+                start: item.start(),
+                end: item.end(),
+                category: spec.category.clone(),
+                pattern_family: spec.pattern_family.clone(),
+            });
+        }
+    }
+    spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+    spans
+}
+
+fn merge_token_category_spans(
+    raw_spans: Vec<TokenCategoryRawSpan>,
+) -> Vec<TokenCategoryMergedSpan> {
+    if raw_spans.is_empty() {
+        return Vec::new();
+    }
+    let mut merged: Vec<TokenCategoryMergedSpan> = Vec::new();
+    for span in raw_spans {
+        if let Some(last) = merged.last_mut() {
+            if span.start <= last.end {
+                last.end = last.end.max(span.end);
+                if !last.categories.iter().any(|value| value == &span.category) {
+                    last.categories.push(span.category.clone());
+                }
+                if !last
+                    .pattern_families
+                    .iter()
+                    .any(|value| value == &span.pattern_family)
+                {
+                    last.pattern_families.push(span.pattern_family.clone());
+                }
+                continue;
+            }
+        }
+        merged.push(TokenCategoryMergedSpan {
+            start: span.start,
+            end: span.end,
+            categories: vec![span.category],
+            pattern_families: vec![span.pattern_family],
+        });
+    }
+    merged
+}
+
+fn render_token_category_debug_page(page_text: &str, spans: &[TokenCategoryMergedSpan]) -> String {
+    if spans.is_empty() {
+        return page_text.to_string();
+    }
+    let mut rendered = String::with_capacity(page_text.len() + spans.len() * 64);
+    let mut cursor = 0usize;
+    for span in spans {
+        if span.start > cursor {
+            rendered.push_str(&page_text[cursor..span.start]);
+        }
+        rendered.push_str("<match category=\"");
+        rendered.push_str(&span.categories.join(","));
+        rendered.push_str("\" pattern_family=\"");
+        rendered.push_str(&span.pattern_families.join(","));
+        rendered.push_str("\">");
+        rendered.push_str(&page_text[span.start..span.end]);
+        rendered.push_str("</match>");
+        cursor = span.end;
+    }
+    if cursor < page_text.len() {
+        rendered.push_str(&page_text[cursor..]);
+    }
+    rendered
+}
+
+fn collect_token_category_debug_candidates_for_text(
+    path: &Path,
+    source_stem: &str,
+    base_stem: &str,
+    start_page: u64,
+    text: &str,
+    specs: &[CompiledTokenCategorySpec],
+    target_chars: usize,
+    min_header_chars: usize,
+    hard_max_chars: usize,
+) -> Vec<TokenCategoryDebugPageCandidate> {
+    let pages = split_synthetic_pages(text, target_chars, min_header_chars, hard_max_chars);
+    let mut candidates = Vec::new();
+    for (idx, page) in pages.into_iter().enumerate() {
+        let raw_spans = collect_token_category_raw_spans(&page.text, specs);
+        let merged_spans = merge_token_category_spans(raw_spans);
+        if merged_spans.is_empty() {
+            continue;
+        }
+        let page_index_in_file = (idx + 1) as u64;
+        let page_number = if page.kind == "real_page" {
+            start_page + idx as u64
+        } else {
+            page_index_in_file
+        };
+        candidates.push(TokenCategoryDebugPageCandidate {
+            source_path: path.to_string_lossy().into_owned(),
+            source_stem: source_stem.to_string(),
+            base_stem: base_stem.to_string(),
+            page_kind: page.kind,
+            page_number,
+            page_index_in_file,
+            page_char_count: page.text.chars().count() as u64,
+            page_text: page.text,
+            merged_spans,
+        });
+    }
+    candidates
+}
+
+fn render_token_category_debug_candidate(
+    candidate: &TokenCategoryDebugPageCandidate,
+    output_dir: &Path,
+) -> anyhow::Result<TokenCategoryDebugPageRow> {
+    let rendered = render_token_category_debug_page(&candidate.page_text, &candidate.merged_spans);
+    let categories = candidate
+        .merged_spans
+        .iter()
+        .flat_map(|span| span.categories.iter().cloned())
+        .collect::<std::collections::BTreeSet<String>>();
+    let pattern_families = candidate
+        .merged_spans
+        .iter()
+        .flat_map(|span| span.pattern_families.iter().cloned())
+        .collect::<std::collections::BTreeSet<String>>();
+    let output_name = format!(
+        "{}__token_debug_{}_{:05}.md",
+        candidate.source_stem, candidate.page_kind, candidate.page_number
+    );
+    let output_path = output_dir.join(output_name);
+    let mut content = String::new();
+    content.push_str("<!-- source_path=");
+    content.push_str(&candidate.source_path);
+    content.push_str(" -->\n");
+    content.push_str("<!-- base_stem=");
+    content.push_str(&candidate.base_stem);
+    content.push_str(" source_stem=");
+    content.push_str(&candidate.source_stem);
+    content.push_str(" page_kind=");
+    content.push_str(&candidate.page_kind);
+    content.push_str(" page_number=");
+    content.push_str(&candidate.page_number.to_string());
+    content.push_str(" page_index_in_file=");
+    content.push_str(&candidate.page_index_in_file.to_string());
+    content.push_str(" page_char_count=");
+    content.push_str(&candidate.page_char_count.to_string());
+    content.push_str(" match_categories=");
+    content.push_str(&categories.iter().cloned().collect::<Vec<_>>().join(","));
+    content.push_str(" match_pattern_families=");
+    content.push_str(
+        &pattern_families
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    content.push_str(" match_count=");
+    content.push_str(&candidate.merged_spans.len().to_string());
+    content.push_str(" -->\n\n");
+    content.push_str(&rendered);
+    fs::write(&output_path, content)?;
+
+    Ok(TokenCategoryDebugPageRow {
+        source_path: candidate.source_path.clone(),
+        output_path: output_path.to_string_lossy().into_owned(),
+        source_stem: candidate.source_stem.clone(),
+        base_stem: candidate.base_stem.clone(),
+        page_kind: candidate.page_kind.clone(),
+        page_number: candidate.page_number,
+        page_index_in_file: candidate.page_index_in_file,
+        page_char_count: candidate.page_char_count,
+        match_categories: categories.into_iter().collect::<Vec<_>>().join(","),
+        match_pattern_families: pattern_families.into_iter().collect::<Vec<_>>().join(","),
+        match_count: candidate.merged_spans.len() as u64,
+    })
+}
+
 fn parse_source_stem(stem: &str) -> (String, u64) {
     if let Some((base, suffix)) = stem.rsplit_once("__p") {
         if let Some((start, _end)) = suffix.split_once('-') {
@@ -1539,7 +1957,11 @@ fn hybrid_classify_numeric_field(token: &str) -> Option<(HybridFieldKind, Vec<u3
     }
 
     let parts: Vec<&str> = stripped.split('.').collect();
-    if parts.is_empty() || parts.iter().any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit())) {
+    if parts.is_empty()
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()))
+    {
         return None;
     }
 
@@ -1688,31 +2110,29 @@ fn hybrid_parse_prefix_at(text: &str, start: usize) -> Option<usize> {
     let (delimiter, mut end_idx) = hybrid_next_char(text, idx)?;
     match delimiter {
         ')' => {}
-        '.' => {
-            loop {
-                let mut cursor = end_idx;
-                let mut saw_digit = false;
-                while cursor < text.len() {
-                    let (ch, next_cursor) = hybrid_next_char(text, cursor)?;
-                    if !ch.is_ascii_digit() {
-                        break;
-                    }
-                    saw_digit = true;
-                    cursor = next_cursor;
+        '.' => loop {
+            let mut cursor = end_idx;
+            let mut saw_digit = false;
+            while cursor < text.len() {
+                let (ch, next_cursor) = hybrid_next_char(text, cursor)?;
+                if !ch.is_ascii_digit() {
+                    break;
                 }
-                if saw_digit {
-                    if cursor < text.len() {
-                        let (ch, next_cursor) = hybrid_next_char(text, cursor)?;
-                        if ch == '.' {
-                            end_idx = next_cursor;
-                            continue;
-                        }
-                    }
-                    end_idx = cursor;
-                }
-                break;
+                saw_digit = true;
+                cursor = next_cursor;
             }
-        }
+            if saw_digit {
+                if cursor < text.len() {
+                    let (ch, next_cursor) = hybrid_next_char(text, cursor)?;
+                    if ch == '.' {
+                        end_idx = next_cursor;
+                        continue;
+                    }
+                }
+                end_idx = cursor;
+            }
+            break;
+        },
         _ => return None,
     }
 
@@ -1894,7 +2314,10 @@ fn hybrid_extract_inline_items(analysis_text: &str) -> Vec<HybridInlineItem> {
                         numeric_positions.push(tokens.len());
                         tokens.push(HybridToken {
                             kind: HybridTokenKind::Numeric,
-                            start: hybrid_byte_to_char_idx(&boundaries, working_offset + token_byte),
+                            start: hybrid_byte_to_char_idx(
+                                &boundaries,
+                                working_offset + token_byte,
+                            ),
                             end: hybrid_byte_to_char_idx(&boundaries, working_offset + end),
                             token_key: None,
                             numeric_value: Some(parsed_value),
@@ -1995,7 +2418,10 @@ fn hybrid_extract_inline_items(analysis_text: &str) -> Vec<HybridInlineItem> {
 }
 
 fn hybrid_partial_body_matches(candidate_body_key: &str, target_body_key: &str) -> bool {
-    if candidate_body_key.is_empty() || target_body_key.is_empty() || candidate_body_key == target_body_key {
+    if candidate_body_key.is_empty()
+        || target_body_key.is_empty()
+        || candidate_body_key == target_body_key
+    {
         return false;
     }
     if !target_body_key.starts_with(candidate_body_key) {
@@ -2013,8 +2439,10 @@ fn hybrid_header_progresses(previous: &HybridNumberedItem, current: &HybridNumbe
         && current.field_kind == HybridFieldKind::HeaderCounter
         && !previous.numbers.is_empty()
         && previous.numbers.len() == current.numbers.len()
-        && previous.numbers[..previous.numbers.len() - 1] == current.numbers[..current.numbers.len() - 1]
-        && current.numbers.last().copied() == previous.numbers.last().copied().map(|value| value + 1)
+        && previous.numbers[..previous.numbers.len() - 1]
+            == current.numbers[..current.numbers.len() - 1]
+        && current.numbers.last().copied()
+            == previous.numbers.last().copied().map(|value| value + 1)
 }
 
 fn hybrid_header_is_parent(previous: &HybridNumberedItem, current: &HybridNumberedItem) -> bool {
@@ -2308,7 +2736,8 @@ pub fn find_labeled_shared_repeat_spans_internal(
 ) -> Vec<LabeledSharedRepeatSpan> {
     let (normalized_text, raw_map) = normalize_alnum_with_map_skip_tags_internal(text);
     let normalized_chars: Vec<char> = normalized_text.chars().collect();
-    let spans = find_word_repeat_spans_internal(&normalized_text, rep_threshold, min_period, window);
+    let spans =
+        find_word_repeat_spans_internal(&normalized_text, rep_threshold, min_period, window);
     let mut labeled: Vec<LabeledSharedRepeatSpan> = Vec::new();
 
     for span in spans {
@@ -2378,9 +2807,10 @@ pub fn find_word_repeat_spans_internal(
     let mut pref = vec![0u64; n_chars + 1];
     let mut pw = vec![1u64; n_chars + 1];
     for (idx, code) in codes.iter().enumerate() {
-        pref[idx + 1] =
-            (pref[idx].wrapping_mul(WORD_REPEAT_HASH_BASE).wrapping_add(*code as u64))
-                & WORD_REPEAT_HASH_MASK;
+        pref[idx + 1] = (pref[idx]
+            .wrapping_mul(WORD_REPEAT_HASH_BASE)
+            .wrapping_add(*code as u64))
+            & WORD_REPEAT_HASH_MASK;
         pw[idx + 1] = pw[idx].wrapping_mul(WORD_REPEAT_HASH_BASE) & WORD_REPEAT_HASH_MASK;
     }
 
@@ -2395,8 +2825,14 @@ pub fn find_word_repeat_spans_internal(
         while idx + rep_threshold * period <= n_chars {
             let mut is_repeat = true;
             for multiple in 1..rep_threshold {
-                if !word_repeat_blocks_equal(&codes, &pref, &pw, idx, idx + multiple * period, period)
-                {
+                if !word_repeat_blocks_equal(
+                    &codes,
+                    &pref,
+                    &pw,
+                    idx,
+                    idx + multiple * period,
+                    period,
+                ) {
                     is_repeat = false;
                     break;
                 }
@@ -3581,4 +4017,197 @@ pub fn export_numeric_match_debug_pages_internal(
             .then(a.page_number.cmp(&b.page_number))
     });
     Ok(flat)
+}
+
+pub fn export_token_category_debug_pages_internal(
+    root: &Path,
+    output_dir: &Path,
+    category_specs_path: &Path,
+    n_threads: Option<usize>,
+    max_pages: Option<usize>,
+    sample_seed: u64,
+    synthetic_page_target_chars: usize,
+    synthetic_page_min_header_chars: usize,
+    synthetic_page_hard_max_chars: usize,
+) -> anyhow::Result<Vec<TokenCategoryDebugPageRow>> {
+    fs::create_dir_all(output_dir)?;
+    let specs = load_token_category_specs(category_specs_path)?;
+
+    if let Some(limit) = max_pages {
+        let specs = specs.clone();
+        let mut candidates: Vec<TokenCategoryDebugPageCandidate> =
+            run_in_thread_pool(n_threads, || {
+                WalkDir::new(root)
+                    .into_iter()
+                    .par_bridge()
+                    .filter_map(Result::ok)
+                    .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+                    .map(|e| {
+                        let path = e.path();
+                        let source_stem = path
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let (base_stem, start_page) = parse_source_stem(&source_stem);
+                        let buf = fs::read(path).expect("read");
+                        let text = String::from_utf8_lossy(&buf);
+                        collect_token_category_debug_candidates_for_text(
+                            path,
+                            &source_stem,
+                            &base_stem,
+                            start_page,
+                            &text,
+                            &specs,
+                            synthetic_page_target_chars,
+                            synthetic_page_min_header_chars,
+                            synthetic_page_hard_max_chars,
+                        )
+                    })
+                    .reduce(Vec::new, |mut acc, mut item| {
+                        acc.append(&mut item);
+                        acc
+                    })
+            })?;
+
+        if candidates.len() > limit {
+            let mut rng = StdRng::seed_from_u64(sample_seed);
+            candidates.shuffle(&mut rng);
+            candidates.truncate(limit);
+        }
+        candidates.sort_by(|a, b| {
+            a.source_path
+                .cmp(&b.source_path)
+                .then(a.page_number.cmp(&b.page_number))
+        });
+
+        let output_dir = output_dir.to_path_buf();
+        let mut rows: Vec<TokenCategoryDebugPageRow> = run_in_thread_pool(n_threads, move || {
+            candidates
+                .into_par_iter()
+                .map(|candidate| render_token_category_debug_candidate(&candidate, &output_dir))
+                .collect::<anyhow::Result<Vec<_>>>()
+        })??;
+        rows.sort_by(|a, b| {
+            a.output_path
+                .cmp(&b.output_path)
+                .then(a.page_number.cmp(&b.page_number))
+        });
+        return Ok(rows);
+    }
+
+    let specs = specs.clone();
+    let rows: Vec<Vec<TokenCategoryDebugPageRow>> = run_in_thread_pool(n_threads, || {
+        WalkDir::new(root)
+            .into_iter()
+            .par_bridge()
+            .filter_map(Result::ok)
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .map(|e| {
+                let path = e.path();
+                let source_stem = path
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let (base_stem, start_page) = parse_source_stem(&source_stem);
+                let buf = fs::read(path).expect("read");
+                let text = String::from_utf8_lossy(&buf);
+                let candidates = collect_token_category_debug_candidates_for_text(
+                    path,
+                    &source_stem,
+                    &base_stem,
+                    start_page,
+                    &text,
+                    &specs,
+                    synthetic_page_target_chars,
+                    synthetic_page_min_header_chars,
+                    synthetic_page_hard_max_chars,
+                );
+                let mut page_rows = Vec::with_capacity(candidates.len());
+                for candidate in candidates {
+                    page_rows.push(
+                        render_token_category_debug_candidate(&candidate, output_dir)
+                            .expect("write token debug page"),
+                    );
+                }
+                page_rows
+            })
+            .collect()
+    })?;
+
+    let mut flat = Vec::new();
+    for mut group in rows {
+        flat.append(&mut group);
+    }
+    flat.sort_by(|a, b| {
+        a.output_path
+            .cmp(&b.output_path)
+            .then(a.page_number.cmp(&b.page_number))
+    });
+    Ok(flat)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn compiled_spec(category: &str, family: &str, pattern: &str) -> CompiledTokenCategorySpec {
+        CompiledTokenCategorySpec {
+            category: category.to_string(),
+            pattern_family: family.to_string(),
+            regex: RegexBuilder::new(pattern)
+                .multi_line(true)
+                .build()
+                .expect("compile test regex"),
+        }
+    }
+
+    #[test]
+    fn synthetic_pages_prefer_headers_before_fallback() {
+        let text = "# One\n\nalpha\n\n# Two\n\nbeta\nGLYPH<1>\n";
+        let pages = split_synthetic_pages(text, 80, 10, 200);
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].kind, "synthetic_header");
+        assert!(pages[1].text.contains("GLYPH<1>"));
+    }
+
+    #[test]
+    fn token_category_matching_merges_overlaps_and_keeps_categories() {
+        let specs = vec![
+            compiled_spec("glyph_font_like", "glyph_marker", r"GLYPH<\d+>"),
+            compiled_spec("dot_leader_like", "dot_run", r"\.{4,}"),
+        ];
+        let spans = collect_token_category_raw_spans(
+            "Intro ................ 12\nGLYPH<1> GLYPH<2>\n",
+            &specs,
+        );
+        let merged = merge_token_category_spans(spans);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].categories, vec!["dot_leader_like".to_string()]);
+        assert_eq!(merged[1].categories, vec!["glyph_font_like".to_string()]);
+        assert_eq!(merged[2].categories, vec!["glyph_font_like".to_string()]);
+    }
+
+    #[test]
+    fn token_category_candidates_preserve_real_page_numbers_from_stem() {
+        let specs = vec![compiled_spec(
+            "glyph_font_like",
+            "glyph_marker",
+            r"GLYPH<\d+>",
+        )];
+        let candidates = collect_token_category_debug_candidates_for_text(
+            Path::new("/tmp/doc__p0005-0006.md"),
+            "doc__p0005-0006",
+            "doc",
+            5,
+            "Alpha\n<--- Page Split --->\nGLYPH<7>\n",
+            &specs,
+            4000,
+            1200,
+            6000,
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].page_kind, "real_page");
+        assert_eq!(candidates[0].page_number, 6);
+        assert_eq!(candidates[0].page_index_in_file, 2);
+    }
 }
