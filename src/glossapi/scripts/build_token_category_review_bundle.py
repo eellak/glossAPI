@@ -133,7 +133,7 @@ def _format_case_text(
         f"PAGE_NUMBER: {row.get('page_number', 0)}",
         f"PAGE_INDEX_IN_FILE: {row.get('page_index_in_file', 0)}",
         f"PAGE_CHAR_COUNT: {row.get('page_char_count', 0)}",
-        f"MATCHED_TEXT: {row.get('matched_text', '')}",
+        f"MERGED_MATCHED_TEXT: {row.get('matched_text', '')}",
         f"RAW_TEXTS: {json.dumps(list(row.get('raw_texts') or []), ensure_ascii=False)}",
         f"CONTEXT_BEFORE: {row.get('context_before', '')}",
         f"CONTEXT_AFTER: {row.get('context_after', '')}",
@@ -155,6 +155,13 @@ def _format_case_text(
         "\n".join(metadata_lines),
         "=== REVIEW_GOAL ===",
         str(review_spec.get("goal", "")),
+        "=== FIELD_NOTES ===",
+        (
+            "MERGED_MATCHED_TEXT is the merged surface span on the synthetic page. "
+            "RAW_TEXTS are the original literal anchors that triggered the category. "
+            "If they differ, trust RAW_TEXTS for the original trigger identity and use "
+            "MERGED_MATCHED_TEXT plus context to judge surrounding noise or structure."
+        ),
         "=== CATEGORY_QUESTIONS ===",
         questions,
         "=== MATCH_CONTEXT_EXCERPT ===",
