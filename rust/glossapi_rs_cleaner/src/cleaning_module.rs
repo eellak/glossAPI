@@ -24,6 +24,11 @@ lazy_static! {
 
     // Regex for HTML comments (captures the whole comment) - STILL USED
     pub static ref COMMENT_REGEX: Regex = Regex::new(r"<!--.*?-->").unwrap();
+    pub static ref GLYPH_FONT_TAG_REGEX: Regex =
+        Regex::new(r"(?i)glyph<c=\d+,font=/[^>]+>").unwrap();
+    pub static ref FONT_GLYPH_TAG_REGEX: Regex =
+        Regex::new(r"(?i)<c=\d+,font=/[^>]+>glyph").unwrap();
+    pub static ref DOT_LEADER_RUN_REGEX: Regex = Regex::new(r"\.{4,}").unwrap();
 
     // Regex for HTML/XML tags (for cleaning, non-comment tags) - Replaced by strip_tags_custom
     // pub static ref ANY_TAG_CLEANING_REGEX: Regex = Regex::new(r"<[^>]*>").unwrap();
@@ -100,6 +105,29 @@ static BAD_LINE_AC: Lazy<AhoCorasick> = Lazy::new(|| {
     ])
     .unwrap()
 });
+
+fn has_decoded_glyph_font_artefact(line: &str) -> bool {
+    GLYPH_FONT_TAG_REGEX.is_match(line) || FONT_GLYPH_TAG_REGEX.is_match(line)
+}
+
+fn normalize_layout_leader_runs(line: &str) -> Option<String> {
+    if line.is_empty()
+        || line == TEXT_MISSING_COMMENT
+        || line == TABLE_REMOVED_COMMENT
+        || !line.contains('.')
+    {
+        return None;
+    }
+    if !DOT_LEADER_RUN_REGEX.is_match(line) {
+        return None;
+    }
+    let normalized = DOT_LEADER_RUN_REGEX.replace_all(line, ".....").into_owned();
+    if normalized == line {
+        None
+    } else {
+        Some(normalized)
+    }
+}
 
 // Helper function for Step 5.1: Stream-strip tags using memchr
 // Takes a mutable buffer for the result, clears it, and appends to it.
@@ -221,6 +249,13 @@ pub fn core_clean_text(
             cleaned_output_string_builder.push('\n');
             continue;
         }
+        // Decode entities before artefact checks so html-escaped GLYPH/font tags
+        // are caught by the same canonical matcher family as raw XML-like forms.
+        let decoded_entity_data = decode(line.as_bytes());
+        let line_after_entity_decoding_str = decoded_entity_data
+            .to_string()
+            .unwrap_or_else(|_| line.to_string());
+
         let mut skip_bad_line_check = carry_math_state || trimmed_line == "$$";
         if !skip_bad_line_check && trimmed_line.contains("$$") {
             // Handle inline math by skipping BAD_LINE_AC so \text in math isn't penalised.
@@ -230,7 +265,11 @@ pub fn core_clean_text(
             }
         }
 
-        if !skip_bad_line_check && BAD_LINE_AC.is_match(line) {
+        if !skip_bad_line_check
+            && (BAD_LINE_AC.is_match(line)
+                || BAD_LINE_AC.is_match(&line_after_entity_decoding_str)
+                || has_decoded_glyph_font_artefact(&line_after_entity_decoding_str))
+        {
             original_chars_for_badness += line.chars().count();
             cleaned_output_string_builder.push_str(TEXT_MISSING_COMMENT);
             cleaned_output_string_builder.push('\n');
@@ -240,12 +279,6 @@ pub fn core_clean_text(
         processed_line_segment_buf.clear();
         current_line_removed_chars_buffer_buf.clear();
         // line_after_tag_handling_buf is cleared inside strip_tags_custom
-
-        // Step 4.1: Decode HTML entities FIRST from the original line
-        let decoded_entity_data = decode(line.as_bytes());
-        let line_after_entity_decoding_str = decoded_entity_data
-            .to_string()
-            .unwrap_or_else(|_| line.to_string());
 
         // Step 5.1 & 5.4: Use strip_tags_custom with a reusable buffer on the DECODED line content
         let removed_from_tags_count = strip_tags_custom(
@@ -361,7 +394,13 @@ pub fn core_clean_text(
         let kept_chars_total = line_content_to_add.chars().count();
         sum_kept_line_content_chars += kept_chars_total.saturating_sub(math_chars_this_line); // exclude math spans
         original_chars_for_badness += line.chars().count().saturating_sub(math_chars_this_line);
-        cleaned_output_string_builder.push_str(&line_content_to_add);
+        let line_to_write = if is_exclusively_comment || line_content_to_add.contains(TEXT_MISSING_COMMENT)
+        {
+            line_content_to_add.clone()
+        } else {
+            normalize_layout_leader_runs(&line_content_to_add).unwrap_or(line_content_to_add.clone())
+        };
+        cleaned_output_string_builder.push_str(&line_to_write);
         cleaned_output_string_builder.push('\n');
     }
 
@@ -741,4 +780,46 @@ pub fn list_available_scripts() -> PyResult<Vec<String>> {
         .filter(|&k| **k != *"unusual")
         .cloned()
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_allowed_chars() -> HashSet<char> {
+        let mut allowed_chars = HashSet::new();
+        for key in ["greek", "latin", "punctuation", "numbers", "common_symbols"] {
+            if let Some(script_set) = SCRIPT_SETS.get(key) {
+                allowed_chars.extend(script_set);
+            }
+        }
+        allowed_chars.insert(' ');
+        allowed_chars.insert('\t');
+        allowed_chars.insert('\n');
+        allowed_chars
+    }
+
+    #[test]
+    fn core_clean_text_rejects_decoded_glyph_font_tags() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "prefix GLYPH&lt;c=3,font=/QCMXYA+CenturyGothic&gt; suffix\n";
+        let (cleaned, original_chars, kept_chars) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
+        assert_eq!(kept_chars, 0);
+    }
+
+    #[test]
+    fn core_clean_text_normalizes_long_dot_leaders_without_badness_penalty() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "Chapter ..........................................  85\n";
+        let (cleaned, original_chars, kept_chars) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, "Chapter .....  85\n");
+        assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
+        assert_eq!(kept_chars, original_chars);
+    }
 }
