@@ -14,6 +14,7 @@ from glossapi.corpus.phase_clean import (
     _merge_labeled_raw_spans,
     _normalize_alnum_with_map_skip_tags,
 )
+from glossapi.scripts.build_token_category_review_bundle import build_token_category_review_bundle
 from glossapi.scripts.table_markdown_audit import audit_table, write_clean_markdown_file
 from glossapi.scripts.review_manifest_materialize import materialize_manifest_categories
 
@@ -1783,6 +1784,93 @@ def test_review_manifest_materialize_creates_labeled_copies(tmp_path: Path) -> N
     assert "REVIEW_LABEL: fits_semantically" in fit_text
     assert "=== REVIEW_SOURCE_CONTENT ===" in fit_text
     assert "alpha body" in fit_text
+
+
+def test_build_token_category_review_bundle_materializes_cases(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    debug_dir = run_dir / "debug_pages"
+    debug_dir.mkdir()
+
+    debug_page = debug_dir / "sample__token_debug_synthetic_00001.md"
+    debug_page.write_text(
+        "Header\n<match category=\"glyph_font_like\" pattern_family=\"fresh_glossapi_only_glyph_font_like\">GLYPH<c=1></match>\n",
+        encoding="utf-8",
+    )
+
+    match_row = {
+        "match_id": "sample:synthetic_header:1:match:1",
+        "source_path": "/tmp/source/sample.md",
+        "source_stem": "sample",
+        "base_stem": "sample",
+        "debug_output_path": str(debug_page),
+        "page_kind": "synthetic_header",
+        "page_number": 1,
+        "page_index_in_file": 1,
+        "page_char_count": 120,
+        "match_index_in_page": 1,
+        "start_char": 7,
+        "end_char": 18,
+        "start_byte": 7,
+        "end_byte": 18,
+        "match_length_chars": 11,
+        "match_length_bytes": 11,
+        "start_line": 2,
+        "end_line": 2,
+        "categories": ["glyph_font_like"],
+        "category": "glyph_font_like",
+        "pattern_families": ["fresh_glossapi_only_glyph_font_like"],
+        "pattern_family": "fresh_glossapi_only_glyph_font_like",
+        "matched_text": "GLYPH<c=1>",
+        "raw_texts": ["GLYPH<c=1>"],
+        "context_before": "Header\n",
+        "context_after": "\n",
+        "context_excerpt": "Header\nGLYPH<c=1>\n",
+    }
+    (run_dir / "match_index.jsonl").write_text(json.dumps(match_row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    page_metric_row = {
+        "source_path": "/tmp/source/sample.md",
+        "source_stem": "sample",
+        "base_stem": "sample",
+        "debug_output_path": str(debug_page),
+        "page_kind": "synthetic_header",
+        "page_number": 1,
+        "page_index_in_file": 1,
+        "page_char_count": 120,
+        "match_count": 1,
+        "match_density_per_1k_chars": 8.3333,
+        "match_categories": "glyph_font_like",
+        "match_pattern_families": "fresh_glossapi_only_glyph_font_like",
+        "category_match_counts": {"glyph_font_like": 1},
+        "pattern_family_match_counts": {"fresh_glossapi_only_glyph_font_like": 1},
+    }
+    (run_dir / "page_metrics.jsonl").write_text(json.dumps(page_metric_row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    output_dir = tmp_path / "review_bundle"
+    summary = build_token_category_review_bundle(
+        run_dir=run_dir,
+        output_dir=output_dir,
+        sample_size_per_category=300,
+    )
+
+    assert summary["sampled_case_count"] == 1
+    assert "glyph_font_like" in summary["category_summaries"]
+
+    manifest_rows = [
+        json.loads(line)
+        for line in (output_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(manifest_rows) == 1
+    case_path = Path(manifest_rows[0]["case_path"])
+    assert case_path.exists()
+    case_text = case_path.read_text(encoding="utf-8")
+    assert "REVIEW_MODE: cleaning" in case_text
+    assert "CATEGORY: glyph_font_like" in case_text
+    assert "RAW_TEXTS: [\"GLYPH<c=1>\"]" in case_text
+    assert f"DEBUG_OUTPUT_PATH: {debug_page}" in case_text
+    assert "=== DEBUG_PAGE_WITH_MATCH_TAGS ===" not in case_text
 
 
 def test_table_markdown_audit_preserves_semantic_inline_html() -> None:
