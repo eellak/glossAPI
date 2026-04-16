@@ -69,17 +69,20 @@ Positions in detailed tuple (suggested append):
 
 Note: after adding these fields, bump the Python bindings accordingly and propagate polytonic_ratio (already computed here) into downstream parquet (already wired in Corpus.clean()).
 */
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use glossapi_rs_common::{is_combining_mark, is_greek, scan_script_metrics, ScriptScanner};
+use once_cell::sync::Lazy;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use regex::{Regex, RegexBuilder};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use unicode_normalization::UnicodeNormalization;
 use walkdir::WalkDir;
 // Avoid heavy regex for table detection; use lightweight checks instead
@@ -105,6 +108,10 @@ const NUMERIC_PAGE_COLLAPSE_MIN_ATOMS: u64 = 64;
 const NUMERIC_BLOCK_SEED_MIN_ATOMS: usize = 8;
 // Baseline for short words per 1000 Greek characters (empirically ~26 on clean texts)
 const SHORT_BASELINE_PER_1000: f64 = 26.0;
+
+static TOKEN_CATEGORY_SPEC_CACHE: Lazy<
+    Mutex<std::collections::HashMap<PathBuf, Arc<Vec<CompiledTokenCategorySpec>>>>,
+> = Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
 
 #[inline]
 fn to_lower_fast(cp: u32) -> u32 {
@@ -229,20 +236,38 @@ struct OcrDebugPageCandidate {
 #[serde(rename_all = "snake_case")]
 struct TokenCategorySpec {
     category: String,
-    pattern: String,
+    #[serde(default)]
+    pattern: Option<String>,
     #[serde(default)]
     pattern_family: Option<String>,
     #[serde(default)]
     match_kind: Option<String>,
     #[serde(default)]
     case_insensitive: bool,
+    #[serde(default)]
+    literals: Option<Vec<String>>,
+    #[serde(default)]
+    literals_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum TokenCategoryLiteralPayload {
+    List(Vec<String>),
+    Map(std::collections::BTreeMap<String, String>),
+}
+
+#[derive(Debug, Clone)]
+enum TokenCategoryMatcher {
+    Regex(Regex),
+    LiteralSet(AhoCorasick),
 }
 
 #[derive(Debug, Clone)]
 struct CompiledTokenCategorySpec {
     category: String,
     pattern_family: String,
-    regex: Regex,
+    matcher: TokenCategoryMatcher,
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +276,7 @@ struct TokenCategoryRawSpan {
     end: usize,
     category: String,
     pattern_family: String,
+    matched_text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -259,6 +285,7 @@ struct TokenCategoryMergedSpan {
     end: usize,
     categories: Vec<String>,
     pattern_families: Vec<String>,
+    raw_texts: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +301,17 @@ struct TokenCategoryDebugPageCandidate {
     merged_spans: Vec<TokenCategoryMergedSpan>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct TokenCategoryExportMatchRow {
+    match_index_in_page: u64,
+    start: usize,
+    end: usize,
+    categories: Vec<String>,
+    pattern_families: Vec<String>,
+    matched_text: String,
+    raw_texts: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct TokenCategoryDebugPageRow {
     pub source_path: String,
@@ -287,6 +325,8 @@ pub struct TokenCategoryDebugPageRow {
     pub match_categories: String,
     pub match_pattern_families: String,
     pub match_count: u64,
+    pub page_text: String,
+    pub matches_json: String,
 }
 
 #[derive(Debug, Clone)]
@@ -1411,23 +1451,107 @@ fn load_token_category_specs(specs_path: &Path) -> anyhow::Result<Vec<CompiledTo
     let specs: Vec<TokenCategorySpec> = serde_json::from_str(&raw)?;
     let mut compiled = Vec::with_capacity(specs.len());
     for spec in specs {
-        if spec.match_kind.as_deref().unwrap_or("regex") != "regex" {
-            anyhow::bail!(
-                "Unsupported match_kind for category {}: {:?}",
-                spec.category,
-                spec.match_kind
-            );
-        }
-        let mut builder = RegexBuilder::new(&spec.pattern);
-        builder.case_insensitive(spec.case_insensitive);
-        builder.multi_line(true);
-        let regex = builder.build()?;
+        let match_kind = spec.match_kind.as_deref().unwrap_or("regex");
+        let matcher = match match_kind {
+            "regex" => {
+                let pattern = spec.pattern.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("Missing regex pattern for category {}", spec.category)
+                })?;
+                let mut builder = RegexBuilder::new(pattern);
+                builder.case_insensitive(spec.case_insensitive);
+                builder.multi_line(true);
+                TokenCategoryMatcher::Regex(builder.build()?)
+            }
+            "literal_set" => {
+                if spec.case_insensitive {
+                    anyhow::bail!(
+                        "literal_set does not currently support case_insensitive for category {}",
+                        spec.category
+                    );
+                }
+                let mut literals = spec.literals.unwrap_or_default();
+                if let Some(raw_path) = spec.literals_path.as_deref() {
+                    let path = if Path::new(raw_path).is_absolute() {
+                        PathBuf::from(raw_path)
+                    } else {
+                        specs_path
+                            .parent()
+                            .unwrap_or_else(|| Path::new("."))
+                            .join(raw_path)
+                    };
+                    let payload_raw = fs::read_to_string(&path).map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to read literal_set payload for category {} from {}: {}",
+                            spec.category,
+                            path.display(),
+                            err
+                        )
+                    })?;
+                    let payload: TokenCategoryLiteralPayload = serde_json::from_str(&payload_raw)?;
+                    match payload {
+                        TokenCategoryLiteralPayload::List(values) => literals.extend(values),
+                        TokenCategoryLiteralPayload::Map(values) => {
+                            literals.extend(values.into_values())
+                        }
+                    }
+                }
+                literals.retain(|value| !value.is_empty());
+                literals.sort();
+                literals.dedup();
+                if literals.is_empty() {
+                    anyhow::bail!(
+                        "literal_set category {} must provide non-empty literals",
+                        spec.category
+                    );
+                }
+                let automaton = AhoCorasickBuilder::new()
+                    .match_kind(MatchKind::LeftmostLongest)
+                    .build(literals)
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to build literal_set automaton for category {}: {}",
+                            spec.category,
+                            err
+                        )
+                    })?;
+                TokenCategoryMatcher::LiteralSet(automaton)
+            }
+            _ => {
+                anyhow::bail!(
+                    "Unsupported match_kind for category {}: {:?}",
+                    spec.category,
+                    spec.match_kind
+                );
+            }
+        };
         compiled.push(CompiledTokenCategorySpec {
             category: spec.category.clone(),
             pattern_family: spec.pattern_family.unwrap_or_else(|| spec.category.clone()),
-            regex,
+            matcher,
         });
     }
+    Ok(compiled)
+}
+
+fn load_token_category_specs_cached(
+    specs_path: &Path,
+) -> anyhow::Result<Arc<Vec<CompiledTokenCategorySpec>>> {
+    let canonical = specs_path
+        .canonicalize()
+        .unwrap_or_else(|_| specs_path.to_path_buf());
+    if let Some(cached) = TOKEN_CATEGORY_SPEC_CACHE
+        .lock()
+        .expect("token category spec cache lock")
+        .get(&canonical)
+        .cloned()
+    {
+        return Ok(cached);
+    }
+    let compiled = Arc::new(load_token_category_specs(&canonical)?);
+    TOKEN_CATEGORY_SPEC_CACHE
+        .lock()
+        .expect("token category spec cache lock")
+        .insert(canonical, compiled.clone());
     Ok(compiled)
 }
 
@@ -1573,13 +1697,29 @@ fn collect_token_category_raw_spans(
 ) -> Vec<TokenCategoryRawSpan> {
     let mut spans = Vec::new();
     for spec in specs {
-        for item in spec.regex.find_iter(page_text) {
-            spans.push(TokenCategoryRawSpan {
-                start: item.start(),
-                end: item.end(),
-                category: spec.category.clone(),
-                pattern_family: spec.pattern_family.clone(),
-            });
+        match &spec.matcher {
+            TokenCategoryMatcher::Regex(regex) => {
+                for item in regex.find_iter(page_text) {
+                    spans.push(TokenCategoryRawSpan {
+                        start: item.start(),
+                        end: item.end(),
+                        category: spec.category.clone(),
+                        pattern_family: spec.pattern_family.clone(),
+                        matched_text: page_text[item.start()..item.end()].to_string(),
+                    });
+                }
+            }
+            TokenCategoryMatcher::LiteralSet(automaton) => {
+                for item in automaton.find_iter(page_text) {
+                    spans.push(TokenCategoryRawSpan {
+                        start: item.start(),
+                        end: item.end(),
+                        category: spec.category.clone(),
+                        pattern_family: spec.pattern_family.clone(),
+                        matched_text: page_text[item.start()..item.end()].to_string(),
+                    });
+                }
+            }
         }
     }
     spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
@@ -1607,6 +1747,7 @@ fn merge_token_category_spans(
                 {
                     last.pattern_families.push(span.pattern_family.clone());
                 }
+                last.raw_texts.push(span.matched_text.clone());
                 continue;
             }
         }
@@ -1615,6 +1756,7 @@ fn merge_token_category_spans(
             end: span.end,
             categories: vec![span.category],
             pattern_families: vec![span.pattern_family],
+            raw_texts: vec![span.matched_text],
         });
     }
     merged
@@ -1705,6 +1847,21 @@ fn render_token_category_debug_candidate(
         candidate.source_stem, candidate.page_kind, candidate.page_number
     );
     let output_path = output_dir.join(output_name);
+    let export_matches: Vec<TokenCategoryExportMatchRow> = candidate
+        .merged_spans
+        .iter()
+        .enumerate()
+        .map(|(idx, span)| TokenCategoryExportMatchRow {
+            match_index_in_page: (idx + 1) as u64,
+            start: span.start,
+            end: span.end,
+            categories: span.categories.clone(),
+            pattern_families: span.pattern_families.clone(),
+            matched_text: candidate.page_text[span.start..span.end].to_string(),
+            raw_texts: span.raw_texts.clone(),
+        })
+        .collect();
+    let matches_json = serde_json::to_string(&export_matches)?;
     let mut content = String::new();
     content.push_str("<!-- source_path=");
     content.push_str(&candidate.source_path);
@@ -1749,7 +1906,49 @@ fn render_token_category_debug_candidate(
         match_categories: categories.into_iter().collect::<Vec<_>>().join(","),
         match_pattern_families: pattern_families.into_iter().collect::<Vec<_>>().join(","),
         match_count: candidate.merged_spans.len() as u64,
+        page_text: candidate.page_text.clone(),
+        matches_json,
     })
+}
+
+pub fn match_token_category_debug_text_internal(
+    output_dir: &Path,
+    category_specs_path: &Path,
+    source_path: &str,
+    source_stem: &str,
+    base_stem: &str,
+    start_page: u64,
+    text: &str,
+    synthetic_page_target_chars: usize,
+    synthetic_page_min_header_chars: usize,
+    synthetic_page_hard_max_chars: usize,
+) -> anyhow::Result<Vec<TokenCategoryDebugPageRow>> {
+    fs::create_dir_all(output_dir)?;
+    let specs = load_token_category_specs_cached(category_specs_path)?;
+    let source_path_buf = PathBuf::from(source_path);
+    let candidates = collect_token_category_debug_candidates_for_text(
+        &source_path_buf,
+        source_stem,
+        base_stem,
+        start_page,
+        text,
+        &specs,
+        synthetic_page_target_chars,
+        synthetic_page_min_header_chars,
+        synthetic_page_hard_max_chars,
+    );
+    let mut rows = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        rows.push(render_token_category_debug_candidate(
+            &candidate, output_dir,
+        )?);
+    }
+    rows.sort_by(|a, b| {
+        a.output_path
+            .cmp(&b.output_path)
+            .then(a.page_number.cmp(&b.page_number))
+    });
+    Ok(rows)
 }
 
 fn parse_source_stem(stem: &str) -> (String, u64) {
@@ -4031,7 +4230,7 @@ pub fn export_token_category_debug_pages_internal(
     synthetic_page_hard_max_chars: usize,
 ) -> anyhow::Result<Vec<TokenCategoryDebugPageRow>> {
     fs::create_dir_all(output_dir)?;
-    let specs = load_token_category_specs(category_specs_path)?;
+    let specs = load_token_category_specs_cached(category_specs_path)?;
 
     if let Some(limit) = max_pages {
         let specs = specs.clone();
@@ -4154,10 +4353,29 @@ mod tests {
         CompiledTokenCategorySpec {
             category: category.to_string(),
             pattern_family: family.to_string(),
-            regex: RegexBuilder::new(pattern)
-                .multi_line(true)
-                .build()
-                .expect("compile test regex"),
+            matcher: TokenCategoryMatcher::Regex(
+                RegexBuilder::new(pattern)
+                    .multi_line(true)
+                    .build()
+                    .expect("compile test regex"),
+            ),
+        }
+    }
+
+    fn compiled_literal_spec(
+        category: &str,
+        family: &str,
+        literals: &[&str],
+    ) -> CompiledTokenCategorySpec {
+        CompiledTokenCategorySpec {
+            category: category.to_string(),
+            pattern_family: family.to_string(),
+            matcher: TokenCategoryMatcher::LiteralSet(
+                AhoCorasickBuilder::new()
+                    .match_kind(MatchKind::LeftmostLongest)
+                    .build(literals)
+                    .expect("compile literal matcher"),
+            ),
         }
     }
 
@@ -4185,6 +4403,18 @@ mod tests {
         assert_eq!(merged[0].categories, vec!["dot_leader_like".to_string()]);
         assert_eq!(merged[1].categories, vec!["glyph_font_like".to_string()]);
         assert_eq!(merged[2].categories, vec!["glyph_font_like".to_string()]);
+    }
+
+    #[test]
+    fn token_category_literal_set_matches_leftmost_longest() {
+        let specs = vec![compiled_literal_spec(
+            "dot_leader_like",
+            "dot_run",
+            &["....", ".....", ".........."],
+        )];
+        let spans = collect_token_category_raw_spans("Intro .......... 15", &specs);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].end - spans[0].start, 10);
     }
 
     #[test]

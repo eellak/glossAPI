@@ -7,9 +7,10 @@ use noise_metrics::{
     export_numeric_match_debug_pages_internal, export_ocr_match_debug_pages_internal,
     export_token_category_debug_pages_internal, find_hybrid_repeat_spans_internal,
     find_labeled_shared_repeat_spans_internal, find_numeric_debug_page_spans_internal,
-    find_word_repeat_spans_internal, score_markdown_directory_detailed_internal,
-    score_markdown_directory_internal, score_markdown_directory_ocr_profile_internal,
-    score_markdown_file_detailed_internal, score_markdown_file_internal,
+    find_word_repeat_spans_internal, match_token_category_debug_text_internal,
+    score_markdown_directory_detailed_internal, score_markdown_directory_internal,
+    score_markdown_directory_ocr_profile_internal, score_markdown_file_detailed_internal,
+    score_markdown_file_internal,
 };
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -331,6 +332,58 @@ fn export_token_category_debug_pages(
         item.set_item("match_categories", row.match_categories)?;
         item.set_item("match_pattern_families", row.match_pattern_families)?;
         item.set_item("match_count", row.match_count)?;
+        item.set_item("page_text", row.page_text)?;
+        item.set_item("matches_json", row.matches_json)?;
+        out.push(item.into());
+    }
+    Ok(out)
+}
+
+#[pyfunction]
+#[pyo3(signature = (text, output_dir, category_specs_path, source_path, source_stem, base_stem, start_page=1, synthetic_page_target_chars=4000, synthetic_page_min_header_chars=1200, synthetic_page_hard_max_chars=6000))]
+fn match_token_category_debug_text(
+    py: Python<'_>,
+    text: &str,
+    output_dir: &str,
+    category_specs_path: &str,
+    source_path: &str,
+    source_stem: &str,
+    base_stem: &str,
+    start_page: u64,
+    synthetic_page_target_chars: usize,
+    synthetic_page_min_header_chars: usize,
+    synthetic_page_hard_max_chars: usize,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let rows = match_token_category_debug_text_internal(
+        std::path::Path::new(output_dir),
+        std::path::Path::new(category_specs_path),
+        source_path,
+        source_stem,
+        base_stem,
+        start_page,
+        text,
+        synthetic_page_target_chars,
+        synthetic_page_min_header_chars,
+        synthetic_page_hard_max_chars,
+    )
+    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    let mut out: Vec<Py<PyDict>> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let item = PyDict::new(py);
+        item.set_item("source_path", row.source_path)?;
+        item.set_item("output_path", row.output_path)?;
+        item.set_item("source_stem", row.source_stem)?;
+        item.set_item("base_stem", row.base_stem)?;
+        item.set_item("page_kind", row.page_kind)?;
+        item.set_item("page_number", row.page_number)?;
+        item.set_item("page_index_in_file", row.page_index_in_file)?;
+        item.set_item("page_char_count", row.page_char_count)?;
+        item.set_item("match_categories", row.match_categories)?;
+        item.set_item("match_pattern_families", row.match_pattern_families)?;
+        item.set_item("match_count", row.match_count)?;
+        item.set_item("page_text", row.page_text)?;
+        item.set_item("matches_json", row.matches_json)?;
         out.push(item.into());
     }
     Ok(out)
@@ -484,6 +537,7 @@ fn glossapi_rs_noise(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(export_ocr_match_debug_pages, m)?)?;
     m.add_function(wrap_pyfunction!(export_numeric_match_debug_pages, m)?)?;
     m.add_function(wrap_pyfunction!(export_token_category_debug_pages, m)?)?;
+    m.add_function(wrap_pyfunction!(match_token_category_debug_text, m)?)?;
     m.add_function(wrap_pyfunction!(annotate_numeric_debug_page, m)?)?;
     m.add_function(wrap_pyfunction!(find_numeric_debug_page_spans, m)?)?;
     m.add_function(wrap_pyfunction!(find_word_repeat_spans, m)?)?;

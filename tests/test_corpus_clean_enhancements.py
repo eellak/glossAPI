@@ -521,12 +521,31 @@ def test_clean_token_category_debug_exports_synthetic_pages(tmp_path: Path) -> N
     assert ".................." in content
 
     manifest = debug_dir / "manifest.jsonl"
+    page_metrics = debug_dir / "page_metrics.jsonl"
+    match_index = debug_dir / "match_index.jsonl"
     summary = debug_dir / "summary.json"
     assert manifest.exists()
+    assert page_metrics.exists()
+    assert match_index.exists()
     assert summary.exists()
+    page_metric_rows = [
+        json.loads(line)
+        for line in page_metrics.read_text(encoding="utf-8").strip().splitlines()
+    ]
+    assert len(page_metric_rows) == 1
+    assert page_metric_rows[0]["page_kind"].startswith("synthetic")
+    assert page_metric_rows[0]["category_match_counts"]["glyph_font_like"] >= 1
+    match_rows = [
+        json.loads(line)
+        for line in match_index.read_text(encoding="utf-8").strip().splitlines()
+    ]
+    assert any(row["category"] == "glyph_font_like" for row in match_rows)
+    assert any(row["category"] == "dot_leader_like" for row in match_rows)
+    assert all("context_excerpt" in row for row in match_rows)
     summary_data = json.loads(summary.read_text(encoding="utf-8"))
     assert summary_data["page_count"] == 1
     assert summary_data["category_page_counts"]["glyph_font_like"] == 1
+    assert summary_data["category_match_counts"]["glyph_font_like"] >= 1
 
 
 def test_clean_ocr_numeric_debug_flags_ascending_sequences(tmp_path: Path) -> None:

@@ -106,6 +106,7 @@ version = "0.1.0"
 name = "glossapi_rs_noise"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "csv",
  "glossapi_rs_common",
