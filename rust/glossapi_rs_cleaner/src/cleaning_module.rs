@@ -110,6 +110,23 @@ fn has_decoded_glyph_font_artefact(line: &str) -> bool {
     GLYPH_FONT_TAG_REGEX.is_match(line) || FONT_GLYPH_TAG_REGEX.is_match(line)
 }
 
+fn is_unicode_noise_char(ch: char) -> bool {
+    match ch {
+        '\t' | '\n' => false,
+        '\u{00AD}' | '\u{03A2}' | '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}'
+        | '\u{FEFF}' | '\u{FFFD}' => true,
+        _ => {
+            let code = ch as u32;
+            code < 0x20
+                || code == 0x7F
+                || (0x80..=0x9F).contains(&code)
+                || (0xE000..=0xF8FF).contains(&code)
+                || (0xF0000..=0xFFFFD).contains(&code)
+                || (0x100000..=0x10FFFD).contains(&code)
+        }
+    }
+}
+
 fn normalize_layout_leader_runs(line: &str) -> Option<String> {
     if line.is_empty()
         || line == TEXT_MISSING_COMMENT
@@ -325,8 +342,10 @@ pub fn core_clean_text(
                 is_char_in_unusual_set = unusual_chars_set.contains(&ch);
             }
 
-            // Condition for removal: It's in the unusual set AND it's NOT specifically allowed by current scripts_to_keep.
-            if is_char_in_unusual_set && !is_char_allowed_by_scripts {
+            let should_remove_char = is_unicode_noise_char(ch)
+                || (is_char_in_unusual_set && !is_char_allowed_by_scripts);
+
+            if should_remove_char {
                 if !ch.is_whitespace() {
                     current_line_removed_chars_buffer_buf.push(ch);
                 }
@@ -821,5 +840,29 @@ mod tests {
         assert_eq!(cleaned, "Chapter .....  85\n");
         assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
         assert_eq!(kept_chars, original_chars);
+    }
+
+    #[test]
+    fn core_clean_text_rejects_bare_glyph_codes() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "prefix GLYPH<236> suffix\n";
+        let (cleaned, original_chars, kept_chars) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
+        assert_eq!(kept_chars, 0);
+    }
+
+    #[test]
+    fn core_clean_text_strips_unicode_noise_chars() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "A\u{00AD}B \u{F0B7} C\u{FFFD}D \u{03A2}\n";
+        let (cleaned, original_chars, kept_chars) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, "AB  CD \n");
+        assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
+        assert_eq!(kept_chars, "AB  CD ".chars().count());
     }
 }
