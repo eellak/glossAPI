@@ -82,6 +82,13 @@ def _read_jsonl(path: Path) -> List[Dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def _row_categories(row: Mapping[str, Any]) -> List[str]:
+    raw = row.get("category", "")
+    if isinstance(raw, (list, tuple)):
+        return [str(item) for item in raw if str(item)]
+    return [part for part in str(raw).split(",") if part]
+
+
 def _stable_sample(rows: Sequence[Dict[str, Any]], limit: int, seed: str) -> List[Dict[str, Any]]:
     def _key(row: Dict[str, Any]) -> str:
         basis = f"{seed}|{row.get('match_id', '')}|{row.get('source_stem', '')}|{row.get('page_number', 0)}"
@@ -192,7 +199,9 @@ def build_token_category_review_bundle(
     review_specs = _load_review_specs(review_config)
 
     if categories is None:
-        selected_categories = [name for name in review_specs if any(str(row.get("category", "")) == name for row in match_rows)]
+        selected_categories = [
+            name for name in review_specs if any(name in _row_categories(row) for row in match_rows)
+        ]
     else:
         selected_categories = [str(name) for name in categories]
 
@@ -214,7 +223,7 @@ def build_token_category_review_bundle(
     summary_rows: MutableMapping[str, Dict[str, Any]] = {}
 
     for category in selected_categories:
-        category_rows = [row for row in match_rows if str(row.get("category", "")) == category]
+        category_rows = [row for row in match_rows if category in _row_categories(row)]
         if not category_rows:
             continue
         sample = _stable_sample(category_rows, sample_size_per_category, f"{seed}:{category}")
@@ -239,24 +248,26 @@ def build_token_category_review_bundle(
                 f"{_slugify_label(row.get('source_stem', 'source'))}__p{int(row.get('page_number', 0) or 0):05d}.txt"
             )
             case_path = category_dir / case_name
+            manifest_row = dict(row)
+            manifest_row.update(
+                {
+                    "category": category,
+                    "matched_row_categories": _row_categories(row),
+                    "review_mode": review_spec.get("review_mode", "unknown"),
+                    "case_path": str(case_path),
+                    "page_metrics": page_metrics or {},
+                    "include_full_debug_page": include_full_debug_page,
+                }
+            )
             case_path.write_text(
                 _format_case_text(
-                    row,
+                    manifest_row,
                     page_metrics=page_metrics,
                     review_spec=review_spec,
                     debug_page_text=debug_page_text,
                     include_full_debug_page=include_full_debug_page,
                 ),
                 encoding="utf-8",
-            )
-            manifest_row = dict(row)
-            manifest_row.update(
-                {
-                    "review_mode": review_spec.get("review_mode", "unknown"),
-                    "case_path": str(case_path),
-                    "page_metrics": page_metrics or {},
-                    "include_full_debug_page": include_full_debug_page,
-                }
             )
             manifest_rows.append(manifest_row)
 

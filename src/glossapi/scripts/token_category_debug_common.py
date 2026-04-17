@@ -54,7 +54,10 @@ def load_rust_extension(
             candidates.append(f"{module_name}.{module_name}")
         module_files: List[Path] = []
         for candidate in candidates:
-            spec = importlib.util.find_spec(candidate)
+            try:
+                spec = importlib.util.find_spec(candidate)
+            except ModuleNotFoundError:
+                continue
             origin = None if spec is None else spec.origin
             if not origin:
                 continue
