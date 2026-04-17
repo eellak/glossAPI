@@ -21,6 +21,7 @@ dependencies = [
     "pyarrow>=7.0.0",
     "aiohttp>=3.8.0",
     "aiofiles>=23.0.0",
+    "google-genai>=1.30.0",
     "ftfy>=6.0.0",
     "tenacity>=8.0.0",
     "tqdm>=4.67.0",
