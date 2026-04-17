@@ -471,6 +471,7 @@ def _call_google_structured_sdk(
 
 def _batch_request_metadata(item: Mapping[str, Any]) -> Dict[str, str]:
     return {
+        "review_case_id": str(item["review_case_id"]),
         "match_id": str(item["match_id"]),
         "category": str(item["category"]),
         "review_mode": str(item["review_mode"]),
@@ -579,6 +580,10 @@ def _load_existing_batch_jobs(path: Path) -> List[Dict[str, Any]]:
     return [dict(row) for row in rows if str(row.get("job_name", "")).strip()]
 
 
+def _review_case_id(row: Mapping[str, Any]) -> str:
+    return f"{str(row.get('category', ''))}::{str(row.get('match_id', ''))}"
+
+
 def _extract_batch_response_text(response: object) -> str:
     return _extract_text_from_sdk_response(response)
 
@@ -599,16 +604,18 @@ def _ingest_batch_job_rows(
     inlined_responses = list(getattr(dest, "inlined_responses", None) or [])
     for inlined_response in inlined_responses:
         metadata = dict(getattr(inlined_response, "metadata", None) or {})
+        review_case_id = str(metadata.get("review_case_id", ""))
         match_id = str(metadata.get("match_id", ""))
         category = str(metadata.get("category", ""))
         review_mode = str(metadata.get("review_mode", ""))
         case_path = str(metadata.get("case_path", ""))
-        if match_id and match_id in existing_result_by_id:
+        if review_case_id and review_case_id in existing_result_by_id:
             continue
 
         error_obj = getattr(inlined_response, "error", None)
         if error_obj is not None:
             error_row = {
+                "review_case_id": review_case_id,
                 "match_id": match_id,
                 "category": category,
                 "review_mode": review_mode,
@@ -616,7 +623,7 @@ def _ingest_batch_job_rows(
                 "error": _json_safe(error_obj),
                 "batch_job_name": str(batch_job_row.get("job_name", "")),
             }
-            error_key = (match_id, json.dumps(error_row["error"], ensure_ascii=False, sort_keys=True))
+            error_key = (review_case_id, json.dumps(error_row["error"], ensure_ascii=False, sort_keys=True))
             if error_key not in existing_error_keys:
                 errors_handle.write(json.dumps(error_row, ensure_ascii=False))
                 errors_handle.write("\n")
@@ -628,6 +635,7 @@ def _ingest_batch_job_rows(
         response_obj = getattr(inlined_response, "response", None)
         if response_obj is None:
             error_row = {
+                "review_case_id": review_case_id,
                 "match_id": match_id,
                 "category": category,
                 "review_mode": review_mode,
@@ -635,7 +643,7 @@ def _ingest_batch_job_rows(
                 "error": "Batch response was missing both response and error.",
                 "batch_job_name": str(batch_job_row.get("job_name", "")),
             }
-            error_key = (match_id, str(error_row["error"]))
+            error_key = (review_case_id, str(error_row["error"]))
             if error_key not in existing_error_keys:
                 errors_handle.write(json.dumps(error_row, ensure_ascii=False))
                 errors_handle.write("\n")
@@ -649,6 +657,7 @@ def _ingest_batch_job_rows(
             parsed = json.loads(raw_text)
         except Exception as exc:
             error_row = {
+                "review_case_id": review_case_id,
                 "match_id": match_id,
                 "category": category,
                 "review_mode": review_mode,
@@ -656,7 +665,7 @@ def _ingest_batch_job_rows(
                 "error": f"Failed to parse batch response: {exc}",
                 "batch_job_name": str(batch_job_row.get("job_name", "")),
             }
-            error_key = (match_id, str(error_row["error"]))
+            error_key = (review_case_id, str(error_row["error"]))
             if error_key not in existing_error_keys:
                 errors_handle.write(json.dumps(error_row, ensure_ascii=False))
                 errors_handle.write("\n")
@@ -668,6 +677,7 @@ def _ingest_batch_job_rows(
         key_field = "is_noise" if review_mode == "cleaning" else "preserves_semantics"
         per_category_counts[category][str(parsed.get(key_field, "missing"))] += 1
         result_row = {
+            "review_case_id": review_case_id,
             "match_id": match_id,
             "category": category,
             "review_mode": review_mode,
@@ -679,7 +689,7 @@ def _ingest_batch_job_rows(
         results_handle.write(json.dumps(result_row, ensure_ascii=False))
         results_handle.write("\n")
         results_handle.flush()
-        existing_result_by_id[match_id] = result_row
+        existing_result_by_id[review_case_id] = result_row
         ingested_results += 1
     return ingested_results, ingested_errors
 
@@ -731,12 +741,14 @@ def review_token_category_bundle_with_gemini(
     existing_request_rows = _read_jsonl(requests_path)
     existing_result_rows = _read_jsonl(results_path)
     existing_error_rows = _read_jsonl(errors_path)
-    existing_request_ids = {str(row.get("match_id", "")) for row in existing_request_rows}
-    existing_result_by_id = {str(row.get("match_id", "")): row for row in existing_result_rows}
+    existing_request_ids = {str(row.get("review_case_id", row.get("match_id", ""))) for row in existing_request_rows}
+    existing_result_by_id = {
+        str(row.get("review_case_id", row.get("match_id", ""))): row for row in existing_result_rows
+    }
     existing_error_keys: MutableMapping[Tuple[str, str], bool] = {}
     for row in existing_error_rows:
         error_key = (
-            str(row.get("match_id", "")),
+            str(row.get("review_case_id", row.get("match_id", ""))),
             json.dumps(row.get("error"), ensure_ascii=False, sort_keys=True),
         )
         existing_error_keys[error_key] = True
@@ -756,6 +768,7 @@ def review_token_category_bundle_with_gemini(
     try:
         pending_calls: List[Dict[str, Any]] = []
         for row in selected_rows:
+            review_case_id = _review_case_id(row)
             match_id = str(row.get("match_id", ""))
             review_mode = str(row.get("review_mode", "unknown"))
             schema = SCHEMA_BY_REVIEW_MODE.get(review_mode)
@@ -765,6 +778,7 @@ def review_token_category_bundle_with_gemini(
             case_text = case_path.read_text(encoding="utf-8", errors="ignore")
             prompt = _build_prompt(row, case_text)
             request_row = {
+                "review_case_id": review_case_id,
                 "match_id": match_id,
                 "category": row.get("category", ""),
                 "review_mode": review_mode,
@@ -774,13 +788,13 @@ def review_token_category_bundle_with_gemini(
                 "model": model,
                 "execution_mode": execution_mode,
             }
-            if match_id not in existing_request_ids:
+            if review_case_id not in existing_request_ids:
                 requests_handle.write(json.dumps(request_row, ensure_ascii=False))
                 requests_handle.write("\n")
                 requests_handle.flush()
-                existing_request_ids.add(match_id)
+                existing_request_ids.add(review_case_id)
 
-            if match_id in existing_result_by_id:
+            if review_case_id in existing_result_by_id:
                 continue
 
             if dry_run:
@@ -790,6 +804,7 @@ def review_token_category_bundle_with_gemini(
             pending_calls.append(
                 {
                     "row": row,
+                    "review_case_id": review_case_id,
                     "match_id": match_id,
                     "category": str(row.get("category", "")),
                     "review_mode": review_mode,
@@ -834,6 +849,7 @@ def review_token_category_bundle_with_gemini(
                         response = future.result()
                     except Exception as exc:
                         error_row = {
+                            "review_case_id": item["review_case_id"],
                             "match_id": item["match_id"],
                             "category": item["category"],
                             "review_mode": item["review_mode"],
@@ -841,7 +857,7 @@ def review_token_category_bundle_with_gemini(
                             "error": str(exc),
                         }
                         error_key = (
-                            str(error_row["match_id"]),
+                            str(error_row["review_case_id"]),
                             json.dumps(error_row["error"], ensure_ascii=False, sort_keys=True),
                         )
                         if error_key not in existing_error_keys:
@@ -856,6 +872,7 @@ def review_token_category_bundle_with_gemini(
                     key_field = "is_noise" if item["review_mode"] == "cleaning" else "preserves_semantics"
                     per_category_counts[category][str(parsed.get(key_field, "missing"))] += 1
                     result_row = {
+                        "review_case_id": item["review_case_id"],
                         "match_id": item["match_id"],
                         "category": category,
                         "review_mode": item["review_mode"],
@@ -866,7 +883,7 @@ def review_token_category_bundle_with_gemini(
                     results_handle.write(json.dumps(result_row, ensure_ascii=False))
                     results_handle.write("\n")
                     results_handle.flush()
-                    existing_result_by_id[item["match_id"]] = result_row
+                    existing_result_by_id[item["review_case_id"]] = result_row
                     if sleep_seconds > 0:
                         time.sleep(float(sleep_seconds))
 
@@ -883,13 +900,13 @@ def review_token_category_bundle_with_gemini(
 
             if pending_calls:
                 existing_batch_match_ids = {
-                    match_id
+                    review_case_id
                     for row in batch_jobs
                     if str(row.get("state", "")) not in RETRYABLE_BATCH_STATES
-                    for match_id in list(row.get("match_ids") or [])
+                    for review_case_id in list(row.get("match_ids") or [])
                 }
                 unsubmitted_pending = [
-                    item for item in pending_calls if str(item["match_id"]) not in existing_batch_match_ids
+                    item for item in pending_calls if str(item["review_case_id"]) not in existing_batch_match_ids
                 ]
             else:
                 unsubmitted_pending = []
@@ -940,7 +957,7 @@ def review_token_category_bundle_with_gemini(
                             shard_index=shard_offset,
                             request_count=len(shard),
                             request_bytes=request_bytes,
-                            match_ids=[str(item["match_id"]) for item in shard],
+                            match_ids=[str(item["review_case_id"]) for item in shard],
                             batch_job=batch_job,
                         )
                     )
@@ -1039,7 +1056,7 @@ def review_token_category_bundle_with_gemini(
         "api_version": api_version,
         "dry_run": bool(dry_run),
         "selected_case_count": len(selected_rows),
-        "completed_case_count": sum(1 for row in selected_rows if str(row.get("match_id", "")) in existing_result_by_id),
+        "completed_case_count": sum(1 for row in selected_rows if _review_case_id(row) in existing_result_by_id),
         "error_count": len(_read_jsonl(errors_path)),
         "categories": sorted({str(row.get("category", "")) for row in selected_rows}),
         "per_category_decision_counts": {category: dict(counter) for category, counter in per_category_counts.items()},

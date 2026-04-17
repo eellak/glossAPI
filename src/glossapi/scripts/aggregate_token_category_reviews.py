@@ -111,6 +111,10 @@ def _family_key(row: Mapping[str, Any]) -> Tuple[str, str]:
     )
 
 
+def _review_case_id(row: Mapping[str, Any]) -> str:
+    return str(row.get("review_case_id", f"{str(row.get('category', ''))}::{str(row.get('match_id', ''))}"))
+
+
 def aggregate_token_category_reviews(
     *,
     bundle_dir: Path,
@@ -127,12 +131,12 @@ def aggregate_token_category_reviews(
 ) -> Dict[str, Any]:
     bundle_rows = _read_jsonl(bundle_dir / "manifest.jsonl")
     review_rows = _read_jsonl(review_dir / "results.jsonl")
-    bundle_by_match_id = {str(row.get("match_id", "")): row for row in bundle_rows}
+    bundle_by_case_id = {_review_case_id(row): row for row in bundle_rows}
 
     joined_rows: List[Dict[str, Any]] = []
     for review_row in review_rows:
-        match_id = str(review_row.get("match_id", ""))
-        bundle_row = bundle_by_match_id.get(match_id)
+        review_case_id = _review_case_id(review_row)
+        bundle_row = bundle_by_case_id.get(review_case_id)
         merged = dict(bundle_row or {})
         merged.update(review_row)
         joined_rows.append(merged)
