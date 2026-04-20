@@ -4,6 +4,7 @@
 // Internal modules
 mod cleaning_module;
 mod directory_processor;
+mod normalize;
 mod pipeline_module;
 mod table_analysis_module;
 mod table_remover_module;

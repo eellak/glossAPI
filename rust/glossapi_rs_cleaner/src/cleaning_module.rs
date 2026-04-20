@@ -10,6 +10,8 @@ use regex::Regex;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet}; // For optimizing comment search in strip_tags_custom
 
+use crate::normalize;
+
 // Constants
 const TEXT_MISSING_COMMENT: &str = "<!-- text-missing -->";
 const TABLE_REMOVED_COMMENT: &str = "<!-- table-removed -->"; // Added for badness adjustment
@@ -42,6 +44,9 @@ lazy_static! {
         let mut greek_chars = HashSet::new();
         for code in 0x0370..0x03E2 { if let Some(c) = std::char::from_u32(code) { greek_chars.insert(c); }}
         for code in 0x03F0..0x0400 { if let Some(c) = std::char::from_u32(code) { greek_chars.insert(c); }}
+        // Polytonic Greek range U+1F00..U+2000 (Greek Extended block).
+        // Explicit so a future edit cannot silently move it to `unusual`.
+        for code in 0x1F00..0x2000 { if let Some(c) = std::char::from_u32(code) { greek_chars.insert(c); }}
         let accented_greek = "άέήίόύώΆΈΉΊΌΎΏϊϋΪΫΐΰ";
         for c in accented_greek.chars() { greek_chars.insert(c); }
         greek_chars.insert('\u{00B5}'); // Add MICRO SIGN
@@ -258,7 +263,13 @@ pub fn core_clean_text(
 
     let mut carry_math_state = false;
 
-    for line in text.lines() {
+    // Pre-pass: GFM table separator row canonicalization (parser-validated).
+    let table_replacements = normalize::scan_gfm_table_separators(text);
+    // Code-fence state carried across lines — inside a fenced block we skip
+    // all normalizations so code indentation and punctuation survive intact.
+    let mut in_code_fence = false;
+
+    for (line_index, line) in text.lines().enumerate() {
         let trimmed_line = line.trim();
         if trimmed_line == TEXT_MISSING_COMMENT {
             original_chars_for_badness += line.chars().count();
@@ -266,6 +277,40 @@ pub fn core_clean_text(
             cleaned_output_string_builder.push('\n');
             continue;
         }
+
+        // GFM table separator: if the pre-pass identified this line as a
+        // parser-validated separator row under a header, swap in the canonical
+        // minimum-width form.
+        if let Some(canonical) = table_replacements.get(&line_index) {
+            let line_chars = line.chars().count();
+            original_chars_for_badness += line_chars;
+            sum_kept_line_content_chars += canonical.chars().count();
+            cleaned_output_string_builder.push_str(canonical);
+            cleaned_output_string_builder.push('\n');
+            continue;
+        }
+
+        // Code-fence state: toggle on ``` / ~~~ markers. Pass the marker and
+        // everything inside through unchanged so normalizations don't collapse
+        // meaningful code indentation or punctuation.
+        if normalize::is_code_fence_marker(trimmed_line) {
+            in_code_fence = !in_code_fence;
+            let line_chars = line.chars().count();
+            original_chars_for_badness += line_chars;
+            sum_kept_line_content_chars += line_chars;
+            cleaned_output_string_builder.push_str(line);
+            cleaned_output_string_builder.push('\n');
+            continue;
+        }
+        if in_code_fence {
+            let line_chars = line.chars().count();
+            original_chars_for_badness += line_chars;
+            sum_kept_line_content_chars += line_chars;
+            cleaned_output_string_builder.push_str(line);
+            cleaned_output_string_builder.push('\n');
+            continue;
+        }
+
         // Decode entities before artefact checks so html-escaped GLYPH/font tags
         // are caught by the same canonical matcher family as raw XML-like forms.
         let decoded_entity_data = decode(line.as_bytes());
@@ -329,6 +374,16 @@ pub fn core_clean_text(
             }
 
             outside_math_original_chars += 1;
+
+            // Codepoint fold (ligatures, enclosed / dingbat / math-alphanumeric
+            // digits, vulgar fractions, Unicode whitespace variants) bypasses
+            // the allowed/unusual check — replacements are ASCII or a regular
+            // space.
+            if let Some(replacement) = normalize::fold_codepoint(ch) {
+                processed_line_segment_buf.push_str(replacement);
+                idx += 1;
+                continue;
+            }
 
             let ch_u32 = ch as u32;
             let is_char_allowed_by_scripts;
@@ -417,7 +472,27 @@ pub fn core_clean_text(
         {
             line_content_to_add.clone()
         } else {
-            normalize_layout_leader_runs(&line_content_to_add).unwrap_or(line_content_to_add.clone())
+            // Chain line-level normalizations. Each is a no-op if its pattern
+            // doesn't match. Order matters:
+            //   dot-leader (existing) -> separator line -> ellipsis run ->
+            //   malformed-entity fallback -> whitespace run.
+            let mut s = line_content_to_add.clone();
+            if let Some(n) = normalize_layout_leader_runs(&s) {
+                s = n;
+            }
+            if let Some(n) = normalize::normalize_separator_line(&s) {
+                s = n;
+            }
+            if let Some(n) = normalize::normalize_ellipsis_runs(&s) {
+                s = n;
+            }
+            if let Some(n) = normalize::normalize_malformed_entities(&s) {
+                s = n;
+            }
+            if let Some(n) = normalize::normalize_whitespace_runs(&s) {
+                s = n;
+            }
+            s
         };
         cleaned_output_string_builder.push_str(&line_to_write);
         cleaned_output_string_builder.push('\n');
@@ -837,7 +912,8 @@ mod tests {
         let input = "Chapter ..........................................  85\n";
         let (cleaned, original_chars, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, "Chapter .....  85\n");
+        // Whitespace collapse now folds the double space after `.....` to one.
+        assert_eq!(cleaned, "Chapter ..... 85\n");
         assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
         assert_eq!(kept_chars, original_chars);
     }
@@ -861,7 +937,10 @@ mod tests {
         let input = "A\u{00AD}B \u{F0B7} C\u{FFFD}D \u{03A2}\n";
         let (cleaned, original_chars, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, "AB  CD \n");
+        // After char-stripping, two spaces around the former PUA slot collapse
+        // to one via the whitespace-run rule. Pre-collapse badness count (7)
+        // is preserved — collapse runs after badness accounting.
+        assert_eq!(cleaned, "AB CD \n");
         assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
         assert_eq!(kept_chars, "AB  CD ".chars().count());
     }
