@@ -10,6 +10,7 @@ mod table_analysis_module;
 mod table_remover_module;
 
 // Export public items from modules via PyO3
+use cleaning_module::clean_text;
 use directory_processor::{
     batch_generate_detailed_table_report_csv, batch_generate_table_summary_csv,
     batch_remove_tables_from_files, generate_analysis_report_for_directory,
@@ -31,6 +32,10 @@ fn glossapi_rs_cleaner(_py: Python, m: &PyModule) -> PyResult<()> {
     )?)?;
     m.add_function(wrap_pyfunction!(batch_remove_tables_from_files, m)?)?;
     m.add_function(wrap_pyfunction!(batch_generate_table_summary_csv, m)?)?;
+
+    // Per-row cleaning entry for scripts that need to clean corpus-parquet
+    // `text` columns without round-tripping through markdown files.
+    m.add_function(wrap_pyfunction!(clean_text, m)?)?;
 
     // For now, only exposing the main pipeline function and essential classes.
     // Other individual functions from submodules can be re-exposed later if needed,
