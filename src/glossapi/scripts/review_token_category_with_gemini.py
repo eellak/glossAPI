@@ -63,6 +63,271 @@ REVIEW_MODE_INSTRUCTIONS = {
 }
 
 YES_NO_UNCERTAIN = ["yes", "no", "uncertain"]
+YES_NO_NA_UNCERTAIN = ["yes", "no", "not_applicable", "uncertain"]
+
+# ---------------------------------------------------------------------------
+# New per-task review modes (2026-04-20 design session; prompt_drafts/01..04)
+# ---------------------------------------------------------------------------
+#
+# Each mode declares the full prompt contract: a cached-safe preamble (project
+# context + task framing + what the mapping of its output will be used for),
+# a tail question block sent after the case body, and a strict JSON schema
+# enforced via `response_json_schema`. The bundler formats the case body in
+# the matching structure (tagged match + line-windowed context + optional
+# shadow-normalized view + optional existing-cleaner inventory).
+
+_SEPARATOR_PREAMBLE = """[PROJECT_CONTEXT]
+You are helping normalize a Greek text corpus used to train a subword tokenizer
+extension for swiss-ai/Apertus-8B-2509. The goal is to reduce over-representation
+of repeated layout structures in the tokenizer vocabulary by collapsing
+interchangeable separator patterns to one canonical form — without losing
+meaning or breaking markdown structure.
+
+[TASK_CONTEXT: separator normalization]
+A "separator" in this corpus is a standalone thematic-break line — repeated
+non-letter chars like `-`, `_`, `*`, `=`, em-dash, or box-drawing runs, alone
+on its own line with blank lines around it. Its role is to divide sections.
+Not in scope here:
+- dot leaders (e.g. `Chapter 1 ......... 5`) — normalized separately to `.....`
+- markdown table separator rows (`|---|---|`) — handled by a deterministic GFM parser
+- ASCII-art table borders and escaped-underscore chains — reviewed as separate classes
+
+[PROPOSED_CHANGE]
+We intend to replace every variant separator (`-----`, `_____`, `***`, `======`,
+em-dash runs, etc.) with the canonical markdown thematic break `---`. You are
+confirming that this substitution preserves meaning in the specific context below."""
+
+_SEPARATOR_QUESTION_BLOCK = """[REVIEW_QUESTIONS]
+Answer only from the evidence in the case file. If unsure, return `uncertain`.
+
+1. Is the matched line acting as a standalone thematic-break / section divider
+   (not a dot leader, table separator, ASCII art border, or stray char run)?
+2. Is the matched line safely interchangeable with the canonical target `---`?
+3. Does the after-normalization context preserve semantics exactly?
+4. Does the normalization preserve any nearby markdown structure (lists,
+   headings, code fences, tables)?
+
+Return ONLY valid JSON matching the declared schema. No prose outside JSON."""
+
+_MD_TABLE_AUDIT_PREAMBLE = """[PROJECT_CONTEXT]
+You are auditing a post-implementation normalization pass on a Greek corpus
+used to train a subword tokenizer extension for swiss-ai/Apertus-8B-2509.
+
+[TASK_CONTEXT: markdown table separator audit]
+GFM/CommonMark specifies a valid table separator cell as >=3 hyphens, optionally
+with leading/trailing colons for alignment. Wider cells render identically. We
+therefore collapse every separator cell to the canonical minimum form:
+- `---`   (default / left)
+- `:---`  (explicit left)
+- `:---:` (center)
+- `---:`  (right)
+Only the separator row changes; header and body rows are untouched.
+
+[PROPOSED_USE]
+A GFM parser has already validated each transformed table. Your job is to
+confirm the pair in this case renders identically: same column count, same
+alignment per column, same surrounding rows, no data shifted."""
+
+_MD_TABLE_AUDIT_QUESTION_BLOCK = """[REVIEW_QUESTIONS]
+Answer only from the rendered evidence. If unsure, return `uncertain`.
+
+1. Does TABLE_AFTER render as a valid GFM table with the same column count
+   and alignment as TABLE_BEFORE?
+2. Are the surrounding lines unchanged (CONTEXT_BEFORE and CONTEXT_AFTER)?
+3. Was TABLE_BEFORE actually a GFM table (not ASCII art or extraction
+   residue that happens to contain pipe-delimited hyphen runs)?
+
+Return ONLY valid JSON matching the declared schema."""
+
+_PAGE_NOISE_PREAMBLE = """[PROJECT_CONTEXT]
+You are helping identify broadly-noisy pages in a Greek corpus used to train a
+subword tokenizer extension for swiss-ai/Apertus-8B-2509. A noisy page inflates
+the tokenizer's vocabulary with one-off garbage sequences and degrades BPE
+compression on legitimate Greek text.
+
+[TASK_CONTEXT: page-level noise detection]
+A page is flagged as suspicious when the ratio of "suspect bigrams" (rare
+non-Greek bigrams not on the common-Greek-digraph whitelist) exceeds a
+threshold. For each flagged page we ask three things:
+1. Is the page genuinely noisy?
+2. If noisy, can meaningful content be salvaged in place, or should the page
+   be discarded (or flagged for OCR re-extraction)?
+3. If noisy, which noise kinds dominate — pick from the closed set.
+
+Noise = spans with no semantic or structural purpose (not language, not math,
+not valid table/formatting structure). Legitimate foreign-language content,
+legitimate technical/scientific prose, and legitimate math notation are NOT
+noise for this task.
+
+[PROPOSED_USE]
+We map `dominant_noise_kinds` to a cleaner rule from a fixed catalog
+(e.g. `pua_replacement_chars` → strip U+FFFD + U+E000..U+F8FF,
+`glyph_font_tags` → apply existing GLYPH_FONT_TAG_REGEX, etc.). You classify;
+we synthesize the rule."""
+
+_PAGE_NOISE_QUESTION_BLOCK = """[REVIEW_QUESTIONS]
+Answer only from the evidence. If unsure, return `uncertain`.
+
+1. Is this page genuinely noisy — does most of its character budget serve
+   no semantic or structural purpose?
+2. If noisy, is meaningful content salvageable by removing noise in place,
+   or should the page be discarded (or flagged for OCR re-extraction)?
+3. If noisy, which noise kinds dominate? Pick one or more from the closed
+   set. If the page is not noisy, `dominant_noise_kinds` must be an empty
+   list.
+
+Return ONLY valid JSON matching the declared schema."""
+
+_SLASH_DASH_PREAMBLE = """[PROJECT_CONTEXT]
+You are helping identify the function of one-off mixed slash+dash tokens in a
+Greek corpus used to train a subword tokenizer extension for
+swiss-ai/Apertus-8B-2509.
+
+[TASK_CONTEXT: slash+dash mixed-token classification]
+The tokenizer produced one-off tokens containing both `/` and `-` (e.g. `//`,
+`://`, `-|`, `=/`, `-->`, `<!--`, `|//`, `-|--------`). The same byte sequence
+serves different functions in different places. Classify what this specific
+occurrence is doing.
+
+Closed function set:
+- url_fragment: URL or protocol marker. Usually near `www`, `http`, `://`,
+  `.gr`, `.com`.
+- html_comment_residue: leftover from HTML comment syntax (`<!--`, `-->`)
+  that escaped tag stripping.
+- separator: standalone thematic-break line of dashes with incidental slashes
+  (blank lines above and below).
+- toc_leader: TOC layout line bridging a section title and a page number.
+- markdown_table_fragment: inside a GFM table (header row above, pipe-
+  delimited cells).
+- other: doesn't fit any of the above.
+
+[PROPOSED_USE]
+We map your classification to a fixed rule (url_fragment → keep;
+html_comment_residue → confirm HTML stripping coverage; separator →
+normalize to `---`; toc_leader → normalize to `.....`;
+markdown_table_fragment → parser-validated path handles it; other → manual
+review queue). You do NOT write the rule. Classify only."""
+
+_SLASH_DASH_QUESTION_BLOCK = """[REVIEW_QUESTIONS]
+Answer only from the evidence. If unsure, return `uncertain`.
+
+1. Which function does the matched token serve in this context? Pick
+   exactly one from the closed set.
+2. If you answer `uncertain`, give one short sentence explaining the
+   blocker.
+
+Return ONLY valid JSON matching the declared schema."""
+
+NEW_TASK_SCHEMAS: Dict[str, Dict[str, Any]] = {
+    "separator_normalization": {
+        "type": "object",
+        "properties": {
+            "is_separator_role": {"type": "string", "enum": YES_NO_UNCERTAIN},
+            "interchangeable_with_target": {"type": "string", "enum": YES_NO_UNCERTAIN},
+            "preserves_semantics": {"type": "string", "enum": YES_NO_UNCERTAIN},
+            "preserves_markdown_structure": {"type": "string", "enum": YES_NO_NA_UNCERTAIN},
+            "blocker": {"type": "string"},
+        },
+        "required": [
+            "is_separator_role",
+            "interchangeable_with_target",
+            "preserves_semantics",
+            "preserves_markdown_structure",
+            "blocker",
+        ],
+        "additionalProperties": False,
+    },
+    "md_table_audit": {
+        "type": "object",
+        "properties": {
+            "renders_identically": {"type": "string", "enum": YES_NO_UNCERTAIN},
+            "surroundings_unchanged": {"type": "string", "enum": YES_NO_UNCERTAIN},
+            "original_was_valid_gfm_table": {"type": "string", "enum": YES_NO_UNCERTAIN},
+            "blocker": {"type": "string"},
+        },
+        "required": [
+            "renders_identically",
+            "surroundings_unchanged",
+            "original_was_valid_gfm_table",
+            "blocker",
+        ],
+        "additionalProperties": False,
+    },
+    "page_noise_detection": {
+        "type": "object",
+        "properties": {
+            "is_noisy_page": {"type": "string", "enum": YES_NO_UNCERTAIN},
+            "page_disposition": {
+                "type": "string",
+                "enum": [
+                    "salvageable_clean",
+                    "discard",
+                    "flag_for_ocr",
+                    "keep_as_is",
+                    "uncertain",
+                ],
+            },
+            "dominant_noise_kinds": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "pua_replacement_chars",
+                        "glyph_font_tags",
+                        "mojibake_latin_extended",
+                        "ocr_char_salad",
+                        "broken_layout",
+                        "foreign_script_dominant",
+                        "mathematical_symbols",
+                        "other",
+                    ],
+                },
+            },
+            "blocker": {"type": "string"},
+        },
+        "required": [
+            "is_noisy_page",
+            "page_disposition",
+            "dominant_noise_kinds",
+            "blocker",
+        ],
+        "additionalProperties": False,
+    },
+    "slash_dash_classification": {
+        "type": "object",
+        "properties": {
+            "function": {
+                "type": "string",
+                "enum": [
+                    "url_fragment",
+                    "html_comment_residue",
+                    "separator",
+                    "toc_leader",
+                    "markdown_table_fragment",
+                    "other",
+                    "uncertain",
+                ],
+            },
+            "blocker": {"type": "string"},
+        },
+        "required": ["function", "blocker"],
+        "additionalProperties": False,
+    },
+}
+
+NEW_TASK_PREAMBLES: Dict[str, str] = {
+    "separator_normalization": _SEPARATOR_PREAMBLE,
+    "md_table_audit": _MD_TABLE_AUDIT_PREAMBLE,
+    "page_noise_detection": _PAGE_NOISE_PREAMBLE,
+    "slash_dash_classification": _SLASH_DASH_PREAMBLE,
+}
+
+NEW_TASK_QUESTION_BLOCKS: Dict[str, str] = {
+    "separator_normalization": _SEPARATOR_QUESTION_BLOCK,
+    "md_table_audit": _MD_TABLE_AUDIT_QUESTION_BLOCK,
+    "page_noise_detection": _PAGE_NOISE_QUESTION_BLOCK,
+    "slash_dash_classification": _SLASH_DASH_QUESTION_BLOCK,
+}
 
 SCHEMA_BY_REVIEW_MODE: Dict[str, Dict[str, Any]] = {
     "cleaning": {
@@ -218,7 +483,27 @@ def _iter_selected_rows(
 
 
 def _build_prompt(row: Mapping[str, Any], case_text: str) -> str:
+    """Compose the per-case user prompt.
+
+    New 2026-04-20 task modes (separator_normalization, md_table_audit,
+    page_noise_detection, slash_dash_classification) use a three-layer
+    structure: cached-safe preamble + the bundler-rendered case body +
+    literal question block as the final lines. The bundler embeds all
+    evidence inside the case body (tagged match, 20-line context windows,
+    optional shadow-normalized view, optional existing-cleaner inventory).
+
+    Legacy modes (`cleaning`, `normalization`) retain the wave10 wrapper
+    for backward compatibility.
+    """
     review_mode = str(row.get("review_mode", "unknown"))
+    if review_mode in NEW_TASK_PREAMBLES:
+        return "\n\n".join(
+            [
+                NEW_TASK_PREAMBLES[review_mode],
+                case_text.rstrip(),
+                NEW_TASK_QUESTION_BLOCKS[review_mode],
+            ]
+        )
     mode_instruction = REVIEW_MODE_INSTRUCTIONS.get(review_mode, "")
     return "\n\n".join(
         [
@@ -228,6 +513,13 @@ def _build_prompt(row: Mapping[str, Any], case_text: str) -> str:
             case_text,
         ]
     )
+
+
+def _resolve_schema(review_mode: str) -> Optional[Dict[str, Any]]:
+    """Look up the response schema for a review mode, falling back to legacy."""
+    if review_mode in NEW_TASK_SCHEMAS:
+        return dict(NEW_TASK_SCHEMAS[review_mode])
+    return SCHEMA_BY_REVIEW_MODE.get(review_mode)
 
 
 def _safe_batch_state(value: object) -> str:
@@ -771,7 +1063,7 @@ def review_token_category_bundle_with_gemini(
             review_case_id = _review_case_id(row)
             match_id = str(row.get("match_id", ""))
             review_mode = str(row.get("review_mode", "unknown"))
-            schema = SCHEMA_BY_REVIEW_MODE.get(review_mode)
+            schema = _resolve_schema(review_mode)
             if schema is None:
                 raise ValueError(f"Unsupported review_mode {review_mode!r} for {row.get('match_id', '')}")
             case_path = Path(str(row["case_path"]))

@@ -10,6 +10,237 @@ from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional,
 
 _SAFE_LABEL_RE = re.compile(r"[^a-z0-9._-]+")
 
+# ---------------------------------------------------------------------------
+# 2026-04-20 task-specific case-body renderers
+# ---------------------------------------------------------------------------
+#
+# Each new review_mode declared in
+# `src/glossapi/scripts/review_token_category_with_gemini.py` is paired with a
+# renderer here that produces the case body the prompt-builder wraps with the
+# cached preamble and the literal question block. The rendered body is a
+# single string written to disk by `build_token_category_review_bundle`.
+#
+# Shared structure:
+#   [MATCH_META]   — review_case_id, source, line indices, matched text
+#   [EXISTING_CLEANER_PATTERNS] (optional, cleaning-ish modes)
+#   [CONTEXT_BEFORE]   — up to N lines preceding the match, verbatim
+#   [MATCH]            — the match line with the matched span wrapped in
+#                        `<match type="..." family="...">…</match>`
+#   [CONTEXT_AFTER]    — up to N lines following the match, verbatim
+#   [CONTEXT_AFTER_NORMALIZATION] (optional, normalization-ish modes)
+#                      — same window, matched span replaced with canonical
+
+NEW_TASK_CASE_LINE_WINDOW = 20
+
+
+_SEPARATOR_EXISTING_CLEANER_NOTE = (
+    "The cleaner currently normalizes standalone separator lines via the Rust\n"
+    "regex SEPARATOR_LINE_REGEX in glossapi_rs_cleaner::normalize:\n"
+    "  ^[ \\t]*(?:-{4,}|_{4,}|\\*{4,}|={4,}|\\u{2014}{3,}|\\u{2015}{3,}|\\u{2500}{3,}|\\u{2550}{3,})[ \\t]*$\n"
+    "Mixed-char runs (e.g. `---___`) are intentionally NOT matched. Dot-leader\n"
+    "lines have a separate rule (target `.....`). This review confirms that the\n"
+    "current regex + target `---` capture this case correctly."
+)
+
+NEW_TASK_CANONICAL_TARGETS: Dict[str, str] = {
+    "separator_normalization": "---",
+    # md_table_audit canonical is per-cell (GFM parser driven); rendered in
+    # the TABLE_AFTER block rather than as a single string replacement.
+    # slash_dash_classification is not a normalization; no canonical target.
+    # page_noise_detection is per-page; no canonical target.
+}
+
+NEW_TASK_EXISTING_CLEANER: Dict[str, str] = {
+    "separator_normalization": _SEPARATOR_EXISTING_CLEANER_NOTE,
+}
+
+
+def _read_source_lines(source_path: Path, max_bytes: int = 200 * 1024 * 1024) -> List[str]:
+    """Read a markdown source file and return it split into lines.
+
+    Guards against enormous files by size cap (default 200 MB); over-cap
+    files return an empty list and the caller falls back to the matcher's
+    char-based context.
+    """
+    try:
+        if not source_path.is_file():
+            return []
+        if source_path.stat().st_size > max_bytes:
+            return []
+        return source_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def _extract_line_window(
+    lines: Sequence[str],
+    match_line_1indexed: int,
+    *,
+    context_lines: int = NEW_TASK_CASE_LINE_WINDOW,
+) -> Tuple[List[str], str, List[str]]:
+    """Return (before_lines, match_line_text, after_lines) for a 1-indexed line.
+
+    If the line index is out of range returns ([], "", []).
+    """
+    zero = match_line_1indexed - 1
+    if zero < 0 or zero >= len(lines):
+        return ([], "", [])
+    before = list(lines[max(0, zero - context_lines) : zero])
+    after = list(lines[zero + 1 : min(len(lines), zero + 1 + context_lines)])
+    return (before, lines[zero], after)
+
+
+def _wrap_match_in_line(
+    line: str,
+    matched_text: str,
+    *,
+    category: str,
+    pattern_family: str,
+    replacement: Optional[str] = None,
+) -> str:
+    """Wrap the first occurrence of ``matched_text`` in ``line`` with a
+    <match type=... family=...>…</match> tag, optionally replacing the
+    matched span with ``replacement`` first (for shadow-normalized views).
+
+    If ``matched_text`` cannot be located inside ``line`` (or it's empty),
+    the whole line is wrapped so the model always sees a tag.
+    """
+    open_tag = f'<match type="{category}" family="{pattern_family}">'
+    close_tag = "</match>"
+    payload = replacement if replacement is not None else matched_text
+    if matched_text and matched_text in line:
+        idx = line.index(matched_text)
+        return f"{line[:idx]}{open_tag}{payload}{close_tag}{line[idx + len(matched_text):]}"
+    return f"{open_tag}{payload if payload else line}{close_tag}"
+
+
+def _build_v2_case_body(
+    row: Mapping[str, Any],
+    *,
+    review_mode: str,
+    canonical_target: Optional[str],
+    existing_cleaner_note: Optional[str],
+) -> str:
+    """Render the 2026-04-20 line-windowed case body.
+
+    Works for any per-match review mode. The caller supplies ``canonical_target``
+    (to emit a shadow-normalized view) or ``existing_cleaner_note`` (to inject
+    the existing cleaner inventory), or both, or neither.
+
+    If the source file can't be read for line-windowed context, falls back to
+    the matcher's char-based ``context_before`` / ``context_after`` fields so
+    the case is still reviewable.
+    """
+    category = str(row.get("category", ""))
+    pattern_family = str(row.get("pattern_family", ""))
+    matched_text = str(row.get("matched_text", ""))
+    source_path = Path(str(row.get("source_path", "")))
+    source_stem = str(row.get("source_stem", ""))
+    match_id = str(row.get("match_id", ""))
+    start_line = int(row.get("start_line", 0) or 0)
+
+    lines = _read_source_lines(source_path) if start_line > 0 else []
+    before_lines, match_line_text, after_lines = (
+        _extract_line_window(lines, start_line) if lines else ([], "", [])
+    )
+    fallback_mode = not lines or not match_line_text
+
+    parts: List[str] = []
+    parts.append("[MATCH_META]")
+    parts.append(f"review_case_id: {category}::{match_id}")
+    parts.append(f"category: {category}")
+    parts.append(f"pattern_family: {pattern_family}")
+    parts.append(f"source: {source_stem}")
+    parts.append(f"source_path: {source_path}")
+    parts.append(f"start_line: {start_line}")
+    parts.append(f"matched_text: {json.dumps(matched_text, ensure_ascii=False)}")
+    if canonical_target is not None:
+        parts.append(f"canonical_target: {json.dumps(canonical_target, ensure_ascii=False)}")
+    if fallback_mode:
+        parts.append("note: source file unavailable or start_line missing; using matcher-supplied char windows")
+
+    if existing_cleaner_note:
+        parts.extend(["", "[EXISTING_CLEANER_PATTERNS]", existing_cleaner_note])
+
+    if fallback_mode:
+        parts.extend(
+            [
+                "",
+                "[CONTEXT_BEFORE (char window fallback, ~240 chars)]",
+                str(row.get("context_before", "")),
+                "",
+                "[MATCH]",
+                _wrap_match_in_line(matched_text or "(empty)", matched_text,
+                                    category=category, pattern_family=pattern_family),
+                "",
+                "[CONTEXT_AFTER (char window fallback, ~240 chars)]",
+                str(row.get("context_after", "")),
+            ]
+        )
+        if canonical_target is not None:
+            parts.extend(
+                [
+                    "",
+                    "[CONTEXT_AFTER_NORMALIZATION (match replaced with canonical target)]",
+                    _wrap_match_in_line(
+                        matched_text or "(empty)",
+                        matched_text,
+                        category=category,
+                        pattern_family=pattern_family,
+                        replacement=canonical_target,
+                    ),
+                ]
+            )
+        return "\n".join(parts).rstrip() + "\n"
+
+    tagged_match_line = _wrap_match_in_line(
+        match_line_text, matched_text, category=category, pattern_family=pattern_family
+    )
+    parts.extend(
+        [
+            "",
+            f"[CONTEXT_BEFORE ({len(before_lines)} lines)]",
+            "\n".join(before_lines),
+            "",
+            "[MATCH]",
+            tagged_match_line,
+            "",
+            f"[CONTEXT_AFTER ({len(after_lines)} lines)]",
+            "\n".join(after_lines),
+        ]
+    )
+
+    if canonical_target is not None:
+        shadow_match_line = _wrap_match_in_line(
+            match_line_text,
+            matched_text,
+            category=category,
+            pattern_family=pattern_family,
+            replacement=canonical_target,
+        )
+        parts.extend(
+            [
+                "",
+                "[CONTEXT_AFTER_NORMALIZATION (same windows; match replaced with canonical target)]",
+                "\n".join(before_lines),
+                shadow_match_line,
+                "\n".join(after_lines),
+            ]
+        )
+
+    return "\n".join(parts).rstrip() + "\n"
+
+
+NEW_TASK_MODES = {
+    "separator_normalization",
+    "slash_dash_classification",
+    # md_table_audit and page_noise_detection need a different data pipeline
+    # (table-before/after synthesis, synthetic-page content injection).
+    # Their prompt preambles + schemas are registered in the prompt-builder;
+    # bundler support here is a follow-up. Falling through to the legacy
+    # renderer with a clear note keeps them reviewable manually if needed.
+}
+
 
 DEFAULT_REVIEW_SPECS: Dict[str, Dict[str, Any]] = {
     "glyph_font_like": {
@@ -128,6 +359,14 @@ def _format_case_text(
     debug_page_text: str,
     include_full_debug_page: bool,
 ) -> str:
+    review_mode = str(review_spec.get("review_mode", "unknown"))
+    if review_mode in NEW_TASK_MODES:
+        return _build_v2_case_body(
+            row,
+            review_mode=review_mode,
+            canonical_target=NEW_TASK_CANONICAL_TARGETS.get(review_mode),
+            existing_cleaner_note=NEW_TASK_EXISTING_CLEANER.get(review_mode),
+        )
     metadata_lines = [
         f"REVIEW_MODE: {review_spec.get('review_mode', 'unknown')}",
         f"CATEGORY: {row.get('category', '')}",
