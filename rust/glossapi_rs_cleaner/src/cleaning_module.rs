@@ -293,11 +293,13 @@ pub fn core_clean_text(
 
         // GFM table separator: if the pre-pass identified this line as a
         // parser-validated separator row under a header, swap in the canonical
-        // minimum-width form.
+        // minimum-width form. This is a semantics-preserving normalization
+        // (alignment + column count are preserved per GFM spec), so it must
+        // stay badness-neutral: count the original line chars as kept.
         if let Some(canonical) = table_replacements.get(&line_index) {
             let line_chars = line.chars().count();
             original_chars_for_badness += line_chars;
-            sum_kept_line_content_chars += canonical.chars().count();
+            sum_kept_line_content_chars += line_chars;
             cleaned_output_string_builder.push_str(canonical);
             cleaned_output_string_builder.push('\n');
             continue;
@@ -956,5 +958,138 @@ mod tests {
         assert_eq!(cleaned, "AB CD \n");
         assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
         assert_eq!(kept_chars, "AB  CD ".chars().count());
+    }
+
+    #[test]
+    fn core_clean_text_normalizes_separator_line() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "Before\n------\nAfter\n";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, "Before\n---\nAfter\n");
+    }
+
+    #[test]
+    fn core_clean_text_normalizes_gfm_table_separator() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "| A | B |\n| :------- | -------: |\n| 1 | 2 |\n";
+        let (cleaned, original_chars, kept_chars) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert!(cleaned.contains("| :--- | ---: |"));
+        // Semantics-preserving normalization => badness neutral on the
+        // separator row (the kept count for that row equals the original).
+        assert_eq!(kept_chars, original_chars);
+    }
+
+    #[test]
+    fn core_clean_text_skips_fenced_code_block() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // Four spaces of indentation and `....` inside a fenced block must survive.
+        let input = "Prose\n```\n    indented...\n----\n```\nMore prose\n";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert!(cleaned.contains("    indented..."));
+        // The `----` inside the fence must NOT collapse to `---`.
+        let fence_block: Vec<&str> =
+            cleaned.lines().skip_while(|l| !l.starts_with("```")).collect();
+        assert!(fence_block.iter().any(|l| *l == "----"));
+    }
+
+    #[test]
+    fn core_clean_text_folds_math_italic_latin() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "Let 𝑥 + 𝑦 = 𝑧.\n";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, "Let x + y = z.\n");
+    }
+
+    #[test]
+    fn core_clean_text_collapses_ellipsis_runs() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "wait……… then\n";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, "wait… then\n");
+    }
+
+    #[test]
+    fn core_clean_text_preserves_polytonic_greek() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // Polytonic chars in U+1F00..U+2000 must survive; previously they
+        // passed through by coincidence, now explicit in the `greek` set.
+        let input = "Λόγος πολυτονικός: ἀγαθός, εὐδαιμονία.\n";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert!(cleaned.contains('ἀ')); // U+1F00 GREEK SMALL LETTER ALPHA WITH PSILI
+        assert!(cleaned.contains('ὐ')); // U+1F50 GREEK SMALL LETTER UPSILON WITH PSILI
+    }
+
+    #[test]
+    fn core_clean_text_strips_non_greek_latin_scripts() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // One Georgian, one Armenian, one Arabic char in Greek text.
+        // Each is stripped because they're now in `unusual` and not `allowed`.
+        let input = "Greek κείμενο \u{10A0} και \u{0531} και \u{0627} συνεχίζει.\n";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert!(!cleaned.contains('\u{10A0}'));
+        assert!(!cleaned.contains('\u{0531}'));
+        assert!(!cleaned.contains('\u{0627}'));
+        assert!(cleaned.contains("Greek"));
+        assert!(cleaned.contains("κείμενο"));
+    }
+
+    #[test]
+    fn core_clean_text_composite_roundtrip() {
+        // End-to-end exercise: polytonic + math italic + ligature + separator
+        // + whitespace run + ellipsis + malformed entity + code fence, all in
+        // one document. Asserts the composed behavior.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "\
+# Document
+
+Let 𝑥    be defined as follows……
+
+Separator:
+--------
+
+The eﬃcient λόγος ἀγαθός &amp 𝐴.
+
+```
+    4 spaces stay
+----
+```
+
+| H1 | H2 |
+| :------- | ---: |
+| a | b |
+";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        // 4-space indented line inside code fence is preserved.
+        assert!(cleaned.contains("    4 spaces stay"));
+        // `----` inside code fence is NOT collapsed.
+        assert!(cleaned.lines().any(|l| l == "----"));
+        // Outside the fence, separator collapses.
+        assert!(cleaned.contains("\n---\n"));
+        // Math italic folds to ASCII.
+        assert!(cleaned.contains("Let x be"));
+        // Whitespace run collapses.
+        assert!(!cleaned.contains("x    be"));
+        // Ligature folds.
+        assert!(cleaned.contains("efficient"));
+        // Polytonic preserved.
+        assert!(cleaned.contains("λόγος"));
+        assert!(cleaned.contains("ἀγαθός"));
+        // Ellipsis collapses to single.
+        assert!(cleaned.contains("follows…"));
+        assert!(!cleaned.contains("follows……"));
+        // Malformed entity fallback.
+        assert!(cleaned.contains("& A"));
+        assert!(!cleaned.contains("&amp"));
+        // GFM table separator normalized.
+        assert!(cleaned.contains("| :--- | ---: |"));
     }
 }

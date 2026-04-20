@@ -352,7 +352,17 @@ pub fn normalize_separator_line(line: &str) -> Option<String> {
 pub fn scan_gfm_table_separators(text: &str) -> HashMap<usize, String> {
     let mut replacements: HashMap<usize, String> = HashMap::new();
     let lines: Vec<&str> = text.lines().collect();
+    // Track code-fence state so we don't normalize `|----|`-shaped lines that
+    // appear inside fenced code blocks (which must survive intact).
+    let mut in_code_fence = false;
     for (i, line) in lines.iter().enumerate() {
+        if is_code_fence_marker(line) {
+            in_code_fence = !in_code_fence;
+            continue;
+        }
+        if in_code_fence {
+            continue;
+        }
         if i == 0 {
             continue;
         }
@@ -398,6 +408,13 @@ fn parse_gfm_separator_row(line: &str) -> Option<GfmSeparatorRow> {
     if trimmed.is_empty() {
         return None;
     }
+    // A GFM table row MUST contain at least one pipe. Without this check a
+    // bare `----` (standalone separator) would be (mis)-parsed as a 1-cell
+    // table separator and then collapsed to `| --- |` whenever the line
+    // above happened to be non-empty.
+    if !trimmed.contains('|') {
+        return None;
+    }
     // Strip optional leading/trailing pipe.
     let inner = trimmed.trim_start_matches('|').trim_end_matches('|');
     if inner.is_empty() {
@@ -441,6 +458,12 @@ fn parse_gfm_separator_row(line: &str) -> Option<GfmSeparatorRow> {
 fn count_gfm_row_cells(line: &str) -> usize {
     let trimmed = line.trim();
     if trimmed.is_empty() {
+        return 0;
+    }
+    // A GFM table row MUST contain at least one pipe. A plain prose line
+    // without pipes is NOT a 1-cell header — enforcing this keeps the
+    // separator pre-pass from pairing up unrelated lines.
+    if !trimmed.contains('|') {
         return 0;
     }
     let inner = trimmed.trim_start_matches('|').trim_end_matches('|');
@@ -810,6 +833,32 @@ mod tests {
     fn gfm_table_separator_cell_count_mismatch_does_not_match() {
         // Header has 3 cells; separator has 2.
         let text = "| A | B | C |\n|-------|------|\n| 1 | 2 | 3 |\n";
+        let reps = scan_gfm_table_separators(text);
+        assert!(reps.is_empty());
+    }
+
+    #[test]
+    fn gfm_table_separator_single_column() {
+        let text = "| Header |\n|--------|\n| cell |\n";
+        let reps = scan_gfm_table_separators(text);
+        assert_eq!(reps.len(), 1);
+        assert_eq!(reps.get(&1).map(String::as_str), Some("| --- |"));
+    }
+
+    #[test]
+    fn gfm_table_separator_alone_is_not_a_table() {
+        // A bare `----` without any pipe in either the separator or the line
+        // above is NOT a table separator. Protects standalone thematic
+        // breaks from being mis-identified as table separators.
+        let text = "Some prose\n----\nMore prose\n";
+        let reps = scan_gfm_table_separators(text);
+        assert!(reps.is_empty());
+    }
+
+    #[test]
+    fn gfm_table_separator_inside_fenced_code_not_normalized() {
+        // Tables inside a fenced code block are code, not tables.
+        let text = "Before\n```\n| H1 | H2 |\n|----|----|\n| a | b |\n```\nAfter\n";
         let reps = scan_gfm_table_separators(text);
         assert!(reps.is_empty());
     }
