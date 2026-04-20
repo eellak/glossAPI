@@ -91,6 +91,19 @@ lazy_static! {
         for code in 0x2C80..0x2D00 { unusual_chars.extend(std::char::from_u32(code)); } // Dedicated Coptic block
         for code in 0x0400..0x0500 { unusual_chars.extend(std::char::from_u32(code)); } // Cyrillic block
         for code in 0x0500..0x0530 { unusual_chars.extend(std::char::from_u32(code)); } // Cyrillic Supplement
+        // Additional non-Latin / non-Greek scripts that appear in the
+        // GlossAPI corpus only as OCR / extraction artifacts. Stripping
+        // them is preferred over letting their codepoints produce one-off
+        // BPE merges in the discovery tokenizer.
+        for code in 0x0530..0x0590 { unusual_chars.extend(std::char::from_u32(code)); } // Armenian
+        for code in 0x0590..0x0600 { unusual_chars.extend(std::char::from_u32(code)); } // Hebrew
+        for code in 0x0600..0x0700 { unusual_chars.extend(std::char::from_u32(code)); } // Arabic
+        for code in 0x10A0..0x1100 { unusual_chars.extend(std::char::from_u32(code)); } // Georgian
+        // Math Alphanumeric Greek (U+1D6A8..U+1D7CD). Math Alphanumeric Latin
+        // and Math digits are folded to ASCII in `normalize::fold_codepoint`,
+        // so they never reach this check; only the Greek and Digamma ranges
+        // need stripping.
+        for code in 0x1D6A8..0x1D7CE { unusual_chars.extend(std::char::from_u32(code)); }
         map.insert("unusual".to_string(), unusual_chars);
 
         map

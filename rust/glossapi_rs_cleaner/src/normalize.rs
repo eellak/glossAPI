@@ -55,6 +55,16 @@ const ASCII_DIGITS: [&str; 10] = [
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
 ];
 
+const ASCII_UPPER: [&str; 26] = [
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S",
+    "T", "U", "V", "W", "X", "Y", "Z",
+];
+
+const ASCII_LOWER: [&str; 26] = [
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+    "t", "u", "v", "w", "x", "y", "z",
+];
+
 /// Return `Some(replacement)` if `ch` should fold, `None` otherwise.
 ///
 /// Policy (from the 2026-04-20 design):
@@ -167,6 +177,62 @@ pub fn fold_codepoint(ch: char) -> Option<&'static str> {
     if let 0x1D7CE..=0x1D7FF = code {
         let offset = (code - 0x1D7CE) % 10;
         return Some(ASCII_DIGITS[offset as usize]);
+    }
+
+    // Mathematical Alphanumeric Symbols — Latin letter blocks
+    // (U+1D400..U+1D6A3). 13 style blocks of 52 codepoints each (A-Z then
+    // a-z). Reserved "holes" in some blocks (Italic, Script, Fraktur,
+    // Double-Struck) are actually encoded in Letterlike Symbols
+    // (U+2100..U+214F) — handled immediately below. For valid codepoints
+    // inside each style block the mapping is uniform: offset modulo 52
+    // picks the ASCII letter regardless of style.
+    if let 0x1D400..=0x1D6A3 = code {
+        let block_offset = (code - 0x1D400) % 52;
+        return Some(if block_offset < 26 {
+            ASCII_UPPER[block_offset as usize]
+        } else {
+            ASCII_LOWER[(block_offset - 26) as usize]
+        });
+    }
+
+    // Math italic dotless i/j (U+1D6A4, U+1D6A5) and reserved slots
+    // U+1D6A6/U+1D6A7. The two assigned slots fold to plain i/j.
+    if code == 0x1D6A4 {
+        return Some("i");
+    }
+    if code == 0x1D6A5 {
+        return Some("j");
+    }
+
+    // Letterlike Symbols that are the "hole" chars for the Math
+    // Alphanumeric blocks (Script h, Fraktur H, Double-Struck H, etc.).
+    // Fold to the matching ASCII Latin letter.
+    match code {
+        0x210A => return Some("g"), // ℊ SCRIPT SMALL G
+        0x210B => return Some("H"), // ℋ SCRIPT CAPITAL H
+        0x210C => return Some("H"), // ℌ BLACK-LETTER CAPITAL H
+        0x210D => return Some("H"), // ℍ DOUBLE-STRUCK CAPITAL H
+        0x210E => return Some("h"), // ℎ PLANCK CONSTANT (== math italic h)
+        0x2110 => return Some("I"), // ℐ SCRIPT CAPITAL I
+        0x2111 => return Some("I"), // ℑ BLACK-LETTER CAPITAL I
+        0x2112 => return Some("L"), // ℒ SCRIPT CAPITAL L
+        0x2113 => return Some("l"), // ℓ SCRIPT SMALL L
+        0x2115 => return Some("N"), // ℕ DOUBLE-STRUCK N
+        0x2119 => return Some("P"), // ℙ DOUBLE-STRUCK P
+        0x211A => return Some("Q"), // ℚ DOUBLE-STRUCK Q
+        0x211B => return Some("R"), // ℛ SCRIPT R
+        0x211C => return Some("R"), // ℜ FRAKTUR R
+        0x211D => return Some("R"), // ℝ DOUBLE-STRUCK R
+        0x2124 => return Some("Z"), // ℤ DOUBLE-STRUCK Z
+        0x2128 => return Some("Z"), // ℨ FRAKTUR Z
+        0x212C => return Some("B"), // ℬ SCRIPT B
+        0x212D => return Some("C"), // ℭ FRAKTUR C
+        0x212F => return Some("e"), // ℯ SCRIPT SMALL E
+        0x2130 => return Some("E"), // ℰ SCRIPT E
+        0x2131 => return Some("F"), // ℱ SCRIPT F
+        0x2133 => return Some("M"), // ℳ SCRIPT M
+        0x2134 => return Some("o"), // ℴ SCRIPT SMALL O
+        _ => {}
     }
 
     None
@@ -427,6 +493,78 @@ mod tests {
         assert_eq!(fold_line("𝟘𝟡"), Some("09".to_string()));
         // U+1D7EC–U+1D7F5 sans-serif bold
         assert_eq!(fold_line("𝟬𝟱"), Some("05".to_string()));
+    }
+
+    #[test]
+    fn fold_math_italic_latin_letters() {
+        // Math Italic Latin letters (U+1D434..U+1D467) — the main form seen
+        // in the tokenizer evidence for broken italic-variable extraction.
+        assert_eq!(fold_line("𝑖"), Some("i".to_string()));
+        assert_eq!(fold_line("𝑛"), Some("n".to_string()));
+        assert_eq!(fold_line("𝑥"), Some("x".to_string()));
+        assert_eq!(fold_line("𝐴"), Some("A".to_string()));
+        assert_eq!(fold_line("𝑅"), Some("R".to_string()));
+        assert_eq!(fold_line("𝑆"), Some("S".to_string()));
+        // A typical math-variable cluster.
+        assert_eq!(
+            fold_line("𝑥 + 𝑦 = 𝑧"),
+            Some("x + y = z".to_string())
+        );
+    }
+
+    #[test]
+    fn fold_math_bold_and_other_styles() {
+        // Bold block (U+1D400..U+1D433).
+        assert_eq!(fold_line("𝐀𝐁𝐂"), Some("ABC".to_string()));
+        assert_eq!(fold_line("𝐚𝐛𝐜"), Some("abc".to_string()));
+        // Bold Italic (U+1D468..U+1D49B).
+        assert_eq!(fold_line("𝑨𝒂"), Some("Aa".to_string()));
+        // Script (U+1D49C..U+1D4CF) — body chars fold; holes use Letterlike.
+        assert_eq!(fold_line("𝒜𝒶"), Some("Aa".to_string()));
+        // Fraktur (U+1D504..U+1D537).
+        assert_eq!(fold_line("𝔄𝔞"), Some("Aa".to_string()));
+        // Double-Struck (U+1D538..U+1D56B).
+        assert_eq!(fold_line("𝔸𝕒"), Some("Aa".to_string()));
+        // Sans-Serif (U+1D5A0..U+1D5D3).
+        assert_eq!(fold_line("𝖠𝖺"), Some("Aa".to_string()));
+        // Monospace (U+1D670..U+1D6A3).
+        assert_eq!(fold_line("𝙰𝚊"), Some("Aa".to_string()));
+    }
+
+    #[test]
+    fn fold_math_italic_dotless() {
+        // U+1D6A4 dotless italic i, U+1D6A5 dotless italic j.
+        assert_eq!(fold_line("𝚤"), Some("i".to_string()));
+        assert_eq!(fold_line("𝚥"), Some("j".to_string()));
+    }
+
+    #[test]
+    fn fold_letterlike_symbols_holes() {
+        // The "holes" in Math Italic / Script / Fraktur / Double-Struck
+        // blocks are encoded as separate codepoints in the Letterlike
+        // Symbols block. They fold to the matching ASCII letter.
+        assert_eq!(fold_line("ℎ"), Some("h".to_string())); // PLANCK CONSTANT
+        assert_eq!(fold_line("ℓ"), Some("l".to_string())); // SCRIPT SMALL L
+        assert_eq!(fold_line("ℝ"), Some("R".to_string())); // DOUBLE-STRUCK R
+        assert_eq!(fold_line("ℕ"), Some("N".to_string())); // DOUBLE-STRUCK N
+        assert_eq!(fold_line("ℤ"), Some("Z".to_string())); // DOUBLE-STRUCK Z
+        assert_eq!(fold_line("ℚ"), Some("Q".to_string())); // DOUBLE-STRUCK Q
+        assert_eq!(fold_line("ℙ"), Some("P".to_string())); // DOUBLE-STRUCK P
+        assert_eq!(fold_line("ℂ"), None); // DOUBLE-STRUCK C at U+2102 — not in our fold (intentional)
+        assert_eq!(fold_line("ℋ"), Some("H".to_string())); // SCRIPT CAPITAL H
+        assert_eq!(fold_line("ℌ"), Some("H".to_string())); // BLACK-LETTER CAPITAL H
+        assert_eq!(fold_line("ℒ"), Some("L".to_string())); // SCRIPT CAPITAL L
+        assert_eq!(fold_line("ℯ"), Some("e".to_string())); // SCRIPT SMALL E
+    }
+
+    #[test]
+    fn fold_does_not_touch_math_greek() {
+        // Math Alphanumeric Greek (U+1D6A8..U+1D7CD) is intentionally NOT
+        // folded — those codepoints are stripped via the `unusual` set in
+        // cleaning_module.rs instead.
+        assert_eq!(fold_line("𝛼"), None); // MATH BOLD SMALL ALPHA U+1D6FC
+        assert_eq!(fold_line("𝛽"), None);
+        assert_eq!(fold_line("𝛾"), None);
     }
 
     #[test]
