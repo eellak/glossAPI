@@ -451,6 +451,106 @@ fn count_gfm_row_cells(line: &str) -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// Page salvage (drop pages with too much content stripped)
+// ---------------------------------------------------------------------------
+
+/// Drop synthetic pages from `cleaned_text` whose retained non-whitespace
+/// content falls below `min_retention_ratio` of the corresponding page in
+/// `original_text`.
+///
+/// Synthetic pages are built from the ORIGINAL text's line structure:
+/// each markdown header line (`^#+`) starts a new page; the first page
+/// runs from line 0 to the first header (or end of text if no headers).
+/// This matches the boundary heuristic used by the matcher's synthetic-page
+/// builder for consistency between cleaner output and matcher re-audit.
+///
+/// Line-alignment assumption: `cleaned_text` must preserve one output line
+/// per input line — `core_clean_text` already satisfies this. If line
+/// counts diverge the function returns `cleaned_text` unmodified.
+///
+/// Design reference:
+/// corpus_clean_normalization/NORMALIZATION_DESIGN_20260420.md §14.
+pub fn drop_low_salvage_pages(
+    original_text: &str,
+    cleaned_text: &str,
+    min_retention_ratio: f64,
+) -> String {
+    let orig_lines: Vec<&str> = original_text.lines().collect();
+    let clean_lines: Vec<&str> = cleaned_text.lines().collect();
+
+    // If line counts diverge we can't safely align per-page accounting.
+    // Return cleaned_text unchanged so the caller sees a clear no-op.
+    if orig_lines.len() != clean_lines.len() {
+        return cleaned_text.to_string();
+    }
+
+    let page_ranges = synthetic_page_line_ranges(&orig_lines);
+    let mut kept_lines: Vec<&str> = Vec::with_capacity(clean_lines.len());
+    let mut dropped_any = false;
+
+    for (start, end) in page_ranges {
+        let orig_nonws = count_nonwhitespace_in_range(&orig_lines, start, end);
+        let clean_nonws = count_nonwhitespace_in_range(&clean_lines, start, end);
+        let retention = if orig_nonws > 0 {
+            clean_nonws as f64 / orig_nonws as f64
+        } else {
+            // Empty original page — nothing to salvage, no ratio to check.
+            1.0
+        };
+        if retention >= min_retention_ratio {
+            kept_lines.extend_from_slice(&clean_lines[start..end]);
+        } else {
+            dropped_any = true;
+        }
+    }
+
+    if !dropped_any {
+        return cleaned_text.to_string();
+    }
+
+    let mut result = kept_lines.join("\n");
+    // Preserve trailing newline behavior: if the input had one and we kept
+    // any content, re-add a single trailing newline.
+    if cleaned_text.ends_with('\n') && !result.is_empty() {
+        result.push('\n');
+    }
+    result
+}
+
+fn synthetic_page_line_ranges(lines: &[&str]) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut start = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 && is_markdown_header_line(line) {
+            ranges.push((start, i));
+            start = i;
+        }
+    }
+    ranges.push((start, lines.len()));
+    ranges
+}
+
+fn is_markdown_header_line(line: &str) -> bool {
+    let t = line.trim_start();
+    if !t.starts_with('#') {
+        return false;
+    }
+    // Valid ATX header: one or more `#` followed by a space or end-of-line.
+    // Rejects `####word` (no space) to avoid treating random `#`-led strings
+    // as headers.
+    let after_hashes = t.trim_start_matches('#');
+    after_hashes.is_empty() || after_hashes.starts_with(' ') || after_hashes.starts_with('\t')
+}
+
+fn count_nonwhitespace_in_range(lines: &[&str], start: usize, end: usize) -> usize {
+    lines[start..end]
+        .iter()
+        .flat_map(|l| l.chars())
+        .filter(|c| !c.is_whitespace())
+        .count()
+}
+
+// ---------------------------------------------------------------------------
 // Code fence detection
 // ---------------------------------------------------------------------------
 
@@ -720,6 +820,86 @@ mod tests {
         let text = "| A | B |\n|---=|-----|\n| 1 | 2 |\n";
         let reps = scan_gfm_table_separators(text);
         assert!(reps.is_empty());
+    }
+
+    #[test]
+    fn drop_low_salvage_pages_keeps_all_when_above_threshold() {
+        let original = "# Intro\nHello world\nAnother line\n# Second\nMore content\n";
+        let cleaned = "# Intro\nHello world\nAnother line\n# Second\nMore content\n";
+        let out = drop_low_salvage_pages(original, cleaned, 0.30);
+        assert_eq!(out, cleaned);
+    }
+
+    #[test]
+    fn drop_low_salvage_pages_drops_degraded_page() {
+        // Second page lost almost everything.
+        let original = "# Intro\nHello world\nNormal prose here\n# Second\nmostly garbage content lost\n";
+        let cleaned = "# Intro\nHello world\nNormal prose here\n# Second\n\n";
+        let out = drop_low_salvage_pages(original, cleaned, 0.30);
+        // Second page dropped entirely; first survives.
+        assert!(out.contains("# Intro"));
+        assert!(out.contains("Hello world"));
+        assert!(!out.contains("# Second"));
+    }
+
+    #[test]
+    fn drop_low_salvage_pages_returns_input_when_line_counts_differ() {
+        // Defensive: if caller passes mismatched line counts we no-op.
+        let original = "line a\nline b\nline c\n";
+        let cleaned = "line a\nline b\n";
+        let out = drop_low_salvage_pages(original, cleaned, 0.50);
+        assert_eq!(out, cleaned);
+    }
+
+    #[test]
+    fn drop_low_salvage_pages_handles_no_headers() {
+        // No markdown headers: whole text is one synthetic page.
+        let original = "hello world\nplain prose\nno headers here\n";
+        let cleaned = "h w\np p\nn h h\n";
+        // Retention is low (~10 kept vs ~29 original).
+        let retained = count_nonwhitespace_in_range(&cleaned.lines().collect::<Vec<_>>(), 0, 3);
+        let orig_count =
+            count_nonwhitespace_in_range(&original.lines().collect::<Vec<_>>(), 0, 3);
+        let ratio = retained as f64 / orig_count as f64;
+        assert!(ratio < 0.30);
+        let out = drop_low_salvage_pages(original, cleaned, 0.30);
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn drop_low_salvage_pages_preserves_trailing_newline() {
+        let original = "# Intro\nbody\n";
+        let cleaned = "# Intro\nbody\n";
+        let out = drop_low_salvage_pages(original, cleaned, 0.30);
+        assert!(out.ends_with('\n'));
+    }
+
+    #[test]
+    fn is_markdown_header_line_accepts_valid_headers() {
+        assert!(is_markdown_header_line("# Header"));
+        assert!(is_markdown_header_line("## Subheader"));
+        assert!(is_markdown_header_line("#### Deep"));
+        assert!(is_markdown_header_line("  ## Indented"));
+        // Hash with no following space is NOT a header (could be a hashtag).
+        assert!(!is_markdown_header_line("#hashtag"));
+        assert!(!is_markdown_header_line("####name"));
+        // Plain text, code, non-hash prefixes.
+        assert!(!is_markdown_header_line("plain"));
+        assert!(!is_markdown_header_line(""));
+    }
+
+    #[test]
+    fn synthetic_page_line_ranges_splits_on_headers() {
+        let lines = vec![
+            "intro line",
+            "# First",
+            "body of first",
+            "# Second",
+            "body of second",
+            "more body",
+        ];
+        let ranges = synthetic_page_line_ranges(&lines);
+        assert_eq!(ranges, vec![(0, 1), (1, 3), (3, 6)]);
     }
 
     #[test]
