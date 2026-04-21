@@ -70,6 +70,7 @@ def iter_cleaned_text(
     doc_id_column: str,
     batch_size: int,
     progress_every: int,
+    apply_cleaner: bool = True,
 ) -> Iterator[List[str]]:
     """Yield lists-of-strings (HF tokenizer trainer expects a list iterator)."""
     total_docs = 0
@@ -94,10 +95,13 @@ def iter_cleaned_text(
                 if not text.strip():
                     empty_docs += 1
                     continue
-                cleaned = cleaner.clean_text(text, scripts_to_keep)
-                if not cleaned.strip() or cleaned.strip().startswith("<!-- text-missing"):
-                    cleaner_removed_docs += 1
-                    continue
+                if apply_cleaner:
+                    cleaned = cleaner.clean_text(text, scripts_to_keep)
+                    if not cleaned.strip() or cleaned.strip().startswith("<!-- text-missing"):
+                        cleaner_removed_docs += 1
+                        continue
+                else:
+                    cleaned = text
                 kept_docs += 1
                 chunk.append(cleaned)
             if chunk:
@@ -131,6 +135,13 @@ def main(argv=None) -> int:
     parser.add_argument("--doc-id-column", default="source_doc_id")
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--progress-every", type=int, default=50_000)
+    parser.add_argument(
+        "--skip-cleaner",
+        action="store_true",
+        help="Skip the cleaner.clean_text call per doc. "
+        "Use when v2 corpus was already cleaned and we only want the "
+        "doc-drop effect to show up in vocab (much faster: ~1h vs ~14h).",
+    )
     args = parser.parse_args(argv)
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "true")
@@ -154,6 +165,7 @@ def main(argv=None) -> int:
         args.scripts_to_keep,
         args.text_column, args.doc_id_column,
         args.batch_size, args.progress_every,
+        apply_cleaner=not args.skip_cleaner,
     )
     start = time.time()
     trained = base.train_new_from_iterator(
