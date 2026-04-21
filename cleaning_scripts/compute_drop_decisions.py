@@ -71,7 +71,15 @@ def _process_one_parquet(
     """Process one parquet entirely; called in a subprocess."""
     import glossapi_rs_noise as noise  # local import in worker
 
-    scratch = tempfile.mkdtemp(prefix="drop_decisions_")
+    # Use a stable subdir next to the output file so the matcher's
+    # side-effect `.md` writes don't land in a tempdir that tempfile
+    # auto-cleans. The matcher writes small per-match .md files there
+    # we don't actually consume — they get deleted at the end of the
+    # call.
+    output_stem = Path(output_path).stem
+    output_dir_root = Path(output_path).parent
+    scratch = str(output_dir_root / f"_scratch_{output_stem}")
+    Path(scratch).mkdir(parents=True, exist_ok=True)
     start = time.time()
     rows_seen = 0
     drops_by_reason: Dict[str, int] = {}
@@ -100,8 +108,14 @@ def _process_one_parquet(
                 source_doc_id = str(row.get(doc_id_column) or f"row-{rows_seen}")
                 source_dataset = str(row.get(dataset_column) or Path(parquet_path).stem)
                 source_path = f"{parquet_path}#{source_doc_id}"
-                source_stem = (f"{source_dataset}__{source_doc_id}")[:200]
-                base_stem = source_dataset
+                # Sanitize: some datasets (e.g. HPLT) have `/` in their
+                # name — that breaks the matcher which uses stems in
+                # filesystem paths for debug .md writes. Replace any
+                # char that can't appear in a file-name with `_`.
+                def _safe(s: str) -> str:
+                    return "".join(c if c.isalnum() or c in "_-." else "_" for c in s)
+                source_stem = _safe((f"{source_dataset}__{source_doc_id}")[:200])
+                base_stem = _safe(source_dataset)
 
                 pages = noise.match_token_category_debug_text(
                     text,
@@ -139,6 +153,14 @@ def _process_one_parquet(
 
     import shutil
     shutil.rmtree(scratch, ignore_errors=True)
+    # Also prune any .md debug files the matcher wrote at the root
+    # (belt-and-suspenders — some builds of the matcher write to the
+    # output_dir not to scratch).
+    for stale in output_dir_root.glob("*.md"):
+        try:
+            stale.unlink()
+        except Exception:
+            pass
     return {
         "parquet": parquet_path,
         "output": output_path,
