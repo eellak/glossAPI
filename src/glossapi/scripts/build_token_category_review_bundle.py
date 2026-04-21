@@ -30,7 +30,7 @@ _SAFE_LABEL_RE = re.compile(r"[^a-z0-9._-]+")
 #   [CONTEXT_AFTER_NORMALIZATION] (optional, normalization-ish modes)
 #                      — same window, matched span replaced with canonical
 
-NEW_TASK_CASE_LINE_WINDOW = 20
+NEW_TASK_CASE_LINE_WINDOW = 30
 
 
 _SEPARATOR_EXISTING_CLEANER_NOTE = (
@@ -98,14 +98,18 @@ def _wrap_match_in_line(
     pattern_family: str,
     replacement: Optional[str] = None,
 ) -> str:
-    """Wrap the first occurrence of ``matched_text`` in ``line`` with a
-    <match type=... family=...>…</match> tag, optionally replacing the
-    matched span with ``replacement`` first (for shadow-normalized views).
+    """Wrap the first occurrence of ``matched_text`` inside ``line`` with a
+    `<match kind="…">…</match>` tag. The tag uses the compact `kind`
+    attribute (see `_short_kind_for_category`) rather than the verbose
+    matcher-internal `type`/`family` pair; keeps the line readable.
 
-    If ``matched_text`` cannot be located inside ``line`` (or it's empty),
-    the whole line is wrapped so the model always sees a tag.
+    When ``replacement`` is set, the tagged span carries the replacement
+    text (shadow-normalized view). When ``matched_text`` can't be located
+    in ``line`` the whole line is wrapped so the model always sees a tag.
     """
-    open_tag = f'<match type="{category}" family="{pattern_family}">'
+    kind = _short_kind_for_category(category)
+    tag_attr = f' kind="{kind}"' if kind else ""
+    open_tag = f"<match{tag_attr}>"
     close_tag = "</match>"
     payload = replacement if replacement is not None else matched_text
     if matched_text and matched_text in line:
@@ -148,66 +152,49 @@ def _build_v2_case_body(
     parts: List[str] = []
     parts.append("[MATCH_META]")
     parts.append(f"review_case_id: {category}::{match_id}")
-    parts.append(f"category: {category}")
-    parts.append(f"pattern_family: {pattern_family}")
     parts.append(f"source: {source_stem}")
-    parts.append(f"source_path: {source_path}")
-    parts.append(f"start_line: {start_line}")
     parts.append(f"matched_text: {json.dumps(matched_text, ensure_ascii=False)}")
     if canonical_target is not None:
         parts.append(f"canonical_target: {json.dumps(canonical_target, ensure_ascii=False)}")
     if fallback_mode:
-        parts.append("note: source file unavailable or start_line missing; using matcher-supplied char windows")
+        parts.append("note: source file unavailable; using matcher-supplied char windows")
 
     if existing_cleaner_note:
         parts.extend(["", "[EXISTING_CLEANER_PATTERNS]", existing_cleaner_note])
 
+    # --- 2026-04-21 change: emit a single continuous passage with the
+    # match wrapped inline via <match>…</match>, not three separate
+    # CONTEXT_BEFORE / MATCH / CONTEXT_AFTER blocks. Reads as flowing
+    # text the way the model would see it in the original document.
     if fallback_mode:
+        before = str(row.get("context_before", ""))
+        after = str(row.get("context_after", ""))
+        tagged_match = _wrap_match_tag_only(matched_text, category=category)
+        passage = f"{before}{tagged_match}{after}"
         parts.extend(
-            [
-                "",
-                "[CONTEXT_BEFORE (char window fallback, ~240 chars)]",
-                str(row.get("context_before", "")),
-                "",
-                "[MATCH]",
-                _wrap_match_in_line(matched_text or "(empty)", matched_text,
-                                    category=category, pattern_family=pattern_family),
-                "",
-                "[CONTEXT_AFTER (char window fallback, ~240 chars)]",
-                str(row.get("context_after", "")),
-            ]
+            ["", "[CONTEXT]  (continuous; match wrapped inline in <match>…</match>)",
+             passage]
         )
         if canonical_target is not None:
+            tagged_canonical = _wrap_match_tag_only(canonical_target, category=category)
+            shadow_passage = f"{before}{tagged_canonical}{after}"
             parts.extend(
-                [
-                    "",
-                    "[CONTEXT_AFTER_NORMALIZATION (match replaced with canonical target)]",
-                    _wrap_match_in_line(
-                        matched_text or "(empty)",
-                        matched_text,
-                        category=category,
-                        pattern_family=pattern_family,
-                        replacement=canonical_target,
-                    ),
-                ]
+                ["", "[CONTEXT_AFTER_NORMALIZATION]  (same passage; match replaced by canonical target)",
+                 shadow_passage]
             )
         return "\n".join(parts).rstrip() + "\n"
 
+    # Line-windowed continuous passage. The match line sits in its
+    # natural position between before_lines and after_lines.
     tagged_match_line = _wrap_match_in_line(
         match_line_text, matched_text, category=category, pattern_family=pattern_family
     )
+    passage_lines = list(before_lines) + [tagged_match_line] + list(after_lines)
+    passage = "\n".join(passage_lines)
     parts.extend(
-        [
-            "",
-            f"[CONTEXT_BEFORE ({len(before_lines)} lines)]",
-            "\n".join(before_lines),
-            "",
-            "[MATCH]",
-            tagged_match_line,
-            "",
-            f"[CONTEXT_AFTER ({len(after_lines)} lines)]",
-            "\n".join(after_lines),
-        ]
+        ["", f"[CONTEXT]  ({len(before_lines)} lines before + match line + "
+             f"{len(after_lines)} lines after; continuous; match wrapped inline)",
+         passage]
     )
 
     if canonical_target is not None:
@@ -218,17 +205,39 @@ def _build_v2_case_body(
             pattern_family=pattern_family,
             replacement=canonical_target,
         )
+        shadow_passage_lines = list(before_lines) + [shadow_match_line] + list(after_lines)
+        shadow_passage = "\n".join(shadow_passage_lines)
         parts.extend(
-            [
-                "",
-                "[CONTEXT_AFTER_NORMALIZATION (same windows; match replaced with canonical target)]",
-                "\n".join(before_lines),
-                shadow_match_line,
-                "\n".join(after_lines),
-            ]
+            ["", "[CONTEXT_AFTER_NORMALIZATION]  (same passage; match replaced by canonical target)",
+             shadow_passage]
         )
 
     return "\n".join(parts).rstrip() + "\n"
+
+
+def _wrap_match_tag_only(matched_text: str, *, category: str) -> str:
+    """Compact match tag for fallback paths where we don't have a full line
+    to show. Uses the short form `<match kind="...">…</match>` per the
+    2026-04-21 steering note on match-tag verbosity.
+    """
+    kind = _short_kind_for_category(category)
+    tag_attr = f' kind="{kind}"' if kind else ""
+    return f"<match{tag_attr}>{matched_text}</match>"
+
+
+def _short_kind_for_category(category: str) -> str:
+    """Map matcher category to a compact `kind` label for the <match> tag.
+    Keeps tag attributes legible (no 60-char pattern_family strings).
+    """
+    return {
+        "separator_run_like": "separator",
+        "markdown_table_separator_like": "md_table_sep",
+        "table_border_ascii_art": "table_border",
+        "dot_leader_like": "dot_leader",
+        "glyph_font_like": "glyph",
+        "control_private_use_replacement": "invisible",
+        "short_nonascii_latin_like": "latin_ext",
+    }.get(category, category)
 
 
 NEW_TASK_MODES = {
