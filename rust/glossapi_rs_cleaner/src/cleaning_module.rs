@@ -126,8 +126,12 @@ fn has_decoded_glyph_font_artefact(line: &str) -> bool {
 fn is_unicode_noise_char(ch: char) -> bool {
     match ch {
         '\t' | '\n' => false,
-        '\u{00AD}' | '\u{03A2}' | '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}'
-        | '\u{FEFF}' | '\u{FFFD}' => true,
+        // Invisible formatting / directional / control / replacement codepoints
+        // with no semantic purpose in Greek text. U+200E (LRM) and U+200F (RLM)
+        // were added 2026-04-21 after wave11 surfaced them as untouched
+        // bidi-mark residue in Greek-Wikipedia translation patterns.
+        '\u{00AD}' | '\u{03A2}' | '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{200E}'
+        | '\u{200F}' | '\u{2060}' | '\u{FEFF}' | '\u{FFFD}' => true,
         _ => {
             let code = ch as u32;
             code < 0x20
@@ -938,6 +942,21 @@ mod tests {
         assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
         assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
         assert_eq!(kept_chars, 0);
+    }
+
+    #[test]
+    fn core_clean_text_strips_lrm_rlm_direction_marks() {
+        // LRM (U+200E) and RLM (U+200F) are invisible bidi-direction marks
+        // inserted by MediaWiki around foreign-language translations. They
+        // have no semantic purpose in Greek text and must strip.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "Μεσοπόλεμος (λατινικά: Interbellum\u{200E}\u{200E}, γερμανικά: Zwischenkriegszeit\u{200F})\n";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert!(!cleaned.contains('\u{200E}'));
+        assert!(!cleaned.contains('\u{200F}'));
+        assert!(cleaned.contains("Interbellum"));
+        assert!(cleaned.contains("Zwischenkriegszeit"));
     }
 
     #[test]
