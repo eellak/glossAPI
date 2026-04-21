@@ -31,6 +31,19 @@ lazy_static! {
     pub static ref FONT_GLYPH_TAG_REGEX: Regex =
         Regex::new(r"(?i)<c=\d+,font=/[^>]+>glyph").unwrap();
     pub static ref DOT_LEADER_RUN_REGEX: Regex = Regex::new(r"\.{4,}").unwrap();
+    // PostScript-glyph-name residue from PDF extraction. `/uni<hex>` is the
+    // Unicode-codepoint glyph-name form (e.g. /uni03B1 for α); `/gid<N>` is
+    // the glyph-ID form. Both appear when a PDF extractor dumps raw Adobe
+    // glyph names instead of decoding to Unicode. Probe on openarchives.gr
+    // first 5k rows (2026-04-21) found 45 docs / 68,510 total hits for
+    // /uni<hex> and 24 docs / 19,085 hits for /gid<N> — catastrophic
+    // corruption never caught by the current BAD_LINE_AC triggers.
+    pub static ref PDF_GLYPH_NAME_REGEX: Regex =
+        Regex::new(r"/uni[0-9A-Fa-f]{4,6}|/g(?:id)?\d+").unwrap();
+    // PDF font-subset naming convention /<6-uppercase>+<FontName>
+    // (e.g. /XQDMQS+CenturyGothic, /NUMPTY+ImprintMTnum).
+    pub static ref PDF_FONT_SUBSET_REGEX: Regex =
+        Regex::new(r"/[A-Z]{6}\+[A-Z][A-Za-z0-9-]+").unwrap();
 
     // Regex for HTML/XML tags (for cleaning, non-comment tags) - Replaced by strip_tags_custom
     // pub static ref ANY_TAG_CLEANING_REGEX: Regex = Regex::new(r"<[^>]*>").unwrap();
@@ -106,6 +119,14 @@ lazy_static! {
 }
 
 // Artefact triggers for Aho-Corasick (Step 2.1)
+//
+// Expanded 2026-04-21 to cover PostScript glyph-name residue from PDF
+// extraction that was previously missed. The five-char `GLYPH` literal
+// (without `<` after) matched 172 docs / 84,798 hits in an openarchives
+// probe of 5,000 rows — catastrophic noise that passed through
+// unrejected because the original set only matched `GLYPH<`. PS glyph
+// names like /hyphenminus, /space, /period are appended too (see
+// `glyph_marker_extended_spec.md`).
 static BAD_LINE_AC: Lazy<AhoCorasick> = Lazy::new(|| {
     AhoCorasick::new([
         "glyph<c=",
@@ -115,12 +136,33 @@ static BAD_LINE_AC: Lazy<AhoCorasick> = Lazy::new(|| {
         "MS-Bold-",
         "font=/", // Common in Docling XML-like font tags e.g. <glyph font=/NUMPTY+ImprintMTnum>1</glyph>
         "FontName=", // Common in some other PDF text extractions for font changes
+        // --- Added 2026-04-21 ---
+        "GLYPH",        // Bare, no `<` — catastrophic noise signal
+        "hyphenminus",  // Bare PostScript glyph name
+        "/hyphenminus", "/space", "/period", "/comma", "/colon", "/semicolon",
+        "/slash", "/backslash", "/parenleft", "/parenright",
+        "/bracketleft", "/bracketright", "/braceleft", "/braceright",
+        "/quotesingle", "/quotedbl", "/exclam", "/question",
+        "/asterisk", "/plus", "/minus", "/equal", "/less", "/greater",
+        "/ampersand", "/percent", "/at", "/dollar", "/numbersign",
+        "/underscore", "/asciitilde", "/asciicircum",
+        "/endash", "/emdash", "/hyphen", "/bullet",
+        "/copyright", "/registered", "/trademark", "/degree",
+        "/plusminus", "/multiply", "/divide", "/section",
+        "/paragraph", "/dagger", "/daggerdbl", "/ellipsis",
+        "/glyph", "CID+",
+        // Note: /uni<hex> and /gid<N> are caught by PDF_GLYPH_NAME_REGEX
+        // via has_decoded_glyph_font_artefact — not listed here to avoid
+        // matching legitimate /united-nations, /university-of-X URLs, etc.
     ])
     .unwrap()
 });
 
 fn has_decoded_glyph_font_artefact(line: &str) -> bool {
-    GLYPH_FONT_TAG_REGEX.is_match(line) || FONT_GLYPH_TAG_REGEX.is_match(line)
+    GLYPH_FONT_TAG_REGEX.is_match(line)
+        || FONT_GLYPH_TAG_REGEX.is_match(line)
+        || PDF_GLYPH_NAME_REGEX.is_match(line)
+        || PDF_FONT_SUBSET_REGEX.is_match(line)
 }
 
 fn is_unicode_noise_char(ch: char) -> bool {
@@ -937,6 +979,89 @@ mod tests {
         assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
         assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
         assert_eq!(kept_chars, 0);
+    }
+
+    #[test]
+    fn core_clean_text_rejects_bare_glyph_word() {
+        // Bare `GLYPH` without a `<` after — previously uncaught. 5k-row
+        // probe on openarchives showed 84,798 hits in 172 docs.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "some text with GLYPH in the middle\n";
+        let (cleaned, _, kept_chars) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_eq!(kept_chars, 0);
+    }
+
+    #[test]
+    fn core_clean_text_rejects_postscript_uni_glyph_name() {
+        // /uni<hex> — PostScript Unicode-codepoint glyph-name residue.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "foo /uni03B1 /uni03B2 /uni03B3 bar\n";
+        let (cleaned, _, kept_chars) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_eq!(kept_chars, 0);
+    }
+
+    #[test]
+    fn core_clean_text_rejects_postscript_gid_glyph_name() {
+        // /gid<N> — PostScript glyph-ID residue.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "x /gid456 y /g12 z\n";
+        let (cleaned, _, kept_chars) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_eq!(kept_chars, 0);
+    }
+
+    #[test]
+    fn core_clean_text_rejects_pdf_font_subset_form() {
+        // /<SUBSET>+<FontName> — Adobe PDF font-subset naming convention.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "Text /XQDMQS+CenturyGothic in it.\n";
+        let (cleaned, _, kept_chars) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_eq!(kept_chars, 0);
+    }
+
+    #[test]
+    fn core_clean_text_rejects_bare_ps_glyph_name() {
+        // Bare `hyphenminus` and `/hyphenminus` — PostScript glyph names.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        for input in [
+            "hello hyphenminus world\n",
+            "foo /hyphenminus bar\n",
+            "x /space y\n",
+            "a /period b\n",
+        ] {
+            let (cleaned, _, kept_chars) =
+                core_clean_text(input, &allowed_chars, &unusual_chars, None);
+            assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"),
+                       "input {:?} should reject", input);
+            assert_eq!(kept_chars, 0);
+        }
+    }
+
+    #[test]
+    fn core_clean_text_does_not_reject_legitimate_slash_word() {
+        // Guard against over-matching /uni-something as a URL path
+        // (e.g. /united-nations /university-of-X). PDF_GLYPH_NAME_REGEX
+        // requires /uni + 4+ hex digits.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "See https://example.com/united-nations/report.\n";
+        let (cleaned, _, kept_chars) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        // URL line should pass through — not rejected, not emptied.
+        assert_ne!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert!(kept_chars > 0);
     }
 
     #[test]
