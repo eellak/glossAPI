@@ -65,6 +65,27 @@ const ASCII_LOWER: [&str; 26] = [
     "t", "u", "v", "w", "x", "y", "z",
 ];
 
+/// Greek capitals in the order Math Alphanumeric Greek blocks use them:
+/// Α Β Γ Δ Ε Ζ Η Θ Ι Κ Λ Μ Ν Ξ Ο Π Ρ ϴ Σ Τ Υ Φ Χ Ψ Ω
+/// (Position 17 is the capital-theta variant ϴ (U+03F4), not regular Θ.)
+const GREEK_CAPITAL_MATH_ORDER: [&str; 25] = [
+    "Α", "Β", "Γ", "Δ", "Ε", "Ζ", "Η", "Θ", "Ι", "Κ", "Λ", "Μ", "Ν", "Ξ", "Ο", "Π", "Ρ", "ϴ",
+    "Σ", "Τ", "Υ", "Φ", "Χ", "Ψ", "Ω",
+];
+
+/// Greek smalls in Math-block order:
+/// α β γ δ ε ζ η θ ι κ λ μ ν ξ ο π ρ ς σ τ υ φ χ ψ ω
+const GREEK_SMALL_MATH_ORDER: [&str; 25] = [
+    "α", "β", "γ", "δ", "ε", "ζ", "η", "θ", "ι", "κ", "λ", "μ", "ν", "ξ", "ο", "π", "ρ", "ς",
+    "σ", "τ", "υ", "φ", "χ", "ψ", "ω",
+];
+
+/// Math Alphanumeric Greek "variant symbols" block-tail (offsets 52..57):
+/// ϵ ϑ ϰ ϕ ϱ ϖ (epsilon / theta / kappa / phi / rho / pi variants).
+const GREEK_VARIANT_MATH_ORDER: [&str; 6] = [
+    "\u{03F5}", "\u{03D1}", "\u{03F0}", "\u{03D5}", "\u{03F1}", "\u{03D6}",
+];
+
 /// Return `Some(replacement)` if `ch` should fold, `None` otherwise.
 ///
 /// Policy (from the 2026-04-20 design):
@@ -202,6 +223,41 @@ pub fn fold_codepoint(ch: char) -> Option<&'static str> {
     }
     if code == 0x1D6A5 {
         return Some("j");
+    }
+
+    // Mathematical Alphanumeric Symbols — Greek letter blocks
+    // (U+1D6A8..U+1D7C9). Five style blocks of 58 codepoints each:
+    //   1D6A8 Bold, 1D6E2 Italic, 1D71C Bold Italic,
+    //   1D756 Sans-Serif Bold, 1D790 Sans-Serif Bold Italic.
+    // Layout inside each block:
+    //   0..24   capital letters Α..Ω (order per Math Alphanumeric spec)
+    //   25      nabla ∇ (U+2207)
+    //   26..50  small letters α..ω
+    //   51      partial differential ∂ (U+2202)
+    //   52..57  variant symbols ϵ ϑ ϰ ϕ ϱ ϖ
+    // Policy (2026-04-21): these are Greek letters used in math with
+    // semantic meaning; Apertus has single-token merges for regular
+    // Greek, so we FOLD them into the regular Greek codepoint that
+    // Apertus tokenizes efficiently, rather than stripping.
+    if let 0x1D6A8..=0x1D7C9 = code {
+        let off = (code - 0x1D6A8) % 58;
+        return Some(match off {
+            0..=24 => GREEK_CAPITAL_MATH_ORDER[off as usize],
+            25 => "\u{2207}", // ∇ NABLA
+            26..=50 => GREEK_SMALL_MATH_ORDER[(off - 26) as usize],
+            51 => "\u{2202}", // ∂ PARTIAL DIFFERENTIAL
+            52..=57 => GREEK_VARIANT_MATH_ORDER[(off - 52) as usize],
+            _ => unreachable!(),
+        });
+    }
+
+    // Mathematical Bold Capital/Small Digamma (U+1D7CA..U+1D7CB) fold to
+    // regular Greek Digamma (U+03DC / U+03DD). U+1D7CC/U+1D7CD are reserved.
+    if code == 0x1D7CA {
+        return Some("\u{03DC}");
+    }
+    if code == 0x1D7CB {
+        return Some("\u{03DD}");
     }
 
     // Letterlike Symbols that are the "hole" chars for the Math
@@ -681,13 +737,35 @@ mod tests {
     }
 
     #[test]
-    fn fold_does_not_touch_math_greek() {
-        // Math Alphanumeric Greek (U+1D6A8..U+1D7CD) is intentionally NOT
-        // folded — those codepoints are stripped via the `unusual` set in
-        // cleaning_module.rs instead.
-        assert_eq!(fold_line("𝛼"), None); // MATH BOLD SMALL ALPHA U+1D6FC
-        assert_eq!(fold_line("𝛽"), None);
-        assert_eq!(fold_line("𝛾"), None);
+    fn fold_math_alphanumeric_greek_to_regular_greek() {
+        // Math Bold Greek (U+1D6A8..U+1D6E1): capitals.
+        assert_eq!(fold_line("𝚨"), Some("Α".to_string())); // U+1D6A8
+        assert_eq!(fold_line("𝛀"), Some("Ω".to_string())); // U+1D6C0
+        // Math Bold Greek: nabla at offset 25.
+        assert_eq!(fold_line("𝛁"), Some("\u{2207}".to_string())); // ∇
+        // Math Bold Greek: smalls.
+        assert_eq!(fold_line("𝛂"), Some("α".to_string())); // U+1D6C2
+        assert_eq!(fold_line("𝛚"), Some("ω".to_string())); // U+1D6DA
+        assert_eq!(fold_line("𝛓"), Some("ς".to_string())); // final sigma (offset 43)
+        // Math Bold Greek: partial differential at offset 51.
+        assert_eq!(fold_line("𝛛"), Some("\u{2202}".to_string())); // ∂
+        // Math Bold Greek: variant symbols.
+        assert_eq!(fold_line("𝛜"), Some("\u{03F5}".to_string())); // ϵ
+
+        // Math Italic Greek (U+1D6E2..).
+        assert_eq!(fold_line("𝛼"), Some("α".to_string())); // U+1D6FC
+        assert_eq!(fold_line("𝛽"), Some("β".to_string())); // U+1D6FD
+        assert_eq!(fold_line("𝛾"), Some("γ".to_string())); // U+1D6FE
+
+        // Math Bold Digamma.
+        assert_eq!(fold_line("𝟊"), Some("Ϝ".to_string())); // U+1D7CA
+        assert_eq!(fold_line("𝟋"), Some("ϝ".to_string())); // U+1D7CB
+
+        // Composite: math-Greek sentence folds to plain Greek.
+        assert_eq!(
+            fold_line("𝛼 + 𝛽 = 𝛾"),
+            Some("α + β = γ".to_string())
+        );
     }
 
     #[test]

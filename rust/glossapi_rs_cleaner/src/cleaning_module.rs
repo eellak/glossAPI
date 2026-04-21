@@ -91,19 +91,14 @@ lazy_static! {
         for code in 0x2C80..0x2D00 { unusual_chars.extend(std::char::from_u32(code)); } // Dedicated Coptic block
         for code in 0x0400..0x0500 { unusual_chars.extend(std::char::from_u32(code)); } // Cyrillic block
         for code in 0x0500..0x0530 { unusual_chars.extend(std::char::from_u32(code)); } // Cyrillic Supplement
-        // Additional non-Latin / non-Greek scripts that appear in the
-        // GlossAPI corpus only as OCR / extraction artifacts. Stripping
-        // them is preferred over letting their codepoints produce one-off
-        // BPE merges in the discovery tokenizer.
-        for code in 0x0530..0x0590 { unusual_chars.extend(std::char::from_u32(code)); } // Armenian
-        for code in 0x0590..0x0600 { unusual_chars.extend(std::char::from_u32(code)); } // Hebrew
-        for code in 0x0600..0x0700 { unusual_chars.extend(std::char::from_u32(code)); } // Arabic
-        for code in 0x10A0..0x1100 { unusual_chars.extend(std::char::from_u32(code)); } // Georgian
-        // Math Alphanumeric Greek (U+1D6A8..U+1D7CD). Math Alphanumeric Latin
-        // and Math digits are folded to ASCII in `normalize::fold_codepoint`,
-        // so they never reach this check; only the Greek and Digamma ranges
-        // need stripping.
-        for code in 0x1D6A8..0x1D7CE { unusual_chars.extend(std::char::from_u32(code)); }
+        // Armenian, Hebrew, Arabic, Georgian, Math Alphanumeric Greek etc.
+        // are INTENTIONALLY NOT stripped here. Policy (2026-04-21): we only
+        // add a range to `unusual` (strip) when the codepoints carry no
+        // semantic meaning — i.e., noise. For meaningful scripts not in
+        // Apertus's vocab we should FOLD (e.g., Math Alphanumeric Greek →
+        // regular Greek, handled in `normalize::fold_codepoint`), not
+        // strip. For Armenian/Hebrew/Arabic/Georgian, Apertus's multilingual
+        // training covers them; they should be preserved as-is.
         map.insert("unusual".to_string(), unusual_chars);
 
         map
@@ -1027,18 +1022,31 @@ mod tests {
     }
 
     #[test]
-    fn core_clean_text_strips_non_greek_latin_scripts() {
+    fn core_clean_text_preserves_non_greek_latin_scripts() {
+        // Policy (2026-04-21): Armenian/Hebrew/Arabic/Georgian carry semantic
+        // meaning; Apertus's multilingual training covers them. We preserve
+        // them rather than strip.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        // One Georgian, one Armenian, one Arabic char in Greek text.
-        // Each is stripped because they're now in `unusual` and not `allowed`.
         let input = "Greek κείμενο \u{10A0} και \u{0531} και \u{0627} συνεχίζει.\n";
         let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert!(!cleaned.contains('\u{10A0}'));
-        assert!(!cleaned.contains('\u{0531}'));
-        assert!(!cleaned.contains('\u{0627}'));
+        assert!(cleaned.contains('\u{10A0}')); // Georgian letter an
+        assert!(cleaned.contains('\u{0531}')); // Armenian capital ayb
+        assert!(cleaned.contains('\u{0627}')); // Arabic alef
         assert!(cleaned.contains("Greek"));
         assert!(cleaned.contains("κείμενο"));
+    }
+
+    #[test]
+    fn core_clean_text_folds_math_greek_to_plain_greek() {
+        // Math-italic Greek letters in a Greek corpus are almost always OCR
+        // residue of italicized Greek in equations. Fold (not strip) to the
+        // regular Greek codepoint Apertus tokenizes efficiently.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "Let 𝛼 + 𝛽 = 𝛾 in Greek.\n";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, "Let α + β = γ in Greek.\n");
     }
 
     #[test]
