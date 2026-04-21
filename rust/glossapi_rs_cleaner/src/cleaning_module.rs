@@ -148,19 +148,12 @@ fn normalize_layout_leader_runs(line: &str) -> Option<String> {
     if line.is_empty()
         || line == TEXT_MISSING_COMMENT
         || line == TABLE_REMOVED_COMMENT
-        || !line.contains('.')
     {
         return None;
     }
-    if !DOT_LEADER_RUN_REGEX.is_match(line) {
-        return None;
-    }
-    let normalized = DOT_LEADER_RUN_REGEX.replace_all(line, ".....").into_owned();
-    if normalized == line {
-        None
-    } else {
-        Some(normalized)
-    }
+    // Tiered bucket per normalize.rs: {2}→1, {3}→3, {4..10}→3, {>10}→20.
+    // Uniform with the whitespace-run rule.
+    normalize::normalize_dot_runs(line)
 }
 
 // Helper function for Step 5.1: Stream-strip tags using memchr
@@ -488,11 +481,10 @@ pub fn core_clean_text(
         } else {
             // Chain line-level normalizations. Each is a no-op if its pattern
             // doesn't match. Order matters:
-            //   dot-leader (existing) -> separator line -> ellipsis run ->
-            //   malformed-entity fallback -> TOC whitespace leader ->
-            //   whitespace run.
-            // TOC whitespace leader MUST run before whitespace-run collapse
-            // or the general collapse will eat the 4+-space run first.
+            //   dot-leader (tiered bucket) -> separator line -> ellipsis run
+            //   -> malformed-entity fallback -> whitespace run (tiered bucket).
+            // Dots and whitespace both use the tiered bucket rule:
+            //   {2}→1, {3}→3, {4..10}→3, {>10}→20.
             let mut s = line_content_to_add.clone();
             if let Some(n) = normalize_layout_leader_runs(&s) {
                 s = n;
@@ -504,9 +496,6 @@ pub fn core_clean_text(
                 s = n;
             }
             if let Some(n) = normalize::normalize_malformed_entities(&s) {
-                s = n;
-            }
-            if let Some(n) = normalize::normalize_toc_whitespace_leader(&s) {
                 s = n;
             }
             if let Some(n) = normalize::normalize_whitespace_runs(&s) {
@@ -932,8 +921,8 @@ mod tests {
         let input = "Chapter ..........................................  85\n";
         let (cleaned, original_chars, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        // Whitespace collapse now folds the double space after `.....` to one.
-        assert_eq!(cleaned, "Chapter ..... 85\n");
+        // Tiered bucket: 42 dots (>10) → 20 dots; 2 spaces → 1 space.
+        assert_eq!(cleaned, "Chapter .................... 85\n");
         assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
         assert_eq!(kept_chars, original_chars);
     }
@@ -1026,16 +1015,18 @@ mod tests {
     }
 
     #[test]
-    fn core_clean_text_normalizes_toc_whitespace_leader() {
+    fn core_clean_text_normalizes_toc_whitespace_leader_via_bucket() {
         // A TOC line where title and page number are separated by a long
-        // whitespace run (PDF table-of-contents layout). Normalize to the
-        // dot-leader canonical form BEFORE the general whitespace collapse
-        // would destroy the signal.
+        // whitespace run (PDF table-of-contents layout). The tiered bucket
+        // whitespace rule bucketizes the run to 20 spaces (>10 → 20),
+        // preserving the visual TOC signal without a TOC-specific heuristic.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         let input = "Κεφάλαιο 1 Εισαγωγή                              5\n";
         let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, "Κεφάλαιο 1 Εισαγωγή ..... 5\n");
+        // Original had 30 spaces between "Εισαγωγή" and "5"; tiered → 20.
+        let expected = format!("Κεφάλαιο 1 Εισαγωγή{}5\n", " ".repeat(20));
+        assert_eq!(cleaned, expected);
     }
 
     #[test]
@@ -1120,9 +1111,9 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
         assert!(cleaned.lines().any(|l| l == "----"));
         // Outside the fence, separator collapses.
         assert!(cleaned.contains("\n---\n"));
-        // Math italic folds to ASCII.
-        assert!(cleaned.contains("Let x be"));
-        // Whitespace run collapses.
+        // Math italic folds to ASCII. Tiered whitespace: 4 spaces → 3.
+        assert!(cleaned.contains("Let x   be"));
+        // Original 4-space run no longer present.
         assert!(!cleaned.contains("x    be"));
         // Ligature folds.
         assert!(cleaned.contains("efficient"));

@@ -21,17 +21,13 @@ lazy_static! {
     /// Two or more U+2026 ellipsis chars.
     pub static ref ELLIPSIS_RUN_REGEX: Regex = Regex::new(r"…{2,}").unwrap();
 
-    /// Two or more ASCII spaces or tabs.
+    /// Two or more ASCII spaces or tabs — cheap presence check before we
+    /// run the tiered bucket rewriter.
     pub static ref WHITESPACE_RUN_REGEX: Regex = Regex::new(r"[ \t]{2,}").unwrap();
 
-    /// TOC whitespace leader: at least one non-whitespace char, then 4+
-    /// spaces/tabs, then a trailing page number at end of line. Captures
-    /// the title portion (lazy) as group 1, the number as group 2, so a
-    /// caller can rewrite the whitespace run to a canonical dot-leader.
-    /// Unifies whitespace-filled TOCs with dot-filled TOCs under the same
-    /// `.....` canonical form.
-    pub static ref TOC_WHITESPACE_LEADER_REGEX: Regex =
-        Regex::new(r"^(.*?\S)[ \t]{4,}(\d+\.?)[ \t]*$").unwrap();
+    /// Two or more ASCII dots — cheap presence check for dot-run tiered
+    /// bucket rewriting.
+    pub static ref DOT_RUN_2PLUS_REGEX: Regex = Regex::new(r"\.{2,}").unwrap();
 
     /// `&gt`, `&lt`, `&amp` NOT followed by `;` or alphanumeric.
     ///
@@ -348,41 +344,108 @@ pub fn normalize_ellipsis_runs(line: &str) -> Option<String> {
     }
 }
 
-/// If the line is a TOC entry whose title is separated from its page number by
-/// a run of 4+ whitespace chars (PDF "whitespace leader"), rewrite the
-/// whitespace run to the canonical dot-leader form `" ..... "`. Unifies
-/// whitespace-filled TOCs with dot-filled TOCs under the same canonical token.
-///
-/// Runs BEFORE `normalize_whitespace_runs` so the general collapse doesn't
-/// eat the leader before we can detect it.
-pub fn normalize_toc_whitespace_leader(line: &str) -> Option<String> {
-    // Cheap early-out: must contain a digit to be a page-number line.
-    if !line.chars().any(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    if !TOC_WHITESPACE_LEADER_REGEX.is_match(line) {
-        return None;
-    }
-    let out = TOC_WHITESPACE_LEADER_REGEX
-        .replace(line, "$1 ..... $2")
-        .into_owned();
-    if out == line {
-        None
-    } else {
-        Some(out)
+/// Tiered bucket for run-length normalization (2026-04-21 policy):
+///   1, 2    → 1  (single char / accidental double collapse to one)
+///   3       → 3  (unchanged — natural prose triple, e.g. ellipsis)
+///   4..=10  → 3  (medium run — treat as an intentional short leader)
+///   >10     → 20 (long run — treat as a long TOC-style leader, visible)
+/// Uniform across dots and whitespace so the BPE sees a small fixed
+/// vocabulary of leader-length tokens regardless of which fill a PDF used.
+pub fn bucket_run_length(n: usize) -> usize {
+    match n {
+        0 | 1 => n,
+        2 => 1,
+        3 => 3,
+        4..=10 => 3,
+        _ => 20,
     }
 }
 
-/// Collapse runs of `[ \t]{2,}` to a single space.
-pub fn normalize_whitespace_runs(line: &str) -> Option<String> {
-    if !WHITESPACE_RUN_REGEX.is_match(line) {
+/// Normalize runs of exactly `target` per the tiered bucket rule above.
+pub fn normalize_char_runs_tiered(line: &str, target: char) -> Option<String> {
+    if !line.contains(target) {
         return None;
     }
-    let out = WHITESPACE_RUN_REGEX.replace_all(line, " ").into_owned();
-    if out == line {
-        None
-    } else {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len());
+    let mut changed = false;
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i] == target {
+            let start = i;
+            while i < chars.len() && chars[i] == target {
+                i += 1;
+            }
+            let n = i - start;
+            let m = bucket_run_length(n);
+            if m != n {
+                changed = true;
+            }
+            for _ in 0..m {
+                out.push(target);
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    if changed {
         Some(out)
+    } else {
+        None
+    }
+}
+
+/// Normalize dot runs per the tiered bucket rule (uniform with whitespace).
+/// Legacy note: previously `\.{4,}` collapsed to `.....` (5 dots). Now:
+///   4..=10 → `...` (3 dots), >10 → `....................` (20 dots).
+pub fn normalize_dot_runs(line: &str) -> Option<String> {
+    if !DOT_RUN_2PLUS_REGEX.is_match(line) {
+        return None;
+    }
+    normalize_char_runs_tiered(line, '.')
+}
+
+/// Normalize runs of `[ \t]` per the tiered bucket rule. Mixed space+tab
+/// runs are treated as one run and emitted as N spaces (tabs are folded
+/// to spaces as a side effect — tabs carry no semantic meaning beyond
+/// layout, same as the whitespace run itself).
+pub fn normalize_whitespace_runs(line: &str) -> Option<String> {
+    // Fire if there's a 2+ whitespace run OR any tab at all (single-tab
+    // folds to single-space independently of run length).
+    if !WHITESPACE_RUN_REGEX.is_match(line) && !line.contains('\t') {
+        return None;
+    }
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len());
+    let mut changed = false;
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == ' ' || c == '\t' {
+            let start = i;
+            while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t') {
+                i += 1;
+            }
+            let n = i - start;
+            let m = bucket_run_length(n);
+            // A single tab collapsing to a single space is still a change.
+            let original: String = chars[start..start + n].iter().collect();
+            if m != n || original.contains('\t') {
+                changed = true;
+            }
+            for _ in 0..m {
+                out.push(' ');
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    if changed {
+        Some(out)
+    } else {
+        None
     }
 }
 
@@ -848,43 +911,76 @@ mod tests {
     }
 
     #[test]
-    fn toc_whitespace_leader_normalizes_to_dot_leader() {
-        // Classic PDF TOC: long space run between title and page number.
-        assert_eq!(
-            normalize_toc_whitespace_leader("Κεφάλαιο 1 Εισαγωγή                              5"),
-            Some("Κεφάλαιο 1 Εισαγωγή ..... 5".to_string())
-        );
-        // Tabs and trailing period both OK.
-        assert_eq!(
-            normalize_toc_whitespace_leader("Chapter 1 Intro\t\t\t\t\t12."),
-            Some("Chapter 1 Intro ..... 12.".to_string())
-        );
-        // Leading whitespace preserved.
-        assert_eq!(
-            normalize_toc_whitespace_leader("  Section 2.1 Background           17"),
-            Some("  Section 2.1 Background ..... 17".to_string())
-        );
-        // Short whitespace (< 4) is NOT TOC leader — should not match.
-        assert_eq!(normalize_toc_whitespace_leader("prose with 3   spaces"), None);
-        // Not a page-number trailing — should not match.
-        assert_eq!(normalize_toc_whitespace_leader("title    more text"), None);
-        // Line without digits — cheap early-out.
-        assert_eq!(normalize_toc_whitespace_leader("a    b    c"), None);
-        // Dot leader (existing rule handles it) — whitespace-leader doesn't match.
-        assert_eq!(normalize_toc_whitespace_leader("Title .......... 5"), None);
+    fn bucket_run_length_tiered() {
+        // {1, 2} → 1
+        assert_eq!(bucket_run_length(0), 0);
+        assert_eq!(bucket_run_length(1), 1);
+        assert_eq!(bucket_run_length(2), 1);
+        // {3} → 3 (unchanged)
+        assert_eq!(bucket_run_length(3), 3);
+        // {4..=10} → 3
+        for n in 4..=10 {
+            assert_eq!(bucket_run_length(n), 3, "n={n}");
+        }
+        // > 10 → 20
+        assert_eq!(bucket_run_length(11), 20);
+        assert_eq!(bucket_run_length(42), 20);
+        assert_eq!(bucket_run_length(200), 20);
     }
 
     #[test]
-    fn whitespace_runs_collapse() {
+    fn dot_runs_tiered() {
+        // 2 dots → 1
+        assert_eq!(normalize_dot_runs("word..here"), Some("word.here".to_string()));
+        // 3 dots unchanged — natural prose ellipsis
+        assert_eq!(normalize_dot_runs("wait... next"), None);
+        // 4–10 dots → 3
+        assert_eq!(normalize_dot_runs("Chapter 1 ..... 5"), Some("Chapter 1 ... 5".to_string()));
+        assert_eq!(normalize_dot_runs("..........heads"), Some("...heads".to_string())); // 10 dots
+        // >10 dots → 20
+        let long = "x".to_string() + &".".repeat(42) + "y";
+        let expected = "x".to_string() + &".".repeat(20) + "y";
+        assert_eq!(normalize_dot_runs(&long), Some(expected));
+        // No dots — fast path
+        assert_eq!(normalize_dot_runs("no dots here"), None);
+        // Single dot (sentence end) — unchanged
+        assert_eq!(normalize_dot_runs("end of sentence."), None);
+    }
+
+    #[test]
+    fn whitespace_runs_tiered() {
+        // 2 spaces → 1
         assert_eq!(
-            normalize_whitespace_runs("a    b"),
+            normalize_whitespace_runs("a  b"),
             Some("a b".to_string())
         );
+        // 3 spaces — unchanged
+        assert_eq!(normalize_whitespace_runs("a   b"), None);
+        // 4 spaces → 3
+        assert_eq!(
+            normalize_whitespace_runs("a    b"),
+            Some("a   b".to_string())
+        );
+        // 10 spaces → 3
+        assert_eq!(
+            normalize_whitespace_runs("a          b"),
+            Some("a   b".to_string())
+        );
+        // 11+ spaces → 20
+        let long = format!("a{}b", " ".repeat(42));
+        let expected = format!("a{}b", " ".repeat(20));
+        assert_eq!(normalize_whitespace_runs(&long), Some(expected));
+        // Tabs always fold to spaces, then bucket
         assert_eq!(
             normalize_whitespace_runs("a\t\tb"),
             Some("a b".to_string())
         );
-        assert_eq!(normalize_whitespace_runs("a b"), None);
+        assert_eq!(
+            normalize_whitespace_runs("a\tb"),
+            Some("a b".to_string())
+        );
+        // No runs
+        assert_eq!(normalize_whitespace_runs("a b c"), None);
         assert_eq!(normalize_whitespace_runs(""), None);
     }
 
