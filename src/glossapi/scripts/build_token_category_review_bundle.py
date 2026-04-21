@@ -30,7 +30,7 @@ _SAFE_LABEL_RE = re.compile(r"[^a-z0-9._-]+")
 #   [CONTEXT_AFTER_NORMALIZATION] (optional, normalization-ish modes)
 #                      — same window, matched span replaced with canonical
 
-NEW_TASK_CASE_LINE_WINDOW = 30
+NEW_TASK_CASE_LINE_WINDOW = 100
 
 
 _SEPARATOR_EXISTING_CLEANER_NOTE = (
