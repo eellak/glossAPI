@@ -145,6 +145,13 @@ fn allowed_double(cp: u32) -> bool {
     ALLOWED_DOUBLE.contains(&cp)
 }
 
+#[inline(always)]
+fn commit_bad_double_run(cp: u32, run_len: u64, bad_double: &mut u64) {
+    if cp != 0 && run_len == 2 && !allowed_double(cp) {
+        *bad_double += 1;
+    }
+}
+
 #[inline]
 fn is_table_line_trimmed(trimmed: &str) -> bool {
     // A simple check equivalent to /^\s*\|.*\|\s*$/ after trimming
@@ -3367,6 +3374,7 @@ fn analyse_bytes(buf: &[u8]) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u6
     let mut idx = 0;
     let mut prev_cp = 0u32;
     let mut run_len = 0u64;
+    let mut same_cp_run_len = 0u64;
     let mut run_is_vowel = false;
     let mut word_len = 0u64;
 
@@ -3377,10 +3385,12 @@ fn analyse_bytes(buf: &[u8]) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u6
             continue;
         }
         if cp == 0 || !is_greek(cp) {
+            commit_bad_double_run(prev_cp, same_cp_run_len, &mut bad_double);
             if run_len > max_run {
                 max_run = run_len;
             }
             run_len = 0;
+            same_cp_run_len = 0;
             if word_len > 0 {
                 total_word_count += 1;
                 if word_len < SHORT_WORD_LIMIT {
@@ -3436,11 +3446,17 @@ fn analyse_bytes(buf: &[u8]) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u6
                 invalid_bigram += 1;
             }
         }
-        if prev_cp == cp && !allowed_double(cp) {
-            bad_double += 1;
+        if prev_cp == 0 {
+            same_cp_run_len = 1;
+        } else if prev_cp == cp {
+            same_cp_run_len += 1;
+        } else {
+            commit_bad_double_run(prev_cp, same_cp_run_len, &mut bad_double);
+            same_cp_run_len = 1;
         }
         prev_cp = cp;
     }
+    commit_bad_double_run(prev_cp, same_cp_run_len, &mut bad_double);
     if run_len >= 4 {
         let pen = run_len - 3;
         if run_is_vowel {
@@ -4349,6 +4365,11 @@ pub fn export_token_category_debug_pages_internal(
 mod tests {
     use super::*;
 
+    fn test_bad_double(text: &str) -> u64 {
+        let (_, _, _, bad_double, _, _, _, _, _, _, _, _) = analyse_bytes(text.as_bytes());
+        bad_double
+    }
+
     fn compiled_spec(category: &str, family: &str, pattern: &str) -> CompiledTokenCategorySpec {
         CompiledTokenCategorySpec {
             category: category.to_string(),
@@ -4439,5 +4460,24 @@ mod tests {
         assert_eq!(candidates[0].page_kind, "real_page");
         assert_eq!(candidates[0].page_number, 6);
         assert_eq!(candidates[0].page_index_in_file, 2);
+    }
+
+    #[test]
+    fn bad_double_counts_only_exact_illegal_doubles() {
+        assert_eq!(test_bad_double("αα"), 1);
+        assert_eq!(test_bad_double("ααββ"), 2);
+    }
+
+    #[test]
+    fn bad_double_ignores_allowed_greek_doubles() {
+        assert_eq!(test_bad_double("λλ"), 0);
+        assert_eq!(test_bad_double("γγ"), 0);
+    }
+
+    #[test]
+    fn bad_double_ignores_long_expressive_runs() {
+        assert_eq!(test_bad_double("ααα"), 0);
+        assert_eq!(test_bad_double("αααα"), 0);
+        assert_eq!(test_bad_double("ββββ!"), 0);
     }
 }
