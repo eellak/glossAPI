@@ -489,7 +489,10 @@ pub fn core_clean_text(
             // Chain line-level normalizations. Each is a no-op if its pattern
             // doesn't match. Order matters:
             //   dot-leader (existing) -> separator line -> ellipsis run ->
-            //   malformed-entity fallback -> whitespace run.
+            //   malformed-entity fallback -> TOC whitespace leader ->
+            //   whitespace run.
+            // TOC whitespace leader MUST run before whitespace-run collapse
+            // or the general collapse will eat the 4+-space run first.
             let mut s = line_content_to_add.clone();
             if let Some(n) = normalize_layout_leader_runs(&s) {
                 s = n;
@@ -501,6 +504,9 @@ pub fn core_clean_text(
                 s = n;
             }
             if let Some(n) = normalize::normalize_malformed_entities(&s) {
+                s = n;
+            }
+            if let Some(n) = normalize::normalize_toc_whitespace_leader(&s) {
                 s = n;
             }
             if let Some(n) = normalize::normalize_whitespace_runs(&s) {
@@ -1017,6 +1023,19 @@ mod tests {
         let input = "Let 𝑥 + 𝑦 = 𝑧.\n";
         let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
         assert_eq!(cleaned, "Let x + y = z.\n");
+    }
+
+    #[test]
+    fn core_clean_text_normalizes_toc_whitespace_leader() {
+        // A TOC line where title and page number are separated by a long
+        // whitespace run (PDF table-of-contents layout). Normalize to the
+        // dot-leader canonical form BEFORE the general whitespace collapse
+        // would destroy the signal.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "Κεφάλαιο 1 Εισαγωγή                              5\n";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, "Κεφάλαιο 1 Εισαγωγή ..... 5\n");
     }
 
     #[test]

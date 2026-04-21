@@ -24,6 +24,15 @@ lazy_static! {
     /// Two or more ASCII spaces or tabs.
     pub static ref WHITESPACE_RUN_REGEX: Regex = Regex::new(r"[ \t]{2,}").unwrap();
 
+    /// TOC whitespace leader: at least one non-whitespace char, then 4+
+    /// spaces/tabs, then a trailing page number at end of line. Captures
+    /// the title portion (lazy) as group 1, the number as group 2, so a
+    /// caller can rewrite the whitespace run to a canonical dot-leader.
+    /// Unifies whitespace-filled TOCs with dot-filled TOCs under the same
+    /// `.....` canonical form.
+    pub static ref TOC_WHITESPACE_LEADER_REGEX: Regex =
+        Regex::new(r"^(.*?\S)[ \t]{4,}(\d+\.?)[ \t]*$").unwrap();
+
     /// `&gt`, `&lt`, `&amp` NOT followed by `;` or alphanumeric.
     ///
     /// Rust's `regex` crate has no look-ahead, so we capture the following
@@ -332,6 +341,31 @@ pub fn normalize_ellipsis_runs(line: &str) -> Option<String> {
         return None;
     }
     let out = ELLIPSIS_RUN_REGEX.replace_all(line, "…").into_owned();
+    if out == line {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+/// If the line is a TOC entry whose title is separated from its page number by
+/// a run of 4+ whitespace chars (PDF "whitespace leader"), rewrite the
+/// whitespace run to the canonical dot-leader form `" ..... "`. Unifies
+/// whitespace-filled TOCs with dot-filled TOCs under the same canonical token.
+///
+/// Runs BEFORE `normalize_whitespace_runs` so the general collapse doesn't
+/// eat the leader before we can detect it.
+pub fn normalize_toc_whitespace_leader(line: &str) -> Option<String> {
+    // Cheap early-out: must contain a digit to be a page-number line.
+    if !line.chars().any(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if !TOC_WHITESPACE_LEADER_REGEX.is_match(line) {
+        return None;
+    }
+    let out = TOC_WHITESPACE_LEADER_REGEX
+        .replace(line, "$1 ..... $2")
+        .into_owned();
     if out == line {
         None
     } else {
@@ -811,6 +845,33 @@ mod tests {
         );
         assert_eq!(normalize_ellipsis_runs("single …"), None);
         assert_eq!(normalize_ellipsis_runs("no ellipsis"), None);
+    }
+
+    #[test]
+    fn toc_whitespace_leader_normalizes_to_dot_leader() {
+        // Classic PDF TOC: long space run between title and page number.
+        assert_eq!(
+            normalize_toc_whitespace_leader("Κεφάλαιο 1 Εισαγωγή                              5"),
+            Some("Κεφάλαιο 1 Εισαγωγή ..... 5".to_string())
+        );
+        // Tabs and trailing period both OK.
+        assert_eq!(
+            normalize_toc_whitespace_leader("Chapter 1 Intro\t\t\t\t\t12."),
+            Some("Chapter 1 Intro ..... 12.".to_string())
+        );
+        // Leading whitespace preserved.
+        assert_eq!(
+            normalize_toc_whitespace_leader("  Section 2.1 Background           17"),
+            Some("  Section 2.1 Background ..... 17".to_string())
+        );
+        // Short whitespace (< 4) is NOT TOC leader — should not match.
+        assert_eq!(normalize_toc_whitespace_leader("prose with 3   spaces"), None);
+        // Not a page-number trailing — should not match.
+        assert_eq!(normalize_toc_whitespace_leader("title    more text"), None);
+        // Line without digits — cheap early-out.
+        assert_eq!(normalize_toc_whitespace_leader("a    b    c"), None);
+        // Dot leader (existing rule handles it) — whitespace-leader doesn't match.
+        assert_eq!(normalize_toc_whitespace_leader("Title .......... 5"), None);
     }
 
     #[test]
