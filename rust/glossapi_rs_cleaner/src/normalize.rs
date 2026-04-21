@@ -344,19 +344,21 @@ pub fn normalize_ellipsis_runs(line: &str) -> Option<String> {
     }
 }
 
-/// Tiered bucket for run-length normalization (2026-04-21 policy):
+/// Tiered bucket for run-length normalization (2026-04-21 policy, v2):
 ///   1, 2    → 1  (single char / accidental double collapse to one)
 ///   3       → 3  (unchanged — natural prose triple, e.g. ellipsis)
-///   4..=10  → 3  (medium run — treat as an intentional short leader)
-///   >10     → 20 (long run — treat as a long TOC-style leader, visible)
-/// Uniform across dots and whitespace so the BPE sees a small fixed
-/// vocabulary of leader-length tokens regardless of which fill a PDF used.
+///   4..=20  → 5  (medium run — canonical "short leader" form)
+///   >20     → 20 (long run — canonical "long leader" form)
+/// Target token vocabulary for dots: `.`, `...`, `.....`,
+/// `....................` — four forms. Uniform across dots and
+/// whitespace so the BPE sees a small fixed vocabulary of leader
+/// tokens regardless of which fill a PDF used or how long the run was.
 pub fn bucket_run_length(n: usize) -> usize {
     match n {
         0 | 1 => n,
         2 => 1,
         3 => 3,
-        4..=10 => 3,
+        4..=20 => 5,
         _ => 20,
     }
 }
@@ -407,12 +409,15 @@ pub fn normalize_dot_runs(line: &str) -> Option<String> {
 }
 
 /// Normalize runs of `[ \t]` per the tiered bucket rule. Mixed space+tab
-/// runs are treated as one run and emitted as N spaces (tabs are folded
-/// to spaces as a side effect — tabs carry no semantic meaning beyond
-/// layout, same as the whitespace run itself).
+/// runs are treated as one run and emitted as N spaces.
+///
+/// Leading whitespace at line start is preserved verbatim — protects
+/// markdown indented code blocks (4-space indent), list indentation,
+/// nested list indent, and verse indent. Only INTERIOR whitespace runs
+/// (those that follow a non-whitespace character on the same line) are
+/// bucketized.
 pub fn normalize_whitespace_runs(line: &str) -> Option<String> {
-    // Fire if there's a 2+ whitespace run OR any tab at all (single-tab
-    // folds to single-space independently of run length).
+    // Fire if there's a 2+ whitespace run OR any non-leading tab.
     if !WHITESPACE_RUN_REGEX.is_match(line) && !line.contains('\t') {
         return None;
     }
@@ -420,6 +425,14 @@ pub fn normalize_whitespace_runs(line: &str) -> Option<String> {
     let mut out = String::with_capacity(line.len());
     let mut changed = false;
     let mut i = 0usize;
+
+    // Copy leading whitespace verbatim (code-block / list-indent preservation).
+    while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t') {
+        out.push(chars[i]);
+        i += 1;
+    }
+
+    // Bucketize interior + trailing whitespace runs.
     while i < chars.len() {
         let c = chars[i];
         if c == ' ' || c == '\t' {
@@ -429,7 +442,8 @@ pub fn normalize_whitespace_runs(line: &str) -> Option<String> {
             }
             let n = i - start;
             let m = bucket_run_length(n);
-            // A single tab collapsing to a single space is still a change.
+            // A single interior tab collapsing to a single space is still a
+            // change (tabs carry no semantic value in markdown prose).
             let original: String = chars[start..start + n].iter().collect();
             if m != n || original.contains('\t') {
                 changed = true;
@@ -911,36 +925,51 @@ mod tests {
     }
 
     #[test]
-    fn bucket_run_length_tiered() {
-        // {1, 2} → 1
+    fn bucket_run_length_tiered_v2() {
+        // {0, 1} → unchanged
         assert_eq!(bucket_run_length(0), 0);
         assert_eq!(bucket_run_length(1), 1);
+        // {2} → 1
         assert_eq!(bucket_run_length(2), 1);
-        // {3} → 3 (unchanged)
+        // {3} → 3 (natural prose triple, e.g. ellipsis)
         assert_eq!(bucket_run_length(3), 3);
-        // {4..=10} → 3
-        for n in 4..=10 {
-            assert_eq!(bucket_run_length(n), 3, "n={n}");
+        // {4..=20} → 5
+        for n in 4..=20 {
+            assert_eq!(bucket_run_length(n), 5, "n={n}");
         }
-        // > 10 → 20
-        assert_eq!(bucket_run_length(11), 20);
+        // > 20 → 20
+        assert_eq!(bucket_run_length(21), 20);
         assert_eq!(bucket_run_length(42), 20);
         assert_eq!(bucket_run_length(200), 20);
     }
 
     #[test]
-    fn dot_runs_tiered() {
+    fn dot_runs_tiered_v2() {
         // 2 dots → 1
-        assert_eq!(normalize_dot_runs("word..here"), Some("word.here".to_string()));
+        assert_eq!(
+            normalize_dot_runs("word..here"),
+            Some("word.here".to_string())
+        );
         // 3 dots unchanged — natural prose ellipsis
         assert_eq!(normalize_dot_runs("wait... next"), None);
-        // 4–10 dots → 3
-        assert_eq!(normalize_dot_runs("Chapter 1 ..... 5"), Some("Chapter 1 ... 5".to_string()));
-        assert_eq!(normalize_dot_runs("..........heads"), Some("...heads".to_string())); // 10 dots
-        // >10 dots → 20
+        // 4 dots → 5 (rounding up to canonical short-leader form)
+        assert_eq!(
+            normalize_dot_runs("Chapter 1 .... 5"),
+            Some("Chapter 1 ..... 5".to_string())
+        );
+        // 10 dots → 5
+        assert_eq!(
+            normalize_dot_runs("..........heads"),
+            Some(".....heads".to_string())
+        );
+        // 20 dots → 5 (edge of the short-leader bucket)
+        let twenty = format!("x{}y", ".".repeat(20));
+        let expected = format!("x{}y", ".".repeat(5));
+        assert_eq!(normalize_dot_runs(&twenty), Some(expected));
+        // >20 dots → 20
         let long = "x".to_string() + &".".repeat(42) + "y";
-        let expected = "x".to_string() + &".".repeat(20) + "y";
-        assert_eq!(normalize_dot_runs(&long), Some(expected));
+        let expected_long = "x".to_string() + &".".repeat(20) + "y";
+        assert_eq!(normalize_dot_runs(&long), Some(expected_long));
         // No dots — fast path
         assert_eq!(normalize_dot_runs("no dots here"), None);
         // Single dot (sentence end) — unchanged
@@ -948,7 +977,7 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_runs_tiered() {
+    fn whitespace_runs_tiered_v2_interior_only() {
         // 2 spaces → 1
         assert_eq!(
             normalize_whitespace_runs("a  b"),
@@ -956,21 +985,22 @@ mod tests {
         );
         // 3 spaces — unchanged
         assert_eq!(normalize_whitespace_runs("a   b"), None);
-        // 4 spaces → 3
+        // 4 spaces → 5
         assert_eq!(
             normalize_whitespace_runs("a    b"),
-            Some("a   b".to_string())
+            Some("a     b".to_string())
         );
-        // 10 spaces → 3
+        // 20 spaces → 5
+        let twenty = format!("a{}b", " ".repeat(20));
         assert_eq!(
-            normalize_whitespace_runs("a          b"),
-            Some("a   b".to_string())
+            normalize_whitespace_runs(&twenty),
+            Some("a     b".to_string())
         );
-        // 11+ spaces → 20
+        // 21+ spaces → 20
         let long = format!("a{}b", " ".repeat(42));
         let expected = format!("a{}b", " ".repeat(20));
         assert_eq!(normalize_whitespace_runs(&long), Some(expected));
-        // Tabs always fold to spaces, then bucket
+        // Tabs always fold to spaces
         assert_eq!(
             normalize_whitespace_runs("a\t\tb"),
             Some("a b".to_string())
@@ -982,6 +1012,34 @@ mod tests {
         // No runs
         assert_eq!(normalize_whitespace_runs("a b c"), None);
         assert_eq!(normalize_whitespace_runs(""), None);
+    }
+
+    #[test]
+    fn whitespace_runs_preserves_leading_indent() {
+        // Markdown indented code block: 4-space indent preserved.
+        assert_eq!(
+            normalize_whitespace_runs("    def add(x, y):"),
+            None
+        );
+        // 8-space indent (nested code) preserved.
+        assert_eq!(
+            normalize_whitespace_runs("        return x + y"),
+            None
+        );
+        // Leading tab preserved (list-indent convention).
+        assert_eq!(
+            normalize_whitespace_runs("\titem"),
+            None
+        );
+        // Leading indent + interior run: leading kept, interior bucketed.
+        assert_eq!(
+            normalize_whitespace_runs("    Chapter 1    title"),
+            Some("    Chapter 1     title".to_string())
+        );
+        // Leading indent + TOC-style long run: leading kept, long run → 20.
+        let input = format!("    Chapter 1{}5", " ".repeat(30));
+        let expected = format!("    Chapter 1{}5", " ".repeat(20));
+        assert_eq!(normalize_whitespace_runs(&input), Some(expected));
     }
 
     #[test]

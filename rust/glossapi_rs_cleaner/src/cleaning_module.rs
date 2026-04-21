@@ -1111,8 +1111,8 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
         assert!(cleaned.lines().any(|l| l == "----"));
         // Outside the fence, separator collapses.
         assert!(cleaned.contains("\n---\n"));
-        // Math italic folds to ASCII. Tiered whitespace: 4 spaces → 3.
-        assert!(cleaned.contains("Let x   be"));
+        // Math italic folds to ASCII. Tiered whitespace: 4 spaces → 5.
+        assert!(cleaned.contains("Let x     be"));
         // Original 4-space run no longer present.
         assert!(!cleaned.contains("x    be"));
         // Ligature folds.
