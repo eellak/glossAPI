@@ -21,6 +21,18 @@ source /home/foivos/venvs/glossapi-corpus-clean/bin/activate
 
 log() { echo "[$(date -Is)] $*"; }
 
+### STAGE 1 gate — wait for the glossapi combined-driver to finish
+
+GLOSSAPI_PID_FILE=/home/foivos/runs/raw_clean_stats_20260422.pid
+if [ -f "$GLOSSAPI_PID_FILE" ]; then
+  PID=$(cat "$GLOSSAPI_PID_FILE")
+  while ps -p "$PID" > /dev/null 2>&1; do
+    log "waiting for glossapi-clean (pid $PID) to finish..."
+    sleep 120
+  done
+  log "glossapi-clean done"
+fi
+
 ### STAGE 2 — Clean HPLT portion (from v2; we only add new per-line + drops)
 if [ ! -d "$HPLT_SHARDS" ] || [ $(ls "$HPLT_SHARDS"/*.txt.gz 2>/dev/null | wc -l) -lt 200 ]; then
   log "STAGE 2 — cleaning HPLT"
@@ -74,6 +86,19 @@ python3 /home/foivos/glossAPI-development/cleaning_scripts/train_bpe_from_text_s
   --base-tokenizer-dir "$BASE_SNAPSHOT_DIR" \
   --output-dir "$RUN_ROOT/bpe_continuous_glossapi_plus_hplt_70_30_cleaned"
 log "3.4 done"
+
+### STAGE 3.5 — per-dataset cleaning concentration analysis
+
+log "STAGE 3.5 — cleaning concentration analysis (per-dataset + per-doc)"
+python3 /home/foivos/glossAPI-development/cleaning_scripts/analyze_cleaning_concentration.py \
+  --stats-dir /home/foivos/runs/raw_clean_stats_20260422/stats \
+  --output-dir /home/foivos/runs/raw_clean_stats_20260422/analysis
+if [ -d "$HPLT_STATS_DIR/stats" ]; then
+  python3 /home/foivos/glossAPI-development/cleaning_scripts/analyze_cleaning_concentration.py \
+    --stats-dir "$HPLT_STATS_DIR/stats" \
+    --output-dir "$HPLT_STATS_DIR/analysis"
+fi
+log "STAGE 3.5 — analysis done"
 
 ### STAGE 4 — Per-tokenizer id_map + quick stats
 
