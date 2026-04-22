@@ -50,42 +50,55 @@ fi
 
 ### STAGE 3 — Train 4 tokenizers sequentially
 
+run_if_needed() {
+  local out=$1; shift
+  if [ -f "$out/tokenizer.json" ]; then
+    log "  skipping (already exists): $out"
+  else
+    "$@"
+  fi
+}
+
 log "STAGE 3.1 — fresh glossapi-only"
-python3 /home/foivos/glossAPI-development/cleaning_scripts/train_bpe_from_text_shards.py \
-  --mode fresh \
-  --shards-dir "$GLOSSAPI_SHARDS" \
-  --vocab-size 50000 \
-  --output-dir "$RUN_ROOT/bpe_fresh_glossapi_only_cleaned"
+run_if_needed "$RUN_ROOT/bpe_fresh_glossapi_only_cleaned" \
+  python3 /home/foivos/glossAPI-development/cleaning_scripts/train_bpe_from_text_shards.py \
+    --mode fresh \
+    --shards-dir "$GLOSSAPI_SHARDS" \
+    --vocab-size 50000 \
+    --output-dir "$RUN_ROOT/bpe_fresh_glossapi_only_cleaned"
 log "3.1 done"
 
 log "STAGE 3.2 — fresh glossapi+hplt 70/30"
-python3 /home/foivos/glossAPI-development/cleaning_scripts/train_bpe_from_text_shards.py \
-  --mode fresh \
-  --shards-dir "$GLOSSAPI_SHARDS" \
-  --hplt-shards-dir "$HPLT_SHARDS" \
-  --hplt-ratio 0.3 \
-  --vocab-size 50000 \
-  --output-dir "$RUN_ROOT/bpe_fresh_glossapi_plus_hplt_70_30_cleaned"
+run_if_needed "$RUN_ROOT/bpe_fresh_glossapi_plus_hplt_70_30_cleaned" \
+  python3 /home/foivos/glossAPI-development/cleaning_scripts/train_bpe_from_text_shards.py \
+    --mode fresh \
+    --shards-dir "$GLOSSAPI_SHARDS" \
+    --hplt-shards-dir "$HPLT_SHARDS" \
+    --hplt-ratio 0.3 \
+    --vocab-size 50000 \
+    --output-dir "$RUN_ROOT/bpe_fresh_glossapi_plus_hplt_70_30_cleaned"
 log "3.2 done"
 
 log "STAGE 3.3 — continuous glossapi-only (target 156672)"
-python3 /home/foivos/glossAPI-development/cleaning_scripts/train_bpe_from_text_shards.py \
-  --mode continuous \
-  --shards-dir "$GLOSSAPI_SHARDS" \
-  --target-vocab-size 156672 \
-  --base-tokenizer-dir "$BASE_SNAPSHOT_DIR" \
-  --output-dir "$RUN_ROOT/bpe_continuous_glossapi_only_cleaned"
+run_if_needed "$RUN_ROOT/bpe_continuous_glossapi_only_cleaned" \
+  python3 /home/foivos/glossAPI-development/cleaning_scripts/train_bpe_from_text_shards.py \
+    --mode continuous \
+    --shards-dir "$GLOSSAPI_SHARDS" \
+    --target-vocab-size 156672 \
+    --base-tokenizer-dir "$BASE_SNAPSHOT_DIR" \
+    --output-dir "$RUN_ROOT/bpe_continuous_glossapi_only_cleaned"
 log "3.3 done"
 
 log "STAGE 3.4 — continuous glossapi+hplt 70/30 (target 156672)"
-python3 /home/foivos/glossAPI-development/cleaning_scripts/train_bpe_from_text_shards.py \
-  --mode continuous \
-  --shards-dir "$GLOSSAPI_SHARDS" \
-  --hplt-shards-dir "$HPLT_SHARDS" \
-  --hplt-ratio 0.3 \
-  --target-vocab-size 156672 \
-  --base-tokenizer-dir "$BASE_SNAPSHOT_DIR" \
-  --output-dir "$RUN_ROOT/bpe_continuous_glossapi_plus_hplt_70_30_cleaned"
+run_if_needed "$RUN_ROOT/bpe_continuous_glossapi_plus_hplt_70_30_cleaned" \
+  python3 /home/foivos/glossAPI-development/cleaning_scripts/train_bpe_from_text_shards.py \
+    --mode continuous \
+    --shards-dir "$GLOSSAPI_SHARDS" \
+    --hplt-shards-dir "$HPLT_SHARDS" \
+    --hplt-ratio 0.3 \
+    --target-vocab-size 156672 \
+    --base-tokenizer-dir "$BASE_SNAPSHOT_DIR" \
+    --output-dir "$RUN_ROOT/bpe_continuous_glossapi_plus_hplt_70_30_cleaned"
 log "3.4 done"
 
 ### STAGE 3.5 — per-dataset cleaning concentration analysis

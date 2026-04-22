@@ -68,11 +68,19 @@ def iter_shards(
 
     def _iter_dir(p: Path) -> Iterator[str]:
         for f in sorted(p.glob("*.txt.gz")):
-            with gzip.open(f, "rt", encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    line = line.rstrip("\n")
-                    if line:
-                        yield line
+            try:
+                with gzip.open(f, "rt", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        line = line.rstrip("\n")
+                        if line:
+                            yield line
+            except (EOFError, OSError) as exc:
+                # Tolerate shards that were interrupted mid-write — skip
+                # unread remainder but keep everything consumed before the
+                # corruption marker. Log once per bad file.
+                print(f"[iter] WARN: {f.name} corrupt ({exc}); skipping remainder",
+                      flush=True)
+                continue
 
     glossapi_iter = _iter_dir(glossapi_dir) if glossapi_dir else iter(())
     hplt_iter = _iter_dir(hplt_dir) if hplt_dir else iter(())
