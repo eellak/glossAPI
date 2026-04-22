@@ -104,16 +104,18 @@ RESPONSE_SCHEMA: Dict[str, Any] = {
 }
 
 
-def _smart_sample_context(text: str, target_chars: int = 8000, n_chunks: int = 4) -> str:
+def _smart_sample_context(text: str, target_chars: int = 500_000, n_chunks: int = 4) -> str:
     """Build the [CONTEXT] payload for Gemini.
 
-    - Docs ≤ target_chars: pass through in full.
-    - Docs > target_chars: take n_chunks evenly-spaced chunks of
-      (target_chars / n_chunks) each. This gives beginning, middle-
-      early, middle-late, and end coverage, which matters for judging
-      text_partition ("half_half", "mostly_good_with_bad_patches")
-      where head-only or head+tail truncation would miss defects
-      concentrated in the body.
+    - Docs ≤ target_chars: pass through in full. Gemini 2.5 Flash has a
+      1M-token context window; Greek is ~3 chars/token so 500k chars ≈
+      170k tokens — well inside the standard <200k input-price tier.
+      Passing the whole doc lets Gemini judge text_partition accurately
+      (a multi-chunk sample of the same doc would hide defects in the
+      gaps).
+    - Docs > target_chars (rare — p99 doc length is 1.48M chars, only
+      top ~1% exceed 500k): take n_chunks evenly-spaced chunks. This
+      preserves beginning / middle-early / middle-late / end coverage.
 
     Prepends a metadata line so Gemini knows the doc's full length
     and sampling strategy — affects judgment of too_short_to_be_useful
@@ -124,7 +126,6 @@ def _smart_sample_context(text: str, target_chars: int = 8000, n_chunks: int = 4
     if total <= target_chars:
         return f"[doc length: {total} chars, shown in full]\n\n{text}"
     chunk_size = target_chars // n_chunks
-    # Evenly-spaced chunk starts; each chunk size up to chunk_size.
     positions = [i * total // n_chunks for i in range(n_chunks)]
     chunks = [text[p : p + chunk_size] for p in positions]
     sampled = "\n[...]\n".join(chunks)
@@ -186,9 +187,10 @@ def main(argv=None) -> int:
     parser.add_argument("--model", default="gemini-2.5-flash")
     parser.add_argument("--workers", type=int, default=10)
     parser.add_argument("--api-key-env", default="GEMINI_API_KEY")
-    parser.add_argument("--context-chars", type=int, default=8000,
-                        help="Max [CONTEXT] chars per prompt. Short docs pass through "
-                             "in full; long docs get multi-chunk sampled. Default 8000.")
+    parser.add_argument("--context-chars", type=int, default=500_000,
+                        help="Pass through in full if ≤ N chars (default 500k ≈ 170k "
+                             "tokens — comfortable inside Flash's 1M context + standard "
+                             "price tier). Docs > N get multi-chunk sampled as fallback.")
     parser.add_argument("--context-chunks", type=int, default=4,
                         help="Number of evenly-spaced chunks for long docs. Default 4.")
     parser.add_argument("--limit", type=int, default=0,
