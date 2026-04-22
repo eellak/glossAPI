@@ -51,13 +51,34 @@ def _load_thresholds(path: Path) -> Dict[str, Optional[int]]:
     }
 
 
-def _drop_reason(counters, thresholds):
-    for name, threshold in thresholds.items():
+def _doc_drop_reason(doc_counters, thresholds):
+    """Only font_name_literal and glyph_font_like decide DOC-level drop.
+    script_residue_restricted is applied at the PAGE level — per
+    `feedback_dont_generalize_beyond_test_parameters.md`, Gemini's
+    wave reviewed script_residue at synthetic-page granularity, so we
+    must apply the threshold at that same granularity, not at doc
+    level (which would be an unreviewed generalization).
+    """
+    for name in ("font_name_literal", "glyph_font_like"):
+        threshold = thresholds.get(name)
         if threshold is None:
             continue
-        if counters.get(name, 0) >= threshold:
+        if doc_counters.get(name, 0) >= threshold:
             return f"counter:{name}"
     return ""
+
+
+def _page_script_residue_count(page_matches_json: str) -> int:
+    try:
+        matches = json.loads(page_matches_json or "[]")
+    except Exception:
+        return 0
+    n = 0
+    for match in matches:
+        for c in list(match.get("categories") or []):
+            if c == "script_residue_restricted":
+                n += 1
+    return n
 
 
 def _process_one_parquet(
@@ -122,7 +143,7 @@ def _process_one_parquet(
                     text, str(scratch), category_specs_path,
                     source_path, source_stem, base_stem,
                 )
-                counters: Dict[str, int] = {
+                doc_counters: Dict[str, int] = {
                     "font_name_literal": 0,
                     "glyph_font_like": 0,
                     "script_residue_restricted": 0,
@@ -130,10 +151,14 @@ def _process_one_parquet(
                 for page in pages:
                     for match in json.loads(page.get("matches_json") or "[]"):
                         for category in list(match.get("categories") or []):
-                            if category in counters:
-                                counters[category] += 1
+                            if category in doc_counters:
+                                doc_counters[category] += 1
 
-                reason = _drop_reason(counters, thresholds)
+                # Doc-level drop ONLY for font/glyph (reviewed at doc/page-
+                # correlated level and threshold is high enough that
+                # doc-level aggregation is a strict-more-aggressive
+                # proxy for page-level).
+                reason = _doc_drop_reason(doc_counters, thresholds)
                 if reason:
                     rows_dropped[reason] = rows_dropped.get(reason, 0) + 1
                     total_chars_dropped_by_drop += chars_before
@@ -145,14 +170,35 @@ def _process_one_parquet(
                         "chars_after": 0,
                         "chars_removed": chars_before,
                         "pct_removed": 100.0,
-                        "counter_font_marker": counters["font_name_literal"],
-                        "counter_glyph_marker": counters["glyph_font_like"],
-                        "counter_script_residue": counters["script_residue_restricted"],
+                        "counter_font_marker": doc_counters["font_name_literal"],
+                        "counter_glyph_marker": doc_counters["glyph_font_like"],
+                        "counter_script_residue": doc_counters["script_residue_restricted"],
                         "drop_reason": reason,
                     }) + "\n")
                     continue
 
-                cleaned = cleaner.clean_text(text, scripts_to_keep)
+                # Page-level drop for script_residue — Gemini reviewed
+                # at synthetic-page granularity with threshold=9, so we
+                # apply at that same granularity. Concatenate surviving
+                # pages' text, send that to the cleaner.
+                sr_threshold = thresholds.get("script_residue_restricted")
+                pages_dropped_script_residue = 0
+                chars_dropped_script_residue_pages = 0
+                if sr_threshold is not None and len(pages) > 1:
+                    surviving_page_text: List[str] = []
+                    for page in pages:
+                        page_sr = _page_script_residue_count(page.get("matches_json", ""))
+                        if page_sr >= sr_threshold:
+                            pages_dropped_script_residue += 1
+                            chars_dropped_script_residue_pages += int(
+                                page.get("page_char_count", 0) or 0)
+                            continue
+                        surviving_page_text.append(str(page.get("page_text", "")))
+                    text_for_cleaner = "\n".join(surviving_page_text) if pages_dropped_script_residue else text
+                else:
+                    text_for_cleaner = text
+
+                cleaned = cleaner.clean_text(text_for_cleaner, scripts_to_keep)
                 if not cleaned.strip() or cleaned.strip().startswith("<!-- text-missing"):
                     rows_dropped["cleaner_empty"] = rows_dropped.get("cleaner_empty", 0) + 1
                     total_chars_dropped_by_drop += chars_before
@@ -164,9 +210,11 @@ def _process_one_parquet(
                         "chars_after": 0,
                         "chars_removed": chars_before,
                         "pct_removed": 100.0,
-                        "counter_font_marker": counters["font_name_literal"],
-                        "counter_glyph_marker": counters["glyph_font_like"],
-                        "counter_script_residue": counters["script_residue_restricted"],
+                        "counter_font_marker": doc_counters["font_name_literal"],
+                        "counter_glyph_marker": doc_counters["glyph_font_like"],
+                        "counter_script_residue": doc_counters["script_residue_restricted"],
+                        "pages_dropped_script_residue": pages_dropped_script_residue,
+                        "chars_dropped_script_residue_pages": chars_dropped_script_residue_pages,
                         "drop_reason": "cleaner_empty",
                     }) + "\n")
                     continue
@@ -187,9 +235,11 @@ def _process_one_parquet(
                     "chars_after": chars_after,
                     "chars_removed": chars_removed,
                     "pct_removed": round(pct_removed, 3),
-                    "counter_font_marker": counters["font_name_literal"],
-                    "counter_glyph_marker": counters["glyph_font_like"],
-                    "counter_script_residue": counters["script_residue_restricted"],
+                    "counter_font_marker": doc_counters["font_name_literal"],
+                    "counter_glyph_marker": doc_counters["glyph_font_like"],
+                    "counter_script_residue": doc_counters["script_residue_restricted"],
+                    "pages_dropped_script_residue": pages_dropped_script_residue,
+                    "chars_dropped_script_residue_pages": chars_dropped_script_residue_pages,
                     "drop_reason": "",
                 }) + "\n")
 
