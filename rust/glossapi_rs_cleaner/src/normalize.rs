@@ -40,14 +40,19 @@ lazy_static! {
     /// Standalone separator line: homogeneous runs of a single ASCII
     /// separator char (`-` / `_` / `*` / `=`) of length >=4, OR homogeneous
     /// runs of em-dash (U+2014), horizontal bar (U+2015), box-drawing light
-    /// (U+2500), or box-drawing double (U+2550) of length >=3. Optional
-    /// leading / trailing whitespace. Dots are handled separately (see
+    /// (U+2500), or box-drawing double (U+2550) of length >=3. Also matches
+    /// the markdown-ESCAPED underscore form `(?:\\_){4,}` — these appear
+    /// whenever a raw `_{4,}` separator gets markdown-escaped, e.g. EU
+    /// legislative-divider chains (see FINAL_RUN_SUMMARY 2026-04-22: the
+    /// prior round's BPE vocab accumulated `\_\_\_…` tokens because this
+    /// form slipped past the un-escaped-only regex). Optional leading /
+    /// trailing whitespace. Dots are handled separately (see
     /// `normalize_layout_leader_runs`).
     ///
     /// Mixed-char runs like `---___` are intentionally *not* matched — the
     /// design doc treats those as ASCII art, not thematic breaks.
     pub static ref SEPARATOR_LINE_REGEX: Regex = Regex::new(
-        r"^[ \t]*(?:-{4,}|_{4,}|\*{4,}|={4,}|\u{2014}{3,}|\u{2015}{3,}|\u{2500}{3,}|\u{2550}{3,})[ \t]*$",
+        r"^[ \t]*(?:-{4,}|_{4,}|(?:\\_){4,}|\*{4,}|={4,}|\u{2014}{3,}|\u{2015}{3,}|\u{2500}{3,}|\u{2550}{3,})[ \t]*$",
     )
     .unwrap();
 }
@@ -1085,6 +1090,20 @@ mod tests {
         // Mixed separator chars on one line — not collapsed (keeps each family
         // distinct; only repeats of a single family qualify).
         assert_eq!(normalize_separator_line("---___"), None);
+        // Escaped-underscore form `(?:\_){4,}` — markdown-escaped dividers
+        // from legislative / parliamentary sources. Regression guard for
+        // FINAL_RUN_SUMMARY 2026-04-22 BPE-vocab bloat.
+        assert_eq!(normalize_separator_line(r"\_\_\_\_"), Some("---".to_string()));
+        assert_eq!(
+            normalize_separator_line(r"\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_"),
+            Some("---".to_string())
+        );
+        assert_eq!(normalize_separator_line(r"  \_\_\_\_  "), Some("---".to_string()));
+        // Below threshold — 3 escaped underscores should not match.
+        assert_eq!(normalize_separator_line(r"\_\_\_"), None);
+        // Mixed with real underscores — single-family rule still applies;
+        // won't fire unless the whole line is one family.
+        assert_eq!(normalize_separator_line(r"\_\_\___"), None);
     }
 
     #[test]

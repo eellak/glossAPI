@@ -20,6 +20,49 @@ const TABLE_REMOVED_COMMENT: &str = "<!-- table-removed -->"; // Added for badne
 // was here for downstream stats + line-alignment invariants.
 const LINE_REMOVED_COMMENT: &str = "<!-- line-removed -->";
 
+/// Per-doc char/line accounting returned by `core_clean_text_with_stats`.
+///
+/// Invariants (approximate, modulo saturating_sub clamps on rare entity
+/// expansions):
+///
+/// Over the INPUT chars:
+///   input_chars ≈ content_chars_kept
+///                 + chars_dropped_by_line_drop
+///                 + chars_dropped_by_normalization
+///                 + chars_dropped_by_per_char_filter
+///                 + marker_chars_passthrough
+///
+/// Over the OUTPUT chars:
+///   output_chars = content_chars_kept
+///                 + marker_chars_passthrough
+///                 + marker_chars_added
+///
+/// Where `marker_chars_passthrough` counts input chars whose LINE was
+/// itself a marker (pre-existing `<!-- text-missing -->` / `<!--
+/// table-removed -->`), and `marker_chars_added` counts marker chars we
+/// emitted during cleaning (`<!-- line-removed -->`, inline TMC
+/// additions, standalone TMC replacements).
+///
+/// `content_chars_kept` EXCLUDES all comment markers. Callers that want
+/// "chars_after" without markers should use this field directly.
+#[derive(Debug, Clone, Default)]
+pub struct CleanStats {
+    pub content_chars_kept: usize,
+    pub chars_dropped_by_line_drop: usize,
+    pub chars_dropped_by_normalization: usize,
+    pub chars_dropped_by_per_char_filter: usize,
+    pub lines_dropped_count: usize,
+    /// Input lines that were themselves marker comments, passed through.
+    /// Sums to input-side invariant.
+    pub marker_chars_passthrough: usize,
+    /// Markers we emitted (LINE_REMOVED_COMMENT, inline/standalone TMC).
+    /// Sums to output-side invariant; NOT accounted against input.
+    pub marker_chars_added: usize,
+    // Back-compat fields used by `perform_text_analysis` for badness scoring.
+    pub original_chars_for_badness: usize,
+    pub sum_kept_line_content_chars: usize,
+}
+
 lazy_static! {
     // Regular expressions for detection (compiled once) - Most are now unused
     // pub static ref GLYPH_TAG_REGEX_RAW: Regex = Regex::new(r"(?:^|\s)glyph<c=\d+,font=/[^>]+>(?:\s|$)").unwrap();
@@ -153,21 +196,27 @@ static BAD_LINE_AC: Lazy<AhoCorasick> = Lazy::new(|| {
 // 1000 sampled lines (2026-04-22) showed 86.5% span-drop preferred.
 // Stripped inline as spans; never triggers line-removal on their own.
 static RULE_A_LITERALS_AC: Lazy<AhoCorasick> = Lazy::new(|| {
-    AhoCorasick::new([
-        "/hyphenminus", "/space", "/period", "/comma", "/colon", "/semicolon",
-        "/slash", "/backslash", "/parenleft", "/parenright",
-        "/bracketleft", "/bracketright", "/braceleft", "/braceright",
-        "/quotesingle", "/quotedbl", "/exclam", "/question",
-        "/asterisk", "/plus", "/minus", "/equal", "/less", "/greater",
-        "/ampersand", "/percent", "/at", "/dollar", "/numbersign",
-        "/underscore", "/asciitilde", "/asciicircum",
-        "/endash", "/emdash", "/hyphen", "/bullet",
-        "/copyright", "/registered", "/trademark", "/degree",
-        "/plusminus", "/multiply", "/divide", "/section",
-        "/paragraph", "/dagger", "/daggerdbl", "/ellipsis",
-        "/glyph", "CID+",
-    ])
-    .unwrap()
+    // LeftmostLongest prevents `/hyphen` from eating the `/hyphen` prefix
+    // of `/hyphenminus` (leaving "minus" residue). Same concern for
+    // `/plus` vs `/plusminus`, `/dagger` vs `/daggerdbl`, `/registered`
+    // vs the shorter variants — always prefer the longer glyph name.
+    aho_corasick::AhoCorasickBuilder::new()
+        .match_kind(aho_corasick::MatchKind::LeftmostLongest)
+        .build([
+            "/hyphenminus", "/space", "/period", "/comma", "/colon", "/semicolon",
+            "/slash", "/backslash", "/parenleft", "/parenright",
+            "/bracketleft", "/bracketright", "/braceleft", "/braceright",
+            "/quotesingle", "/quotedbl", "/exclam", "/question",
+            "/asterisk", "/plus", "/minus", "/equal", "/less", "/greater",
+            "/ampersand", "/percent", "/at", "/dollar", "/numbersign",
+            "/underscore", "/asciitilde", "/asciicircum",
+            "/endash", "/emdash", "/hyphen", "/bullet",
+            "/copyright", "/registered", "/trademark", "/degree",
+            "/plusminus", "/multiply", "/divide", "/section",
+            "/paragraph", "/dagger", "/daggerdbl", "/ellipsis",
+            "/glyph", "CID+",
+        ])
+        .unwrap()
 });
 
 /// Strip rule A + rule B matches from a line. Rule A is always span-
@@ -319,16 +368,40 @@ fn strip_tags_custom(line: &str, result_buf: &mut String) -> usize {
     removed_non_ws_tag_chars // No longer returns the String, it's modified in place
 }
 
-/// Core text cleaning function - removes unwanted characters based on script sets
-/// Returns a tuple: (cleaned_text, original_chars_count_for_badness, kept_chars_count_for_badness)
-/// original_chars_count_for_badness: count of characters in lines not fully rejected by BAD_LINE_AC.
-/// kept_chars_count_for_badness: count of characters remaining in those lines after cleaning.
+/// Thin wrapper over `core_clean_text_with_stats` that returns just the
+/// legacy `(cleaned_text, original_chars_count_for_badness,
+/// kept_chars_count_for_badness)` tuple used by `perform_text_analysis`
+/// and existing tests. New call sites that need the four-way char split
+/// or lines_dropped_count should call `core_clean_text_with_stats`
+/// directly.
 pub fn core_clean_text(
     text: &str,
     allowed_chars: &HashSet<char>,
     unusual_chars_set: &HashSet<char>,
     min_chars_for_comment_override: Option<usize>,
 ) -> (String, usize, usize) {
+    let (cleaned, stats) = core_clean_text_with_stats(
+        text,
+        allowed_chars,
+        unusual_chars_set,
+        min_chars_for_comment_override,
+    );
+    (
+        cleaned,
+        stats.original_chars_for_badness,
+        stats.sum_kept_line_content_chars,
+    )
+}
+
+/// Core text cleaning function with full char accounting.
+///
+/// See `CleanStats` for the invariant and field meanings.
+pub fn core_clean_text_with_stats(
+    text: &str,
+    allowed_chars: &HashSet<char>,
+    unusual_chars_set: &HashSet<char>,
+    min_chars_for_comment_override: Option<usize>,
+) -> (String, CleanStats) {
     let min_comment_chars = min_chars_for_comment_override.unwrap_or(5);
     let mut cleaned_output_string_builder = String::new(); // Used to build the final string with newlines
     let mut original_chars_for_badness: usize = 0; // Sum of original line content lengths (excluding their newlines)
@@ -339,6 +412,15 @@ pub fn core_clean_text(
 
     let mut inline_tmc_additions_count: usize = 0;
     let mut standalone_tmc_replacements_on_processed_lines_count: usize = 0;
+
+    // Four-way char accounting (see `CleanStats` doc-comment).
+    let mut content_chars_kept: usize = 0;
+    let mut chars_dropped_by_line_drop: usize = 0;
+    let mut chars_dropped_by_normalization: usize = 0;
+    let mut chars_dropped_by_per_char_filter: usize = 0;
+    let mut lines_dropped_count: usize = 0;
+    let mut marker_chars_passthrough: usize = 0;
+    let mut marker_chars_added: usize = 0;
 
     // Step 5.3: Build local bitmaps for faster char checking in the 0-1023 range.
     let mut local_allowed_bitmap: [bool; 1024] = [false; 1024];
@@ -373,7 +455,12 @@ pub fn core_clean_text(
     for (line_index, line) in text.lines().enumerate() {
         let trimmed_line = line.trim();
         if trimmed_line == TEXT_MISSING_COMMENT {
-            original_chars_for_badness += line.chars().count();
+            let line_chars = line.chars().count();
+            original_chars_for_badness += line_chars;
+            // Input line IS the TMC marker — it's a marker pass-through, not
+            // content. Attribute all its chars to marker_chars_passthrough so
+            // they don't pollute content_chars_kept or any drop bucket.
+            marker_chars_passthrough += line_chars;
             cleaned_output_string_builder.push_str(TEXT_MISSING_COMMENT);
             cleaned_output_string_builder.push('\n');
             continue;
@@ -386,8 +473,11 @@ pub fn core_clean_text(
         // stay badness-neutral: count the original line chars as kept.
         if let Some(canonical) = table_replacements.get(&line_index) {
             let line_chars = line.chars().count();
+            let canonical_chars = canonical.chars().count();
             original_chars_for_badness += line_chars;
             sum_kept_line_content_chars += line_chars;
+            content_chars_kept += canonical_chars;
+            chars_dropped_by_normalization += line_chars.saturating_sub(canonical_chars);
             cleaned_output_string_builder.push_str(canonical);
             cleaned_output_string_builder.push('\n');
             continue;
@@ -401,6 +491,7 @@ pub fn core_clean_text(
             let line_chars = line.chars().count();
             original_chars_for_badness += line_chars;
             sum_kept_line_content_chars += line_chars;
+            content_chars_kept += line_chars;
             cleaned_output_string_builder.push_str(line);
             cleaned_output_string_builder.push('\n');
             continue;
@@ -409,6 +500,7 @@ pub fn core_clean_text(
             let line_chars = line.chars().count();
             original_chars_for_badness += line_chars;
             sum_kept_line_content_chars += line_chars;
+            content_chars_kept += line_chars;
             cleaned_output_string_builder.push_str(line);
             cleaned_output_string_builder.push('\n');
             continue;
@@ -450,7 +542,11 @@ pub fn core_clean_text(
             stripped
         };
         if rule_b_line_drop {
-            original_chars_for_badness += line.chars().count();
+            let line_chars = line.chars().count();
+            original_chars_for_badness += line_chars;
+            chars_dropped_by_line_drop += line_chars;
+            lines_dropped_count += 1;
+            marker_chars_added += LINE_REMOVED_COMMENT.chars().count();
             cleaned_output_string_builder.push_str(LINE_REMOVED_COMMENT);
             cleaned_output_string_builder.push('\n');
             continue;
@@ -460,7 +556,11 @@ pub fn core_clean_text(
             && (BAD_LINE_AC.is_match(&post_rule_strip)
                 || has_decoded_glyph_font_artefact(&post_rule_strip))
         {
-            original_chars_for_badness += line.chars().count();
+            let line_chars = line.chars().count();
+            original_chars_for_badness += line_chars;
+            chars_dropped_by_line_drop += line_chars;
+            lines_dropped_count += 1;
+            marker_chars_added += LINE_REMOVED_COMMENT.chars().count();
             cleaned_output_string_builder.push_str(LINE_REMOVED_COMMENT);
             cleaned_output_string_builder.push('\n');
             continue;
@@ -543,6 +643,8 @@ pub fn core_clean_text(
 
         // If the line only contained math content, preserve it but skip scoring contributions.
         if outside_math_original_chars == 0 && math_chars_this_line > 0 {
+            // Math pass-through: count chars as kept content (math is legitimate).
+            content_chars_kept += processed_line_segment_buf.chars().count();
             cleaned_output_string_builder.push_str(&processed_line_segment_buf);
             cleaned_output_string_builder.push('\n');
             continue;
@@ -597,6 +699,16 @@ pub fn core_clean_text(
         let kept_chars_total = line_content_to_add.chars().count();
         sum_kept_line_content_chars += kept_chars_total.saturating_sub(math_chars_this_line); // exclude math spans
         original_chars_for_badness += line.chars().count().saturating_sub(math_chars_this_line);
+
+        // Per-char filter accounting. Entity-decode + rule A/B span strip +
+        // tag strip + per-char unicode filter together shrink input chars to
+        // processed_line_segment_buf chars. Marker additions happen AFTER
+        // (line_content_to_add), so they don't pollute this delta.
+        let input_chars_this_line = line.chars().count();
+        let post_per_char_chars = processed_line_segment_buf.chars().count();
+        chars_dropped_by_per_char_filter +=
+            input_chars_this_line.saturating_sub(post_per_char_chars);
+
         let line_to_write = if is_exclusively_comment || line_content_to_add.contains(TEXT_MISSING_COMMENT)
         {
             line_content_to_add.clone()
@@ -625,6 +737,42 @@ pub fn core_clean_text(
             }
             s
         };
+        // Normalize-pass accounting: delta between pre-normalize (with any
+        // inline markers already attached) and post-normalize output.
+        // Saturating because rare expansions (e.g. `…` folded to ASCII
+        // triple-dot ".....") would underflow.
+        let pre_normalize_chars = line_content_to_add.chars().count();
+        let post_normalize_chars = line_to_write.chars().count();
+        chars_dropped_by_normalization +=
+            pre_normalize_chars.saturating_sub(post_normalize_chars);
+
+        // Content-chars-kept accounting: output chars on this line EXCLUDING
+        // any marker chars that were added inline (space + TMC) or that
+        // wholly replaced the line (standalone TMC / exclusive-comment).
+        if is_exclusively_comment {
+            // Output line IS a comment marker that came from the INPUT
+            // (pass-through; we didn't add it). Attribute to passthrough.
+            marker_chars_passthrough += post_normalize_chars;
+        } else if line_content_to_add.contains(TEXT_MISSING_COMMENT) {
+            // Inline TMC addition OR standalone TMC replacement — we ADDED
+            // this marker. Standalone case: processed_line_segment_buf.trim()
+            // is empty and the whole line becomes the marker. Inline case:
+            // output = trimmed_content + " " + TMC, so marker part is
+            // (1 space + TMC.len()). Normalize doesn't run on this path
+            // (line_to_write == line_content_to_add).
+            let inline_marker_chars = TEXT_MISSING_COMMENT.chars().count();
+            if processed_line_segment_buf.trim().is_empty() {
+                marker_chars_added += post_normalize_chars;
+            } else {
+                let marker_span = inline_marker_chars + 1; // " " + TMC
+                content_chars_kept += post_normalize_chars.saturating_sub(marker_span);
+                marker_chars_added += marker_span.min(post_normalize_chars);
+            }
+        } else {
+            // Normal kept line — all output chars are content.
+            content_chars_kept += post_normalize_chars;
+        }
+
         cleaned_output_string_builder.push_str(&line_to_write);
         cleaned_output_string_builder.push('\n');
     }
@@ -688,11 +836,52 @@ pub fn core_clean_text(
     let adjusted_kept_chars_for_badness =
         sum_kept_line_content_chars.saturating_sub(total_placeholder_content_penalty);
 
-    (
-        final_cleaned_text,
+    // If an input line was pre-existing TABLE_REMOVED_COMMENT, the main
+    // path classified it as kept content. Move those chars from content to
+    // marker_chars_passthrough so content_chars_kept reflects true content.
+    let trc_marker_chars = TABLE_REMOVED_COMMENT.chars().count();
+    let trc_reclass_total = num_table_removed_comments_as_full_lines_in_output * trc_marker_chars;
+    marker_chars_passthrough += trc_reclass_total;
+    content_chars_kept = content_chars_kept.saturating_sub(trc_reclass_total);
+
+    let stats = CleanStats {
+        content_chars_kept,
+        chars_dropped_by_line_drop,
+        chars_dropped_by_normalization,
+        chars_dropped_by_per_char_filter,
+        lines_dropped_count,
+        marker_chars_passthrough,
+        marker_chars_added,
         original_chars_for_badness,
-        adjusted_kept_chars_for_badness,
-    )
+        sum_kept_line_content_chars: adjusted_kept_chars_for_badness,
+    };
+
+    (final_cleaned_text, stats)
+}
+
+/// Build (allowed_chars, unusual_chars) for the requested script set.
+/// Ensures `punctuation`, `numbers`, `common_symbols` are always included
+/// and that whitespace chars are always allowed.
+fn build_script_char_sets(scripts_to_keep: &[String]) -> (HashSet<char>, HashSet<char>) {
+    let mut allowed_chars = HashSet::new();
+    for key in scripts_to_keep {
+        if let Some(script_set) = SCRIPT_SETS.get(key) {
+            allowed_chars.extend(script_set);
+        }
+    }
+    for key_str in ["punctuation", "numbers", "common_symbols"].iter() {
+        let key = key_str.to_string();
+        if !scripts_to_keep.contains(&key) {
+            if let Some(script_set) = SCRIPT_SETS.get(&key) {
+                allowed_chars.extend(script_set);
+            }
+        }
+    }
+    allowed_chars.insert(' ');
+    allowed_chars.insert('\t');
+    allowed_chars.insert('\n');
+    let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+    (allowed_chars, unusual_chars)
 }
 
 /// Python-exposed function to clean a single string
@@ -702,37 +891,50 @@ pub fn clean_text(
     scripts_to_keep: Vec<String>,
     min_chars_for_comment: Option<usize>,
 ) -> PyResult<String> {
-    let mut allowed_chars = HashSet::new();
-    for key in &scripts_to_keep {
-        if let Some(script_set) = SCRIPT_SETS.get(key) {
-            allowed_chars.extend(script_set);
-        } else {
-            // Optionally, log a warning if a script key is not found
-            // log::warn!("Script key '{}' not found in SCRIPT_SETS", key);
-        }
-    }
-
-    // Ensure common scripts are included even if not specified
-    // Using .to_string() for comparison as keys in SCRIPT_SETS are String
-    for key_str in ["punctuation", "numbers", "common_symbols"].iter() {
-        let key = key_str.to_string();
-        if !scripts_to_keep.contains(&key) {
-            // Check if scripts_to_keep (Vec<String>) contains the current key (String)
-            if let Some(script_set) = SCRIPT_SETS.get(&key) {
-                allowed_chars.extend(script_set);
-            }
-        }
-    }
-
-    // Add essential whitespace that should always be allowed regardless of script choices
-    allowed_chars.insert(' ');
-    allowed_chars.insert('\t');
-    allowed_chars.insert('\n'); // Though lines are processed and newlines re-added, having it in allowed_chars is safe.
-
-    let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+    let (allowed_chars, unusual_chars) = build_script_char_sets(&scripts_to_keep);
     let (cleaned_string, _, _) =
         core_clean_text(text, &allowed_chars, &unusual_chars, min_chars_for_comment);
     Ok(cleaned_string)
+}
+
+/// Python-exposed variant that also returns per-doc char accounting.
+///
+/// Returns `(cleaned_text, stats_dict)` where `stats_dict` has integer keys:
+/// - `content_chars_kept`: output chars excluding all comment markers
+/// - `chars_dropped_by_line_drop`: chars in lines replaced by a line-drop marker
+/// - `chars_dropped_by_normalization`: chars collapsed by dot/whitespace/separator/table/ellipsis normalizers
+/// - `chars_dropped_by_per_char_filter`: chars stripped by entity-decode / rule-A/B / tag-strip / unicode filter
+/// - `lines_dropped_count`: number of line-drop marker emissions
+/// - `marker_chars_passthrough`: input chars whose line was a marker (pass-through)
+/// - `marker_chars_added`: marker chars we emitted during cleaning
+/// - `original_chars_for_badness`: back-compat badness-scoring input
+/// - `sum_kept_line_content_chars`: back-compat badness-scoring output
+#[pyfunction]
+pub fn clean_text_with_stats(
+    py: Python<'_>,
+    text: &str,
+    scripts_to_keep: Vec<String>,
+    min_chars_for_comment: Option<usize>,
+) -> PyResult<(String, PyObject)> {
+    use pyo3::types::PyDict;
+    let (allowed_chars, unusual_chars) = build_script_char_sets(&scripts_to_keep);
+    let (cleaned_string, stats) = core_clean_text_with_stats(
+        text,
+        &allowed_chars,
+        &unusual_chars,
+        min_chars_for_comment,
+    );
+    let dict = PyDict::new(py);
+    dict.set_item("content_chars_kept", stats.content_chars_kept)?;
+    dict.set_item("chars_dropped_by_line_drop", stats.chars_dropped_by_line_drop)?;
+    dict.set_item("chars_dropped_by_normalization", stats.chars_dropped_by_normalization)?;
+    dict.set_item("chars_dropped_by_per_char_filter", stats.chars_dropped_by_per_char_filter)?;
+    dict.set_item("lines_dropped_count", stats.lines_dropped_count)?;
+    dict.set_item("marker_chars_passthrough", stats.marker_chars_passthrough)?;
+    dict.set_item("marker_chars_added", stats.marker_chars_added)?;
+    dict.set_item("original_chars_for_badness", stats.original_chars_for_badness)?;
+    dict.set_item("sum_kept_line_content_chars", stats.sum_kept_line_content_chars)?;
+    Ok((cleaned_string, dict.into()))
 }
 
 // Helper function for script percentage calculation (moved from analyze_text for clarity)
@@ -1354,5 +1556,245 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
         assert!(!cleaned.contains("&amp"));
         // GFM table separator normalized.
         assert!(cleaned.contains("| :--- | ---: |"));
+    }
+
+    // -----------------------------------------------------------------
+    // Char accounting regression suite (added 2026-04-22)
+    // -----------------------------------------------------------------
+
+    /// Helper: assert the INPUT-side char accounting invariant:
+    ///   input_chars ≈ content_kept + line_drop + normalize + per_char
+    ///                 + marker_chars_passthrough
+    /// marker_chars_added is NOT part of input — those are chars we emitted
+    /// into output that weren't in the input (LINE_REMOVED_COMMENT, inline
+    /// TMC additions, etc.).
+    fn assert_accounting_invariant(input: &str, stats: &CleanStats) {
+        let input_chars = input
+            .lines()
+            .map(|l| l.chars().count())
+            .sum::<usize>();
+        let accounted = stats.content_chars_kept
+            + stats.chars_dropped_by_line_drop
+            + stats.chars_dropped_by_normalization
+            + stats.chars_dropped_by_per_char_filter
+            + stats.marker_chars_passthrough;
+        // Entity decoding can shrink chars (`&amp;` 5→1) so accounting may
+        // undercount slightly. We only assert we don't OVER-count.
+        assert!(
+            accounted <= input_chars + 2, // small slack for edge cases
+            "accounting overshoot: input={input_chars} accounted={accounted} stats={stats:?}"
+        );
+        // And that we don't massively undercount either.
+        assert!(
+            accounted + 20 >= input_chars,
+            "accounting undershoot: input={input_chars} accounted={accounted} stats={stats:?}"
+        );
+    }
+
+    #[test]
+    fn accounting_clean_greek_text_goes_to_content_kept() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "Καλημέρα κόσμε.\nΚαι πάλι.\n";
+        let (_cleaned, stats) =
+            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(stats.chars_dropped_by_line_drop, 0);
+        assert_eq!(stats.lines_dropped_count, 0);
+        assert_eq!(stats.marker_chars_passthrough, 0);
+        assert_eq!(stats.marker_chars_added, 0);
+        assert!(stats.content_chars_kept > 0);
+        assert_accounting_invariant(input, &stats);
+    }
+
+    #[test]
+    fn accounting_line_drop_bumps_counter_and_chars() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // Line 2 is a dense rule-B line (≥10 /g<N> matches at coverage ≥ 0.09).
+        let input = "Καλημέρα.\n/g302/g544/g306/g542/g304/g538/g652/g305/g536/g545/g541/g547\nΕπίλογος.\n";
+        let (cleaned, stats) =
+            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(stats.lines_dropped_count, 1);
+        assert!(stats.chars_dropped_by_line_drop > 0,
+                "expected line-drop chars, got {stats:?}");
+        // Output must contain the marker but content_chars_kept must NOT
+        // include the marker's chars.
+        assert!(cleaned.contains(LINE_REMOVED_COMMENT));
+        let marker_chars = LINE_REMOVED_COMMENT.chars().count();
+        assert!(stats.marker_chars_added >= marker_chars,
+                "LINE_REMOVED_COMMENT should be in marker_chars_added, not passthrough: {stats:?}");
+        assert_eq!(stats.marker_chars_passthrough, 0,
+                "no pass-through markers in this input: {stats:?}");
+        assert_accounting_invariant(input, &stats);
+    }
+
+    #[test]
+    fn accounting_content_chars_excludes_line_removed_marker() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "hello hyphenminus world\n";
+        let (cleaned, stats) =
+            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+        // The whole line dropped — content_chars_kept MUST be 0 even
+        // though the output has the marker in it.
+        assert_eq!(stats.content_chars_kept, 0);
+        assert!(cleaned.contains(LINE_REMOVED_COMMENT));
+        assert_eq!(stats.marker_chars_added, LINE_REMOVED_COMMENT.chars().count());
+        assert_eq!(stats.marker_chars_passthrough, 0);
+    }
+
+    #[test]
+    fn accounting_normalization_tracks_separator_collapse() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // 20-dash separator → collapses to `---` (3 chars). normalize delta
+        // should reflect the reduction.
+        let input = "hello\n--------------------\nworld\n";
+        let (cleaned, stats) =
+            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+        assert!(cleaned.contains("\n---\n"), "expected collapsed separator, got {cleaned:?}");
+        assert!(stats.chars_dropped_by_normalization >= 17,
+                "expected ≥17 normalization chars dropped, got {stats:?}");
+        assert_eq!(stats.chars_dropped_by_line_drop, 0);
+        assert_accounting_invariant(input, &stats);
+    }
+
+    #[test]
+    fn accounting_escaped_underscore_separator_normalizes_to_dash_and_counts() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // Markdown-escaped divider (common in EU legislative corpus).
+        // Raw bytes: \ _ \ _ \ _ \ _ \ _ = 10 chars; should collapse to `---`.
+        let input = "ΠΕΡΙ: ΝΟΜΟΘΕΣΙΑΣ\n\\_\\_\\_\\_\\_\nΑιτιολογική έκθεση.\n";
+        let (cleaned, stats) =
+            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+        assert!(cleaned.contains("\n---\n"),
+                "escaped-underscore divider should collapse to `---`, got {cleaned:?}");
+        assert!(stats.chars_dropped_by_normalization > 0);
+        assert_accounting_invariant(input, &stats);
+    }
+
+    #[test]
+    fn accounting_per_char_filter_tracks_unusual_script_strip() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // Cyrillic letters aren't in the default greek/latin/french/spanish
+        // allowed set; they're in `unusual` (stripped per SCRIPT_SETS policy).
+        let input = "Καλημέρα Здравствуйте.\n";
+        let (_cleaned, stats) =
+            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+        // All 12 cyrillic chars should be stripped by the per-char filter.
+        assert!(stats.chars_dropped_by_per_char_filter >= 12,
+                "expected ≥12 per-char-filter chars dropped, got {stats:?}");
+        assert_eq!(stats.chars_dropped_by_line_drop, 0);
+        assert_accounting_invariant(input, &stats);
+    }
+
+    #[test]
+    fn accounting_mixed_doc_invariant_holds() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // Mix of: kept Greek, line-drop (rule B dense), normalize (separator),
+        // per-char strip (cyrillic), and escaped-underscore divider.
+        let input = "Καλημέρα, Здравствуйте.\n\
+/g302/g544/g306/g542/g304/g538/g652/g305/g536/g545/g541/g547\n\
+--------------------\n\
+\\_\\_\\_\\_\\_\n\
+Επίλογος.\n";
+        let (_cleaned, stats) =
+            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(stats.lines_dropped_count, 1);
+        assert!(stats.chars_dropped_by_line_drop > 0);
+        assert!(stats.chars_dropped_by_normalization > 0);
+        assert!(stats.chars_dropped_by_per_char_filter > 0);
+        assert!(stats.content_chars_kept > 0);
+        assert_accounting_invariant(input, &stats);
+    }
+
+    #[test]
+    fn accounting_rule_a_span_strip_goes_to_per_char_filter_not_line_drop() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // Rule A literals `/hyphenminus /space` inside otherwise-valid prose.
+        // Should span-strip (per-char filter) — NOT line-drop.
+        let input = "foo /hyphenminus /space bar\n";
+        let (_cleaned, stats) =
+            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(stats.lines_dropped_count, 0);
+        assert_eq!(stats.chars_dropped_by_line_drop, 0);
+        assert!(stats.chars_dropped_by_per_char_filter >= 18,
+                "expected rule-A literals (`/hyphenminus`=12 + `/space`=6) stripped, got {stats:?}");
+        assert_accounting_invariant(input, &stats);
+    }
+
+    // -----------------------------------------------------------------
+    // Performance baseline — regression fence (added 2026-04-22)
+    // -----------------------------------------------------------------
+
+    /// Build a representative mixed-content doc: Greek prose, rule-B dense
+    /// line, separator, escaped-underscore divider, unusual-script strip,
+    /// GFM table, code fence, malformed entities — roughly everything the
+    /// cleaner handles in one pass, blown up to ~8 KB.
+    fn bench_doc() -> String {
+        let block = "\
+Καλημέρα κόσμε. Η γλώσσα μας είναι πλούσια. λόγος ἀγαθός.
+Η πρόταση περιέχει &amp πολλά &lt σύμβολα.
+/g302/g544/g306/g542/g304/g538/g652/g305/g536/g545/g541/g547
+foo /hyphenminus /space /period bar /uni03B1 /uni03B2
+--------------------
+\\_\\_\\_\\_\\_\\_\\_\\_
+Καλημέρα Здравствуйте ქართული.
+| Column | Value |
+| :------- | ---: |
+| α | 1 |
+
+Some dots in a row......
+```
+code fence content     stays
+----
+```
+Επίλογος.
+";
+        // Blow up ~12x to get a representative ~8 KB doc.
+        let mut out = String::with_capacity(block.len() * 12);
+        for _ in 0..12 {
+            out.push_str(block);
+        }
+        out
+    }
+
+    /// Regression fence: assert cleaner throughput stays above a
+    /// conservative minimum. The baseline (measured 2026-04-22 on the
+    /// author's laptop, release build, single-threaded) is ~40 M chars/sec
+    /// on this mixed-content doc. The threshold below is deliberately well
+    /// under that (5 M chars/sec) — this test should only trip on major
+    /// regressions, not normal CI-machine variability.
+    #[test]
+    fn perf_mixed_doc_throughput_floor() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let doc = bench_doc();
+        let doc_chars = doc.chars().count();
+        let iterations = 50;
+        let start = std::time::Instant::now();
+        for _ in 0..iterations {
+            let (_cleaned, _stats) =
+                core_clean_text_with_stats(&doc, &allowed_chars, &unusual_chars, None);
+        }
+        let elapsed = start.elapsed();
+        let total_chars = doc_chars * iterations;
+        let chars_per_sec = total_chars as f64 / elapsed.as_secs_f64();
+        let min_chars_per_sec = 5_000_000.0;
+        assert!(
+            chars_per_sec >= min_chars_per_sec,
+            "throughput regression: {chars_per_sec:.0} chars/sec < {min_chars_per_sec:.0} floor \
+             ({total_chars} chars in {:.3}s)",
+            elapsed.as_secs_f64(),
+        );
+        // Print so `cargo test -- --nocapture` shows the actual number.
+        eprintln!(
+            "[perf] core_clean_text_with_stats: {chars_per_sec:.0} chars/sec ({iterations} x {doc_chars} chars in {:.3}s)",
+            elapsed.as_secs_f64(),
+        );
     }
 }

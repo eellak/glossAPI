@@ -82,6 +82,35 @@ def _page_script_residue_count(page_matches_json):
     return n
 
 
+_MARKER_LINES = {
+    "<!-- line-removed -->",
+    "<!-- text-missing -->",
+    "<!-- table-removed -->",
+}
+
+
+def _non_empty_stats(text: str):
+    """Return (line_count_total, non_empty_line_count, non_empty_char_count).
+
+    A line is "non-empty" if its trimmed form is non-empty AND isn't
+    one of our known marker comments. Character count sums only chars
+    on non-empty, non-marker lines (newlines excluded).
+    """
+    total_lines = 0
+    non_empty_lines = 0
+    non_empty_chars = 0
+    for line in text.split("\n"):
+        total_lines += 1
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped in _MARKER_LINES:
+            continue
+        non_empty_lines += 1
+        non_empty_chars += len(line)
+    return total_lines, non_empty_lines, non_empty_chars
+
+
 def _process_row_shard(
     parquet_path: str,
     start_row: int,
@@ -199,7 +228,18 @@ def _process_row_shard(
                 else:
                     text_for_cleaner = text
 
-                cleaned = cleaner.clean_text(text_for_cleaner, scripts_to_keep)
+                cleaned, clean_stats = cleaner.clean_text_with_stats(
+                    text_for_cleaner, scripts_to_keep,
+                )
+                # Four-way char-drop attribution + line-drop count come from
+                # the Rust side. Quality stats (non-empty lines/chars in/out)
+                # and derived percentages computed here in Python.
+                lines_in_total, non_empty_lines_in, non_empty_chars_in = (
+                    _non_empty_stats(text_for_cleaner)
+                )
+                lines_out_total, non_empty_lines_out, non_empty_chars_out = (
+                    _non_empty_stats(cleaned)
+                )
                 if not cleaned.strip() or cleaned.strip().startswith("<!-- text-missing"):
                     rows_dropped["cleaner_empty"] = rows_dropped.get("cleaner_empty", 0) + 1
                     total_chars_dropped += chars_before
@@ -213,13 +253,34 @@ def _process_row_shard(
                         "counter_script_residue": doc_counters["script_residue_restricted"],
                         "pages_dropped_script_residue": pages_dropped_sr,
                         "chars_dropped_script_residue_pages": chars_dropped_sr_pages,
+                        "lines_in_total": lines_in_total,
+                        "non_empty_lines_in": non_empty_lines_in,
+                        "non_empty_chars_in": non_empty_chars_in,
+                        "lines_dropped_by_cleaner": clean_stats.get("lines_dropped_count", 0),
+                        "chars_dropped_by_line_drop": clean_stats.get("chars_dropped_by_line_drop", 0),
+                        "chars_dropped_by_normalization": clean_stats.get("chars_dropped_by_normalization", 0),
+                        "chars_dropped_by_per_char_filter": clean_stats.get("chars_dropped_by_per_char_filter", 0),
+                        "content_chars_kept": clean_stats.get("content_chars_kept", 0),
                         "drop_reason": "cleaner_empty",
                     }) + "\n")
                     continue
 
+                # `chars_after` reports cleaned-output length INCLUDING marker
+                # chars (legacy compat). The "content_chars_kept" field is the
+                # per-user-spec char count that excludes comment markers.
                 chars_after = len(cleaned)
                 chars_removed = chars_before - chars_after
                 pct_removed = (chars_removed / chars_before * 100.0) if chars_before else 0.0
+                # Non-empty-based pcts (user spec: percentage against non-empty
+                # baseline, so marker lines don't inflate the denominator).
+                pct_chars_removed_non_empty = (
+                    (1.0 - non_empty_chars_out / non_empty_chars_in) * 100.0
+                    if non_empty_chars_in else 0.0
+                )
+                pct_lines_removed_non_empty = (
+                    (1.0 - non_empty_lines_out / non_empty_lines_in) * 100.0
+                    if non_empty_lines_in else 0.0
+                )
                 total_chars_before += chars_before
                 total_chars_after += chars_after
                 rows_kept += 1
@@ -235,6 +296,23 @@ def _process_row_shard(
                     "counter_script_residue": doc_counters["script_residue_restricted"],
                     "pages_dropped_script_residue": pages_dropped_sr,
                     "chars_dropped_script_residue_pages": chars_dropped_sr_pages,
+                    # Four-way per-doc char attribution (from Rust).
+                    "content_chars_kept": clean_stats.get("content_chars_kept", 0),
+                    "chars_dropped_by_line_drop": clean_stats.get("chars_dropped_by_line_drop", 0),
+                    "chars_dropped_by_normalization": clean_stats.get("chars_dropped_by_normalization", 0),
+                    "chars_dropped_by_per_char_filter": clean_stats.get("chars_dropped_by_per_char_filter", 0),
+                    "lines_dropped_by_cleaner": clean_stats.get("lines_dropped_count", 0),
+                    "marker_chars_passthrough": clean_stats.get("marker_chars_passthrough", 0),
+                    "marker_chars_added": clean_stats.get("marker_chars_added", 0),
+                    # Quality signals for broken-text flagging.
+                    "lines_in_total": lines_in_total,
+                    "non_empty_lines_in": non_empty_lines_in,
+                    "non_empty_chars_in": non_empty_chars_in,
+                    "lines_out_total": lines_out_total,
+                    "non_empty_lines_out": non_empty_lines_out,
+                    "non_empty_chars_out": non_empty_chars_out,
+                    "pct_chars_removed_non_empty": round(pct_chars_removed_non_empty, 3),
+                    "pct_lines_removed_non_empty": round(pct_lines_removed_non_empty, 3),
                     "drop_reason": "",
                 }) + "\n")
             if global_row_idx >= end_row:
