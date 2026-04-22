@@ -35,15 +35,16 @@ fi
 
 ### STAGE 2 — Clean HPLT portion (from v2; we only add new per-line + drops)
 if [ ! -d "$HPLT_SHARDS" ] || [ $(ls "$HPLT_SHARDS"/*.txt.gz 2>/dev/null | wc -l) -lt 200 ]; then
-  log "STAGE 2 — cleaning HPLT"
+  log "STAGE 2 — cleaning HPLT (row-sharded, 48 workers × 8 shards/parquet)"
   mkdir -p "$HPLT_STATS_DIR/stats" "$HPLT_SHARDS"
-  python3 /home/foivos/glossAPI-development/cleaning_scripts/clean_and_stats_full.py \
+  python3 /home/foivos/glossAPI-development/cleaning_scripts/clean_and_stats_rowsharded.py \
     --input-glob '/home/foivos/data/glossapi_work/hf_release_publish_cleaned_v2/data/HPLT*.parquet' \
     --stats-dir "$HPLT_STATS_DIR/stats" \
     --text-shards-dir "$HPLT_SHARDS" \
     --category-specs "$CATEGORY_SPECS" \
     --thresholds "$THRESHOLDS" \
-    --workers 48
+    --workers 48 \
+    --shards-per-parquet 4
   log "STAGE 2 — HPLT clean done"
 fi
 
