@@ -175,6 +175,37 @@ def _process_row_shard(
                 source_stem = _safe(f"{source_dataset}__{source_doc_id}")[:200]
                 base_stem = _safe(source_dataset)
 
+                # Pre-clean charset quality filter (2026-04-22 addition):
+                # three-rule drop from the Gemini review.
+                # - moji_residue_ratio > 0.30 → Latin-1/IPA/PUA mojibake
+                # - ascii_punct_ratio  > 0.30 → font-substitution mojibake
+                # - greek_letter_ratio < 0.05 → not a Greek doc at all
+                cs = cleaner.analyze_charset(text)
+                if (cs["moji_residue_ratio"] > 0.30
+                        or cs["ascii_punct_ratio"] > 0.30
+                        or cs["greek_letter_ratio"] < 0.05):
+                    reason = (
+                        "charset_moji" if cs["moji_residue_ratio"] > 0.30
+                        else "charset_punct" if cs["ascii_punct_ratio"] > 0.30
+                        else "charset_greek_low"
+                    )
+                    rows_dropped[reason] = rows_dropped.get(reason, 0) + 1
+                    total_chars_dropped += chars_before
+                    stats_fh.write(json.dumps({
+                        "source_path": source_path,
+                        "source_doc_id": source_doc_id,
+                        "source_dataset": source_dataset,
+                        "chars_before": chars_before, "chars_after": 0,
+                        "chars_removed": chars_before, "pct_removed": 100.0,
+                        "counter_font_marker": 0, "counter_glyph_marker": 0,
+                        "counter_script_residue": 0,
+                        "charset_greek_ratio": round(cs["greek_letter_ratio"], 4),
+                        "charset_moji_ratio": round(cs["moji_residue_ratio"], 4),
+                        "charset_punct_ratio": round(cs["ascii_punct_ratio"], 4),
+                        "drop_reason": reason,
+                    }) + "\n")
+                    continue
+
                 pages = noise.match_token_category_debug_text(
                     text, str(scratch), category_specs_path,
                     source_path, source_stem, base_stem,
@@ -194,6 +225,12 @@ def _process_row_shard(
                     try: md.unlink()
                     except Exception: pass
 
+                # Attach the charset ratios computed above so kept-docs
+                # records show them (distribution/threshold calibration).
+                charset_greek_ratio = round(cs["greek_letter_ratio"], 4)
+                charset_moji_ratio = round(cs["moji_residue_ratio"], 4)
+                charset_punct_ratio = round(cs["ascii_punct_ratio"], 4)
+
                 # Doc-level drop: font + glyph only.
                 reason = _doc_drop_reason(doc_counters, thresholds)
                 if reason:
@@ -207,6 +244,9 @@ def _process_row_shard(
                         "counter_font_marker": doc_counters["font_name_literal"],
                         "counter_glyph_marker": doc_counters["glyph_font_like"],
                         "counter_script_residue": doc_counters["script_residue_restricted"],
+                        "charset_greek_ratio": charset_greek_ratio,
+                        "charset_moji_ratio": charset_moji_ratio,
+                        "charset_punct_ratio": charset_punct_ratio,
                         "drop_reason": reason,
                     }) + "\n")
                     continue
@@ -251,6 +291,9 @@ def _process_row_shard(
                         "counter_font_marker": doc_counters["font_name_literal"],
                         "counter_glyph_marker": doc_counters["glyph_font_like"],
                         "counter_script_residue": doc_counters["script_residue_restricted"],
+                        "charset_greek_ratio": charset_greek_ratio,
+                        "charset_moji_ratio": charset_moji_ratio,
+                        "charset_punct_ratio": charset_punct_ratio,
                         "pages_dropped_script_residue": pages_dropped_sr,
                         "chars_dropped_script_residue_pages": chars_dropped_sr_pages,
                         "lines_in_total": lines_in_total,
@@ -294,6 +337,9 @@ def _process_row_shard(
                     "counter_font_marker": doc_counters["font_name_literal"],
                     "counter_glyph_marker": doc_counters["glyph_font_like"],
                     "counter_script_residue": doc_counters["script_residue_restricted"],
+                    "charset_greek_ratio": charset_greek_ratio,
+                    "charset_moji_ratio": charset_moji_ratio,
+                    "charset_punct_ratio": charset_punct_ratio,
                     "pages_dropped_script_residue": pages_dropped_sr,
                     "chars_dropped_script_residue_pages": chars_dropped_sr_pages,
                     # Four-way per-doc char attribution (from Rust).

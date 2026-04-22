@@ -2,6 +2,7 @@
 // Implements refactored code with better separation of concerns
 
 // Internal modules
+mod charset_module;
 mod cleaning_module;
 mod directory_processor;
 mod normalize;
@@ -10,6 +11,7 @@ mod table_analysis_module;
 mod table_remover_module;
 
 // Export public items from modules via PyO3
+use charset_module::analyze_charset;
 use cleaning_module::{clean_text, clean_text_with_stats};
 use directory_processor::{
     batch_generate_detailed_table_report_csv, batch_generate_table_summary_csv,
@@ -37,6 +39,7 @@ fn glossapi_rs_cleaner(_py: Python, m: &PyModule) -> PyResult<()> {
     // `text` columns without round-tripping through markdown files.
     m.add_function(wrap_pyfunction!(clean_text, m)?)?;
     m.add_function(wrap_pyfunction!(clean_text_with_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(analyze_charset, m)?)?;
 
     // For now, only exposing the main pipeline function and essential classes.
     // Other individual functions from submodules can be re-exposed later if needed,
