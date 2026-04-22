@@ -709,12 +709,18 @@ pub fn core_clean_text_with_stats(
         chars_dropped_by_per_char_filter +=
             input_chars_this_line.saturating_sub(post_per_char_chars);
 
-        let line_to_write = if is_exclusively_comment || line_content_to_add.contains(TEXT_MISSING_COMMENT)
-        {
+        let line_to_write = if is_exclusively_comment {
+            // Input line was ITSELF a comment (pass-through) — don't touch.
             line_content_to_add.clone()
         } else {
-            // Chain line-level normalizations. Each is a no-op if its pattern
-            // doesn't match. Order matters:
+            // Chain line-level normalizations AFTER cleaning so that chars
+            // removed by per-char filter / rule-A/B-span-strip /
+            // entity-decode collapse cleanly — e.g. a word stripped
+            // mid-line leaves `foo  bar` (2 spaces) which whitespace-run
+            // bucketing collapses to `foo bar`. Normalize passes are
+            // marker-safe (they operate on specific patterns that don't
+            // overlap with `<!-- text-missing -->`), so inline-TMC lines
+            // normalize too. Order matters:
             //   dot-leader (tiered bucket) -> separator line -> ellipsis run
             //   -> malformed-entity fallback -> whitespace run (tiered bucket).
             // Dots and whitespace both use the tiered bucket rule:
@@ -1709,6 +1715,43 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
         assert!(stats.chars_dropped_by_per_char_filter > 0);
         assert!(stats.content_chars_kept > 0);
         assert_accounting_invariant(input, &stats);
+    }
+
+    #[test]
+    fn normalization_collapses_whitespace_left_after_cleaning() {
+        // Per 2026-04-22 user guidance: normalization runs AFTER cleaning
+        // so that when a word/span is stripped, the gap it leaves collapses
+        // cleanly. Input: "hello /hyphenminus world" →
+        //   after rule-A strip: "hello  world" (2 spaces)
+        //   after whitespace-run normalize: "hello world" (1 space)
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "hello /hyphenminus world\n";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert!(cleaned.contains("hello world\n"),
+                "expected single space between hello/world, got {cleaned:?}");
+        assert!(!cleaned.contains("hello  world"),
+                "double space should have been collapsed, got {cleaned:?}");
+    }
+
+    #[test]
+    fn normalization_fires_on_inline_tmc_lines_too() {
+        // When enough chars are stripped to trigger inline TMC
+        // (>=5 unicode-filter removals on the line), normalize should STILL
+        // run on the surviving prose so long whitespace runs bucket-collapse.
+        // Before 2026-04-22 fix: normalize was skipped whenever
+        // line_content_to_add contained TEXT_MISSING_COMMENT, leaving raw
+        // 6-space gaps in the output.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // Cyrillic word stripped by per-char filter → 6 consecutive spaces
+        // (3 + 3 around the removed word). bucket_run_length(6) = 5, so a
+        // 6-space run means normalize didn't fire.
+        let input = "Καλημέρα   Здравствуйте   world\n";
+        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert!(cleaned.contains(TEXT_MISSING_COMMENT));
+        assert!(!cleaned.contains("      "),
+                "6-space run should have been bucket-collapsed by normalize, got {cleaned:?}");
     }
 
     #[test]
