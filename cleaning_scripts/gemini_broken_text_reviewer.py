@@ -104,20 +104,40 @@ RESPONSE_SCHEMA: Dict[str, Any] = {
 }
 
 
-def _middle_truncate(text: str, max_chars: int = 4000) -> str:
-    """Keep first + last segments, drop the middle if too long."""
-    if len(text) <= max_chars:
-        return text
-    half = max_chars // 2
+def _smart_sample_context(text: str, target_chars: int = 8000, n_chunks: int = 4) -> str:
+    """Build the [CONTEXT] payload for Gemini.
+
+    - Docs ≤ target_chars: pass through in full.
+    - Docs > target_chars: take n_chunks evenly-spaced chunks of
+      (target_chars / n_chunks) each. This gives beginning, middle-
+      early, middle-late, and end coverage, which matters for judging
+      text_partition ("half_half", "mostly_good_with_bad_patches")
+      where head-only or head+tail truncation would miss defects
+      concentrated in the body.
+
+    Prepends a metadata line so Gemini knows the doc's full length
+    and sampling strategy — affects judgment of too_short_to_be_useful
+    (a doc shown in full that reads short IS short; a chunk of a long
+    doc shown short may not be).
+    """
+    total = len(text)
+    if total <= target_chars:
+        return f"[doc length: {total} chars, shown in full]\n\n{text}"
+    chunk_size = target_chars // n_chunks
+    # Evenly-spaced chunk starts; each chunk size up to chunk_size.
+    positions = [i * total // n_chunks for i in range(n_chunks)]
+    chunks = [text[p : p + chunk_size] for p in positions]
+    sampled = "\n[...]\n".join(chunks)
     return (
-        text[:half]
-        + "\n[...truncated " + str(len(text) - max_chars) + " chars...]\n"
-        + text[-half:]
+        f"[doc length: {total} chars; shown: {n_chunks} evenly-spaced "
+        f"samples of ~{chunk_size} chars each from positions "
+        f"{[round(p / max(total, 1), 2) for p in positions]}]\n\n"
+        + sampled
     )
 
 
-def _build_prompt(row: Dict[str, Any]) -> str:
-    cleaned = _middle_truncate(row.get("cleaned_text") or "", 4000)
+def _build_prompt(row: Dict[str, Any], target_chars: int = 8000) -> str:
+    cleaned = _smart_sample_context(row.get("cleaned_text") or "", target_chars=target_chars)
     body = (
         "[CONTEXT]\n"
         f"{cleaned}\n\n"
@@ -166,6 +186,13 @@ def main(argv=None) -> int:
     parser.add_argument("--model", default="gemini-2.5-flash")
     parser.add_argument("--workers", type=int, default=10)
     parser.add_argument("--api-key-env", default="GEMINI_API_KEY")
+    parser.add_argument("--context-chars", type=int, default=8000,
+                        help="Max [CONTEXT] chars per prompt. Short docs pass through "
+                             "in full; long docs get multi-chunk sampled. Default 8000.")
+    parser.add_argument("--context-chunks", type=int, default=4,
+                        help="Number of evenly-spaced chunks for long docs. Default 4.")
+    parser.add_argument("--limit", type=int, default=0,
+                        help="If >0, review only the first N docs (smoke test).")
     args = parser.parse_args(argv)
 
     api_key = os.environ.get(args.api_key_env)
@@ -180,20 +207,23 @@ def main(argv=None) -> int:
     with args.sample_path.open("r", encoding="utf-8") as fh:
         for line in fh:
             rows.append(json.loads(line))
-    print(f"{len(rows)} sample docs to review")
+    if args.limit > 0:
+        rows = rows[: args.limit]
+    print(f"{len(rows)} sample docs to review "
+          f"(context: {args.context_chars} chars × up to {args.context_chunks} chunks)")
 
     client = genai.Client(api_key=api_key)
 
     errors = 0
     start = time.time()
+    ctx_chars = args.context_chars
+    ctx_chunks = args.context_chunks
+    def _task(r):
+        prompt = _build_prompt(r, target_chars=ctx_chars)
+        return (r, _call_gemini(client, args.model, prompt))
     with verdicts_path.open("w", encoding="utf-8") as out, \
          cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futures = [
-            ex.submit(
-                lambda r=r: (r, _call_gemini(client, args.model, _build_prompt(r)))
-            )
-            for r in rows
-        ]
+        futures = [ex.submit(_task, r) for r in rows]
         for i, fut in enumerate(cf.as_completed(futures), 1):
             try:
                 row, verdict = fut.result()
