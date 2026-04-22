@@ -15,6 +15,10 @@ use crate::normalize;
 // Constants
 const TEXT_MISSING_COMMENT: &str = "<!-- text-missing -->";
 const TABLE_REMOVED_COMMENT: &str = "<!-- table-removed -->"; // Added for badness adjustment
+// Emitted when an individual LINE is dropped (BAD_LINE_AC / glyph
+// regex / rule-B coverage predicate). Preserves the fact that a line
+// was here for downstream stats + line-alignment invariants.
+const LINE_REMOVED_COMMENT: &str = "<!-- line-removed -->";
 
 lazy_static! {
     // Regular expressions for detection (compiled once) - Most are now unused
@@ -127,6 +131,9 @@ lazy_static! {
 // unrejected because the original set only matched `GLYPH<`. PS glyph
 // names like /hyphenminus, /space, /period are appended too (see
 // `glyph_marker_extended_spec.md`).
+// Structural-PDF-residue triggers: line gets dropped (emits
+// LINE_REMOVED_COMMENT). These are whole-line PDF-extractor artefact
+// markers with zero legitimate-prose use.
 static BAD_LINE_AC: Lazy<AhoCorasick> = Lazy::new(|| {
     AhoCorasick::new([
         "glyph<c=",
@@ -134,11 +141,19 @@ static BAD_LINE_AC: Lazy<AhoCorasick> = Lazy::new(|| {
         "GLYPH<",
         "GLYPH&lt;",
         "MS-Bold-",
-        "font=/", // Common in Docling XML-like font tags e.g. <glyph font=/NUMPTY+ImprintMTnum>1</glyph>
-        "FontName=", // Common in some other PDF text extractions for font changes
-        // --- Added 2026-04-21 ---
-        "GLYPH",        // Bare, no `<` — catastrophic noise signal
-        "hyphenminus",  // Bare PostScript glyph name
+        "font=/",
+        "FontName=",
+        "GLYPH",        // bare word — 84k hits in 172 docs per 5k-row probe
+        "hyphenminus",  // bare PostScript glyph name (not a real word)
+    ])
+    .unwrap()
+});
+
+// Rule A literals — PostScript glyph-name + CID prefix. Gemini wave on
+// 1000 sampled lines (2026-04-22) showed 86.5% span-drop preferred.
+// Stripped inline as spans; never triggers line-removal on their own.
+static RULE_A_LITERALS_AC: Lazy<AhoCorasick> = Lazy::new(|| {
+    AhoCorasick::new([
         "/hyphenminus", "/space", "/period", "/comma", "/colon", "/semicolon",
         "/slash", "/backslash", "/parenleft", "/parenright",
         "/bracketleft", "/bracketright", "/braceleft", "/braceright",
@@ -151,17 +166,56 @@ static BAD_LINE_AC: Lazy<AhoCorasick> = Lazy::new(|| {
         "/plusminus", "/multiply", "/divide", "/section",
         "/paragraph", "/dagger", "/daggerdbl", "/ellipsis",
         "/glyph", "CID+",
-        // Note: /uni<hex> and /gid<N> are caught by PDF_GLYPH_NAME_REGEX
-        // via has_decoded_glyph_font_artefact — not listed here to avoid
-        // matching legitimate /united-nations, /university-of-X URLs, etc.
     ])
     .unwrap()
 });
 
+/// Strip rule A + rule B matches from a line. Rule A is always span-
+/// stripped. For rule B (PDF_GLYPH_NAME_REGEX = /uni<hex> | /g<N>),
+/// also check the coverage predicate: if rule-B match count ≥ 10
+/// AND rule-B-matches / non-whitespace-length ≥ 0.09, the line is
+/// flagged for removal (caller emits LINE_REMOVED_COMMENT).
+///
+/// Gemini wave (2026-04-22, 1000 rule-B cases): coverage ≥ 0.10
+/// alone gave precision 95.7% / recall 82%. User chose the more
+/// conservative `count ≥ 10 AND coverage ≥ 0.09` (precision 96.3%,
+/// recall 60.4% — trades recall for precision).
+///
+/// Returns (stripped_line, rule_b_line_drop_flag).
+fn apply_glyph_span_strip_and_rule_b(line: &str) -> (String, bool) {
+    // Count rule B matches before we strip
+    let rule_b_count = PDF_GLYPH_NAME_REGEX.find_iter(line).count();
+    let non_ws_len = line.chars().filter(|c| !c.is_whitespace()).count();
+    let rule_b_coverage = if non_ws_len > 0 {
+        rule_b_count as f64 / non_ws_len as f64
+    } else {
+        0.0
+    };
+    let rule_b_line_drop = rule_b_count >= 10 && rule_b_coverage >= 0.09;
+
+    // Strip rule A literal spans
+    let mut out = String::with_capacity(line.len());
+    let mut last_end = 0;
+    for m in RULE_A_LITERALS_AC.find_iter(line) {
+        out.push_str(&line[last_end..m.start()]);
+        last_end = m.end();
+    }
+    out.push_str(&line[last_end..]);
+    // Strip rule B regex spans (subsequent pass — RULE_A shouldn't overlap)
+    let stripped = PDF_GLYPH_NAME_REGEX.replace_all(&out, "").into_owned();
+    (stripped, rule_b_line_drop)
+}
+
 fn has_decoded_glyph_font_artefact(line: &str) -> bool {
+    // GLYPH_FONT_TAG_REGEX / FONT_GLYPH_TAG_REGEX are structural PDF
+    // font-tag residue; PDF_FONT_SUBSET_REGEX (/XQDMQS+CenturyGothic)
+    // is the Adobe font-subset convention. All stay as whole-line
+    // drop triggers (user-review classification: ✅).
+    //
+    // PDF_GLYPH_NAME_REGEX is now handled by apply_glyph_span_strip_
+    // and_rule_b per the 2026-04-22 Gemini wave.
     GLYPH_FONT_TAG_REGEX.is_match(line)
         || FONT_GLYPH_TAG_REGEX.is_match(line)
-        || PDF_GLYPH_NAME_REGEX.is_match(line)
         || PDF_FONT_SUBSET_REGEX.is_match(line)
 }
 
@@ -376,13 +430,38 @@ pub fn core_clean_text(
             }
         }
 
+        // Rule A (PS-glyph literal set) + Rule B (PS-glyph regex).
+        // Both span-stripped inline; rule B additionally triggers
+        // whole-line removal if coverage predicate met (mc ≥ 10 AND
+        // rule-B matches / non-whitespace chars ≥ 0.09). Per 2026-04-22
+        // Gemini wave: P=96.3%, R=60.4% on rule-B predicate.
+        // Applied BEFORE BAD_LINE_AC so `/hyphenminus`-style spans get
+        // stripped and don't trigger the `hyphenminus` substring trigger
+        // in BAD_LINE_AC.
+        // Skip in math context.
+        let rule_b_line_drop;
+        let post_rule_strip = if skip_bad_line_check {
+            rule_b_line_drop = false;
+            line_after_entity_decoding_str.clone()
+        } else {
+            let (stripped, drop) =
+                apply_glyph_span_strip_and_rule_b(&line_after_entity_decoding_str);
+            rule_b_line_drop = drop;
+            stripped
+        };
+        if rule_b_line_drop {
+            original_chars_for_badness += line.chars().count();
+            cleaned_output_string_builder.push_str(LINE_REMOVED_COMMENT);
+            cleaned_output_string_builder.push('\n');
+            continue;
+        }
+
         if !skip_bad_line_check
-            && (BAD_LINE_AC.is_match(line)
-                || BAD_LINE_AC.is_match(&line_after_entity_decoding_str)
-                || has_decoded_glyph_font_artefact(&line_after_entity_decoding_str))
+            && (BAD_LINE_AC.is_match(&post_rule_strip)
+                || has_decoded_glyph_font_artefact(&post_rule_strip))
         {
             original_chars_for_badness += line.chars().count();
-            cleaned_output_string_builder.push_str(TEXT_MISSING_COMMENT);
+            cleaned_output_string_builder.push_str(LINE_REMOVED_COMMENT);
             cleaned_output_string_builder.push('\n');
             continue;
         }
@@ -391,9 +470,10 @@ pub fn core_clean_text(
         current_line_removed_chars_buffer_buf.clear();
         // line_after_tag_handling_buf is cleared inside strip_tags_custom
 
-        // Step 5.1 & 5.4: Use strip_tags_custom with a reusable buffer on the DECODED line content
+        // Step 5.1 & 5.4: Use strip_tags_custom with a reusable buffer
+        // on the rule-A/B-stripped decoded line content
         let removed_from_tags_count = strip_tags_custom(
-            &line_after_entity_decoding_str,
+            &post_rule_strip,
             &mut line_after_tag_handling_buf,
         );
 
@@ -951,7 +1031,7 @@ mod tests {
         let input = "prefix GLYPH&lt;c=3,font=/QCMXYA+CenturyGothic&gt; suffix\n";
         let (cleaned, original_chars, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_eq!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
         assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
         assert_eq!(kept_chars, 0);
     }
@@ -976,91 +1056,112 @@ mod tests {
         let input = "prefix GLYPH<236> suffix\n";
         let (cleaned, original_chars, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_eq!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
         assert_eq!(original_chars, input.trim_end_matches('\n').chars().count());
         assert_eq!(kept_chars, 0);
     }
 
     #[test]
     fn core_clean_text_rejects_bare_glyph_word() {
-        // Bare `GLYPH` without a `<` after — previously uncaught. 5k-row
-        // probe on openarchives showed 84,798 hits in 172 docs.
+        // Bare `GLYPH` — structural trigger, line-drop with marker.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         let input = "some text with GLYPH in the middle\n";
         let (cleaned, _, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_eq!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
         assert_eq!(kept_chars, 0);
     }
 
     #[test]
-    fn core_clean_text_rejects_postscript_uni_glyph_name() {
-        // /uni<hex> — PostScript Unicode-codepoint glyph-name residue.
+    fn core_clean_text_span_strips_ps_uni_glyph_names_in_prose() {
+        // Per 2026-04-22 Gemini wave: /uni<hex> is now SPAN-stripped, not
+        // line-rejected, when coverage predicate is not met. Matches
+        // should disappear; surrounding prose should remain.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         let input = "foo /uni03B1 /uni03B2 /uni03B3 bar\n";
-        let (cleaned, _, kept_chars) =
+        let (cleaned, _, _) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
-        assert_eq!(kept_chars, 0);
+        // Prose "foo" + "bar" survive; /uni spans removed.
+        assert!(cleaned.contains("foo"), "got {:?}", cleaned);
+        assert!(cleaned.contains("bar"), "got {:?}", cleaned);
+        assert!(!cleaned.contains("/uni03B1"), "got {:?}", cleaned);
     }
 
     #[test]
-    fn core_clean_text_rejects_postscript_gid_glyph_name() {
-        // /gid<N> — PostScript glyph-ID residue.
+    fn core_clean_text_line_drops_dense_rule_b_matches() {
+        // When rule-B match count >= 10 AND matches / non-whitespace
+        // chars >= 0.09, emit LINE_REMOVED_COMMENT (user-approved
+        // threshold, 2026-04-22).
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        let input = "x /gid456 y /g12 z\n";
+        // 12 /g<N> matches, all concatenated — max density.
+        let input = "/g302/g544/g306/g542/g304/g538/g652/g305/g536/g545/g541/g547\n";
         let (cleaned, _, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_eq!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
         assert_eq!(kept_chars, 0);
     }
 
     #[test]
     fn core_clean_text_rejects_pdf_font_subset_form() {
-        // /<SUBSET>+<FontName> — Adobe PDF font-subset naming convention.
+        // /<SUBSET>+<FontName> — Adobe font-subset convention, still
+        // line-drop (user classified ✅ not-flagged).
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         let input = "Text /XQDMQS+CenturyGothic in it.\n";
         let (cleaned, _, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_eq!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
         assert_eq!(kept_chars, 0);
     }
 
     #[test]
-    fn core_clean_text_rejects_bare_ps_glyph_name() {
-        // Bare `hyphenminus` and `/hyphenminus` — PostScript glyph names.
+    fn core_clean_text_span_strips_ps_glyph_literals_in_prose() {
+        // `/hyphenminus /space /period ...` — rule A literals. Per
+        // 2026-04-22 Gemini wave: SPAN-strip unconditionally; surrounding
+        // prose (here "hello"/"world") should remain.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         for input in [
-            "hello hyphenminus world\n",
             "foo /hyphenminus bar\n",
             "x /space y\n",
             "a /period b\n",
         ] {
-            let (cleaned, _, kept_chars) =
+            let (cleaned, _, _) =
                 core_clean_text(input, &allowed_chars, &unusual_chars, None);
-            assert_eq!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"),
-                       "input {:?} should reject", input);
-            assert_eq!(kept_chars, 0);
+            assert_ne!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"),
+                       "rule A literals should not line-drop: {:?} → {:?}",
+                       input, cleaned);
+            assert!(!cleaned.contains("/hyphenminus") && !cleaned.contains("/space")
+                    && !cleaned.contains("/period"),
+                    "rule A literal should be stripped from {:?} → {:?}", input, cleaned);
         }
     }
 
     #[test]
+    fn core_clean_text_bare_hyphenminus_still_line_drops() {
+        // `hyphenminus` (no slash) is a BAD_LINE_AC structural trigger —
+        // still line-drops per user-review classification ✅.
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input = "hello hyphenminus world\n";
+        let (cleaned, _, kept_chars) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert_eq!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
+        assert_eq!(kept_chars, 0);
+    }
+
+    #[test]
     fn core_clean_text_does_not_reject_legitimate_slash_word() {
-        // Guard against over-matching /uni-something as a URL path
-        // (e.g. /united-nations /university-of-X). PDF_GLYPH_NAME_REGEX
-        // requires /uni + 4+ hex digits.
+        // Guard: /united-nations /university-of-X in URLs must survive.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         let input = "See https://example.com/united-nations/report.\n";
         let (cleaned, _, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        // URL line should pass through — not rejected, not emptied.
-        assert_ne!(cleaned, format!("{TEXT_MISSING_COMMENT}\n"));
+        assert_ne!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
         assert!(kept_chars > 0);
     }
 
