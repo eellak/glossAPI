@@ -49,7 +49,15 @@ from typing import Any, Dict, List, Optional
 DEFAULT_SCRIPTS = ["greek", "latin", "french", "spanish", "punctuation", "numbers", "common_symbols"]
 
 
-def _load_stats(stats_glob: str) -> List[Dict[str, Any]]:
+def _load_stats(stats_glob: str, altered_only: bool = True) -> List[Dict[str, Any]]:
+    """Load all per-doc stats records and filter to the target population.
+
+    Target population (per 2026-04-22 design note):
+      docs that actually experienced cleaning damage — i.e. non-zero
+      chars removed OR at least one line dropped. Docs that passed
+      through untouched don't help calibrate cutoffs because there's
+      nothing to judge.
+    """
     out = []
     for path in sorted(globmod.glob(stats_glob)):
         with open(path, "r", encoding="utf-8") as fh:
@@ -64,6 +72,11 @@ def _load_stats(stats_glob: str) -> List[Dict[str, Any]]:
                 # runs won't.
                 if "content_chars_kept" not in d:
                     continue
+                if altered_only:
+                    pct_chars = float(d.get("pct_chars_removed_non_empty", 0) or 0)
+                    lines_dropped = int(d.get("lines_dropped_by_cleaner", 0) or 0)
+                    if pct_chars <= 0 and lines_dropped <= 0:
+                        continue
                 out.append(d)
     return out
 
@@ -126,7 +139,17 @@ def main(argv=None) -> int:
     parser.add_argument("--stats-glob", required=True)
     parser.add_argument("--parquet-glob", required=True)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--sample-size", type=int, default=150)
+    parser.add_argument("--sample-size", type=int, default=500,
+                        help="Total target sample (default 500 — gives ~30/zone across "
+                             "10 zones for each of 4 marginal-axis estimates at ~±17%% CI)")
+    parser.add_argument("--min-per-dataset", type=int, default=15,
+                        help="Per-dataset floor — every dataset gets at least this many "
+                             "samples regardless of stratification. Default 15.")
+    parser.add_argument("--altered-only", action="store_true", default=True,
+                        help="Only sample docs with pct_chars_removed_non_empty > 0 OR "
+                             "lines_dropped_by_cleaner > 0 (default on).")
+    parser.add_argument("--include-unaltered", dest="altered_only", action="store_false",
+                        help="Include docs with zero cleaning damage.")
     parser.add_argument("--doc-id-column", default="doc_id")
     parser.add_argument("--text-column", default="text")
     parser.add_argument("--scripts", nargs="+", default=DEFAULT_SCRIPTS)
@@ -137,9 +160,10 @@ def main(argv=None) -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     rng = random.Random(args.seed)
 
-    print(f"loading stats from {args.stats_glob} ...", flush=True)
-    stats = _load_stats(args.stats_glob)
-    print(f"  {len(stats)} kept-docs with new-cleaner stats")
+    print(f"loading stats from {args.stats_glob} "
+          f"(altered_only={args.altered_only}) ...", flush=True)
+    stats = _load_stats(args.stats_glob, altered_only=args.altered_only)
+    print(f"  population size: {len(stats)} docs")
     if not stats:
         print("  nothing to sample. did you run clean_and_stats_rowsharded "
               "after the 2026-04-22 four-way-accounting change?",
@@ -172,12 +196,32 @@ def main(argv=None) -> int:
             per_zone_picks[(axis, z)].extend(picks)
             sample_ids.update(picks)
 
-    # Trim to exactly sample_size.
-    picks_list = list(sample_ids)
+    # Per-dataset floor: every dataset gets at least --min-per-dataset picks.
+    # Supplements stratified zone picks so rare datasets don't get under-represented.
+    by_dataset: Dict[str, List[int]] = defaultdict(list)
+    for i, rec in enumerate(stats):
+        by_dataset[str(rec.get("source_dataset", "unknown"))].append(i)
+    dataset_picks = defaultdict(list)
+    for ds, idxs in by_dataset.items():
+        rng.shuffle(idxs)
+        existing = [i for i in idxs if i in sample_ids]
+        need = max(args.min_per_dataset - len(existing), 0)
+        extra = [i for i in idxs if i not in sample_ids][:need]
+        dataset_picks[ds].extend(existing + extra)
+        sample_ids.update(extra)
+
+    # Trim to exactly sample_size while preserving per-dataset floor.
+    floor_ids = set()
+    for ds_list in dataset_picks.values():
+        floor_ids.update(ds_list[: args.min_per_dataset])
+    remaining_budget = max(args.sample_size - len(floor_ids), 0)
+    extras = [i for i in sample_ids if i not in floor_ids]
+    rng.shuffle(extras)
+    picks_list = list(floor_ids) + extras[:remaining_budget]
     rng.shuffle(picks_list)
-    picks_list = picks_list[: args.sample_size]
     print(f"stratified to {len(picks_list)} unique docs "
-          f"({len(per_zone_picks)} zones across {len(axes)} axes)")
+          f"({len(per_zone_picks)} zones across {len(axes)} axes, "
+          f"{len(by_dataset)} datasets covered at ≥{args.min_per_dataset} each)")
 
     # Build output. Per pick: re-load parquet row, re-run cleaner with newlines.
     output_path = args.output_dir / "sample.jsonl"
