@@ -107,9 +107,16 @@ def main():
     for d in _iter_stats(args.stats_glob):
         if d.get("drop_reason"):
             continue
-        pct = d.get("pct_chars_removed_non_empty")
-        if pct is None:
-            continue
+        # Use CLEANING-ONLY deletion pct (line_drop + per_char_filter),
+        # excluding normalization effects. Normalization is mostly
+        # whitespace-bucket / dot-leader / separator collapse — format
+        # compression, not content loss. For the sample split at 20%
+        # we want actual content removal.
+        inp = int(d.get("non_empty_chars_in", 0) or 0)
+        line_drop = int(d.get("chars_dropped_by_line_drop", 0) or 0)
+        per_char = int(d.get("chars_dropped_by_per_char_filter", 0) or 0)
+        pct = 100.0 * (line_drop + per_char) / max(inp, 1)
+        d["__cleaning_only_deletion_pct"] = pct
         for (band, lo, hi) in buckets:
             if lo <= pct < hi:
                 by_bucket[(band, lo, hi)].append(d)
@@ -182,7 +189,10 @@ def main():
         text = texts.get(did)
         if not text:
             continue
-        pct = float(rec.get("pct_chars_removed_non_empty", 0))
+        # Use the cleaning-only deletion pct (excludes normalization)
+        # for the 20% split, matching the bucket classification above.
+        pct = float(rec.get("__cleaning_only_deletion_pct", 0))
+        pct_total = float(rec.get("pct_chars_removed_non_empty", 0))
         ds = rec.get("source_dataset", "unk")
         up = upstream.get((ds, did), {})
         target_dir = low_dir if pct < 20.0 else high_dir
@@ -200,10 +210,12 @@ def main():
             "",
             f"## Deletion metrics",
             "",
-            f"- **pct_chars_removed_non_empty**: {pct}%",
-            f"- **non_empty_chars_in**: {rec.get('non_empty_chars_in')}",
-            f"- **non_empty_chars_out**: {rec.get('non_empty_chars_out')}",
-            f"- **content_chars_kept**: {rec.get('content_chars_kept')}",
+            f"- **cleaning_only_deletion_pct** (line_drop + per_char_filter, "
+            f"excludes normalization): **{pct:.3f}%**",
+            f"- pct_chars_removed_non_empty (total incl normalization): {pct_total}%",
+            f"- non_empty_chars_in: {rec.get('non_empty_chars_in')}",
+            f"- non_empty_chars_out: {rec.get('non_empty_chars_out')}",
+            f"- content_chars_kept: {rec.get('content_chars_kept')}",
             "",
             f"## Four-way drop attribution",
             "",
