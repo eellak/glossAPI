@@ -498,6 +498,82 @@ pub fn detect_repeated_element_cut(s: &str, threshold: usize) -> Option<usize> {
     None
 }
 
+/// Small-vocabulary library of LaTeX atoms — Greek letters plus
+/// common decorator commands. Ported from
+/// `src/glossapi/corpus/phase_clean.py`:
+/// - `LATEX_SHORT_ATOM_BLOCK_BASE_COMMANDS`
+/// - `LATEX_SHORT_ATOM_BLOCK_DECORATOR_COMMANDS`
+/// - `LATEX_SYMBOL_SLOT_COMMANDS`
+///
+/// The set is intentionally SMALL. A long run of elements all drawn
+/// from this set — even if each occurrence is a different member —
+/// signals the model is looping through a known small vocabulary
+/// (common hallucination mode on math-OCR outputs).
+fn is_small_vocab_atom(base: &str) -> bool {
+    // Strip any subscript/superscript from the base for comparison —
+    // small-vocab detection is about the COMMAND, not the args.
+    let stem = base.split_once('{').map(|(s, _)| s).unwrap_or(base);
+    matches!(
+        stem,
+        // Greek letters
+        "\\alpha" | "\\beta" | "\\gamma" | "\\delta"
+        | "\\epsilon" | "\\varepsilon" | "\\zeta" | "\\eta"
+        | "\\theta" | "\\vartheta" | "\\iota" | "\\kappa"
+        | "\\lambda" | "\\mu" | "\\nu" | "\\xi" | "\\omicron"
+        | "\\pi" | "\\varpi" | "\\rho" | "\\varrho"
+        | "\\sigma" | "\\varsigma" | "\\tau" | "\\upsilon"
+        | "\\phi" | "\\varphi" | "\\chi" | "\\psi" | "\\omega"
+        | "\\Alpha" | "\\Beta" | "\\Gamma" | "\\Delta"
+        | "\\Epsilon" | "\\Zeta" | "\\Eta" | "\\Theta"
+        | "\\Iota" | "\\Kappa" | "\\Lambda" | "\\Mu"
+        | "\\Nu" | "\\Xi" | "\\Omicron" | "\\Pi"
+        | "\\Rho" | "\\Sigma" | "\\Tau" | "\\Upsilon"
+        | "\\Phi" | "\\Chi" | "\\Psi" | "\\Omega"
+        // Decorators (typically appear as wrappers around Greek)
+        | "\\hat" | "\\tilde" | "\\bar" | "\\vec"
+        | "\\dot" | "\\ddot"
+    )
+}
+
+/// Detect a SMALL-VOCABULARY RUN cut: `threshold`+1 consecutive LaTeX
+/// elements where EVERY element's base is in the small Greek/decorator
+/// vocabulary. The elements don't have to repeat — `\alpha \beta \mu
+/// \beta \gamma \alpha \nu \mu …` still matches if all are Greek.
+///
+/// Returns the byte offset at which the run exceeds the threshold.
+/// Breaks on any element outside the vocabulary — ensures the detector
+/// only fires on "pure small-vocab" runs, not math with a mix of
+/// Greek + variables + operators.
+///
+/// Default threshold 12 (matches `LATEX_SHORT_ATOM_BLOCK_REPEAT_MIN_ITEMS`
+/// in the corpus code).
+pub fn detect_small_vocab_run_cut(s: &str, threshold: usize) -> Option<usize> {
+    if threshold == 0 {
+        return Some(0);
+    }
+    let mut pos = 0;
+    let mut run_count: usize = 0;
+    let mut recent_ends: Vec<usize> = Vec::with_capacity(threshold + 1);
+    while let Some(elem) = next_latex_element(s, pos) {
+        pos = elem.end;
+        if is_small_vocab_atom(&elem.base) {
+            run_count += 1;
+            recent_ends.push(elem.end);
+            if run_count > threshold {
+                let cut = recent_ends[threshold - 1];
+                return Some(cut);
+            }
+        } else {
+            run_count = 0;
+            recent_ends.clear();
+        }
+        if pos == elem.start {
+            pos = elem.start + 1;
+        }
+    }
+    None
+}
+
 /// Detect a MONOTONIC-progression cut: same base with numeric sub- OR
 /// super-script incrementing by exactly 1 between consecutive elements
 /// (like `x_1, x_2, x_3, ...`). Threshold is the minimum progression
@@ -617,7 +693,13 @@ pub fn crop_latex_repetitions(
         // the test dataset: real math rarely enumerates 8+ without
         // `\ldots`). Analog of OCR's numeric-list garbage detector.
         let cut_mono = detect_monotonic_element_cut(inner, 8);
-        let cut = [cut_char, cut_line, cut_elem, cut_mono]
+        // Small-vocab run detector — catches a long run of Greek-
+        // letter / decorator commands (from a fixed small vocabulary),
+        // e.g. `\alpha \beta \mu \beta \gamma \alpha \nu \mu …`.
+        // Threshold 12 (matches LATEX_SHORT_ATOM_BLOCK_REPEAT_MIN_ITEMS
+        // in the corpus Python code).
+        let cut_vocab = detect_small_vocab_run_cut(inner, 12);
+        let cut = [cut_char, cut_line, cut_elem, cut_mono, cut_vocab]
             .into_iter()
             .flatten()
             .min();
@@ -1011,5 +1093,74 @@ mod tests {
         let doc = "$$x_1 + x_2 + x_3 + \\ldots + x_n$$";
         let out = crop_latex_repetitions(doc, true, 100, 100);
         assert_eq!(out, doc);
+    }
+
+    // --- small-vocab-run detector: positive + negative dataset ---
+
+    #[test]
+    fn small_vocab_run_catches_pure_greek_run() {
+        // 15 mixed Greek letters, none repeating, but all from the
+        // small-vocab set — should trigger.
+        let s = "\\alpha \\beta \\gamma \\delta \\mu \\nu \\alpha \\beta \\gamma \\mu \\lambda \\omega \\phi \\theta \\chi";
+        let cut = detect_small_vocab_run_cut(s, 12).expect("cut");
+        assert!(cut > 0);
+    }
+
+    #[test]
+    fn small_vocab_run_catches_decorated_greek_run() {
+        // `\hat{\alpha}` etc. — base starts with `\hat` which is in the
+        // decorator set. 15× should trigger.
+        let s = "\\hat{\\alpha} \\hat{\\beta} \\tilde{\\gamma} \\bar{\\mu} \\hat{\\nu} \\tilde{\\alpha} \\bar{\\beta} \\hat{\\gamma} \\tilde{\\mu} \\bar{\\nu} \\hat{\\alpha} \\tilde{\\beta} \\bar{\\gamma} \\hat{\\mu} \\tilde{\\nu}";
+        let cut = detect_small_vocab_run_cut(s, 12).expect("cut");
+        assert!(cut > 0);
+    }
+
+    #[test]
+    fn small_vocab_run_does_not_fire_below_threshold() {
+        // 11 Greek letters — below threshold 12.
+        let s = "\\alpha \\beta \\gamma \\delta \\mu \\nu \\alpha \\beta \\gamma \\mu \\lambda";
+        assert_eq!(detect_small_vocab_run_cut(s, 12), None);
+    }
+
+    #[test]
+    fn small_vocab_run_breaks_on_non_vocab_element() {
+        // Greek letters + a variable `x` in the middle breaks the run.
+        let s = "\\alpha \\beta \\gamma \\delta \\mu \\nu \\alpha \\beta x \\gamma \\mu \\lambda \\omega \\phi \\theta";
+        // `x` breaks the run at position 8; the subsequent 7 atoms
+        // restart but only reach 7, below 12.
+        assert_eq!(detect_small_vocab_run_cut(s, 12), None);
+    }
+
+    #[test]
+    fn small_vocab_run_breaks_on_latex_operators() {
+        // Integral / summation / fraction break the pure-Greek run.
+        let s = "\\alpha \\beta \\sum \\gamma \\delta \\mu \\nu \\int \\alpha \\beta \\gamma \\mu \\lambda \\omega \\phi";
+        assert_eq!(detect_small_vocab_run_cut(s, 12), None);
+    }
+
+    #[test]
+    fn small_vocab_run_does_not_fire_on_short_theorem_setup() {
+        // Typical proof setup: `Let $\alpha, \beta, \gamma \in \mathbb{R}$`.
+        // Greek vars + non-vocab element (\in, \mathbb).
+        let s = "\\alpha, \\beta, \\gamma \\in \\mathbb{R}";
+        assert_eq!(detect_small_vocab_run_cut(s, 12), None);
+    }
+
+    #[test]
+    fn small_vocab_run_does_not_fire_on_summation_body() {
+        // `\sum \alpha_i \beta_i` inside a sum — sum breaks the run,
+        // and the Greek letters afterward aren't numerous enough.
+        let s = "\\sum_{i=1}^{n} \\alpha_i \\beta_i \\gamma_i";
+        assert_eq!(detect_small_vocab_run_cut(s, 12), None);
+    }
+
+    #[test]
+    fn crop_catches_small_vocab_loop_end_to_end() {
+        // Pure Greek-letter spam inside `$$…$$` — a plausible
+        // hallucination mode the user flagged.
+        let inner = "\\alpha \\beta \\gamma \\delta \\mu \\nu \\alpha \\beta \\gamma \\mu \\lambda \\omega \\phi \\theta \\chi \\psi";
+        let doc = format!("$$ {} $$", inner);
+        let out = crop_latex_repetitions(&doc, true, 100, 100);
+        assert!(out.contains("repetition cropped"), "expected crop marker, got {:?}", out);
     }
 }
