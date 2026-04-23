@@ -227,18 +227,22 @@ def main():
             f"- greek_percentage: {up.get('greek_percentage')}",
             f"- latin_percentage: {up.get('latin_percentage')}",
             "",
-            f"## Text sample",
+            f"## Text sample (rendered as markdown)",
             "",
-            "```"
+            f"<!-- the metadata above is cleaner stats; everything below "
+            f"this HR is the cleaned doc text, shown unfenced so tables / "
+            f"headings render in preview -->",
+            "",
+            "---",
+            "",
         ]
         if args.max_text_chars > 0 and len(text) > args.max_text_chars:
             half = args.max_text_chars // 2
             lines.append(text[:half])
-            lines.append(f"\n[...truncated {len(text) - args.max_text_chars} chars...]\n")
+            lines.append(f"\n*[...truncated {len(text) - args.max_text_chars} chars...]*\n")
             lines.append(text[-half:])
         else:
             lines.append(text)
-        lines.append("```")
         (target_dir / fname).write_text("\n".join(lines), encoding="utf-8")
         n_written += 1
     print(f"wrote {n_written} files to {args.output_dir}")
