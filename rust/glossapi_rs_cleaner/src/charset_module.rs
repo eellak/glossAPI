@@ -43,42 +43,138 @@ pub struct CharsetCounts {
     pub other: usize,
 }
 
-/// Count chars by Unicode bucket in a single pass over the string.
-/// No allocations; total runtime ~O(chars).
+/// Decide whether a single line should be excluded from the content-
+/// ratio denominator. These lines are format scaffolding — their chars
+/// are not prose and should not bias the mojibake / language signals.
+///
+/// Excluded classes (2026-04-23 per user guidance):
+/// - MD table rows (contain `|` pipes; parser check minimal)
+/// - Standalone separator lines (`---`, `___`, `***`, `===`, `(?:\\_){4,}`,
+///   and em-dash / horizontal-bar / box-drawing variants)
+/// - Dot-leader lines (runs of `.` only, possibly with whitespace)
+/// - Horizontal-rule lines (long runs of `_` or `-`)
+/// - Block-HTML-comment-only lines (`<!-- … -->`)
+///
+/// LaTeX math regions (`$$…$$`) are handled by the caller via state
+/// because they span multiple lines.
+/// Strip inline HTML-comment spans (`<!-- … -->`) from a single line.
+/// Returns a string with the comment regions removed. Unterminated
+/// `<!--` at end-of-line is tolerated by dropping from `<!--` to EOL.
+pub fn strip_html_comments(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(start) = rest.find("<!--") {
+        out.push_str(&rest[..start]);
+        let after_open = &rest[start + 4..];
+        match after_open.find("-->") {
+            Some(end_rel) => {
+                rest = &after_open[end_rel + 3..];
+            }
+            None => {
+                // Unterminated — drop rest of line.
+                return out;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+pub fn is_format_scaffolding_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false; // empty lines don't contribute chars anyway
+    }
+    // MD table row: starts and ends with `|`, and has at least one interior `|`
+    if trimmed.starts_with('|') && trimmed.ends_with('|') {
+        if trimmed.chars().filter(|&c| c == '|').count() >= 2 {
+            return true;
+        }
+    }
+    // Standalone separator / dot-leader line: entire trimmed content is
+    // runs of separator chars only.
+    let all_sep = trimmed.chars().all(|c| matches!(
+        c,
+        '-' | '_' | '*' | '=' | '.' | '·' | '\u{2014}' | '\u{2015}'
+        | '\u{2500}' | '\u{2550}' | '\\' | ' ' | '\t'
+    ));
+    if all_sep && trimmed.chars().any(|c| !c.is_whitespace()) {
+        return true;
+    }
+    // HTML-comment-only line.
+    if trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
+        return true;
+    }
+    false
+}
+
+/// Count chars by Unicode bucket over the string, SKIPPING lines that
+/// are pure format scaffolding (MD tables, separator / dot-leader,
+/// HTML-comment-only) and block LaTeX math regions. The counts reflect
+/// actual content, so the derived ratios measure content-language /
+/// content-mojibake / content-punct density — not layout overhead.
+///
+/// No allocations beyond the line iterator; O(chars).
 pub fn count_charsets(text: &str) -> CharsetCounts {
     let mut c = CharsetCounts::default();
-    for ch in text.chars() {
-        c.total += 1;
-        if ch.is_whitespace() {
-            c.whitespace += 1;
-            continue;
-        }
-        let cp = ch as u32;
-        // Cheap ASCII fast-path (majority of English/Greek prose is ASCII-or-Greek).
-        if cp < 0x80 {
-            if ch.is_ascii_alphabetic() {
-                c.latin_letters += 1;
-            } else if ch.is_ascii_digit() {
-                c.digits += 1;
-            } else if cp >= 0x21 && cp <= 0x7E {
-                c.ascii_punct += 1;
-            } else {
-                c.other += 1;
+    let mut in_latex_block = false;
+    for line in text.lines() {
+        // LaTeX $$...$$ block tracking. A line containing a single `$$`
+        // toggles the state. A line with TWO `$$` opens-and-closes and
+        // stays in the same state.
+        let dollar_pairs = line.matches("$$").count();
+        let starts_or_ends_math = dollar_pairs % 2 == 1;
+        if in_latex_block {
+            // We're inside a math block — skip this line's content.
+            if starts_or_ends_math {
+                in_latex_block = false;
             }
             continue;
         }
-        // Named non-ASCII blocks (ranges are inclusive).
-        match cp {
-            0x00A1..=0x00FF => c.latin1_supp += 1,
-            0x0100..=0x017F => c.latin_ext_a += 1,
-            0x0180..=0x024F => c.latin_ext_b += 1,
-            0x0250..=0x02AF => c.ipa_extensions += 1,
-            0x0370..=0x03FF => c.greek += 1,
-            0x0400..=0x04FF => c.cyrillic += 1,
-            0x1F00..=0x1FFF => c.greek += 1, // Polytonic Greek extended
-            0xE000..=0xF8FF => c.pua += 1,
-            0xFFF0..=0xFFFF => c.specials_fffd += 1,
-            _ => c.other += 1,
+        if starts_or_ends_math {
+            // Entering a math block; skip this line too.
+            in_latex_block = true;
+            continue;
+        }
+        if is_format_scaffolding_line(line) {
+            // Skip entirely — neither numerator nor denominator affected.
+            continue;
+        }
+        // Strip inline HTML-comment spans (`<!-- image -->`, `<!-- text-missing -->`,
+        // etc.) before per-char counting — they're markers from upstream
+        // extraction/cleaning, not prose.
+        let line_stripped = strip_html_comments(line);
+        for ch in line_stripped.chars() {
+            c.total += 1;
+            if ch.is_whitespace() {
+                c.whitespace += 1;
+                continue;
+            }
+            let cp = ch as u32;
+            if cp < 0x80 {
+                if ch.is_ascii_alphabetic() {
+                    c.latin_letters += 1;
+                } else if ch.is_ascii_digit() {
+                    c.digits += 1;
+                } else if cp >= 0x21 && cp <= 0x7E {
+                    c.ascii_punct += 1;
+                } else {
+                    c.other += 1;
+                }
+                continue;
+            }
+            match cp {
+                0x00A1..=0x00FF => c.latin1_supp += 1,
+                0x0100..=0x017F => c.latin_ext_a += 1,
+                0x0180..=0x024F => c.latin_ext_b += 1,
+                0x0250..=0x02AF => c.ipa_extensions += 1,
+                0x0370..=0x03FF => c.greek += 1,
+                0x0400..=0x04FF => c.cyrillic += 1,
+                0x1F00..=0x1FFF => c.greek += 1,
+                0xE000..=0xF8FF => c.pua += 1,
+                0xFFF0..=0xFFFF => c.specials_fffd += 1,
+                _ => c.other += 1,
+            }
         }
     }
     c
@@ -183,5 +279,119 @@ mod tests {
         let c = count_charsets("ὁ λόγος ἀγαθός");
         let r = CharsetRatios::from_counts(&c);
         assert!(r.greek_letter_ratio > 0.7);
+    }
+
+    #[test]
+    fn excludes_md_table_rows_from_counts() {
+        // A table row should not pollute punct ratio with pipes.
+        let text = "\
+καλημέρα κόσμε
+| Column | Value |
+| --- | --- |
+| alpha | 1 |
+";
+        let c = count_charsets(text);
+        // Only "καλημέρα κόσμε" counted. No `|` should show up in punct.
+        let r = CharsetRatios::from_counts(&c);
+        assert!(r.ascii_punct_ratio < 0.05,
+                "table pipes leaked into punct: got {}", r.ascii_punct_ratio);
+        assert!(r.greek_letter_ratio > 0.9);
+    }
+
+    #[test]
+    fn excludes_separator_and_dot_leader_lines() {
+        let text = "\
+καλημέρα
+---------
+..........
+Αθήνα
+___________
+";
+        let c = count_charsets(text);
+        let r = CharsetRatios::from_counts(&c);
+        // Only the two Greek prose lines should count.
+        assert!(r.greek_letter_ratio > 0.95,
+                "separator chars leaked into denom: greek_ratio={}",
+                r.greek_letter_ratio);
+        assert!(r.ascii_punct_ratio < 0.05);
+    }
+
+    #[test]
+    fn excludes_latex_block_math_region() {
+        let text = "\
+καλημέρα κόσμε
+$$
+\\alpha + \\beta = \\gamma
+\\int_0^1 x \\, dx
+$$
+Αθήνα πόλη
+";
+        let c = count_charsets(text);
+        let r = CharsetRatios::from_counts(&c);
+        // The math block's `\alpha \beta \gamma \int` backslash + letters
+        // would normally register as latin_letters + ascii_punct. With
+        // the block excluded, ratio is dominated by the Greek prose.
+        assert!(r.greek_letter_ratio > 0.9,
+                "latex block leaked: greek={} punct={} latin={}",
+                r.greek_letter_ratio, r.ascii_punct_ratio,
+                c.latin_letters);
+        assert_eq!(c.latin_letters, 0);
+    }
+
+    #[test]
+    fn excludes_html_comment_only_lines() {
+        let text = "\
+καλημέρα
+<!-- image -->
+κόσμε
+<!-- table-removed -->
+";
+        let c = count_charsets(text);
+        let r = CharsetRatios::from_counts(&c);
+        assert!(r.greek_letter_ratio > 0.95);
+        assert_eq!(c.latin_letters, 0); // "image" / "table-removed" not counted
+    }
+
+    #[test]
+    fn excludes_inline_html_comments_from_counts() {
+        // <!-- image --> inserted inline on a content line must not
+        // inflate ascii_punct (the `<`, `!`, `-`, `-`, `>` chars).
+        let text = "καλημέρα <!-- image --> κόσμε";
+        let c = count_charsets(text);
+        let r = CharsetRatios::from_counts(&c);
+        // Only Greek letters should count. No "image" latin letters,
+        // no comment-syntax punct.
+        assert_eq!(c.latin_letters, 0,
+                   "inline comment leaked 'image' letters: {:?}", c);
+        assert_eq!(c.ascii_punct, 0,
+                   "inline comment leaked punct chars: {:?}", c);
+        assert!(r.greek_letter_ratio > 0.95);
+    }
+
+    #[test]
+    fn strip_html_comments_handles_multiple_and_unterminated() {
+        assert_eq!(strip_html_comments("a <!-- x --> b <!-- y --> c"),
+                   "a  b  c");
+        // Unterminated drops rest of line.
+        assert_eq!(strip_html_comments("a <!-- x b"), "a ");
+        // Non-comment chars kept.
+        assert_eq!(strip_html_comments("plain text"), "plain text");
+    }
+
+    #[test]
+    fn format_line_exclusion_does_not_hide_mojibake_in_prose() {
+        // Regression: we still count chars on NON-format lines properly.
+        let text = "\
+normal Greek καλημέρα
+| table | row |
+corrupted µµµµµµµ chars
+";
+        let c = count_charsets(text);
+        let r = CharsetRatios::from_counts(&c);
+        // The µ chars are on a content line and must still register
+        // in moji_residue_ratio.
+        assert!(r.moji_residue_ratio > 0.1,
+                "lost mojibake on content line: {:?}",
+                r);
     }
 }
