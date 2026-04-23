@@ -4503,4 +4503,94 @@ mod tests {
         assert_eq!(test_bad_double("αααα"), 0);
         assert_eq!(test_bad_double("ββββ!"), 0);
     }
+
+    #[test]
+    fn render_candidate_per_category_match_count_tallies_by_category() {
+        // Two glyph hits + two dot-leader hits → tallies must reflect that.
+        let specs = vec![
+            compiled_spec("glyph_font_like", "glyph_marker", r"GLYPH<\d+>"),
+            compiled_spec("dot_leader_like", "dot_run", r"\.{4,}"),
+        ];
+        let candidates = collect_token_category_debug_candidates_for_text(
+            Path::new("/tmp/doc.md"),
+            "doc",
+            "doc",
+            1,
+            "GLYPH<1> ........ GLYPH<2> ........",
+            &specs,
+            4000,
+            1200,
+            6000,
+        );
+        assert_eq!(candidates.len(), 1);
+        let row = render_token_category_debug_candidate(
+            &candidates[0],
+            Path::new("/tmp"),
+            false, // write_files=false: no disk I/O during this test
+        )
+        .expect("render");
+        assert_eq!(row.per_category_match_count.get("glyph_font_like").copied(), Some(2));
+        assert_eq!(row.per_category_match_count.get("dot_leader_like").copied(), Some(2));
+    }
+
+    #[test]
+    fn render_candidate_write_files_false_skips_disk_but_returns_row() {
+        // Confirm write_files=false still produces a populated row (so the
+        // Python driver gets the same data without paying disk-I/O cost).
+        let specs = vec![compiled_spec(
+            "glyph_font_like",
+            "glyph_marker",
+            r"GLYPH<\d+>",
+        )];
+        let candidates = collect_token_category_debug_candidates_for_text(
+            Path::new("/tmp/doc.md"),
+            "doc",
+            "doc",
+            1,
+            "GLYPH<1>",
+            &specs,
+            4000,
+            1200,
+            6000,
+        );
+        // Use a path that does NOT exist — proves write_files=false skips fs::write.
+        let nonexistent = Path::new("/tmp/this-dir-must-not-exist-for-test-XYZ");
+        let row = render_token_category_debug_candidate(
+            &candidates[0],
+            nonexistent,
+            false,
+        )
+        .expect("render with write_files=false must succeed even when output_dir is missing");
+        assert_eq!(row.match_count, 1);
+        assert_eq!(row.per_category_match_count.get("glyph_font_like").copied(), Some(1));
+    }
+
+    #[test]
+    fn match_internal_write_files_false_skips_mkdir_and_returns_rows() {
+        // End-to-end variant via match_token_category_debug_text_internal.
+        let nonexistent = Path::new("/tmp/this-dir-must-not-exist-for-test-ZZZ");
+        let specs_path = std::env::temp_dir().join("glossapi_rs_noise_test_specs.json");
+        std::fs::write(
+            &specs_path,
+            r#"[{"category":"glyph_font_like","pattern_family":"glyph_marker","match_kind":"regex","pattern":"GLYPH<\\d+>"}]"#,
+        ).expect("write specs");
+        let rows = match_token_category_debug_text_internal(
+            nonexistent,
+            &specs_path,
+            "/tmp/doc.md",
+            "doc",
+            "doc",
+            1,
+            "GLYPH<1> some text GLYPH<2>",
+            4000,
+            1200,
+            6000,
+            false,
+        )
+        .expect("match internal must not fail with write_files=false");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].match_count, 2);
+        assert_eq!(rows[0].per_category_match_count.get("glyph_font_like").copied(), Some(2));
+        assert!(!nonexistent.exists(), "write_files=false must not create the output dir");
+    }
 }

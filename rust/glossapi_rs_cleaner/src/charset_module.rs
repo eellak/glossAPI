@@ -431,4 +431,44 @@ corrupted µµµµµµµ chars
                 "lost mojibake on content line: {:?}",
                 r);
     }
+
+    #[test]
+    fn non_empty_stats_counts_lines_and_chars() {
+        let text = "alpha\n\nbeta gamma\n";
+        let (total, ne, nec) = non_empty_stats(text);
+        assert_eq!(total, 4, "split('\\n') over 3 newlines yields 4 segments");
+        assert_eq!(ne, 2);
+        assert_eq!(nec, 5 + 10);
+    }
+
+    #[test]
+    fn non_empty_stats_skips_marker_lines() {
+        let text = "real line\n<!-- line-removed -->\n<!-- text-missing -->\n<!-- table-removed -->\nother\n";
+        let (_, ne, nec) = non_empty_stats(text);
+        assert_eq!(ne, 2, "marker lines must not count");
+        assert_eq!(nec, "real line".len() + "other".len());
+    }
+
+    #[test]
+    fn non_empty_stats_skips_whitespace_only_lines() {
+        let text = "alpha\n   \n\t\n  \t \nbeta\n";
+        let (_, ne, _) = non_empty_stats(text);
+        assert_eq!(ne, 2);
+    }
+
+    #[test]
+    fn non_empty_stats_uses_char_count_not_byte_count() {
+        // καλημέρα = 8 codepoints, 16 bytes (each Greek char is 2 bytes UTF-8)
+        let text = "καλημέρα\n";
+        let (_, ne, nec) = non_empty_stats(text);
+        assert_eq!(ne, 1);
+        assert_eq!(nec, 8, "must count codepoints, not bytes (got {})", nec);
+    }
+
+    #[test]
+    fn non_empty_line_stats_pyfunction_matches_internal() {
+        // Regression: the PyO3 wrapper must not diverge from non_empty_stats.
+        let text = "alpha\n<!-- table-removed -->\nbeta\n";
+        assert_eq!(non_empty_line_stats(text), non_empty_stats(text));
+    }
 }
