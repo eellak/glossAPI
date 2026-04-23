@@ -201,6 +201,43 @@ impl CharsetRatios {
     }
 }
 
+/// Count non-empty lines + chars on those lines. A line is non-empty
+/// if its trimmed form is non-empty AND isn't one of the known marker
+/// comments. Char count sums chars on counted lines (newlines excluded).
+///
+/// Previously this was done in Python (`_non_empty_stats`) for every
+/// cleaner-driver doc twice (input + output text). Moving it to Rust
+/// eliminates ~10k Python-loop iterations per large doc.
+pub fn non_empty_stats(text: &str) -> (usize, usize, usize) {
+    const MARKERS: &[&str] = &[
+        "<!-- line-removed -->",
+        "<!-- text-missing -->",
+        "<!-- table-removed -->",
+    ];
+    let mut total_lines = 0usize;
+    let mut non_empty_lines = 0usize;
+    let mut non_empty_chars = 0usize;
+    for line in text.split('\n') {
+        total_lines += 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if MARKERS.contains(&trimmed) {
+            continue;
+        }
+        non_empty_lines += 1;
+        non_empty_chars += line.chars().count();
+    }
+    (total_lines, non_empty_lines, non_empty_chars)
+}
+
+/// Python-exposed `non_empty_line_stats(text) -> (total, non_empty, chars)`.
+#[pyfunction]
+pub fn non_empty_line_stats(text: &str) -> (usize, usize, usize) {
+    non_empty_stats(text)
+}
+
 /// Python-exposed `analyze_charset(text) -> dict` with all counts +
 /// derived ratios. Caller applies thresholds.
 #[pyfunction]

@@ -334,6 +334,13 @@ fn export_token_category_debug_pages(
         item.set_item("match_count", row.match_count)?;
         item.set_item("page_text", row.page_text)?;
         item.set_item("matches_json", row.matches_json)?;
+        // Precomputed per-category match count — avoids Python having to
+        // json.loads(matches_json) to tally counters. 2026-04-23 speedup.
+        let counts = PyDict::new(py);
+        for (cat, n) in &row.per_category_match_count {
+            counts.set_item(cat, n)?;
+        }
+        item.set_item("per_category_match_count", counts)?;
         out.push(item.into());
     }
     Ok(out)
@@ -386,6 +393,13 @@ fn match_token_category_debug_text(
         item.set_item("match_count", row.match_count)?;
         item.set_item("page_text", row.page_text)?;
         item.set_item("matches_json", row.matches_json)?;
+        // Precomputed per-category match count — avoids Python having to
+        // json.loads(matches_json) to tally counters. 2026-04-23 speedup.
+        let counts = PyDict::new(py);
+        for (cat, n) in &row.per_category_match_count {
+            counts.set_item(cat, n)?;
+        }
+        item.set_item("per_category_match_count", counts)?;
         out.push(item.into());
     }
     Ok(out)

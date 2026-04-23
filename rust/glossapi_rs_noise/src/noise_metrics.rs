@@ -334,6 +334,10 @@ pub struct TokenCategoryDebugPageRow {
     pub match_count: u64,
     pub page_text: String,
     pub matches_json: String,
+    /// Per-category match counts (summed across all matches on the page).
+    /// Precomputed in Rust so the Python driver doesn't re-parse
+    /// matches_json just to tally counters. 2026-04-23 speedup.
+    pub per_category_match_count: std::collections::BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1904,6 +1908,16 @@ fn render_token_category_debug_candidate(
         fs::write(&output_path, content)?;
     }
 
+    // Per-category match-count tally (Python driver no longer has to
+    // json.loads the matches_json string to compute doc counters).
+    let mut per_category_match_count: std::collections::BTreeMap<String, u64>
+        = std::collections::BTreeMap::new();
+    for span in &candidate.merged_spans {
+        for cat in &span.categories {
+            *per_category_match_count.entry(cat.clone()).or_insert(0) += 1;
+        }
+    }
+
     Ok(TokenCategoryDebugPageRow {
         source_path: candidate.source_path.clone(),
         output_path: output_path.to_string_lossy().into_owned(),
@@ -1918,6 +1932,7 @@ fn render_token_category_debug_candidate(
         match_count: candidate.merged_spans.len() as u64,
         page_text: candidate.page_text.clone(),
         matches_json,
+        per_category_match_count,
     })
 }
 

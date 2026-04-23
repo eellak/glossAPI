@@ -69,17 +69,20 @@ def _doc_drop_reason(doc_counters, thresholds):
     return ""
 
 
-def _page_script_residue_count(page_matches_json):
+def _page_script_residue_count(page):
+    """Pages now carry `per_category_match_count` from Rust — this is a
+    cheap dict lookup. Accepts either the full page dict OR the old
+    matches_json string for back-compat with callers not yet migrated."""
+    if isinstance(page, dict):
+        pc = page.get("per_category_match_count") or {}
+        return int(pc.get("script_residue_restricted", 0) or 0)
+    # Legacy path: matches_json string.
     try:
-        matches = json.loads(page_matches_json or "[]")
+        matches = json.loads(page or "[]")
     except Exception:
         return 0
-    n = 0
-    for match in matches:
-        for c in list(match.get("categories") or []):
-            if c == "script_residue_restricted":
-                n += 1
-    return n
+    return sum(1 for m in matches
+               if "script_residue_restricted" in list(m.get("categories") or []))
 
 
 _MARKER_LINES = {
@@ -225,14 +228,17 @@ def _process_row_shard(
                     source_path, source_stem, base_stem,
                     write_files=False,
                 )
+                # Use Rust-precomputed per-category counts from each page.
+                # Saves two json.loads(matches_json) passes per doc at
+                # Python level (measured 2026-04-23 as the dominant per-doc
+                # Python overhead).
                 doc_counters: Dict[str, int] = {
                     "font_name_literal": 0, "glyph_font_like": 0, "script_residue_restricted": 0,
                 }
                 for page in pages:
-                    for match in json.loads(page.get("matches_json") or "[]"):
-                        for category in list(match.get("categories") or []):
-                            if category in doc_counters:
-                                doc_counters[category] += 1
+                    pc = page.get("per_category_match_count") or {}
+                    for category in doc_counters:
+                        doc_counters[category] += int(pc.get(category, 0) or 0)
                 # write_files=False above means no scratch .md files are
                 # produced — the per-doc pruning loop that used to live here
                 # is obsolete.
@@ -242,6 +248,12 @@ def _process_row_shard(
                 charset_greek_ratio = round(cs["greek_letter_ratio"], 4)
                 charset_moji_ratio = round(cs["moji_residue_ratio"], 4)
                 charset_punct_ratio = round(cs["ascii_punct_ratio"], 4)
+                # Combined metric per 2026-04-23: additive, no weighting.
+                # Interpretation: fraction of non-whitespace chars that look
+                # like mojibake residue by either axis. NOT a rejection
+                # signal on its own — user review needed before setting cutoff.
+                mojibake_noise_ratio = round(
+                    charset_moji_ratio + charset_punct_ratio, 4)
 
                 # Doc-level drop: font + glyph only.
                 reason = _doc_drop_reason(doc_counters, thresholds)
@@ -259,6 +271,7 @@ def _process_row_shard(
                         "charset_greek_ratio": charset_greek_ratio,
                         "charset_moji_ratio": charset_moji_ratio,
                         "charset_punct_ratio": charset_punct_ratio,
+                        "mojibake_noise_ratio": mojibake_noise_ratio,
                         "drop_reason": reason,
                     }) + "\n")
                     continue
@@ -270,7 +283,7 @@ def _process_row_shard(
                 if sr_threshold is not None and len(pages) > 1:
                     surviving_page_text: List[str] = []
                     for page in pages:
-                        page_sr = _page_script_residue_count(page.get("matches_json", ""))
+                        page_sr = _page_script_residue_count(page)
                         if page_sr >= sr_threshold:
                             pages_dropped_sr += 1
                             chars_dropped_sr_pages += int(page.get("page_char_count", 0) or 0)
@@ -286,11 +299,14 @@ def _process_row_shard(
                 # Four-way char-drop attribution + line-drop count come from
                 # the Rust side. Quality stats (non-empty lines/chars in/out)
                 # and derived percentages computed here in Python.
+                # Rust-side non_empty_line_stats — replaces the Python
+                # _non_empty_stats helper. Iterates text once; orders of
+                # magnitude faster on large docs.
                 lines_in_total, non_empty_lines_in, non_empty_chars_in = (
-                    _non_empty_stats(text_for_cleaner)
+                    cleaner.non_empty_line_stats(text_for_cleaner)
                 )
                 lines_out_total, non_empty_lines_out, non_empty_chars_out = (
-                    _non_empty_stats(cleaned)
+                    cleaner.non_empty_line_stats(cleaned)
                 )
                 if not cleaned.strip() or cleaned.strip().startswith("<!-- text-missing"):
                     rows_dropped["cleaner_empty"] = rows_dropped.get("cleaner_empty", 0) + 1
@@ -306,6 +322,7 @@ def _process_row_shard(
                         "charset_greek_ratio": charset_greek_ratio,
                         "charset_moji_ratio": charset_moji_ratio,
                         "charset_punct_ratio": charset_punct_ratio,
+                        "mojibake_noise_ratio": mojibake_noise_ratio,
                         "pages_dropped_script_residue": pages_dropped_sr,
                         "chars_dropped_script_residue_pages": chars_dropped_sr_pages,
                         "lines_in_total": lines_in_total,
