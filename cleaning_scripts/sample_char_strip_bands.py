@@ -68,6 +68,8 @@ def _load_and_filter(stats_glob: str,
 
 def _find_row(parquet_path: str, doc_id: str,
               doc_id_column: str, text_column: str) -> Optional[str]:
+    # Slow fallback (single-doc lookup). Prefer _bulk_find when picking
+    # >1 doc from the same parquet.
     import pyarrow.parquet as pq
     pf = pq.ParquetFile(parquet_path)
     for batch in pf.iter_batches(batch_size=2000):
@@ -75,6 +77,26 @@ def _find_row(parquet_path: str, doc_id: str,
             if str(row.get(doc_id_column)) == str(doc_id):
                 return row.get(text_column) or ""
     return None
+
+
+def _bulk_find(parquet_path: str, doc_ids: List[str],
+               doc_id_column: str, text_column: str) -> Dict[str, str]:
+    """Scan a parquet ONCE and return {doc_id: text} for all requested ids
+    found. Orders of magnitude faster than _find_row per doc when multiple
+    picks come from the same parquet file."""
+    import pyarrow.parquet as pq
+    want = set(str(d) for d in doc_ids)
+    out: Dict[str, str] = {}
+    pf = pq.ParquetFile(parquet_path)
+    for batch in pf.iter_batches(batch_size=5000):
+        for row in batch.to_pylist():
+            did = str(row.get(doc_id_column))
+            if did in want:
+                out[did] = row.get(text_column) or ""
+                want.discard(did)
+                if not want:
+                    return out
+    return out
 
 
 def _clean_with_newlines(text: str, scripts_to_keep: List[str]) -> str:
@@ -118,19 +140,36 @@ def main(argv=None) -> int:
     print(f"  picking {min(args.per_band, len(low))} from low + "
           f"{min(args.per_band, len(high))} from high = {len(picks)} total")
 
+    # Group picks by parquet file so we can do ONE scan per parquet and
+    # find all relevant doc_ids in that pass. Previous per-doc-scan loop
+    # was O(P × N_docs) with large openarchives parquets (~42k rows) —
+    # this is O(P) where P = number of parquets touched.
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
+    by_parquet: Dict[Path, List[Dict]] = defaultdict(list)
+    for rec in picks:
+        parquet_name, _, _ = rec.get("source_path", "").partition("#")
+        by_parquet[args.parquet_dir / Path(parquet_name).name].append(rec)
+
+    text_cache: Dict[str, Dict[str, str]] = {}
+    for parquet_file, recs in by_parquet.items():
+        if not parquet_file.is_file():
+            print(f"  [skip] parquet not found: {parquet_file}", file=sys.stderr)
+            continue
+        doc_ids = [rec["source_path"].partition("#")[2] for rec in recs]
+        print(f"  bulk-finding {len(doc_ids)} docs in {parquet_file.name} ...",
+              flush=True)
+        text_cache[str(parquet_file)] = _bulk_find(
+            str(parquet_file), doc_ids, args.doc_id_column, args.text_column,
+        )
+
     with args.output_path.open("w", encoding="utf-8") as out:
         for i, rec in enumerate(picks, 1):
             source_path = rec.get("source_path", "")
             parquet_name, _, doc_id = source_path.partition("#")
-            # Use the CLI-provided parquet dir, not the stored absolute path
-            # (stats may have been moved between machines).
             parquet_file = args.parquet_dir / Path(parquet_name).name
             if not parquet_file.is_file():
-                print(f"  [skip] parquet not found: {parquet_file}", file=sys.stderr)
                 continue
-            raw_text = _find_row(str(parquet_file), doc_id,
-                                 args.doc_id_column, args.text_column)
+            raw_text = text_cache.get(str(parquet_file), {}).get(doc_id)
             if raw_text is None:
                 print(f"  [skip] doc_id not in parquet: {doc_id}", file=sys.stderr)
                 continue

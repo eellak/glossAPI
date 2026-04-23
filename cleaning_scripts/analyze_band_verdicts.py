@@ -87,33 +87,37 @@ def main(argv=None) -> int:
             out.append(f"- [{ds}/{did}] {rsn}")
         out.append("")
 
-    out.append("## Low-vs-high contrast (binary yes-rate delta)")
+    # Generalized per-band binary yes-rate table across ALL bands present.
+    bands_sorted = sorted(by_band.keys())
+    out.append("## Cross-band binary yes-rate comparison")
     out.append("")
-    out.append("| axis | low yes_rate | high yes_rate | delta (high - low) |")
-    out.append("|---|---:|---:|---:|")
+    header = "| axis | " + " | ".join(f"{b} yes_rate (N={len(by_band[b])})" for b in bands_sorted) + " |"
+    out.append(header)
+    out.append("|---|" + "---:|" * len(bands_sorted))
     for axis in BINARY_AXES:
-        for band_pair in ["low", "high"]:
-            pass
-        low_docs = by_band.get("low", [])
-        high_docs = by_band.get("high", [])
-        low_yes = sum(1 for d in low_docs if d["verdict"].get(axis) == "yes")
-        high_yes = sum(1 for d in high_docs if d["verdict"].get(axis) == "yes")
-        low_rate = low_yes / max(len(low_docs), 1)
-        high_rate = high_yes / max(len(high_docs), 1)
-        out.append(f"| {axis} | {low_rate:.2f} | {high_rate:.2f} | {high_rate - low_rate:+.2f} |")
+        row = f"| {axis} |"
+        for b in bands_sorted:
+            docs = by_band[b]
+            yes = sum(1 for d in docs if d["verdict"].get(axis) == "yes")
+            rate = yes / max(len(docs), 1)
+            row += f" {rate:.2f} |"
+        out.append(row)
     out.append("")
-    out.append("## Enum axis contrast")
+    out.append("## Cross-band enum distribution")
     out.append("")
     for axis in ENUM_AXES:
         out.append(f"### {axis}")
         out.append("")
-        out.append("| value | low count | high count |")
-        out.append("|---|---:|---:|")
-        low_c = Counter(d["verdict"].get(axis) for d in by_band.get("low", []))
-        high_c = Counter(d["verdict"].get(axis) for d in by_band.get("high", []))
-        all_values = sorted(set(low_c.keys()) | set(high_c.keys()), key=str)
+        out.append("| value | " + " | ".join(f"{b} count" for b in bands_sorted) + " |")
+        out.append("|---|" + "---:|" * len(bands_sorted))
+        counters = {b: Counter(d["verdict"].get(axis) for d in by_band[b])
+                    for b in bands_sorted}
+        all_values = sorted(set().union(*(c.keys() for c in counters.values())), key=str)
         for v in all_values:
-            out.append(f"| {v} | {low_c.get(v, 0)} | {high_c.get(v, 0)} |")
+            row = f"| {v} |"
+            for b in bands_sorted:
+                row += f" {counters[b].get(v, 0)} |"
+            out.append(row)
         out.append("")
 
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
