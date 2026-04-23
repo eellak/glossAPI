@@ -1276,3 +1276,514 @@ mod tests {
         assert!(!is_code_fence_marker("no fence"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Wave-2 text-preprocessing passes (Cases 4, 7, 8, 10a, 13 subsets).
+// Run at the START of core_clean_text_with_stats, BEFORE the per-line
+// filter loop, so recovered chars survive per-char filtering.
+// ---------------------------------------------------------------------------
+
+lazy_static! {
+    /// HTML named entities → literal chars (Case 4). Conservative: only
+    /// the entities we've actually seen in openarchives / web-extracted
+    /// Greek corpus docs. Adding more is cheap but should be driven by
+    /// corpus evidence, not speculation.
+    static ref HTML_NAMED_ENTITY_MAP: HashMap<&'static str, &'static str> = {
+        let mut m = HashMap::new();
+        m.insert("amp", "&");
+        m.insert("lt", "<");
+        m.insert("gt", ">");
+        m.insert("quot", "\"");
+        m.insert("apos", "'");
+        m.insert("nbsp", "\u{00A0}");
+        m.insert("copy", "©");
+        m.insert("reg", "®");
+        m.insert("trade", "™");
+        m.insert("euro", "€");
+        m.insert("pound", "£");
+        m.insert("yen", "¥");
+        m.insert("sect", "§");
+        m.insert("deg", "°");
+        m.insert("laquo", "«");
+        m.insert("raquo", "»");
+        m.insert("hellip", "…");
+        m.insert("mdash", "—");
+        m.insert("ndash", "–");
+        m.insert("lsquo", "\u{2018}");
+        m.insert("rsquo", "\u{2019}");
+        m.insert("ldquo", "\u{201C}");
+        m.insert("rdquo", "\u{201D}");
+        m.insert("middot", "·");
+        m.insert("bull", "•");
+        m
+    };
+
+    /// Named-entity pattern: `&name;` where name is a short alphanumeric
+    /// token. Doesn't swallow text if the entity name isn't recognised —
+    /// the replacer checks the map and falls back to the original.
+    static ref HTML_NAMED_ENTITY_REGEX: Regex =
+        Regex::new(r"&([A-Za-z][A-Za-z0-9]{1,10});").unwrap();
+
+    /// Numeric HTML entity: `&#1234;` (decimal) or `&#x1F600;` (hex).
+    static ref HTML_NUMERIC_ENTITY_REGEX: Regex =
+        Regex::new(r"&#(x[0-9A-Fa-f]+|[0-9]+);").unwrap();
+
+    /// GLYPH/uni/gN marker regex (Case 7). Font-local glyph indices
+    /// survive text extraction when ToUnicode CMaps are missing; we
+    /// delete them rather than substitute (per user-verdict-resolved
+    /// Case 7 / Case 9: the N is font-local, no safe global mapping).
+    /// `GLYPH<…>` covers both bare numeric forms (`GLYPH<216>`) and
+    /// the longer attribute forms emitted by some PDF extractors
+    /// (`GLYPH<c=3,font=/SubsetName+FontFamily>`).
+    static ref GLYPH_MARKER_REGEX: Regex = Regex::new(
+        r"GLYPH<[^>]{1,200}>|/uni[0-9A-Fa-f]{4,6}|/g(?:id)?\d+"
+    ).unwrap();
+
+    /// Adobe Symbol font PUA → real Unicode (Case 10a). 100% of the
+    /// top-30 PUA chars observed on openarchives 01500_pct0033_… were
+    /// recovered to real Greek / math chars via this mapping.
+    /// Reference: Adobe Symbol Encoding Vector.
+    static ref ADOBE_SYMBOL_PUA_MAP: HashMap<char, &'static str> = {
+        let mut m = HashMap::new();
+        // ASCII-mirrored positions (F020..F07E): shift back to ASCII
+        // code for punctuation + digits.
+        m.insert('\u{F020}', " "); m.insert('\u{F021}', "!");
+        m.insert('\u{F023}', "#"); m.insert('\u{F025}', "%");
+        m.insert('\u{F026}', "&"); m.insert('\u{F028}', "(");
+        m.insert('\u{F029}', ")"); m.insert('\u{F02A}', "*");
+        m.insert('\u{F02B}', "+"); m.insert('\u{F02C}', ",");
+        m.insert('\u{F02D}', "-"); m.insert('\u{F02E}', ".");
+        m.insert('\u{F02F}', "/"); m.insert('\u{F030}', "0");
+        m.insert('\u{F031}', "1"); m.insert('\u{F032}', "2");
+        m.insert('\u{F033}', "3"); m.insert('\u{F034}', "4");
+        m.insert('\u{F035}', "5"); m.insert('\u{F036}', "6");
+        m.insert('\u{F037}', "7"); m.insert('\u{F038}', "8");
+        m.insert('\u{F039}', "9"); m.insert('\u{F03A}', ":");
+        m.insert('\u{F03B}', ";"); m.insert('\u{F03C}', "<");
+        m.insert('\u{F03D}', "="); m.insert('\u{F03E}', ">");
+        m.insert('\u{F03F}', "?");
+        m.insert('\u{F05B}', "["); m.insert('\u{F05D}', "]");
+        // Greek letters (F041..F057 upper, F061..F077 lower — Symbol
+        // ordering). These are the positions where Adobe Symbol
+        // emits Greek letters when a PDF embeds the font.
+        m.insert('\u{F041}', "Α"); m.insert('\u{F042}', "Β");
+        m.insert('\u{F043}', "Χ"); m.insert('\u{F044}', "Δ");
+        m.insert('\u{F045}', "Ε"); m.insert('\u{F046}', "Φ");
+        m.insert('\u{F047}', "Γ"); m.insert('\u{F048}', "Η");
+        m.insert('\u{F049}', "Ι"); m.insert('\u{F04A}', "ϑ");
+        m.insert('\u{F04B}', "Κ"); m.insert('\u{F04C}', "Λ");
+        m.insert('\u{F04D}', "Μ"); m.insert('\u{F04E}', "Ν");
+        m.insert('\u{F04F}', "Ο"); m.insert('\u{F050}', "Π");
+        m.insert('\u{F051}', "Θ"); m.insert('\u{F052}', "Ρ");
+        m.insert('\u{F053}', "Σ"); m.insert('\u{F054}', "Τ");
+        m.insert('\u{F055}', "Υ"); m.insert('\u{F057}', "Ω");
+        m.insert('\u{F058}', "Ξ"); m.insert('\u{F059}', "Ψ");
+        m.insert('\u{F05A}', "Ζ");
+        m.insert('\u{F061}', "α"); m.insert('\u{F062}', "β");
+        m.insert('\u{F063}', "χ"); m.insert('\u{F064}', "δ");
+        m.insert('\u{F065}', "ε"); m.insert('\u{F066}', "φ");
+        m.insert('\u{F067}', "γ"); m.insert('\u{F068}', "η");
+        m.insert('\u{F069}', "ι"); m.insert('\u{F06A}', "ϕ");
+        m.insert('\u{F06B}', "κ"); m.insert('\u{F06C}', "λ");
+        m.insert('\u{F06D}', "μ"); m.insert('\u{F06E}', "ν");
+        m.insert('\u{F06F}', "ο"); m.insert('\u{F070}', "π");
+        m.insert('\u{F071}', "θ"); m.insert('\u{F072}', "ρ");
+        m.insert('\u{F073}', "σ"); m.insert('\u{F074}', "τ");
+        m.insert('\u{F075}', "υ"); m.insert('\u{F077}', "ω");
+        m.insert('\u{F078}', "ξ"); m.insert('\u{F079}', "ψ");
+        m.insert('\u{F07A}', "ζ");
+        // Math relations / operators commonly used in Greek math docs.
+        m.insert('\u{F0A3}', "≤"); m.insert('\u{F0B3}', "≥");
+        m.insert('\u{F0B9}', "≠"); m.insert('\u{F0AE}', "→");
+        m.insert('\u{F0AC}', "←"); m.insert('\u{F0AD}', "↑");
+        m.insert('\u{F0AF}', "↓"); m.insert('\u{F0DE}', "⇒");
+        m.insert('\u{F0DC}', "⇐"); m.insert('\u{F0DB}', "⇔");
+        m.insert('\u{F0CE}', "∈"); m.insert('\u{F0CF}', "∉");
+        m.insert('\u{F0CD}', "⊄"); m.insert('\u{F0C7}', "∩");
+        m.insert('\u{F0C8}', "∪"); m.insert('\u{F0C5}', "⊗");
+        m.insert('\u{F0C9}', "⊃"); m.insert('\u{F0CB}', "⊂");
+        m.insert('\u{F0CC}', "⊆"); m.insert('\u{F0D1}', "∠");
+        m.insert('\u{F0D2}', "∇"); m.insert('\u{F0D4}', "∏");
+        m.insert('\u{F0D5}', "√"); m.insert('\u{F0D6}', "·");
+        m.insert('\u{F0D7}', "¬"); m.insert('\u{F0D8}', "∧");
+        m.insert('\u{F0D9}', "∨"); m.insert('\u{F0DA}', "⇔");
+        m.insert('\u{F0E5}', "∞"); m.insert('\u{F0E6}', "∫");
+        m.insert('\u{F0E8}', "∑"); m.insert('\u{F0B4}', "×");
+        m.insert('\u{F0B8}', "÷"); m.insert('\u{F0B1}', "±");
+        m
+    };
+}
+
+/// Decode HTML entities (Case 4): `&amp; &lt; &gt; &quot; &apos; &nbsp;`
+/// + named entities in the map above + numeric (decimal `&#38;` and
+/// hex `&#x26;`) back to their literal characters. Unknown named
+/// entities are left as-is.
+pub fn decode_html_entities(text: &str) -> String {
+    // First, named: use a regex replace with a closure that falls back
+    // to the original match if the name isn't in the map.
+    let step1 = HTML_NAMED_ENTITY_REGEX.replace_all(text, |caps: &regex::Captures| {
+        let name = &caps[1];
+        match HTML_NAMED_ENTITY_MAP.get(name) {
+            Some(replacement) => (*replacement).to_string(),
+            None => caps[0].to_string(),
+        }
+    });
+    // Then, numeric (decimal and hex). Leave malformed ones alone.
+    HTML_NUMERIC_ENTITY_REGEX
+        .replace_all(&step1, |caps: &regex::Captures| {
+            let body = &caps[1];
+            let code = if let Some(hex) = body.strip_prefix('x').or_else(|| body.strip_prefix('X')) {
+                u32::from_str_radix(hex, 16).ok()
+            } else {
+                body.parse::<u32>().ok()
+            };
+            match code.and_then(char::from_u32) {
+                Some(c) => c.to_string(),
+                None => caps[0].to_string(),
+            }
+        })
+        .into_owned()
+}
+
+/// Delete GLYPH<N> / `/uni...` / `/gN` markers (Case 7). These are
+/// font-local glyph indices that survive PDF extraction when a
+/// ToUnicode CMap is missing. Per Case 9, there's no safe global
+/// substitution (N is per-font, not per-corpus), so we delete.
+pub fn strip_glyph_markers(text: &str) -> String {
+    GLYPH_MARKER_REGEX.replace_all(text, "").into_owned()
+}
+
+/// Silently strip soft hyphens U+00AD (Case 13). Invisible format-only
+/// chars; their presence inflates `charset_moji_ratio` despite having
+/// no semantic content.
+pub fn strip_soft_hyphens(text: &str) -> String {
+    if !text.contains('\u{00AD}') {
+        return text.to_string();
+    }
+    text.chars().filter(|&c| c != '\u{00AD}').collect()
+}
+
+/// Decode Adobe Symbol font PUA chars (Case 10a). 100% of the top-30
+/// observed PUA chars in a sample math thesis were recovered via
+/// this mapping. Chars not in the map pass through unchanged; the
+/// per-char filter then decides whether to strip them.
+pub fn decode_adobe_symbol_pua(text: &str) -> String {
+    // Fast check: any PUA chars at all? If not, skip.
+    if !text.chars().any(|c| {
+        let cp = c as u32;
+        (0xF000..=0xF8FF).contains(&cp)
+    }) {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match ADOBE_SYMBOL_PUA_MAP.get(&c) {
+            Some(replacement) => out.push_str(replacement),
+            None => out.push(c),
+        }
+    }
+    out
+}
+
+/// Paragraph-reflow (Case 8): collapse soft-wrap sequences where a
+/// line ends mid-sentence and the next line continues it. PDF column-
+/// width line breaks look like `word1\t\n  word2`; we replace with
+/// `word1 word2`. Hard breaks (blank lines, headings, tables,
+/// separators, list markers, blockquotes, fenced code) are preserved.
+///
+/// Heuristic — only joins when:
+/// - prior line is non-empty AND doesn't end with a sentence terminator
+///   (`.?!:;·;·` or closing quote/bracket)
+/// - next line is non-empty, doesn't start with `#|>*-` / list marker
+///   / fenced-code marker, and starts with a letter or digit
+/// - prior line doesn't look like a list item / heading either
+///
+/// Accounting: the whitespace chars (`\n`, `\t`, leading spaces on the
+/// joined line) are replaced by a single space, so output is shorter
+/// by `(removed_ws_len) - 1` chars per join.
+pub fn reflow_paragraphs(text: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    if lines.len() < 2 {
+        return text.to_string();
+    }
+    let mut out_lines: Vec<String> = Vec::with_capacity(lines.len());
+    let mut in_fenced_code = false;
+    for line in &lines {
+        // Track fenced code state so we don't reflow inside code blocks.
+        if is_code_fence_marker(line) {
+            in_fenced_code = !in_fenced_code;
+            out_lines.push(line.to_string());
+            continue;
+        }
+        if in_fenced_code {
+            out_lines.push(line.to_string());
+            continue;
+        }
+        // Can we append this line to the previous one in out_lines?
+        if let Some(prev) = out_lines.last() {
+            if can_join_lines(prev, line) {
+                let joined = format!("{} {}", prev.trim_end(), line.trim_start());
+                let idx = out_lines.len() - 1;
+                out_lines[idx] = joined;
+                continue;
+            }
+        }
+        out_lines.push(line.to_string());
+    }
+    out_lines.join("\n")
+}
+
+fn can_join_lines(prev: &str, next: &str) -> bool {
+    let prev_trim = prev.trim_end();
+    let next_trim = next.trim_start();
+    // Both must be non-empty content.
+    if prev_trim.is_empty() || next_trim.is_empty() {
+        return false;
+    }
+    // Don't merge across structural lines.
+    if line_is_hard_break(prev_trim) || line_is_hard_break(next_trim) {
+        return false;
+    }
+    // Prior line's last non-whitespace char — sentence terminators
+    // stop merging.
+    let last = prev_trim.chars().next_back().unwrap();
+    if matches!(
+        last,
+        '.' | '!' | '?' | ':' | ';' | '·' | '\u{037E}' /* Greek ; */
+        | '"' | '\'' | ')' | ']' | '}' | '…'
+        | '»' | '\u{201D}' | '\u{2019}'
+    ) {
+        return false;
+    }
+    // Next line's first char — must look like continuation (letter/
+    // digit/opening-quote).
+    let first = next_trim.chars().next().unwrap();
+    if first.is_alphanumeric() || matches!(first, '«' | '(' | '\u{201C}' | '\u{2018}') {
+        // Also guard: if the RAW `next` line (with leading whitespace)
+        // is indented by 4+ spaces or a tab, it's an indented code
+        // block in markdown — don't join.
+        let raw_leading = next.len() - next.trim_start().len();
+        let tab_or_4spaces = next.starts_with('\t')
+            || (raw_leading >= 4 && next.chars().take(raw_leading).all(|c| c == ' '));
+        if tab_or_4spaces {
+            return false;
+        }
+        return true;
+    }
+    false
+}
+
+fn line_is_hard_break(line: &str) -> bool {
+    if line.is_empty() {
+        return true;
+    }
+    // Fenced code markers (`````` / `~~~`) are hard breaks too — the
+    // outer reflow walker tracks fenced-code state, but if the prev/next
+    // line itself IS a fence marker, joining it to the surrounding
+    // prose is wrong.
+    if is_code_fence_marker(line) {
+        return true;
+    }
+    let first = line.chars().next().unwrap();
+    // Headings, blockquotes.
+    if matches!(first, '#' | '>') {
+        return true;
+    }
+    // List markers at line start (`- item`, `* item`, `+ item`,
+    // `1. item`) — preserve.
+    if matches!(first, '-' | '*' | '+') && line.chars().nth(1) == Some(' ') {
+        return true;
+    }
+    // Ordered list: `N.` or `N)`
+    let mut digit_run = 0;
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c.is_ascii_digit() {
+            digit_run += 1;
+        } else {
+            if digit_run > 0 && (c == '.' || c == ')') {
+                if chars.next() == Some(' ') {
+                    return true;
+                }
+            }
+            break;
+        }
+    }
+    // Table rows.
+    if line.starts_with('|') && line.ends_with('|') && line.matches('|').count() >= 2 {
+        return true;
+    }
+    // Separator lines (3+ of same separator char).
+    if SEPARATOR_LINE_REGEX.is_match(line) {
+        return true;
+    }
+    // Fenced code markers handled by caller (state-machine).
+    false
+}
+
+#[cfg(test)]
+mod wave2_tests {
+    use super::*;
+
+    #[test]
+    fn decode_html_named_core_entities() {
+        assert_eq!(decode_html_entities("a &amp; b"), "a & b");
+        assert_eq!(decode_html_entities("&lt;div&gt;"), "<div>");
+        assert_eq!(decode_html_entities("&quot;hi&quot;"), "\"hi\"");
+        assert_eq!(decode_html_entities("&apos;test&apos;"), "'test'");
+    }
+
+    #[test]
+    fn decode_html_numeric_entities_decimal_and_hex() {
+        assert_eq!(decode_html_entities("&#38;"), "&");
+        assert_eq!(decode_html_entities("&#x26;"), "&");
+        assert_eq!(decode_html_entities("&#8364;"), "€");
+        assert_eq!(decode_html_entities("&#x20AC;"), "€");
+    }
+
+    #[test]
+    fn decode_html_unknown_entity_passes_through() {
+        // `&fakename;` isn't in the map — leave as-is.
+        assert_eq!(decode_html_entities("a &fakename; b"), "a &fakename; b");
+    }
+
+    #[test]
+    fn decode_html_handles_mixed_content() {
+        assert_eq!(
+            decode_html_entities("&lt; item &gt;Αθήνα&lt;/ item &gt;"),
+            "< item >Αθήνα</ item >"
+        );
+    }
+
+    #[test]
+    fn strip_glyph_markers_handles_all_variants() {
+        assert_eq!(strip_glyph_markers("a GLYPH<216> b"), "a  b");
+        assert_eq!(strip_glyph_markers("a /uni03B1 b"), "a  b");
+        assert_eq!(strip_glyph_markers("a /g12 b /gid34 c"), "a  b  c");
+        assert_eq!(
+            strip_glyph_markers("GLYPH<1> GLYPH<216> GLYPH<99>"),
+            "  "
+        );
+    }
+
+    #[test]
+    fn strip_glyph_markers_leaves_unrelated_text() {
+        assert_eq!(strip_glyph_markers("καλημέρα"), "καλημέρα");
+        // Empty `<>` not matched (regex requires 1+ chars inside).
+        assert_eq!(strip_glyph_markers("GLYPH<>"), "GLYPH<>");
+    }
+
+    #[test]
+    fn strip_glyph_markers_handles_long_attribute_form() {
+        // PDF extractors sometimes emit `GLYPH<c=N,font=/Subset+Family>`.
+        let input = "prefix GLYPH<c=3,font=/QCMXYA+CenturyGothic> suffix";
+        assert_eq!(strip_glyph_markers(input), "prefix  suffix");
+    }
+
+    #[test]
+    fn strip_soft_hyphens_removes_u00ad() {
+        let shy = '\u{00AD}';
+        let input = format!("co{}operate", shy);
+        assert_eq!(strip_soft_hyphens(&input), "cooperate");
+    }
+
+    #[test]
+    fn strip_soft_hyphens_noop_when_absent() {
+        assert_eq!(strip_soft_hyphens("plain text"), "plain text");
+    }
+
+    #[test]
+    fn decode_pua_recovers_ascii_mirrored_chars() {
+        assert_eq!(decode_adobe_symbol_pua("\u{F02D}"), "-");
+        assert_eq!(decode_adobe_symbol_pua("\u{F03D}"), "=");
+        assert_eq!(decode_adobe_symbol_pua("\u{F02B}"), "+");
+    }
+
+    #[test]
+    fn decode_pua_recovers_greek_letters() {
+        assert_eq!(decode_adobe_symbol_pua("\u{F061}"), "α");
+        assert_eq!(decode_adobe_symbol_pua("\u{F06C}"), "λ");
+        assert_eq!(decode_adobe_symbol_pua("\u{F06D}"), "μ");
+    }
+
+    #[test]
+    fn decode_pua_recovers_math_operators() {
+        assert_eq!(decode_adobe_symbol_pua("\u{F0A3}"), "≤");
+        assert_eq!(decode_adobe_symbol_pua("\u{F0B3}"), "≥");
+        assert_eq!(decode_adobe_symbol_pua("\u{F0CE}"), "∈");
+    }
+
+    #[test]
+    fn decode_pua_skips_unmapped_chars() {
+        // Some random PUA codepoint not in our map.
+        let unmapped = '\u{F500}';
+        let s = unmapped.to_string();
+        assert_eq!(decode_adobe_symbol_pua(&s), s);
+    }
+
+    #[test]
+    fn decode_pua_fast_path_noop_when_no_pua() {
+        assert_eq!(decode_adobe_symbol_pua("plain Greek καλημέρα"), "plain Greek καλημέρα");
+    }
+
+    #[test]
+    fn reflow_joins_soft_wrapped_lines() {
+        let input = "word1\nword2\nword3";
+        // All continue mid-sentence → join all three into one line.
+        assert_eq!(reflow_paragraphs(input), "word1 word2 word3");
+    }
+
+    #[test]
+    fn reflow_preserves_blank_line_breaks() {
+        let input = "paragraph1.\n\nparagraph2.";
+        assert_eq!(reflow_paragraphs(input), input);
+    }
+
+    #[test]
+    fn reflow_preserves_headings() {
+        let input = "body text\n# Heading\nmore text";
+        assert_eq!(reflow_paragraphs(input), input);
+    }
+
+    #[test]
+    fn reflow_preserves_table_rows() {
+        let input = "intro\n| a | b |\n| - | - |\n| 1 | 2 |\nafter";
+        assert_eq!(reflow_paragraphs(input), input);
+    }
+
+    #[test]
+    fn reflow_preserves_list_items() {
+        let input = "intro\n- item one\n- item two\nafter";
+        assert_eq!(reflow_paragraphs(input), input);
+    }
+
+    #[test]
+    fn reflow_stops_at_sentence_terminators() {
+        let input = "First sentence.\nSecond starts here";
+        // `.` at end of first line should block joining.
+        assert_eq!(reflow_paragraphs(input), input);
+    }
+
+    #[test]
+    fn reflow_stops_at_fenced_code() {
+        let input = "before\n```\ncode line\n```\nafter";
+        assert_eq!(reflow_paragraphs(input), input);
+    }
+
+    #[test]
+    fn reflow_does_not_join_indented_code() {
+        // 4-space indent = indented code block in markdown.
+        let input = "prose\n    code line\nprose again";
+        let out = reflow_paragraphs(input);
+        assert!(out.contains("    code line"));
+    }
+
+    #[test]
+    fn reflow_joins_pdf_column_wrap_pattern() {
+        // The actual Docling pattern the user flagged (Case 8):
+        // word1\t\n<spaces>word2
+        let input = "word1\t\n  word2\t\n  word3";
+        let out = reflow_paragraphs(input);
+        assert_eq!(out, "word1 word2 word3");
+    }
+}
