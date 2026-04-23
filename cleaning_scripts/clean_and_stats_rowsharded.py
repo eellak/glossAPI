@@ -216,9 +216,14 @@ def _process_row_shard(
                     }) + "\n")
                     continue
 
+                # write_files=False → skip the per-match .md disk writes that
+                # dominated wall time at 56 workers (see step-2 profiling).
+                # All data we need (categories, match counts, matches_json,
+                # page_text, page_char_count) is returned in-memory.
                 pages = noise.match_token_category_debug_text(
                     text, str(scratch), category_specs_path,
                     source_path, source_stem, base_stem,
+                    write_files=False,
                 )
                 doc_counters: Dict[str, int] = {
                     "font_name_literal": 0, "glyph_font_like": 0, "script_residue_restricted": 0,
@@ -228,12 +233,9 @@ def _process_row_shard(
                         for category in list(match.get("categories") or []):
                             if category in doc_counters:
                                 doc_counters[category] += 1
-                # Matcher writes per-match .md files into scratch. We only
-                # need the counts; prune immediately so 48 concurrent workers
-                # don't saturate disk. ~0.05ms syscall per doc; negligible.
-                for md in list(scratch.glob(f"{source_stem}*.md")):
-                    try: md.unlink()
-                    except Exception: pass
+                # write_files=False above means no scratch .md files are
+                # produced — the per-doc pruning loop that used to live here
+                # is obsolete.
 
                 # Attach the charset ratios computed above so kept-docs
                 # records show them (distribution/threshold calibration).

@@ -1837,6 +1837,7 @@ fn collect_token_category_debug_candidates_for_text(
 fn render_token_category_debug_candidate(
     candidate: &TokenCategoryDebugPageCandidate,
     output_dir: &Path,
+    write_file: bool,
 ) -> anyhow::Result<TokenCategoryDebugPageRow> {
     let rendered = render_token_category_debug_page(&candidate.page_text, &candidate.merged_spans);
     let categories = candidate
@@ -1899,7 +1900,9 @@ fn render_token_category_debug_candidate(
     content.push_str(&candidate.merged_spans.len().to_string());
     content.push_str(" -->\n\n");
     content.push_str(&rendered);
-    fs::write(&output_path, content)?;
+    if write_file {
+        fs::write(&output_path, content)?;
+    }
 
     Ok(TokenCategoryDebugPageRow {
         source_path: candidate.source_path.clone(),
@@ -1929,8 +1932,11 @@ pub fn match_token_category_debug_text_internal(
     synthetic_page_target_chars: usize,
     synthetic_page_min_header_chars: usize,
     synthetic_page_hard_max_chars: usize,
+    write_files: bool,
 ) -> anyhow::Result<Vec<TokenCategoryDebugPageRow>> {
-    fs::create_dir_all(output_dir)?;
+    if write_files {
+        fs::create_dir_all(output_dir)?;
+    }
     let specs = load_token_category_specs_cached(category_specs_path)?;
     let source_path_buf = PathBuf::from(source_path);
     let candidates = collect_token_category_debug_candidates_for_text(
@@ -1947,7 +1953,9 @@ pub fn match_token_category_debug_text_internal(
     let mut rows = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         rows.push(render_token_category_debug_candidate(
-            &candidate, output_dir,
+            &candidate,
+            output_dir,
+            write_files,
         )?);
     }
     rows.sort_by(|a, b| {
@@ -4299,7 +4307,7 @@ pub fn export_token_category_debug_pages_internal(
         let mut rows: Vec<TokenCategoryDebugPageRow> = run_in_thread_pool(n_threads, move || {
             candidates
                 .into_par_iter()
-                .map(|candidate| render_token_category_debug_candidate(&candidate, &output_dir))
+                .map(|candidate| render_token_category_debug_candidate(&candidate, &output_dir, true))
                 .collect::<anyhow::Result<Vec<_>>>()
         })??;
         rows.sort_by(|a, b| {
@@ -4340,7 +4348,7 @@ pub fn export_token_category_debug_pages_internal(
                 let mut page_rows = Vec::with_capacity(candidates.len());
                 for candidate in candidates {
                     page_rows.push(
-                        render_token_category_debug_candidate(&candidate, output_dir)
+                        render_token_category_debug_candidate(&candidate, output_dir, true)
                             .expect("write token debug page"),
                     );
                 }

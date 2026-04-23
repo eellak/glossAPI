@@ -340,7 +340,7 @@ fn export_token_category_debug_pages(
 }
 
 #[pyfunction]
-#[pyo3(signature = (text, output_dir, category_specs_path, source_path, source_stem, base_stem, start_page=1, synthetic_page_target_chars=4000, synthetic_page_min_header_chars=1200, synthetic_page_hard_max_chars=6000))]
+#[pyo3(signature = (text, output_dir, category_specs_path, source_path, source_stem, base_stem, start_page=1, synthetic_page_target_chars=4000, synthetic_page_min_header_chars=1200, synthetic_page_hard_max_chars=6000, write_files=true))]
 fn match_token_category_debug_text(
     py: Python<'_>,
     text: &str,
@@ -353,6 +353,7 @@ fn match_token_category_debug_text(
     synthetic_page_target_chars: usize,
     synthetic_page_min_header_chars: usize,
     synthetic_page_hard_max_chars: usize,
+    write_files: bool,
 ) -> PyResult<Vec<Py<PyDict>>> {
     let rows = match_token_category_debug_text_internal(
         std::path::Path::new(output_dir),
@@ -365,6 +366,7 @@ fn match_token_category_debug_text(
         synthetic_page_target_chars,
         synthetic_page_min_header_chars,
         synthetic_page_hard_max_chars,
+        write_files,
     )
     .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
