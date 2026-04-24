@@ -102,25 +102,76 @@ Members (implemented, scattered across modules):
 
 ## Order of operations
 
+The actual pipeline in `core_clean_text_with_stats` is NOT a clean
+"Phase A → Phase B" split. Earlier revisions of this doc described
+Phase A as running first, but in practice a small set of
+content-level passes runs before the Phase A orchestrator because
+Phase A's structural scanners (pipe counting, run matching) need
+to see post-decode, post-marker-strip text to be accurate.
+
 ```
   input MD
     ↓
-  Phase A — MD-syntax normalization (preview-preserving)
+  Pre-Phase-A — preview-preserving recovery:
+    • decode_html_entities         (&amp; → &)
+    • decode_adobe_symbol_pua      (U+F061 → α)
     ↓
-  Content-modifying transforms (entity decode, PUA decode, GLYPH
-    strip, soft-hyphen strip, per-char filter, line-drop)
+  Pre-Phase-A — destructive strips that MUST run before Phase A:
+    • strip_glyph_markers          (GLYPH<…> / /uniXXXX deleted;
+                                    renders as literal text, so
+                                    this IS destructive — but
+                                    leaving it would make Phase A
+                                    miscount pipes inside rows)
+    • strip_soft_hyphens           (U+00AD invisible anyway)
     ↓
-  Phase A post-pass (defensive re-canonicalization if any content
-    pass changed row widths / separator positions — future work;
-    not critical today because content passes are narrowly scoped)
+  Phase A — MD-syntax normalization (preview-preserving):
+    • md_module::normalize_md_syntax
+        - scan_gfm_table_separators
+        - normalize_separator_line (HR min)
+        - reflow_paragraphs
+    ↓
+  Phase B — per-line cleanup (destructive by design):
+    • per-line char-fold / dot / whitespace / ellipsis normalize
+    • per-char allowlist filter
+    • rule-A / rule-B line-drop → <!-- line-removed --> markers
     ↓
   output MD
 ```
 
-Rationale for Phase A first: content passes must operate on
-canonicalized MD structure so they can safely "not touch" MD-syntax
-chars like `|`, `#`, `---`. Running Phase A first means subsequent
-passes see clean, compact MD to work on.
+Notes on the ordering:
+
+- **Entity + PUA decode run first** so Phase A's detectors see the
+  same glyphs a renderer would. If Phase A ran first, a `&#8212;`
+  (em-dash) would still look like an entity rather than `—`, and
+  the structure Phase A sees could differ from what the renderer
+  sees.
+- **GLYPH-marker strip runs BEFORE Phase A** even though it IS
+  destructive (the markers render as literal text). If GLYPH
+  markers survived to Phase A, a `|GLYPH<7>|` inside a row would
+  break `scan_gfm_table_separators`' pipe-count check and leak
+  literal marker content into a canonicalized table row. The cost
+  — a small class of Phase-A-structural decisions being made on
+  content the renderer would have shown — is considered acceptable
+  because GLYPH markers are themselves extractor noise, not
+  author-intended text.
+- **Soft-hyphen strip runs before Phase A** because U+00AD is
+  zero-width: removing it is structurally preview-preserving.
+- **Phase A runs in the middle** so subsequent destructive passes
+  operate on canonicalized MD. Per-char filters and line-drops can
+  safely leave structural chars (`|`, `#`, `---`) alone because
+  the MD is already in compact canonical form.
+- **Phase B runs last** as the per-line loop inside
+  `core_clean_text_with_stats`. This is where content actually
+  gets removed; it's what `verify_md_structural` bounds.
+
+The non-destructive baseline `non_destructive_canonicalize` (used
+by the verifier) applies entity-decode + PUA-decode + soft-hyphen
+strip + per-line normalization + Phase A. It deliberately SKIPS
+`strip_glyph_markers` (destructive) and Phase B. Drift-prevention
+tests in `cleaning_module::tests` assert that on inputs without
+GLYPH markers — and with a permissive allowed-chars so Phase B
+deletes nothing — `core_clean_text_with_stats` and
+`non_destructive_canonicalize` produce identical output.
 
 ## Key architectural constraints
 

@@ -599,3 +599,129 @@ M-2, M-3 (doc drift). Deferred: the reflow-expansion portion of
 M-1 pending scorecard validation. The remaining findings (L-1,
 L-2) are minor and were captured in the verdict table above.
 
+## Follow-up review after C11-C16
+
+### Findings
+
+- **Medium:** the refreshed architecture doc still contradicts the
+  implementation order. The doc says Phase A runs before content
+  transforms, but `core_clean_text_with_stats` still decodes
+  entities/PUA, strips GLYPH markers, strips soft hyphens, then
+  runs `normalize_md_syntax`. See `docs/MD_MODULE_ARCHITECTURE.md`
+  around the "Order of operations" section and
+  `src/cleaning_module.rs` around the `core_clean_text_with_stats`
+  preprocessing sequence. This is now the main remaining doc issue.
+- **Low/Medium:** C15 closes the important Heading/tight-list
+  verifier gap, but the structural verifier still is not a
+  universal "all text-bearing blocks" extractor. If the contract
+  really includes HTML blocks or other direct-text containers,
+  `paragraph_tokens` still needs a broader block model.
+- **Low:** fence detection now has the crucial CommonMark
+  indentation guard, so H-1 is fixed in practice, but
+  `is_code_fence_marker` remains an approximate detector rather
+  than a full fence grammar recognizer. That is acceptable for the
+  current safeguards, but worth documenting as intentional.
+
+### Assessment
+
+The implementation and prioritization mostly satisfy the issues
+flagged in the review. The highest-risk items were handled in the
+right order: indentation awareness, routing the cleaner through MD
+syntax normalization, hard-break preservation, shared
+canonicalization, and structural coverage for headings/list items
+all have focused tests and pass.
+
+The deferred reflow expansion is a good call. That change affects
+corpus style much more than syntax safety, so gating it behind
+scorecard/raw-readability metrics is the right sequencing.
+
+### Verification
+
+Focused tests passed:
+
+- `cargo test md_module`
+- `cargo test md_verify`
+- `cargo test red_until`
+- `cargo test drift_cleaner_eq_canonicalize`
+- `cargo test phase_b_`
+
+Full `cargo test` still fails on the same two unrelated tests
+observed earlier:
+
+- `table_remover_module::tests::test_empty_content_with_remove_op`
+- `cleaning_module::tests::perf_mixed_doc_throughput_floor`
+
+## Response to the follow-up review (Claude)
+
+### Order-of-operations doc contradiction — ADOPTED
+
+Fair catch. The doc's "Order of operations" diagram said Phase A
+runs before all content transforms, but the cleaner actually runs
+four content-level passes first (entity decode, PUA decode, GLYPH
+strip, soft-hyphen strip), then Phase A, then the per-line Phase
+B loop. Rewrote the section in `MD_MODULE_ARCHITECTURE.md` to
+describe the real order honestly:
+
+- Called out that GLYPH-marker strip is destructive (the markers
+  would render as literal text in preview) but must run before
+  Phase A because they'd break `scan_gfm_table_separators`'
+  pipe-count check.
+- Called out that entity / PUA decode are structurally
+  preview-preserving and need to run first so Phase A sees the
+  same glyphs a renderer would.
+- Called out that soft-hyphen strip is preview-preserving because
+  U+00AD is zero-width.
+- Noted explicitly which passes are in
+  `non_destructive_canonicalize` (entity, PUA, soft-hyphen,
+  per-line, Phase A) and which are NOT (GLYPH strip, Phase B),
+  and reconciled that with the drift tests' permissive allowed-
+  chars setup plus GLYPH-free inputs.
+
+### Structural verifier not universal — DOCUMENTED, NOT EXTENDED
+
+The reviewer's point is correct: `paragraph_tokens` covers
+Paragraph + Heading + Item (tight lists) but not `HtmlBlock` (and
+code blocks / table cells go through separate comparators by
+design). For Docling-produced corpus MD, `HtmlBlock` doesn't
+appear; extending to cover it would add surface with no concrete
+gap driving it.
+
+Updated the `paragraph_tokens` doc-comment to explicitly list
+what's NOT covered and note `HtmlBlock` as a deferred-until-needed
+extension. The contract is now clear — "covers these blocks, not
+those" — rather than implicitly "all text-bearing blocks."
+
+### `is_code_fence_marker` remains approximate — DOCUMENTED
+
+Also fair. The detector does not enforce CM's open/close fence-
+char pairing (`` ``` `` closes `` ``` ``, not `~~~`) or the
+info-string-no-backtick rule. It returns `true` for any ``` or
+`~~~` line ≥3 chars.
+
+Updated the `is_code_fence_marker` doc-comment with an explicit
+"Intentionally approximate" section listing the rules not
+enforced, the practical consequences (best-effort fence-state
+machine; verifier catches preview violations), and the reason
+for deferral (full pairing requires cross-line state, so the
+function can no longer be a pure line predicate). Will revisit
+if a concrete corpus document triggers the limitation.
+
+### Test state
+
+- `cargo test --release --lib` — same state as before the
+  follow-up: 266 passed, 1 failing (the unrelated `table_remover`
+  test). The `perf_mixed_doc_throughput_floor` test the reviewer
+  observed failing passes on my machine (it's a timing-based
+  throughput-floor test — flaky across hardware; not actionable
+  in this series).
+
+No code behavior changes in this response. Three doc / code-
+comment edits:
+
+- `docs/MD_MODULE_ARCHITECTURE.md` — rewrote "Order of
+  operations" to describe the real three-tier arrangement.
+- `src/md_module.rs` — expanded `is_code_fence_marker` doc-
+  comment with the "Intentionally approximate" section.
+- `src/md_verify.rs` — expanded `paragraph_tokens` doc-comment
+  with the "Not a universal text-bearing-block extractor" section.
+

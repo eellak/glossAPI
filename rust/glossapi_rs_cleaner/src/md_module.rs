@@ -305,6 +305,29 @@ fn count_gfm_row_cells(line: &str) -> usize {
 /// and wrongly toggling fence state there would make the cleaner skip
 /// normalization on real prose (or, symmetrically, normalize inside
 /// a real fenced code block).
+///
+/// **Intentionally approximate, not a full fence-grammar recognizer.**
+/// The CommonMark fence rules this function does NOT fully enforce:
+///
+/// - Open/close pairing: a closing fence must use the same char as
+///   the opener (`` ``` `` closes `` ``` ``, `~~~` closes `~~~`) and
+///   have length ≥ opener length. This function returns `true` for
+///   ANY ``` or ~~~ line ≥3 chars, so a mixed/shorter `~~~` inside
+///   a `` ``` `` block would be (mis-)treated as a fence toggle. In
+///   practice, consumers treat the cleaner's fence-state machine as
+///   best-effort: false positives just mean the cleaner temporarily
+///   declines to normalize inside what it believes is a code block,
+///   and false negatives mean it may normalize inside one. The
+///   downstream verifier catches any preview-rendering violation.
+/// - Info-string constraints: CM forbids backticks in a `` ``` ``
+///   opener's info string (so `` ```lang`x `` is not a fence). This
+///   function does not enforce that — a rare but representable
+///   document could produce a false positive.
+///
+/// Promoting to a full fence grammar would require tracking the
+/// active fence character and length across lines, which means
+/// this can no longer be a pure line predicate. Deferred until a
+/// concrete corpus bug demands it.
 pub fn is_code_fence_marker(line: &str) -> bool {
     if leading_columns(line) >= 4 {
         return false;

@@ -219,6 +219,8 @@ fn block_sequence(md: &str) -> Vec<BlockKind> {
 ///   / footnote definitions — pulldown-cmark emits a Paragraph inside
 ///   each of those containers).
 /// - `Heading` (ATX `# ...` and setext `text\n---`).
+/// - `Item` (for tight list items, where pulldown-cmark emits text
+///   directly without a nested Paragraph).
 ///
 /// Text inside a block (including inline formatting) is concatenated
 /// before tokenization. Link/image URLs ARE included in the token
@@ -227,6 +229,20 @@ fn block_sequence(md: &str) -> Vec<BlockKind> {
 /// Fixing M-2 from the 2026-04-24 review: a cleaner that rewrote
 /// `# Α` to `# Β` would previously pass structural equivalence
 /// because heading text wasn't compared at all. Now it is.
+///
+/// **Not a universal text-bearing-block extractor.** Explicitly not
+/// covered (deferred until a concrete gap surfaces in practice):
+///
+/// - `Html` blocks (raw `<div>…</div>` content). Docling-produced
+///   corpus MD does not emit these, and the corpus contract treats
+///   raw HTML as either ignorable or a Phase B candidate. A cleaner
+///   that rewrote HTML-block text content would pass this check
+///   today. Add `Start(Tag::HtmlBlock)` / `End(TagEnd::HtmlBlock)`
+///   to the match arms if and when that becomes a real risk.
+/// - Table cells (covered separately via `table_structure` and the
+///   `table_cells_subsequence` report field, so this is not a gap).
+/// - Code blocks (covered separately via line-preserving comparison
+///   — whitespace in code is meaningful, not tokenized).
 ///
 /// (Historical name `paragraph_tokens` is retained — callers and the
 /// `MdStructuralReport::paragraph_tokens_subsequence` field form a
