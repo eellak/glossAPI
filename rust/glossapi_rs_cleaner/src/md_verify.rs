@@ -23,6 +23,9 @@ use pulldown_cmark::{html, Event, Options, Parser, Tag, TagEnd};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use crate::md_module;
+use crate::normalize;
+
 /// Detailed report from a verification run. Boolean fields are what
 /// tests normally assert on; the diagnostic strings exist to make
 /// failures self-explanatory (copy-paste into an issue).
@@ -87,6 +90,66 @@ impl MdStructuralReport {
             && self.table_cells_subsequence
             && self.code_blocks_preserved
     }
+}
+
+/// Apply every NON-destructive cleaner transform to `md`. Used by the
+/// structural verifier to canonicalize the INPUT before comparing
+/// against cleaner output — otherwise cosmetic differences like
+/// `&amp;` → `&`, `........(40 dots)` → `....(20)`, `-----` → `---`
+/// etc. are misclassified as "injections."
+///
+/// Transforms applied (all token-semantic-preserving or invisible):
+/// 1. HTML entity decode (`&amp;` → `&` etc.)
+/// 2. Adobe Symbol PUA decode (U+F061 → α etc.)
+/// 3. Soft-hyphen strip (U+00AD, invisible anyway)
+/// 4. Per-line character fold (NBSP → space, ligatures → pairs,
+///    Unicode whitespace variants → space, enclosed digits → ASCII)
+/// 5. Dot-run normalization (tiered bucket collapse)
+/// 6. Whitespace-run normalization (multi-space → tiered bucket)
+/// 7. Ellipsis-run normalization
+/// 8. HR thematic-break minimization (`-----` → `---`)
+/// 9. GFM table separator minimization (`|-----|` → `|---|`)
+/// 10. Paragraph reflow (soft-wrap `\n` → space within paragraphs)
+///
+/// NOT applied (destructive or content-removing):
+/// - GLYPH strip
+/// - Per-char allowlist filter
+/// - Line-drop rules
+/// - Rule-A/B filtering
+///
+/// The result is what the cleaner WOULD produce if every pass were
+/// non-destructive.
+fn canonicalize_for_verify(md: &str) -> String {
+    // Step 1-3: content-level wave-2 preprocessing.
+    let step1 = normalize::decode_html_entities(md);
+    let step2 = normalize::decode_adobe_symbol_pua(&step1);
+    let step3 = normalize::strip_soft_hyphens(&step2);
+
+    // Step 4: per-line char fold + per-line normalizations.
+    let mut per_line_out = String::with_capacity(step3.len());
+    let lines: Vec<&str> = step3.split('\n').collect();
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            per_line_out.push('\n');
+        }
+        let mut cur = line.to_string();
+        if let Some(folded) = normalize::fold_line(&cur) {
+            cur = folded;
+        }
+        if let Some(normed) = normalize::normalize_dot_runs(&cur) {
+            cur = normed;
+        }
+        if let Some(normed) = normalize::normalize_whitespace_runs(&cur) {
+            cur = normed;
+        }
+        if let Some(normed) = normalize::normalize_ellipsis_runs(&cur) {
+            cur = normed;
+        }
+        per_line_out.push_str(&cur);
+    }
+
+    // Step 5: MD-syntax-aware Phase A (GFM sep min, HR min, reflow).
+    md_module::normalize_md_syntax(&per_line_out)
 }
 
 fn gfm_options() -> Options {
@@ -456,8 +519,21 @@ pub fn verify_md_preview_equivalent(input: &str, output: &str) -> MdEquivalenceR
 
 /// Structural Phase B verification: output is a content-subset of input,
 /// structure preserved.
+///
+/// **Input pre-canonicalization** (2026-04-24): before extracting
+/// tokens, runs `canonicalize_for_verify(input)` so that entity decode,
+/// HR/GFM-sep minimization, Unicode-whitespace folding, and other
+/// non-destructive cleaner transforms don't produce misclassified
+/// "injection" failures. Without this, a cleaner that decodes `&amp;`
+/// to `&` would appear to have "injected" the token `&` because it
+/// wasn't literally in the raw input. With this, both sides see `&`.
 pub fn verify_md_structural(input: &str, output: &str) -> MdStructuralReport {
     let mut r = MdStructuralReport::default();
+
+    // Canonicalize input — apply the cleaner's non-destructive
+    // transforms so diffs reflect real content changes only.
+    let input_canon_owned = canonicalize_for_verify(input);
+    let input = input_canon_owned.as_str();
 
     let seq_in = block_sequence(input);
     let seq_out = block_sequence(output);
@@ -915,5 +991,75 @@ mod tests {
         let r = verify_md_structural(input, output);
         assert!(!r.is_structural_equivalent());
         assert_eq!(r.subsequence_failure_kind.as_deref(), Some("injection"));
+    }
+
+    // --- Input pre-canonicalization (wave-3 enhancement) ---
+
+    #[test]
+    fn canonicalization_makes_entity_decode_invisible() {
+        // `&amp;` in input, `&` in output — cleaner did entity decode.
+        // After pre-canonicalization of input, both see `&`.
+        let input = "Text with &amp; entity.\n";
+        let output = "Text with & entity.\n";
+        let r = verify_md_structural(input, output);
+        assert!(
+            r.is_structural_equivalent(),
+            "entity-decode should pass after input canonicalization: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn canonicalization_makes_hr_min_invisible() {
+        let input = "before\n\n-----------\n\nafter\n";
+        let output = "before\n\n---\n\nafter\n";
+        let r = verify_md_structural(input, output);
+        assert!(
+            r.is_structural_equivalent(),
+            "HR min should pass: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn canonicalization_makes_gfm_sep_min_invisible() {
+        let input = "| a | b |\n| --------- | --------- |\n| 1 | 2 |\n";
+        let output = "| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+        let r = verify_md_structural(input, output);
+        assert!(
+            r.is_structural_equivalent(),
+            "GFM sep min should pass: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn canonicalization_makes_nbsp_fold_invisible() {
+        // Input has NBSP between words; output has regular space.
+        // Cleaner folded NBSP (post v6-11 fix). After canonicalization,
+        // both sides see `Η εργασία`.
+        let input = "Η\u{00A0}εργασία\u{00A0}αυτή\n";
+        let output = "Η εργασία αυτή\n";
+        let r = verify_md_structural(input, output);
+        assert!(
+            r.is_structural_equivalent(),
+            "NBSP fold should pass: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn canonicalization_does_not_hide_real_content_changes() {
+        // Regression: pre-canonicalization should NOT mask a genuinely
+        // destructive cleaner change.
+        let input = "alpha beta gamma delta epsilon\n";
+        let output = "alpha gamma epsilon\n"; // dropped beta, delta — fine
+        let r = verify_md_structural(input, output);
+        assert!(r.is_structural_equivalent(), "deletion should pass: {:?}", r);
+
+        // But ADDING content or REORDERING must still fail.
+        let output_reorder = "gamma alpha beta delta epsilon\n";
+        let r2 = verify_md_structural(input, output_reorder);
+        assert!(!r2.is_structural_equivalent(), "reorder must fail: {:?}", r2);
     }
 }
