@@ -42,8 +42,10 @@ def main() -> int:
     p.add_argument("--sample-dir", required=True, type=Path)
     p.add_argument("--output", required=True, type=Path)
     p.add_argument("--max-docs", type=int, default=0,
-                   help="If >0, process only the first N BEFORE files "
-                        "(by filename sort). Useful for smoke-tests.")
+                   help="If >0, process only the first N BEFORE files.")
+    p.add_argument("--formatter", default="format_parsed_py",
+                   choices=["format_parsed_py", "format_surgical_py"],
+                   help="Pilot A (round-trip) vs Pilot B (surgical).")
     args = p.parse_args()
 
     # Confirm cmark-gfm is actually usable before starting.
@@ -58,10 +60,11 @@ def main() -> int:
     total = len(befores)
     n_pass = 0
     fails = []
+    formatter = getattr(c, args.formatter)
     for i, b in enumerate(befores):
         body = extract_body(b)
         try:
-            out = c.format_parsed_py(body)
+            out = formatter(body)
         except Exception as err:
             fails.append({
                 "pair": b.stem.replace("_BEFORE", ""),

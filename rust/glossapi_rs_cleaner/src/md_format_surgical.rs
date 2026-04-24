@@ -31,7 +31,10 @@
 //! nodes and surgically reflow nested paragraphs, but only after the
 //! top-level approach is proven safe.
 
-use comrak::{nodes::AstNode, nodes::NodeValue, parse_document, Arena, Options};
+use comrak::{
+    nodes::{AstNode, NodeValue, TableAlignment},
+    parse_document, Arena, Options,
+};
 
 /// Build comrak options matching what `md_format::format_parsed`
 /// uses, so Pilot A and Pilot B operate under the same parser
@@ -48,15 +51,6 @@ fn options_with_sourcepos() -> Options<'static> {
     opts.render.sourcepos = true;
     opts.render.unsafe_ = true;
     opts
-}
-
-/// Return true if this node kind is one of the three Phase A
-/// transforms we WANT to apply. Everything else stays verbatim.
-fn is_phase_a_target(v: &NodeValue) -> bool {
-    matches!(
-        v,
-        NodeValue::Paragraph | NodeValue::Table(_) | NodeValue::ThematicBreak,
-    )
 }
 
 /// Byte-offset table keyed by 1-based line number. Given a
@@ -115,18 +109,15 @@ fn line_col_to_byte(src: &str, line_offsets: &[usize], line: usize, col: usize) 
 }
 
 /// Serialize ONE comrak AST node (and its descendants) back to
-/// CommonMark. Used for the 3 target node kinds.
+/// CommonMark via `format_commonmark`. Used for ThematicBreak nodes
+/// where the only transform we want IS comrak's canonical form.
 ///
-/// Before serialization, rewrite `SoftBreak` inline nodes inside
-/// this subtree to be spaces. Comrak's default `format_commonmark`
-/// emits `SoftBreak` as `\n`, which preserves source-level soft
-/// wrapping — but for our Phase A "raw-readability" goal we WANT
-/// soft breaks unwrapped to a single space (CM treats them as
-/// whitespace in preview anyway). `LineBreak` (hard break) is
-/// preserved — it's a real `<br />` in preview.
+/// NOT used for Paragraph / Table — those go through source-level
+/// rewrites that preserve inline content byte-exact (see
+/// `paragraph_source_with_softbreaks_unwrapped` and
+/// `table_source_with_minimal_delimiter`).
 fn serialize_node_only<'a>(node: &'a AstNode<'a>, opts: &Options) -> String {
     // Rewrite SoftBreak → Text(" ") in-place before serialization.
-    // Collect nodes first to avoid borrow conflicts during iteration.
     let descendants: Vec<_> = node.descendants().collect();
     for desc in descendants {
         let needs_rewrite = matches!(
@@ -140,6 +131,132 @@ fn serialize_node_only<'a>(node: &'a AstNode<'a>, opts: &Options) -> String {
     let mut out = Vec::with_capacity(256);
     comrak::format_commonmark(node, opts, &mut out).expect("format_commonmark");
     String::from_utf8(out).unwrap_or_default()
+}
+
+/// Source-level paragraph unwrap: take the paragraph's raw source
+/// bytes and replace SoftBreak newlines with single spaces.
+/// Everything else (URLs with `%XX`, escape forms like `\*`, inline
+/// code with literal pipes, link markup, em/strong markers) stays
+/// byte-exact from source.
+///
+/// CommonMark rule for identifying soft break vs hard break inside
+/// a paragraph:
+/// - `  \n` (two or more trailing spaces before newline) = hard
+/// - `\\\n` (odd count of trailing backslashes) = hard
+/// - any other single `\n` = soft break, unwrap to space
+///
+/// Important: this is line-level rewriting on the raw source of a
+/// paragraph (everything between the paragraph's start and end
+/// byte offsets). Works correctly even if the paragraph contains
+/// inline HTML, autolinks, or escape sequences, because we only
+/// touch whitespace around `\n`.
+fn paragraph_source_with_softbreaks_unwrapped(para_src: &str) -> String {
+    let lines: Vec<&str> = para_src.split('\n').collect();
+    let mut out = String::with_capacity(para_src.len());
+    for (i, line) in lines.iter().enumerate() {
+        if i == 0 {
+            out.push_str(line);
+            continue;
+        }
+        let prev = &lines[i - 1];
+        let hard_break = prev_is_hard_break(prev);
+        if hard_break {
+            out.push('\n');
+            out.push_str(line);
+        } else {
+            // Soft break: roll back trailing whitespace from `out`
+            // itself (not from `prev`, since `out` may have been
+            // mutated by a previous iteration's soft-break join).
+            // `trim_end()` on &str returns a valid UTF-8 slice, so
+            // its length is a valid char boundary in `out`.
+            let trimmed_len = out.trim_end().len();
+            out.truncate(trimmed_len);
+            out.push(' ');
+            // Trim leading whitespace from THIS line — PDF column-
+            // wrap often indents continuation lines; these render
+            // as inline word whitespace, collapsed.
+            out.push_str(line.trim_start());
+        }
+    }
+    out
+}
+
+/// Return true if the last non-`\r` content of `prev` is a
+/// CommonMark hard-break marker:
+/// - 2+ trailing spaces, OR
+/// - odd count of trailing backslashes.
+fn prev_is_hard_break(prev: &str) -> bool {
+    let s = prev.trim_end_matches('\r');
+    if s.ends_with("  ") {
+        return true;
+    }
+    let trailing_backslashes = s.chars().rev().take_while(|c| *c == '\\').count();
+    trailing_backslashes % 2 == 1
+}
+
+/// Emit the canonical GFM separator row for a table with the given
+/// per-column alignments. e.g. `| --- | :--- | ---: |`.
+fn canonical_gfm_separator_row(alignments: &[TableAlignment]) -> String {
+    let mut s = String::with_capacity(alignments.len() * 8);
+    s.push('|');
+    for a in alignments {
+        s.push(' ');
+        match a {
+            TableAlignment::None => s.push_str("---"),
+            TableAlignment::Left => s.push_str(":---"),
+            TableAlignment::Right => s.push_str("---:"),
+            TableAlignment::Center => s.push_str(":---:"),
+        }
+        s.push_str(" |");
+    }
+    s
+}
+
+/// Surgical rewrite of a Table node's source: keep header + body
+/// bytes byte-exact, replace ONLY the delimiter row (second line)
+/// with a canonical `| --- | :--- | …` form.
+///
+/// Why not re-serialize via `format_commonmark`: comrak's table
+/// serialization adds `\` escapes to `_`, `[`, `]`, `#` etc. inside
+/// URL text in cells, which cmark-gfm then percent-encodes — the
+/// single biggest Pilot B residual-failure category.
+fn table_source_with_delimiter_rewritten(
+    table_src: &str,
+    alignments: &[TableAlignment],
+) -> String {
+    // Find the first and second `\n` in the table source: the
+    // delimiter row is between them. Header row = bytes 0..first_nl.
+    // Delimiter row = bytes first_nl+1..second_nl.
+    let bytes = table_src.as_bytes();
+    let mut first_nl = None;
+    let mut second_nl = None;
+    for (i, b) in bytes.iter().enumerate() {
+        if *b == b'\n' {
+            if first_nl.is_none() {
+                first_nl = Some(i);
+            } else {
+                second_nl = Some(i);
+                break;
+            }
+        }
+    }
+    let (Some(first), Some(second)) = (first_nl, second_nl) else {
+        // Malformed / single-line "table" — pass through unchanged.
+        return table_src.to_string();
+    };
+    // Sanity: the original delimiter row must start with `|` or a
+    // digit-free dash sequence. If not, don't rewrite.
+    let original_delim = &table_src[first + 1..second];
+    let t = original_delim.trim();
+    if !t.contains('-') {
+        return table_src.to_string();
+    }
+    let canonical = canonical_gfm_separator_row(alignments);
+    let mut out = String::with_capacity(table_src.len());
+    out.push_str(&table_src[..first + 1]); // header row + its `\n`
+    out.push_str(&canonical);
+    out.push_str(&table_src[second..]); // `\n` + body
+    out
 }
 
 /// Pilot B entry: surgical Phase A rewrite.
@@ -157,9 +274,15 @@ pub fn format_surgical(md: &str) -> String {
     let mut out = String::with_capacity(md.len());
     let mut cursor: usize = 0; // byte offset in source we've copied up to
 
-    // Walk Document's top-level block children in order.
-    for child in root.children() {
+    // Collect children so we can peek at the next sibling's kind
+    // when deciding whether to inject a blank-line separator.
+    let children: Vec<_> = root.children().collect();
+    for (idx, child) in children.iter().enumerate() {
         let ast = child.data.borrow();
+        let next_is_hr = children
+            .get(idx + 1)
+            .map(|n| matches!(n.data.borrow().value, NodeValue::ThematicBreak))
+            .unwrap_or(false);
         let sp = ast.sourcepos;
         // Byte range for this node in the source.
         let start = line_col_to_byte(md, &line_offsets, sp.start.line, sp.start.column);
@@ -196,21 +319,69 @@ pub fn format_surgical(md: &str) -> String {
         if start > cursor {
             out.push_str(&md[cursor..start]);
         }
-        if is_phase_a_target(&ast.value) {
-            // Canonical serialization for this one node.
-            let canonical = serialize_node_only(child, &opts);
-            // comrak's per-node output ends with `\n` already; we'll
-            // rely on the source's own line-end bytes outside the
-            // span for final layout. Strip a single trailing `\n`
-            // if present so we don't double-up when the source
-            // already had a newline after the node.
-            let canonical_trimmed = canonical.strip_suffix('\n').unwrap_or(&canonical);
-            out.push_str(canonical_trimmed);
-        } else {
-            // Verbatim passthrough.
-            out.push_str(&md[start..end_exclusive]);
-        }
+        let rewritten_block = match &ast.value {
+            NodeValue::Paragraph => {
+                // Source-level SoftBreak unwrap — preserves all
+                // inline content (URLs, escapes, inline code, etc.)
+                // byte-exact. Only whitespace around `\n` changes.
+                let para_src = &md[start..end_exclusive];
+                let rewritten = paragraph_source_with_softbreaks_unwrapped(para_src);
+                out.push_str(&rewritten);
+                true
+            }
+            NodeValue::Table(tbl) => {
+                // Delimiter-only rewrite: keep every cell byte-exact,
+                // replace ONLY the `|---|---|` row with canonical
+                // `| --- | :--- | ---: | :---: |` form. This avoids
+                // comrak's URL-escape injection inside cells that
+                // cmark-gfm re-encodes.
+                let table_src = &md[start..end_exclusive];
+                let rewritten =
+                    table_source_with_delimiter_rewritten(table_src, &tbl.alignments);
+                out.push_str(&rewritten);
+                true
+            }
+            NodeValue::ThematicBreak => {
+                // Canonical HR is just `---`.
+                out.push_str("---");
+                true
+            }
+            _ => {
+                // Verbatim passthrough.
+                out.push_str(&md[start..end_exclusive]);
+                false
+            }
+        };
         cursor = end_exclusive;
+
+        // If this rewritten block is a Paragraph immediately
+        // followed by a ThematicBreak, the source might only have a
+        // single `\n` between them (or the HR's canonical form
+        // might land adjacent). That creates setext-heading
+        // ambiguity — cmark-gfm would re-parse the paragraph as a
+        // setext H2 with `---` as the underline. Force `\n\n`
+        // separation in output, consuming source's `\n`s so we
+        // don't double-up.
+        //
+        // For paragraph → any-other-block (including comrak's split
+        // of what cmark-gfm sees as one soft-wrapped paragraph),
+        // DO NOT inject extra blank line — let the source decide.
+        // (Dialect-ambiguous input ≠ our bug.)
+        let needs_forced_blank_line = matches!(
+            &ast.value,
+            NodeValue::Paragraph | NodeValue::ThematicBreak
+        ) && (next_is_hr || matches!(&ast.value, NodeValue::ThematicBreak));
+        if needs_forced_blank_line {
+            let mut consumed = 0usize;
+            while cursor + consumed < md.len()
+                && md.as_bytes()[cursor + consumed] == b'\n'
+            {
+                consumed += 1;
+            }
+            out.push_str("\n\n");
+            cursor += consumed;
+        }
+        let _ = rewritten_block;
     }
     // Trailing source after last node (typically `\n` or blank).
     if cursor < md.len() {
