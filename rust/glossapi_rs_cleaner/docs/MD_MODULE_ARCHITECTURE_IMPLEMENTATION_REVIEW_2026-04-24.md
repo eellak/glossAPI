@@ -506,3 +506,48 @@ least one of these gates.
 failures are still the C15 RED and the pre-existing unrelated
 `table_remover` failure. No regressions from C13.
 
+### Commit 15 (expand structural verifier to all text-bearing blocks) landed
+
+Fixed M-2 from the review. Extended `paragraph_tokens(md)` in
+`src/md_verify.rs` to open/flush its buffer on three block kinds
+(from just Paragraph):
+
+- `Paragraph` (unchanged).
+- `Heading` (ATX `# …` and setext `text\n===`). The RED test
+  `red_until_c15_heading_text_change_detected_by_structural` now
+  fails the subsequence check on injected heading content as it
+  should.
+- `Item` — covers TIGHT list items, where pulldown-cmark emits
+  text directly inside `Item` without a nested `Paragraph`. Loose
+  list items have a nested `Paragraph` which overwrites the
+  Item-level buffer (benign: the Paragraph handler flushes first,
+  End(Item) then has nothing to flush).
+
+Block-quote paragraphs and list-item loose-paragraphs were already
+covered via nested `Paragraph` events; this expansion adds headings
+and tight lists.
+
+**Tests turned GREEN:**
+
+- `red_until_c15_heading_text_change_detected_by_structural`.
+
+**Tests added as regression gates:**
+
+- `structural_catches_heading_text_injection` — injection fails,
+  deletion still passes (coverage is specific, not over-triggering).
+- `structural_catches_setext_heading_text_change` — setext
+  Heading emission is also picked up by the extractor.
+- `structural_catches_list_item_text_change` — tight list item
+  text injection fails.
+
+Note: the `MdStructuralReport::paragraph_tokens_subsequence` field
+name is retained as-is to avoid breaking Python consumers that
+read the PyDict key by that literal name. The extractor function
+is also still called `paragraph_tokens`; both names are
+historical. The function doc-comment now describes the broader
+coverage explicitly.
+
+**Test state at Commit 15 boundary:** 266 passed, 1 failing (only
+the pre-existing unrelated `table_remover` failure). No remaining
+regressions from the review-response series.
+

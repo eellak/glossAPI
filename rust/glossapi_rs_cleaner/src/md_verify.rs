@@ -212,22 +212,46 @@ fn block_sequence(md: &str) -> Vec<BlockKind> {
     seq
 }
 
-/// Extract one whitespace-tokenized vector per paragraph block, in
-/// source order. Text inside a paragraph (including inline formatting)
-/// is concatenated before tokenization. Link/image URLs ARE included
-/// in the token stream so that a cleaner that silently rewrites a URL
-/// is detected.
+/// Extract one whitespace-tokenized vector per text-bearing leaf
+/// block, in source order. Covers:
+///
+/// - `Paragraph` (top-level and nested inside BlockQuote / list items
+///   / footnote definitions — pulldown-cmark emits a Paragraph inside
+///   each of those containers).
+/// - `Heading` (ATX `# ...` and setext `text\n---`).
+///
+/// Text inside a block (including inline formatting) is concatenated
+/// before tokenization. Link/image URLs ARE included in the token
+/// stream so that a cleaner silently rewriting a URL is detected.
+///
+/// Fixing M-2 from the 2026-04-24 review: a cleaner that rewrote
+/// `# Α` to `# Β` would previously pass structural equivalence
+/// because heading text wasn't compared at all. Now it is.
+///
+/// (Historical name `paragraph_tokens` is retained — callers and the
+/// `MdStructuralReport::paragraph_tokens_subsequence` field form a
+/// small public-facing surface; broadening the coverage without
+/// renaming is the least-disruptive change.)
 fn paragraph_tokens(md: &str) -> Vec<Vec<String>> {
-    let mut paragraphs: Vec<Vec<String>> = Vec::new();
+    let mut blocks: Vec<Vec<String>> = Vec::new();
     let mut current: Option<String> = None;
     for ev in Parser::new_ext(md, gfm_options()) {
         match ev {
-            Event::Start(Tag::Paragraph) => {
+            // Tight list items render text DIRECTLY inside `Item`
+            // (no nested `Paragraph`). Loose list items have a nested
+            // `Paragraph` which overwrites the Item-level buffer —
+            // that's fine; the Paragraph handler flushes first, and
+            // End(Item) then has nothing to flush.
+            Event::Start(Tag::Paragraph)
+            | Event::Start(Tag::Heading { .. })
+            | Event::Start(Tag::Item) => {
                 current = Some(String::new());
             }
-            Event::End(TagEnd::Paragraph) => {
+            Event::End(TagEnd::Paragraph)
+            | Event::End(TagEnd::Heading(_))
+            | Event::End(TagEnd::Item) => {
                 if let Some(buf) = current.take() {
-                    paragraphs.push(
+                    blocks.push(
                         buf.split_whitespace()
                             .map(|s| s.to_string())
                             .collect(),
@@ -257,7 +281,7 @@ fn paragraph_tokens(md: &str) -> Vec<Vec<String>> {
             _ => {}
         }
     }
-    paragraphs
+    blocks
 }
 
 /// Extract table structure: `Vec<Table>` where each Table is
@@ -1069,5 +1093,48 @@ mod tests {
         let output = "> different content\n";
         let r = verify_md_structural(input, output);
         assert!(!r.is_structural_equivalent(), "{:?}", r);
+    }
+
+    // --- Post-C15 regression tests: heading + nested-paragraph coverage.
+
+    #[test]
+    fn structural_catches_heading_text_injection() {
+        // Same shape as the RED test but inverts the polarity: a clean
+        // deletion inside a heading (retaining a subsequence) still
+        // passes, so the new coverage doesn't over-trigger.
+        let input_same_sub = "# alpha beta gamma\n";
+        let out_same_sub = "# alpha gamma\n";
+        let r_ok = verify_md_structural(input_same_sub, out_same_sub);
+        assert!(r_ok.is_structural_equivalent(), "heading deletion ok: {:?}", r_ok);
+        // Injected heading text fails.
+        let out_injected = "# alpha beta injected word gamma\n";
+        let r_fail = verify_md_structural(input_same_sub, out_injected);
+        assert!(
+            !r_fail.is_structural_equivalent(),
+            "heading injection must fail: {:?}",
+            r_fail
+        );
+    }
+
+    #[test]
+    fn structural_catches_setext_heading_text_change() {
+        // Setext H1/H2: `text\n===` or `text\n---`. pulldown-cmark
+        // emits a Heading tag for these too, so the new coverage
+        // catches content changes here.
+        let input = "original heading content\n===\n";
+        let output = "different heading content\n===\n";
+        let r = verify_md_structural(input, output);
+        assert!(!r.is_structural_equivalent(), "setext heading change: {:?}", r);
+    }
+
+    #[test]
+    fn structural_catches_list_item_text_change() {
+        // List items wrap their content in a Paragraph, which the
+        // existing extractor already covers. This test locks that in
+        // as coverage of nested-paragraph text changes.
+        let input = "- first item text\n- second item text\n";
+        let output = "- rewritten first\n- second item text\n";
+        let r = verify_md_structural(input, output);
+        assert!(!r.is_structural_equivalent(), "list-item change: {:?}", r);
     }
 }
