@@ -120,10 +120,7 @@ fn serialize_node_only<'a>(node: &'a AstNode<'a>, opts: &Options) -> String {
     // Rewrite SoftBreak → Text(" ") in-place before serialization.
     let descendants: Vec<_> = node.descendants().collect();
     for desc in descendants {
-        let needs_rewrite = matches!(
-            desc.data.borrow().value,
-            NodeValue::SoftBreak
-        );
+        let needs_rewrite = matches!(desc.data.borrow().value, NodeValue::SoftBreak);
         if needs_rewrite {
             desc.data.borrow_mut().value = NodeValue::Text(" ".to_string());
         }
@@ -164,21 +161,54 @@ fn paragraph_source_with_softbreaks_unwrapped(para_src: &str) -> String {
             out.push('\n');
             out.push_str(line);
         } else {
-            // Soft break: roll back trailing whitespace from `out`
-            // itself (not from `prev`, since `out` may have been
-            // mutated by a previous iteration's soft-break join).
-            // `trim_end()` on &str returns a valid UTF-8 slice, so
-            // its length is a valid char boundary in `out`.
-            let trimmed_len = out.trim_end().len();
+            // Soft break: roll back trailing ASCII-whitespace from
+            // `out`, emit one space, then append line with leading
+            // ASCII-whitespace stripped. ASCII-ONLY because
+            // Docling-extracted PDFs use U+00A0 (NBSP) as a
+            // meaningful column-preservation marker — cmark-gfm
+            // treats NBSP as content and so must we. Using Rust's
+            // `trim_start()` / `trim_end()` here would be wrong;
+            // those are Unicode-whitespace-aware and strip NBSP.
+            let trimmed_len = trim_end_ascii_ws(&out).len();
             out.truncate(trimmed_len);
             out.push(' ');
-            // Trim leading whitespace from THIS line — PDF column-
-            // wrap often indents continuation lines; these render
-            // as inline word whitespace, collapsed.
-            out.push_str(line.trim_start());
+            out.push_str(trim_start_ascii_ws(line));
         }
     }
     out
+}
+
+/// Return `s` with trailing ASCII whitespace (space, tab, `\r`)
+/// removed. NBSP (U+00A0) and other Unicode whitespace are
+/// preserved — cmark-gfm treats those as content.
+fn trim_end_ascii_ws(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 {
+        let c = bytes[end - 1];
+        if c == b' ' || c == b'\t' || c == b'\r' {
+            end -= 1;
+        } else {
+            break;
+        }
+    }
+    &s[..end]
+}
+
+/// Return `s` with leading ASCII whitespace (space, tab, `\r`)
+/// removed. NBSP (U+00A0) and other Unicode whitespace preserved.
+fn trim_start_ascii_ws(s: &str) -> &str {
+    let bytes = s.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() {
+        let c = bytes[start];
+        if c == b' ' || c == b'\t' || c == b'\r' {
+            start += 1;
+        } else {
+            break;
+        }
+    }
+    &s[start..]
 }
 
 /// Return true if the last non-`\r` content of `prev` is a
@@ -220,10 +250,7 @@ fn canonical_gfm_separator_row(alignments: &[TableAlignment]) -> String {
 /// serialization adds `\` escapes to `_`, `[`, `]`, `#` etc. inside
 /// URL text in cells, which cmark-gfm then percent-encodes — the
 /// single biggest Pilot B residual-failure category.
-fn table_source_with_delimiter_rewritten(
-    table_src: &str,
-    alignments: &[TableAlignment],
-) -> String {
+fn table_source_with_delimiter_rewritten(table_src: &str, alignments: &[TableAlignment]) -> String {
     // Find the first and second `\n` in the table source: the
     // delimiter row is between them. Header row = bytes 0..first_nl.
     // Delimiter row = bytes first_nl+1..second_nl.
@@ -289,8 +316,7 @@ pub fn format_surgical(md: &str) -> String {
         // End column is inclusive — add 1 char width to get the
         // byte AFTER the last char.
         let mut end_exclusive = {
-            let col_end_byte =
-                line_col_to_byte(md, &line_offsets, sp.end.line, sp.end.column);
+            let col_end_byte = line_col_to_byte(md, &line_offsets, sp.end.line, sp.end.column);
             if col_end_byte < md.len() {
                 let rest = &md[col_end_byte..];
                 col_end_byte + rest.chars().next().map_or(0, |c| c.len_utf8())
@@ -303,9 +329,7 @@ pub fn format_surgical(md: &str) -> String {
         // blank line after). Trim trailing `\n` chars off the byte
         // range so blank lines fall into inter-node preservation,
         // not into the node's splice span.
-        while end_exclusive > start
-            && md.as_bytes()[end_exclusive - 1] == b'\n'
-        {
+        while end_exclusive > start && md.as_bytes()[end_exclusive - 1] == b'\n' {
             end_exclusive -= 1;
         }
         // Defensive: if the end still looks wrong (empty span or
@@ -336,8 +360,7 @@ pub fn format_surgical(md: &str) -> String {
                 // comrak's URL-escape injection inside cells that
                 // cmark-gfm re-encodes.
                 let table_src = &md[start..end_exclusive];
-                let rewritten =
-                    table_source_with_delimiter_rewritten(table_src, &tbl.alignments);
+                let rewritten = table_source_with_delimiter_rewritten(table_src, &tbl.alignments);
                 out.push_str(&rewritten);
                 true
             }
@@ -367,15 +390,12 @@ pub fn format_surgical(md: &str) -> String {
         // of what cmark-gfm sees as one soft-wrapped paragraph),
         // DO NOT inject extra blank line — let the source decide.
         // (Dialect-ambiguous input ≠ our bug.)
-        let needs_forced_blank_line = matches!(
-            &ast.value,
-            NodeValue::Paragraph | NodeValue::ThematicBreak
-        ) && (next_is_hr || matches!(&ast.value, NodeValue::ThematicBreak));
+        let needs_forced_blank_line =
+            matches!(&ast.value, NodeValue::Paragraph | NodeValue::ThematicBreak)
+                && (next_is_hr || matches!(&ast.value, NodeValue::ThematicBreak));
         if needs_forced_blank_line {
             let mut consumed = 0usize;
-            while cursor + consumed < md.len()
-                && md.as_bytes()[cursor + consumed] == b'\n'
-            {
+            while cursor + consumed < md.len() && md.as_bytes()[cursor + consumed] == b'\n' {
                 consumed += 1;
             }
             out.push_str("\n\n");
@@ -423,9 +443,43 @@ mod tests {
         );
     }
 
+    fn assert_surgical_preserves_cmark_preview_if_available(input: &str) {
+        let out = format_surgical(input);
+        assert_surgical_preserves_preview(input);
+        if !crate::cmark_gfm_oracle::is_available() {
+            eprintln!("cmark-gfm not available — skipping cmark-gfm assertion");
+            return;
+        }
+        let r = crate::cmark_gfm_oracle::verify(input, &out).expect("cmark-gfm verify");
+        assert!(
+            r.preview_identical,
+            "\n=== INPUT ===\n{}\n=== OUTPUT ===\n{}\n=== CMARK DIFF ===\n{:?}\n",
+            input, out, r.first_diff,
+        );
+    }
+
     #[test]
     fn sg_paragraph_reflow() {
         let input = "This is a\nsoft-wrapped\nparagraph.\n\nSecond\npara.\n";
+        assert_surgical_preserves_preview(input);
+    }
+
+    #[test]
+    fn sg_paragraph_with_nbsp_preserves_nbsp_as_content() {
+        // Docling-extracted PDFs use NBSP (U+00A0) as a meaningful
+        // column-preservation marker on continuation lines. cmark-gfm
+        // treats NBSP as content. Our reflow must NOT strip NBSP via
+        // Unicode-aware trim — only ASCII space/tab/CR should be
+        // trimmed at soft-break boundaries.
+        let input = "Παρασκευή\t\n \u{00A0}των\t\n \u{00A0}δεκαδικών\n";
+        let out = format_surgical(input);
+        // NBSP chars must survive in the output (one per original
+        // continuation line).
+        let nbsp_count = out.chars().filter(|c| *c == '\u{00A0}').count();
+        assert_eq!(
+            nbsp_count, 2,
+            "expected 2 NBSPs preserved, got {nbsp_count}. output={out:?}"
+        );
         assert_surgical_preserves_preview(input);
     }
 
@@ -499,6 +553,118 @@ mod tests {
         // HR canonicalized to `-----` from 9 dashes → comrak emits
         // `-----` (or `---`). Either way, not the original 9-dash.
         // Preview preservation is what matters.
+        assert_surgical_preserves_preview(input);
+    }
+
+    #[test]
+    fn sg_optional_pipe_table_gets_delimiter_only_rewrite() {
+        // GFM tables do not require leading/trailing pipes. The
+        // parser must identify the table and Pilot B should rewrite
+        // only the delimiter row, leaving header/body bytes alone.
+        let input = "a | b\n---------- | :----------:\n1 | 2\n";
+        let out = format_surgical(input);
+        assert!(
+            out.contains("a | b\n| --- | :---: |\n1 | 2"),
+            "delimiter should be canonical but cells byte-exact; out={out:?}"
+        );
+        assert_surgical_preserves_cmark_preview_if_available(input);
+    }
+
+    #[test]
+    fn sg_table_cell_code_span_pipe_and_url_bytes_survive() {
+        // Pipes inside code spans and URL-ish cell text are classic
+        // places where table serializers over-escape. Surgical must
+        // rely on the parser for the table span, but preserve cell
+        // source bytes exactly.
+        let input = concat!(
+            "| expr | url |\n",
+            "| ---------- | ---------- |\n",
+            "| `a | b` | https://example.com/a_b?q=[x] |\n",
+        );
+        let out = format_surgical(input);
+        assert!(
+            out.contains("| `a | b` | https://example.com/a_b?q=[x] |"),
+            "out={out:?}"
+        );
+        assert!(out.contains("| --- | --- |"), "out={out:?}");
+        assert_surgical_preserves_cmark_preview_if_available(input);
+    }
+
+    #[test]
+    fn sg_setext_heading_is_not_rewritten_as_paragraph_plus_hr() {
+        // Parser identity matters here: `Title\n---` is a heading,
+        // not a paragraph followed by a thematic break.
+        let input = "Title\n---\n\nAfter.\n";
+        let out = format_surgical(input);
+        assert_eq!(out, input, "setext heading should pass through byte-exact");
+        assert_surgical_preserves_preview(input);
+    }
+
+    #[test]
+    fn sg_hr_between_paragraphs_gets_padding_to_avoid_setext_ambiguity() {
+        // Canonicalizing `-----` to `---` next to paragraph text can
+        // accidentally create a setext heading unless we force blank
+        // line separation around the HR.
+        let input = "alpha\n\n-----\nbeta\n";
+        let out = format_surgical(input);
+        assert_eq!(out, "alpha\n\n---\n\nbeta\n", "out={out:?}");
+        assert_surgical_preserves_cmark_preview_if_available(input);
+    }
+
+    #[test]
+    fn sg_multibyte_greek_sourcepos_reflows_and_rewrites_table() {
+        // Source-position slicing must stay correct on multi-byte
+        // Greek text, otherwise byte ranges will corrupt UTF-8 or
+        // splice the wrong block.
+        let input = concat!(
+            "Αλφα\n",
+            "βήτα\n\n",
+            "| λέξη | τιμή |\n",
+            "| ------------ | ------------ |\n",
+            "| γάμμα | δέλτα |\n",
+        );
+        let out = format_surgical(input);
+        assert!(out.contains("Αλφα βήτα"), "out={out:?}");
+        assert!(out.contains("| --- | --- |"), "out={out:?}");
+        assert_surgical_preserves_cmark_preview_if_available(input);
+    }
+
+    #[test]
+    fn sg_inline_code_span_softbreak_is_parser_identical() {
+        // CommonMark normalizes line endings inside code spans to
+        // spaces in rendered code text. This challenges source-level
+        // paragraph unwrap without letting a full formatter touch the
+        // rest of the inline markup.
+        let input = "Use `alpha\nbeta` inside code\nand continue.\n";
+        let out = format_surgical(input);
+        assert!(
+            out.contains("Use `alpha beta` inside code and continue."),
+            "out={out:?}"
+        );
+        assert_surgical_preserves_cmark_preview_if_available(input);
+    }
+
+    #[test]
+    #[ignore = "current Pilot B only rewrites top-level paragraphs; recursive container rewrites are future work"]
+    fn red_until_surgical_reflows_softbreaks_inside_blockquote() {
+        let input = "> quoted line one\n> quoted line two\n\nAfter.\n";
+        let out = format_surgical(input);
+        assert!(
+            out.contains("> quoted line one quoted line two"),
+            "nested blockquote paragraph was not reflowed; out={out:?}"
+        );
+        assert_surgical_preserves_preview(input);
+    }
+
+    #[test]
+    #[ignore = "current Pilot B only rewrites top-level paragraphs; recursive container rewrites are future work"]
+    fn red_until_surgical_reflows_softbreaks_inside_list_item() {
+        let input = "- This item is\n  soft wrapped.\n- Next item.\n";
+        let out = format_surgical(input);
+        assert!(
+            out.contains("- This item is soft wrapped."),
+            "nested list paragraph was not reflowed; out={out:?}"
+        );
         assert_surgical_preserves_preview(input);
     }
 }
