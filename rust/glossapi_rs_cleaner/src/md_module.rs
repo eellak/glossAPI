@@ -30,13 +30,20 @@ use regex::Regex;
 use std::collections::HashMap;
 
 lazy_static! {
-    /// Matches a standalone horizontal-rule separator line — runs of
-    /// `-` / `_` / `*` / `=` of length ≥4, or Unicode em-dash / horizontal-
-    /// bar / box-drawing runs of length ≥3. Also matches markdown-escaped
-    /// underscore runs like `\_\_\_\_` that appear in EU legislative
-    /// corpus docs.
+    /// Matches a standalone CommonMark horizontal-rule (`<hr/>` in the
+    /// rendered output) — runs of `-` / `_` / `*` of length ≥4 on a line
+    /// that contains only those chars (plus optional leading/trailing
+    /// whitespace). Also matches the markdown-escaped underscore run
+    /// `\_\_\_\_` that appears in EU legislative corpus docs — the
+    /// escape preserves the same thematic-break render.
+    ///
+    /// Intentionally does NOT match `=` runs (`====` is a setext heading
+    /// marker, not an HR), Unicode em-dash / horizontal-bar / box-drawing
+    /// (these parse as literal paragraphs, not HRs, under CommonMark).
+    /// Transforming them to `---` would CHANGE preview rendering and
+    /// violate the Phase A invariant — verifier catches it.
     pub static ref SEPARATOR_LINE_REGEX: Regex = Regex::new(
-        r"^[ \t]*(?:-{4,}|_{4,}|(?:\\_){4,}|\*{4,}|={4,}|\u{2014}{3,}|\u{2015}{3,}|\u{2500}{3,}|\u{2550}{3,})[ \t]*$",
+        r"^[ \t]*(?:-{4,}|_{4,}|(?:\\_){4,}|\*{4,})[ \t]*$",
     )
     .unwrap();
 }
@@ -442,26 +449,36 @@ mod tests {
     // --- HR minimization ---
 
     #[test]
-    fn hr_minimization_collapses_long_runs() {
+    fn hr_minimization_collapses_long_ascii_runs() {
         assert_eq!(normalize_separator_line("----"), Some("---".to_string()));
         assert_eq!(normalize_separator_line("______"), Some("---".to_string()));
         assert_eq!(normalize_separator_line("****"), Some("---".to_string()));
-        assert_eq!(normalize_separator_line("===="), Some("---".to_string()));
         assert_eq!(normalize_separator_line("  ----  "), Some("---".to_string()));
     }
 
     #[test]
-    fn hr_minimization_handles_unicode_dashes() {
-        assert_eq!(normalize_separator_line("———"), Some("---".to_string()));
-        assert_eq!(normalize_separator_line("═══"), Some("---".to_string()));
-        assert_eq!(normalize_separator_line("───"), Some("---".to_string()));
+    fn hr_minimization_does_not_touch_equals_runs() {
+        // `====` is a setext heading level-1 marker in CommonMark (when
+        // preceded by a non-blank line) or a paragraph of `=` chars
+        // otherwise. NEVER an HR — transforming it would change render.
+        assert_eq!(normalize_separator_line("===="), None);
+        assert_eq!(normalize_separator_line("========"), None);
+    }
+
+    #[test]
+    fn hr_minimization_does_not_touch_unicode_dash_like_chars() {
+        // Em-dash, horizontal-bar, box-drawing are NOT CommonMark HRs.
+        // CommonMark renders them as a paragraph of literal chars;
+        // transforming to `---` would change render.
+        assert_eq!(normalize_separator_line("———"), None);
+        assert_eq!(normalize_separator_line("═══"), None);
+        assert_eq!(normalize_separator_line("───"), None);
     }
 
     #[test]
     fn hr_minimization_preserves_non_hr() {
         // ASCII threshold is 4 chars; exactly 3 dashes unchanged.
         assert_eq!(normalize_separator_line("---"), None);
-        assert_eq!(normalize_separator_line("==="), None);
         assert_eq!(normalize_separator_line("hello ----"), None);
         assert_eq!(normalize_separator_line("----- x"), None);
         // Dot-leader runs are not HRs.
@@ -634,5 +651,186 @@ mod tests {
         assert!(out.contains("\n---\n"));
         // Paragraph reflowed.
         assert!(out.contains("First word second word third word"));
+    }
+
+    // -----------------------------------------------------------------
+    // Preview-equivalence regression tests for Phase A transforms.
+    //
+    // Invariant asserted: for each transform, the cleaner OUTPUT renders
+    // identically to the INPUT under a spec-compliant GFM parser. Any
+    // future edit that breaks preview-preservation fails loudly here.
+    //
+    // Uses `md_verify::verify_md_preview_equivalent` (pulldown-cmark as
+    // reference parser). See `docs/MD_MODULE_ARCHITECTURE.md`.
+    // -----------------------------------------------------------------
+
+    // --- HR minimization preserves preview ---
+
+    #[test]
+    fn equiv_hr_min_on_ascii_dash_run() {
+        let input = "before\n\n----------\n\nafter\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    #[test]
+    fn equiv_hr_min_on_underscore_run() {
+        let input = "before\n\n__________\n\nafter\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    #[test]
+    fn equiv_hr_min_on_asterisk_run() {
+        let input = "before\n\n**********\n\nafter\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    #[test]
+    fn equiv_hr_min_leaves_em_dash_paragraph_alone() {
+        // `———` renders as a paragraph of em-dashes under CommonMark
+        // (NOT an HR). Phase A must leave it unchanged so preview
+        // stays bit-identical.
+        let input = "before\n\n———\n\nafter\n";
+        let out = normalize_md_syntax(input);
+        assert_eq!(out, input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    // --- GFM table separator minimization preserves preview ---
+
+    #[test]
+    fn equiv_gfm_sep_min_on_long_dash_body() {
+        let input = "| a | b |\n| ---------- | ---------- |\n| 1 | 2 |\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    #[test]
+    fn equiv_gfm_sep_min_preserves_all_alignments() {
+        let input = "| a | b | c | d |\n| :-------- | --------: | :--------: | -------- |\n| 1 | 2 | 3 | 4 |\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    #[test]
+    fn equiv_gfm_sep_min_on_single_column_table() {
+        let input = "| Header |\n| ---------- |\n| cell |\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    #[test]
+    fn equiv_gfm_sep_min_on_multiple_tables() {
+        let input = concat!(
+            "| a | b |\n| ---------- | ---------- |\n| 1 | 2 |\n\n",
+            "| c | d | e |\n| :----- | :-----: | -----: |\n| x | y | z |\n"
+        );
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    // --- Paragraph reflow preserves preview ---
+
+    #[test]
+    fn equiv_reflow_on_soft_wrapped_paragraph() {
+        let input = "This is a\nsoft-wrapped\nparagraph.\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    #[test]
+    fn equiv_reflow_across_mixed_content() {
+        let input = concat!(
+            "# Heading\n\n",
+            "First soft-wrapped\nparagraph of text.\n\n",
+            "Second paragraph\nalso wrapped.\n\n",
+            "- list item one\n- list item two\n\n",
+            "Final paragraph\non multiple\nshort lines.\n"
+        );
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    #[test]
+    fn equiv_reflow_does_not_merge_across_blockquote() {
+        let input = "First paragraph\nline two\n\n> quoted content\n> line two\n\nAfter.\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    #[test]
+    fn equiv_reflow_does_not_merge_across_fenced_code() {
+        let input = "Before paragraph\ntext.\n\n```\ncode line one\ncode line two\n```\n\nAfter paragraph\ntext.\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    // --- Orchestrator equivalence on mixed-content docs ---
+
+    #[test]
+    fn equiv_orchestrator_on_heading_para_table_hr_mix() {
+        let input = concat!(
+            "# Top heading\n\n",
+            "A soft-wrapped\nparagraph of text.\n\n",
+            "| Col A | Col B |\n| ---------- | ---------- |\n| 1 | 2 |\n\n",
+            "-----------\n\n",
+            "## Section two\n\n",
+            "- item alpha\n- item beta\n- item gamma\n\n",
+            "Final\nparagraph\nsoft-wrapped.\n"
+        );
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    #[test]
+    fn equiv_orchestrator_idempotent_on_canonical_input() {
+        // Already-canonical input should pass through unchanged.
+        let input = concat!(
+            "# Heading\n\n",
+            "Already-joined paragraph.\n\n",
+            "| a | b |\n| --- | --- |\n| 1 | 2 |\n\n",
+            "---\n\n",
+            "After.\n"
+        );
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    // --- Negative controls: if equiv check is wrong, these would pass ---
+
+    #[test]
+    fn equiv_detects_an_incorrect_transform_that_drops_paragraph() {
+        // This is NOT md_module's output — we manufacture a broken
+        // transform to confirm the verifier would catch it.
+        let input = "para1\n\npara2\n\npara3\n";
+        let broken_output = "para1\n\npara3\n";
+        let r = crate::md_verify::verify_md_preview_equivalent(input, broken_output);
+        assert!(!r.is_strict_equivalent(), "verifier should catch dropped paragraph");
+    }
+
+    #[test]
+    fn equiv_detects_an_incorrect_transform_that_fuses_words() {
+        // Simulates the v6-11 NBSP-strip bug. Would-be Phase A violation.
+        let input = "Η εργασία αυτή έχει σκοπό.\n";
+        let broken_output = "Ηεργασίααυτήέχεισκοπό.\n";
+        let r = crate::md_verify::verify_md_preview_equivalent(input, broken_output);
+        assert!(!r.is_strict_equivalent(), "verifier should catch word fusion");
+        assert!(!r.paragraph_text_equal);
     }
 }
