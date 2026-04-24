@@ -6,6 +6,7 @@ mod charset_module;
 mod cleaning_module;
 mod directory_processor;
 mod latex_module;
+mod md_module;
 mod normalize;
 mod pipeline_module;
 mod table_analysis_module;

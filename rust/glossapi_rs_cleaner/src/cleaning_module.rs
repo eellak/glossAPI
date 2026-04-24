@@ -10,6 +10,7 @@ use regex::Regex;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet}; // For optimizing comment search in strip_tags_custom
 
+use crate::md_module;
 use crate::normalize;
 
 // Constants
@@ -441,7 +442,7 @@ pub fn core_clean_text_with_stats(
     let step2 = normalize::decode_adobe_symbol_pua(&step1);
     let step3 = normalize::strip_glyph_markers(&step2);
     let step4 = normalize::strip_soft_hyphens(&step3);
-    let step5 = normalize::reflow_paragraphs(&step4);
+    let step5 = md_module::reflow_paragraphs(&step4);
     let wave2_out_len = step5.chars().count();
     let wave2_preprocessing_delta = wave2_in_len.saturating_sub(wave2_out_len);
     // Re-alias `text` so the rest of the function sees the preprocessed
@@ -499,7 +500,7 @@ pub fn core_clean_text_with_stats(
     let mut carry_math_state = false;
 
     // Pre-pass: GFM table separator row canonicalization (parser-validated).
-    let table_replacements = normalize::scan_gfm_table_separators(text);
+    let table_replacements = md_module::scan_gfm_table_separators(text);
     // Code-fence state carried across lines — inside a fenced block we skip
     // all normalizations so code indentation and punctuation survive intact.
     let mut in_code_fence = false;
@@ -538,7 +539,7 @@ pub fn core_clean_text_with_stats(
         // Code-fence state: toggle on ``` / ~~~ markers. Pass the marker and
         // everything inside through unchanged so normalizations don't collapse
         // meaningful code indentation or punctuation.
-        if normalize::is_code_fence_marker(trimmed_line) {
+        if md_module::is_code_fence_marker(trimmed_line) {
             in_code_fence = !in_code_fence;
             let line_chars = line.chars().count();
             original_chars_for_badness += line_chars;
@@ -781,7 +782,7 @@ pub fn core_clean_text_with_stats(
             if let Some(n) = normalize_layout_leader_runs(&s) {
                 s = n;
             }
-            if let Some(n) = normalize::normalize_separator_line(&s) {
+            if let Some(n) = md_module::normalize_separator_line(&s) {
                 s = n;
             }
             if let Some(n) = normalize::normalize_ellipsis_runs(&s) {

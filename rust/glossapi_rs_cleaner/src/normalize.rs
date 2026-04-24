@@ -37,24 +37,9 @@ lazy_static! {
     pub static ref MALFORMED_ENTITY_REGEX: Regex =
         Regex::new(r"&(gt|lt|amp)($|[^a-zA-Z0-9;])").unwrap();
 
-    /// Standalone separator line: homogeneous runs of a single ASCII
-    /// separator char (`-` / `_` / `*` / `=`) of length >=4, OR homogeneous
-    /// runs of em-dash (U+2014), horizontal bar (U+2015), box-drawing light
-    /// (U+2500), or box-drawing double (U+2550) of length >=3. Also matches
-    /// the markdown-ESCAPED underscore form `(?:\\_){4,}` — these appear
-    /// whenever a raw `_{4,}` separator gets markdown-escaped, e.g. EU
-    /// legislative-divider chains (see FINAL_RUN_SUMMARY 2026-04-22: the
-    /// prior round's BPE vocab accumulated `\_\_\_…` tokens because this
-    /// form slipped past the un-escaped-only regex). Optional leading /
-    /// trailing whitespace. Dots are handled separately (see
-    /// `normalize_layout_leader_runs`).
-    ///
-    /// Mixed-char runs like `---___` are intentionally *not* matched — the
-    /// design doc treats those as ASCII art, not thematic breaks.
-    pub static ref SEPARATOR_LINE_REGEX: Regex = Regex::new(
-        r"^[ \t]*(?:-{4,}|_{4,}|(?:\\_){4,}|\*{4,}|={4,}|\u{2014}{3,}|\u{2015}{3,}|\u{2500}{3,}|\u{2550}{3,})[ \t]*$",
-    )
-    .unwrap();
+    // (SEPARATOR_LINE_REGEX moved to md_module.rs alongside
+    // normalize_separator_line — it's MD-syntax-aware and lives with
+    // the Phase A transforms.)
 }
 
 // ---------------------------------------------------------------------------
@@ -498,152 +483,10 @@ pub fn normalize_malformed_entities(line: &str) -> Option<String> {
     }
 }
 
-/// Collapse a standalone separator line (hyphen / underscore / asterisk / equals
-/// runs, or em-dash / horizontal-bar / box-drawing runs) to the canonical `---`.
-///
-/// Does NOT fire on dot-leader lines (those are handled by
-/// `normalize_layout_leader_runs` in `cleaning_module.rs` with target `.....`).
-pub fn normalize_separator_line(line: &str) -> Option<String> {
-    if !SEPARATOR_LINE_REGEX.is_match(line) {
-        return None;
-    }
-    Some("---".to_string())
-}
-
-// ---------------------------------------------------------------------------
-// GFM table separator pre-pass
-// ---------------------------------------------------------------------------
-
-/// Scan the full text for GFM-compliant table separator rows. A row qualifies
-/// when (a) the row itself parses as a separator (cells of `:?-{3,}:?`,
-/// pipe-delimited) AND (b) the line immediately preceding it is a
-/// pipe-delimited row with the same number of cells (a header row).
-///
-/// Returns a map from `line_index` (0-based, as emitted by `str::lines()`)
-/// to the canonical replacement line.
-pub fn scan_gfm_table_separators(text: &str) -> HashMap<usize, String> {
-    let mut replacements: HashMap<usize, String> = HashMap::new();
-    let lines: Vec<&str> = text.lines().collect();
-    // Track code-fence state so we don't normalize `|----|`-shaped lines that
-    // appear inside fenced code blocks (which must survive intact).
-    let mut in_code_fence = false;
-    for (i, line) in lines.iter().enumerate() {
-        if is_code_fence_marker(line) {
-            in_code_fence = !in_code_fence;
-            continue;
-        }
-        if in_code_fence {
-            continue;
-        }
-        if i == 0 {
-            continue;
-        }
-        let sep = match parse_gfm_separator_row(line) {
-            Some(s) => s,
-            None => continue,
-        };
-        let header = lines[i - 1];
-        let header_cells = count_gfm_row_cells(header);
-        if header_cells != sep.cells.len() {
-            continue;
-        }
-        let canonical_cells: Vec<&str> = sep
-            .cells
-            .iter()
-            .map(|a| match a {
-                GfmAlign::Default => "---",
-                GfmAlign::Left => ":---",
-                GfmAlign::Center => ":---:",
-                GfmAlign::Right => "---:",
-            })
-            .collect();
-        replacements.insert(i, format!("| {} |", canonical_cells.join(" | ")));
-    }
-    replacements
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum GfmAlign {
-    Default,
-    Left,
-    Center,
-    Right,
-}
-
-#[derive(Debug, Clone)]
-struct GfmSeparatorRow {
-    cells: Vec<GfmAlign>,
-}
-
-fn parse_gfm_separator_row(line: &str) -> Option<GfmSeparatorRow> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    // A GFM table row MUST contain at least one pipe. Without this check a
-    // bare `----` (standalone separator) would be (mis)-parsed as a 1-cell
-    // table separator and then collapsed to `| --- |` whenever the line
-    // above happened to be non-empty.
-    if !trimmed.contains('|') {
-        return None;
-    }
-    // Strip optional leading/trailing pipe.
-    let inner = trimmed.trim_start_matches('|').trim_end_matches('|');
-    if inner.is_empty() {
-        return None;
-    }
-    let cells: Vec<&str> = inner.split('|').map(str::trim).collect();
-    if cells.is_empty() {
-        return None;
-    }
-    let mut parsed = Vec::with_capacity(cells.len());
-    for cell in cells {
-        if cell.is_empty() {
-            return None;
-        }
-        let left = cell.starts_with(':');
-        let right = cell.ends_with(':');
-        // Strip leading/trailing colons to get the hyphen body.
-        let body_start = if left { 1 } else { 0 };
-        let body_end = if right { cell.len() - 1 } else { cell.len() };
-        if body_end <= body_start {
-            return None;
-        }
-        let body = &cell[body_start..body_end];
-        if body.len() < 3 {
-            return None;
-        }
-        if !body.chars().all(|c| c == '-') {
-            return None;
-        }
-        let align = match (left, right) {
-            (true, true) => GfmAlign::Center,
-            (true, false) => GfmAlign::Left,
-            (false, true) => GfmAlign::Right,
-            (false, false) => GfmAlign::Default,
-        };
-        parsed.push(align);
-    }
-    Some(GfmSeparatorRow { cells: parsed })
-}
-
-fn count_gfm_row_cells(line: &str) -> usize {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return 0;
-    }
-    // A GFM table row MUST contain at least one pipe. A plain prose line
-    // without pipes is NOT a 1-cell header — enforcing this keeps the
-    // separator pre-pass from pairing up unrelated lines.
-    if !trimmed.contains('|') {
-        return 0;
-    }
-    let inner = trimmed.trim_start_matches('|').trim_end_matches('|');
-    if inner.is_empty() {
-        return 0;
-    }
-    inner.split('|').count()
-}
+// (normalize_separator_line, scan_gfm_table_separators, parse_gfm_separator_row,
+// count_gfm_row_cells, GfmAlign, GfmSeparatorRow moved to md_module.rs —
+// they're MD-syntax-aware transforms with the preview-render-preserving
+// invariant, co-located with the other Phase A passes.)
 
 // ---------------------------------------------------------------------------
 // Page salvage (drop pages with too much content stripped)
@@ -751,11 +594,7 @@ fn count_nonwhitespace_in_range(lines: &[&str], start: usize, end: usize) -> usi
 
 /// True if the line opens or closes a fenced code block (``` or ~~~).
 /// Leading whitespace up to 3 spaces is allowed (CommonMark spec).
-pub fn is_code_fence_marker(line: &str) -> bool {
-    let t = line.trim_start();
-    // Require at least 3 backticks or 3 tildes.
-    t.starts_with("```") || t.starts_with("~~~")
-}
+// (is_code_fence_marker moved to md_module.rs.)
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -1068,120 +907,8 @@ mod tests {
         assert_eq!(normalize_malformed_entities("&gtfoo"), None);
     }
 
-    #[test]
-    fn separator_line_detection() {
-        assert_eq!(normalize_separator_line("----"), Some("---".to_string()));
-        assert_eq!(normalize_separator_line("______"), Some("---".to_string()));
-        assert_eq!(normalize_separator_line("****"), Some("---".to_string()));
-        assert_eq!(normalize_separator_line("===="), Some("---".to_string()));
-        assert_eq!(normalize_separator_line("  ----  "), Some("---".to_string()));
-        // Em-dash / horizontal bar / box-drawing (>=3).
-        assert_eq!(normalize_separator_line("———"), Some("---".to_string()));
-        assert_eq!(normalize_separator_line("═══"), Some("---".to_string()));
-        assert_eq!(normalize_separator_line("───"), Some("---".to_string()));
-        // Below threshold.
-        assert_eq!(normalize_separator_line("---"), None); // ASCII threshold is 4
-        assert_eq!(normalize_separator_line("==="), None);
-        // Contains non-separator content.
-        assert_eq!(normalize_separator_line("hello ----"), None);
-        assert_eq!(normalize_separator_line("----- x"), None);
-        // Dot leader stays out of this rule.
-        assert_eq!(normalize_separator_line("......"), None);
-        // Mixed separator chars on one line — not collapsed (keeps each family
-        // distinct; only repeats of a single family qualify).
-        assert_eq!(normalize_separator_line("---___"), None);
-        // Escaped-underscore form `(?:\_){4,}` — markdown-escaped dividers
-        // from legislative / parliamentary sources. Regression guard for
-        // FINAL_RUN_SUMMARY 2026-04-22 BPE-vocab bloat.
-        assert_eq!(normalize_separator_line(r"\_\_\_\_"), Some("---".to_string()));
-        assert_eq!(
-            normalize_separator_line(r"\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_"),
-            Some("---".to_string())
-        );
-        assert_eq!(normalize_separator_line(r"  \_\_\_\_  "), Some("---".to_string()));
-        // Below threshold — 3 escaped underscores should not match.
-        assert_eq!(normalize_separator_line(r"\_\_\_"), None);
-        // Mixed with real underscores — single-family rule still applies;
-        // won't fire unless the whole line is one family.
-        assert_eq!(normalize_separator_line(r"\_\_\___"), None);
-    }
-
-    #[test]
-    fn gfm_table_separator_basic() {
-        let text = "| Header | Col2 |\n|-------|------|\n| a | b |\n";
-        let reps = scan_gfm_table_separators(text);
-        assert_eq!(reps.len(), 1);
-        assert_eq!(reps.get(&1).map(String::as_str), Some("| --- | --- |"));
-    }
-
-    #[test]
-    fn gfm_table_separator_with_alignment() {
-        let text = "| A | B | C | D |\n| :--- | :---: | ---: | --- |\n| 1 | 2 | 3 | 4 |\n";
-        let reps = scan_gfm_table_separators(text);
-        assert_eq!(reps.len(), 1);
-        assert_eq!(
-            reps.get(&1).map(String::as_str),
-            Some("| :--- | :---: | ---: | --- |")
-        );
-    }
-
-    #[test]
-    fn gfm_table_separator_wider_cells_collapsed() {
-        let text = "| A | B |\n| :---------- | -----------: |\n| 1 | 2 |\n";
-        let reps = scan_gfm_table_separators(text);
-        assert_eq!(reps.len(), 1);
-        assert_eq!(reps.get(&1).map(String::as_str), Some("| :--- | ---: |"));
-    }
-
-    #[test]
-    fn gfm_table_separator_no_header_does_not_match() {
-        // `random prose` has 0 pipes; row-count mismatch => no replacement.
-        let text = "random prose\n|-------|------|\n";
-        let reps = scan_gfm_table_separators(text);
-        assert!(reps.is_empty());
-    }
-
-    #[test]
-    fn gfm_table_separator_cell_count_mismatch_does_not_match() {
-        // Header has 3 cells; separator has 2.
-        let text = "| A | B | C |\n|-------|------|\n| 1 | 2 | 3 |\n";
-        let reps = scan_gfm_table_separators(text);
-        assert!(reps.is_empty());
-    }
-
-    #[test]
-    fn gfm_table_separator_single_column() {
-        let text = "| Header |\n|--------|\n| cell |\n";
-        let reps = scan_gfm_table_separators(text);
-        assert_eq!(reps.len(), 1);
-        assert_eq!(reps.get(&1).map(String::as_str), Some("| --- |"));
-    }
-
-    #[test]
-    fn gfm_table_separator_alone_is_not_a_table() {
-        // A bare `----` without any pipe in either the separator or the line
-        // above is NOT a table separator. Protects standalone thematic
-        // breaks from being mis-identified as table separators.
-        let text = "Some prose\n----\nMore prose\n";
-        let reps = scan_gfm_table_separators(text);
-        assert!(reps.is_empty());
-    }
-
-    #[test]
-    fn gfm_table_separator_inside_fenced_code_not_normalized() {
-        // Tables inside a fenced code block are code, not tables.
-        let text = "Before\n```\n| H1 | H2 |\n|----|----|\n| a | b |\n```\nAfter\n";
-        let reps = scan_gfm_table_separators(text);
-        assert!(reps.is_empty());
-    }
-
-    #[test]
-    fn gfm_table_separator_rejects_non_hyphen_body() {
-        // `---=` is not a valid separator cell body.
-        let text = "| A | B |\n|---=|-----|\n| 1 | 2 |\n";
-        let reps = scan_gfm_table_separators(text);
-        assert!(reps.is_empty());
-    }
+    // (separator_line_detection + all gfm_table_separator_* tests moved
+    // to md_module.rs alongside the relocated functions.)
 
     #[test]
     fn drop_low_salvage_pages_keeps_all_when_above_threshold() {
@@ -1263,18 +990,7 @@ mod tests {
         assert_eq!(ranges, vec![(0, 1), (1, 3), (3, 6)]);
     }
 
-    #[test]
-    fn code_fence_marker_detection() {
-        assert!(is_code_fence_marker("```"));
-        assert!(is_code_fence_marker("```python"));
-        assert!(is_code_fence_marker("~~~"));
-        assert!(is_code_fence_marker("~~~rust"));
-        assert!(is_code_fence_marker("  ```"));
-        assert!(is_code_fence_marker("   ```")); // 3 leading spaces
-        assert!(!is_code_fence_marker("`inline`"));
-        assert!(!is_code_fence_marker("``double``"));
-        assert!(!is_code_fence_marker("no fence"));
-    }
+    // (code_fence_marker_detection moved to md_module.rs.)
 }
 
 // ---------------------------------------------------------------------------
@@ -1501,125 +1217,7 @@ pub fn decode_adobe_symbol_pua(text: &str) -> String {
 /// Accounting: the whitespace chars (`\n`, `\t`, leading spaces on the
 /// joined line) are replaced by a single space, so output is shorter
 /// by `(removed_ws_len) - 1` chars per join.
-pub fn reflow_paragraphs(text: &str) -> String {
-    let lines: Vec<&str> = text.split('\n').collect();
-    if lines.len() < 2 {
-        return text.to_string();
-    }
-    let mut out_lines: Vec<String> = Vec::with_capacity(lines.len());
-    let mut in_fenced_code = false;
-    for line in &lines {
-        // Track fenced code state so we don't reflow inside code blocks.
-        if is_code_fence_marker(line) {
-            in_fenced_code = !in_fenced_code;
-            out_lines.push(line.to_string());
-            continue;
-        }
-        if in_fenced_code {
-            out_lines.push(line.to_string());
-            continue;
-        }
-        // Can we append this line to the previous one in out_lines?
-        if let Some(prev) = out_lines.last() {
-            if can_join_lines(prev, line) {
-                let joined = format!("{} {}", prev.trim_end(), line.trim_start());
-                let idx = out_lines.len() - 1;
-                out_lines[idx] = joined;
-                continue;
-            }
-        }
-        out_lines.push(line.to_string());
-    }
-    out_lines.join("\n")
-}
-
-fn can_join_lines(prev: &str, next: &str) -> bool {
-    let prev_trim = prev.trim_end();
-    let next_trim = next.trim_start();
-    // Both must be non-empty content.
-    if prev_trim.is_empty() || next_trim.is_empty() {
-        return false;
-    }
-    // Don't merge across structural lines.
-    if line_is_hard_break(prev_trim) || line_is_hard_break(next_trim) {
-        return false;
-    }
-    // Prior line's last non-whitespace char — sentence terminators
-    // stop merging.
-    let last = prev_trim.chars().next_back().unwrap();
-    if matches!(
-        last,
-        '.' | '!' | '?' | ':' | ';' | '·' | '\u{037E}' /* Greek ; */
-        | '"' | '\'' | ')' | ']' | '}' | '…'
-        | '»' | '\u{201D}' | '\u{2019}'
-    ) {
-        return false;
-    }
-    // Next line's first char — must look like continuation (letter/
-    // digit/opening-quote).
-    let first = next_trim.chars().next().unwrap();
-    if first.is_alphanumeric() || matches!(first, '«' | '(' | '\u{201C}' | '\u{2018}') {
-        // Also guard: if the RAW `next` line (with leading whitespace)
-        // is indented by 4+ spaces or a tab, it's an indented code
-        // block in markdown — don't join.
-        let raw_leading = next.len() - next.trim_start().len();
-        let tab_or_4spaces = next.starts_with('\t')
-            || (raw_leading >= 4 && next.chars().take(raw_leading).all(|c| c == ' '));
-        if tab_or_4spaces {
-            return false;
-        }
-        return true;
-    }
-    false
-}
-
-fn line_is_hard_break(line: &str) -> bool {
-    if line.is_empty() {
-        return true;
-    }
-    // Fenced code markers (`````` / `~~~`) are hard breaks too — the
-    // outer reflow walker tracks fenced-code state, but if the prev/next
-    // line itself IS a fence marker, joining it to the surrounding
-    // prose is wrong.
-    if is_code_fence_marker(line) {
-        return true;
-    }
-    let first = line.chars().next().unwrap();
-    // Headings, blockquotes.
-    if matches!(first, '#' | '>') {
-        return true;
-    }
-    // List markers at line start (`- item`, `* item`, `+ item`,
-    // `1. item`) — preserve.
-    if matches!(first, '-' | '*' | '+') && line.chars().nth(1) == Some(' ') {
-        return true;
-    }
-    // Ordered list: `N.` or `N)`
-    let mut digit_run = 0;
-    let mut chars = line.chars();
-    while let Some(c) = chars.next() {
-        if c.is_ascii_digit() {
-            digit_run += 1;
-        } else {
-            if digit_run > 0 && (c == '.' || c == ')') {
-                if chars.next() == Some(' ') {
-                    return true;
-                }
-            }
-            break;
-        }
-    }
-    // Table rows.
-    if line.starts_with('|') && line.ends_with('|') && line.matches('|').count() >= 2 {
-        return true;
-    }
-    // Separator lines (3+ of same separator char).
-    if SEPARATOR_LINE_REGEX.is_match(line) {
-        return true;
-    }
-    // Fenced code markers handled by caller (state-machine).
-    false
-}
+// (reflow_paragraphs, can_join_lines, line_is_hard_break moved to md_module.rs.)
 
 #[cfg(test)]
 mod wave2_tests {
@@ -1726,64 +1324,5 @@ mod wave2_tests {
         assert_eq!(decode_adobe_symbol_pua("plain Greek καλημέρα"), "plain Greek καλημέρα");
     }
 
-    #[test]
-    fn reflow_joins_soft_wrapped_lines() {
-        let input = "word1\nword2\nword3";
-        // All continue mid-sentence → join all three into one line.
-        assert_eq!(reflow_paragraphs(input), "word1 word2 word3");
-    }
-
-    #[test]
-    fn reflow_preserves_blank_line_breaks() {
-        let input = "paragraph1.\n\nparagraph2.";
-        assert_eq!(reflow_paragraphs(input), input);
-    }
-
-    #[test]
-    fn reflow_preserves_headings() {
-        let input = "body text\n# Heading\nmore text";
-        assert_eq!(reflow_paragraphs(input), input);
-    }
-
-    #[test]
-    fn reflow_preserves_table_rows() {
-        let input = "intro\n| a | b |\n| - | - |\n| 1 | 2 |\nafter";
-        assert_eq!(reflow_paragraphs(input), input);
-    }
-
-    #[test]
-    fn reflow_preserves_list_items() {
-        let input = "intro\n- item one\n- item two\nafter";
-        assert_eq!(reflow_paragraphs(input), input);
-    }
-
-    #[test]
-    fn reflow_stops_at_sentence_terminators() {
-        let input = "First sentence.\nSecond starts here";
-        // `.` at end of first line should block joining.
-        assert_eq!(reflow_paragraphs(input), input);
-    }
-
-    #[test]
-    fn reflow_stops_at_fenced_code() {
-        let input = "before\n```\ncode line\n```\nafter";
-        assert_eq!(reflow_paragraphs(input), input);
-    }
-
-    #[test]
-    fn reflow_does_not_join_indented_code() {
-        // 4-space indent = indented code block in markdown.
-        let input = "prose\n    code line\nprose again";
-        let out = reflow_paragraphs(input);
-        assert!(out.contains("    code line"));
-    }
-
-    #[test]
-    fn reflow_joins_pdf_column_wrap_pattern() {
-        // The actual Docling pattern the user flagged (Case 8):
-        // word1\t\n<spaces>word2
-        let input = "word1\t\n  word2\t\n  word3";
-        let out = reflow_paragraphs(input);
-        assert_eq!(out, "word1 word2 word3");
-    }
+    // (reflow_* tests moved to md_module.rs.)
 }
