@@ -833,4 +833,106 @@ mod tests {
         assert!(!r.is_strict_equivalent(), "verifier should catch word fusion");
         assert!(!r.paragraph_text_equal);
     }
+
+    // -----------------------------------------------------------------
+    // Commit 11 — RED tests for the bugs identified in the
+    // MD_MODULE_ARCHITECTURE_IMPLEMENTATION_REVIEW (2026-04-24).
+    //
+    // These tests expose Phase A preview-equivalence violations that
+    // the current implementation commits. They are EXPECTED TO FAIL
+    // on the commit-11 boundary; commits 12–15 turn them green by
+    // adding CommonMark indentation awareness + hard-break guards
+    // + orchestrator wiring + expanded structural comparison.
+    //
+    // Each test name ends in `_red_until_C<N>` to make the tracking
+    // explicit.
+    // -----------------------------------------------------------------
+
+    // --- H-1 indentation awareness (CommonMark: ≥4 leading spaces /
+    //                                tab = indented code, NOT an HR /
+    //                                table / fence opener) ---
+
+    #[test]
+    fn red_until_c12_indented_code_with_hr_looking_line_preserved() {
+        // CommonMark: lines indented by ≥4 spaces (after preceding blank
+        // line) form an indented code block. `----` inside such a block
+        // is literal text, NOT a thematic break. Phase A must not touch
+        // it. Render: `<pre><code>----</code></pre>`.
+        let input = "paragraph\n\n    ----\n\nafter\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(
+            r.is_strict_equivalent(),
+            "indented code containing HR-looking line was rewritten — \
+             violates Phase A invariant. Fix in Commit 12: detector \
+             must reject at ≥4 leading columns. {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn red_until_c12_indented_code_with_table_looking_lines_preserved() {
+        // Same CommonMark rule: `    | a | b |\n    | --- | --- |` is
+        // indented code, NOT a GFM table. Phase A must not canonicalize
+        // the separator row.
+        let input = "paragraph\n\n    | a | b |\n    | --- | --- |\n    | 1 | 2 |\n\nafter\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(
+            r.is_strict_equivalent(),
+            "indented code containing table-looking lines was rewritten — \
+             scan_gfm_table_separators must reject rows whose leading \
+             columns >= 4. {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn equiv_indented_code_with_fence_looking_line_passthrough() {
+        // `    ` + ``` → indented code in CommonMark. Even though our
+        // current is_code_fence_marker erroneously matches this (bug
+        // per the review, fixed in Commit 12), normal inputs like this
+        // one happen to still pass preview-equivalence because reflow's
+        // 4-space guard already refuses to join these lines. The
+        // deeper bug (state-machine toggling on indented `` ` `` inside
+        // a real fenced code block) is exercised by the fence-grammar
+        // tests we add in Commit 12.
+        let input = "paragraph\n\n    ```\n    body\n    ```\n\nafter\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    // --- H-3 paragraph reflow destroys hard breaks ---
+
+    #[test]
+    fn red_until_c13_reflow_preserves_two_space_hard_break() {
+        // CommonMark hard break: two trailing spaces before `\n`
+        // produces `<br>` in preview. Current reflow `trim_end()`s
+        // the prev line, destroying the hard-break marker.
+        let input = "first line  \nsecond line\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(
+            r.is_strict_equivalent(),
+            "two-space hard break lost by reflow — preview `<br>` \
+             removed. Fix in Commit 13: detect `  $` and refuse to \
+             join. {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn red_until_c13_reflow_preserves_backslash_hard_break() {
+        // CommonMark hard break: trailing `\` before `\n` → `<br>`.
+        let input = "first line\\\nsecond line\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(
+            r.is_strict_equivalent(),
+            "backslash hard break lost by reflow. Fix in Commit 13: \
+             detect `\\$` and refuse to join. {:?}",
+            r
+        );
+    }
 }

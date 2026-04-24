@@ -2127,6 +2127,42 @@ code fence content     stays
         );
     }
 
+    // -----------------------------------------------------------------
+    // Commit 11 RED test — optional-pipe GFM tables through full cleaner.
+    //
+    // Per the reviewer, this Markdown is a valid GFM table:
+    //   a | b
+    //   --- | ---
+    //   1 | 2
+    // Today's cleaner ordering (reflow first, table-sep canonicalization
+    // much later) means `--- | ---` is NOT detected as a hard break by
+    // `line_is_hard_break` (doesn't start/end with pipe, doesn't match
+    // SEPARATOR_LINE_REGEX). Reflow joins it with the header → table
+    // destroyed before the GFM-sep pass ever sees it.
+    //
+    // Fix in Commit 13: route cleaner through md_module::normalize_md_syntax
+    // as single Phase A entrypoint so GFM-sep canonicalization runs BEFORE
+    // reflow.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn red_until_c13_optional_pipe_gfm_table_survives_full_cleaner() {
+        let input = "a | b\n--- | ---\n1 | 2\n";
+        let out = run_full_cleaner(input);
+        // Structural equivalence: block count + tokens. Passes only if
+        // the cleaner preserves the table as a table (header row,
+        // separator row, body row).
+        let r = crate::md_verify::verify_md_structural(input, &out);
+        assert!(
+            r.is_structural_equivalent(),
+            "optional-pipe GFM table destroyed by cleaner — reflow fused \
+             rows before table-sep canonicalization. Fix in Commit 13: \
+             route cleaner through md_module::normalize_md_syntax as \
+             single Phase A entrypoint. out={:?} report={:?}",
+            out, r
+        );
+    }
+
     #[test]
     fn phase_b_other_unicode_spaces_also_preserved() {
         // Narrow NBSP / thin space / em space / etc. all fold to

@@ -1080,4 +1080,45 @@ mod tests {
         let r2 = verify_md_structural(input, output_reorder);
         assert!(!r2.is_structural_equivalent(), "reorder must fail: {:?}", r2);
     }
+
+    // -----------------------------------------------------------------
+    // Commit 11 RED test — heading text change not caught.
+    //
+    // Per the reviewer, block-token comparison is only implemented for
+    // Paragraph / Table / CodeBlock. A cleaner that rewrote `# Α` to
+    // `# Β` (or `# Injected Heading`) would pass structural today
+    // because the block sequence is the same (one Heading) and there
+    // are no paragraphs to compare. That's a real gap: headings are
+    // text-bearing blocks and their content must be checked.
+    //
+    // Fix in Commit 15: extend token extraction to cover all text-
+    // bearing blocks (headings, blockquote paragraphs, list-item
+    // paragraphs, footnote definitions).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn red_until_c15_heading_text_change_detected_by_structural() {
+        let input = "# Alpha Beta\n";
+        let output = "# Injected Heading\n";
+        let r = verify_md_structural(input, output);
+        assert!(
+            !r.is_structural_equivalent(),
+            "heading text change must be caught — cleaner rewriting `# Α` \
+             to `# Β` currently passes structural. Fix in Commit 15: \
+             extend block-text extraction beyond Paragraph. report={:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn blockquote_inner_text_change_already_detected() {
+        // Property check: blockquotes render with an inner Paragraph
+        // block under CommonMark, so paragraph_tokens already picks up
+        // their text. This test documents current coverage (passes
+        // today). Not a C11 RED test.
+        let input = "> quoted text\n";
+        let output = "> different content\n";
+        let r = verify_md_structural(input, output);
+        assert!(!r.is_structural_equivalent(), "{:?}", r);
+    }
 }
