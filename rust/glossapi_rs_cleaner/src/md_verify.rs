@@ -92,6 +92,19 @@ impl MdStructuralReport {
     }
 }
 
+/// Strip the cleaner's own line-level marker comments
+/// (`<!-- line-removed -->`, `<!-- text-missing -->`,
+/// `<!-- table-removed -->`) from `md`. These are EMITTED by Phase B
+/// to mark dropped content — they're legitimate cleaner behavior but
+/// would appear as "injected tokens" in structural comparisons.
+/// Strip them from BOTH sides so the verifier sees a fair comparison.
+fn strip_cleaner_markers(md: &str) -> String {
+    md.replace("<!-- line-removed -->", "")
+        .replace("<!-- text-missing -->", "")
+        .replace("<!-- table-removed -->", "")
+        .replace("<!-- image -->", "")
+}
+
 /// Apply every NON-destructive cleaner transform to `md`. Used by the
 /// structural verifier to canonicalize the INPUT before comparing
 /// against cleaner output — otherwise cosmetic differences like
@@ -531,9 +544,14 @@ pub fn verify_md_structural(input: &str, output: &str) -> MdStructuralReport {
     let mut r = MdStructuralReport::default();
 
     // Canonicalize input — apply the cleaner's non-destructive
-    // transforms so diffs reflect real content changes only.
-    let input_canon_owned = canonicalize_for_verify(input);
+    // transforms so diffs reflect real content changes only. Also
+    // strip the cleaner's own marker comments from BOTH sides so
+    // `<!-- line-removed -->` etc. aren't classified as injections.
+    let input_canon_owned =
+        strip_cleaner_markers(&canonicalize_for_verify(input));
+    let output_canon_owned = strip_cleaner_markers(output);
     let input = input_canon_owned.as_str();
+    let output = output_canon_owned.as_str();
 
     let seq_in = block_sequence(input);
     let seq_out = block_sequence(output);
