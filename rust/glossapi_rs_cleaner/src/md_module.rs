@@ -53,7 +53,7 @@ lazy_static! {
     /// Transforming them to `---` would CHANGE preview rendering and
     /// violate the Phase A invariant — verifier catches it.
     pub static ref SEPARATOR_LINE_REGEX: Regex = Regex::new(
-        r"^[ \t]*(?:-{4,}|_{4,}|(?:\\_){4,}|\*{4,})[ \t]*$",
+        r"^[ \t]*(?:-{4,}|_{4,}|\*{4,})[ \t]*$",
     )
     .unwrap();
 
@@ -108,8 +108,7 @@ pub fn leading_columns(line: &str) -> usize {
 // ---------------------------------------------------------------------------
 
 /// Collapse a standalone CommonMark thematic-break line (runs of
-/// `-` / `_` / `*`, or the markdown-escaped-underscore form
-/// `\_\_\_\_`) to the canonical `---`.
+/// `-` / `_` / `*`) to the canonical `---`.
 ///
 /// Per CommonMark: any run of ≥3 identical `-` / `_` / `*` characters
 /// (optionally surrounded by whitespace, up to 3 leading spaces)
@@ -338,6 +337,64 @@ pub fn is_code_fence_marker(line: &str) -> bool {
     let t = line.trim_start();
     // Require at least 3 backticks or 3 tildes.
     t.starts_with("```") || t.starts_with("~~~")
+}
+
+// ---------------------------------------------------------------------------
+// Blank-line run collapse.
+// ---------------------------------------------------------------------------
+
+/// Collapse runs of `≥2` consecutive blank lines to exactly one
+/// blank line. CommonMark renders ANY number of consecutive blank
+/// lines as a single paragraph break — `\n\n` and `\n\n\n\n\n\n` are
+/// preview-identical. But PDF-extracted MD frequently has 100+ blank
+/// lines between sections (page-feed artifacts), which bloats the
+/// raw training text for zero information value.
+///
+/// Preview-preserving per CM spec. Fence-aware: blank lines INSIDE a
+/// fenced code block are preserved (code whitespace is meaningful).
+pub fn collapse_blank_line_runs(text: &str) -> String {
+    if !text.contains("\n\n\n") && !text.contains("\n \n") {
+        // Fast path — at most single-blank-line runs, nothing to do.
+        // (A run of ≥2 blank lines means at least `\n\n\n` appears.)
+        return text.to_string();
+    }
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut out = String::with_capacity(text.len());
+    let mut in_code_fence = false;
+    let mut blank_run = 0usize;
+    for (i, line) in lines.iter().enumerate() {
+        let is_blank = line.trim().is_empty();
+        if is_code_fence_marker(line) {
+            in_code_fence = !in_code_fence;
+        }
+        // Inside a fenced code block, preserve every blank line —
+        // code whitespace is meaningful.
+        if in_code_fence {
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(line);
+            blank_run = 0;
+            continue;
+        }
+        if is_blank {
+            blank_run += 1;
+            if blank_run == 1 {
+                if i > 0 {
+                    out.push('\n');
+                }
+                out.push_str(line);
+            }
+            // Additional blank lines (blank_run >= 2) are dropped.
+        } else {
+            if i > 0 {
+                out.push('\n');
+            }
+            out.push_str(line);
+            blank_run = 0;
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -603,8 +660,13 @@ pub fn normalize_md_syntax_with_stats(text: &str) -> (String, PhaseAStats) {
     let (step3, reflow_joins) = reflow_paragraphs_with_count(&step2);
     stats.reflow_joins = reflow_joins;
 
-    stats.total_chars_saved = input_char_count.saturating_sub(step3.chars().count());
-    (step3, stats)
+    // Step 4: blank-line-run collapse — PDF page-break artifacts
+    // often leave dozens of consecutive blank lines; preview-
+    // preserving to collapse to one.
+    let step4 = collapse_blank_line_runs(&step3);
+
+    stats.total_chars_saved = input_char_count.saturating_sub(step4.chars().count());
+    (step4, stats)
 }
 
 /// PyO3 entry: run Phase A on `text` and return the per-transform
@@ -817,7 +879,11 @@ pub fn normalize_md_syntax(text: &str) -> String {
     };
 
     // Step 3: paragraph reflow — collapse soft-wraps within blocks.
-    reflow_paragraphs(&step2)
+    let step3 = reflow_paragraphs(&step2);
+
+    // Step 4: blank-line-run collapse — preview-preserving raw-
+    // readability pass.
+    collapse_blank_line_runs(&step3)
 }
 
 // ---------------------------------------------------------------------------
@@ -879,6 +945,9 @@ pub fn non_destructive_canonicalize(md: &str) -> String {
         if let Some(normed) = normalize::normalize_ellipsis_runs(&cur) {
             cur = normed;
         }
+        if let Some(normed) = normalize::normalize_escaped_underscore_runs(&cur) {
+            cur = normed;
+        }
         per_line_out.push_str(&cur);
     }
 
@@ -936,16 +1005,26 @@ mod tests {
     }
 
     #[test]
-    fn hr_minimization_handles_escaped_underscores() {
-        assert_eq!(normalize_separator_line(r"\_\_\_\_"), Some("---".to_string()));
+    fn hr_minimization_does_not_touch_escaped_underscores() {
+        // Per CommonMark, `\_` is a valid backslash-escape (since `_`
+        // is ASCII punctuation), so a line of `\_\_\_\_…` renders as
+        // a paragraph of LITERAL underscores — NOT as a thematic
+        // break. Rewriting it to `---` (which renders as an HR)
+        // changes preview. Found by formal verification on the
+        // 90-doc most-altered PDF-only sample 2026-04-24 — 34 of the
+        // 72 preview-equivalence failures traced to this rule.
+        //
+        // Bucketing the run LENGTH (a cosmetic normalization, not
+        // a thematic-break rewrite) is handled in
+        // `normalize::normalize_escaped_underscore_runs` — see that
+        // module for the `{1, 3, 5, 20}` tiered bucket.
+        assert_eq!(normalize_separator_line(r"\_\_\_\_"), None);
         assert_eq!(
             normalize_separator_line(r"\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_"),
-            Some("---".to_string())
+            None
         );
-        assert_eq!(normalize_separator_line(r"  \_\_\_\_  "), Some("---".to_string()));
-        // Below threshold (3 escaped pairs).
+        assert_eq!(normalize_separator_line(r"  \_\_\_\_  "), None);
         assert_eq!(normalize_separator_line(r"\_\_\_"), None);
-        assert_eq!(normalize_separator_line(r"\_\_\___"), None);
     }
 
     // --- GFM table separator minimization ---
@@ -1315,6 +1394,57 @@ paragraph\n\n    | a | b |\n    | --- | --- |\n    | 1 | 2 |\n\nafter\n";
         let out = normalize_md_syntax(input);
         let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
         assert!(r.is_strict_equivalent(), "{:?}", r);
+    }
+
+    // --- Blank-line run collapse ---
+
+    #[test]
+    fn blank_line_collapse_leaves_single_blank_alone() {
+        let input = "a\n\nb\n\nc\n";
+        assert_eq!(collapse_blank_line_runs(input), input);
+    }
+
+    #[test]
+    fn blank_line_collapse_reduces_long_runs() {
+        let input = "a\n\n\n\n\n\nb\n";
+        assert_eq!(collapse_blank_line_runs(input), "a\n\nb\n");
+    }
+
+    #[test]
+    fn blank_line_collapse_preserves_inside_fenced_code() {
+        // Blank lines inside a fenced code block are significant
+        // (empty code lines) — must not be collapsed.
+        let input = "before\n\n```\n\n\n\ncode\n\n\n```\n\nafter\n";
+        let out = collapse_blank_line_runs(input);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn equiv_blank_line_collapse_preview_preserving() {
+        let input = "first paragraph.\n\n\n\n\n\nsecond paragraph.\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "blank-line collapse changes preview: {:?}", r);
+        // And verifies it actually collapsed (otherwise the test is vacuous).
+        assert!(!out.contains("\n\n\n"), "should collapse 6-blank run, got {out:?}");
+    }
+
+    // --- Escaped-underscore rule removal regression ---
+
+    #[test]
+    fn equiv_escaped_underscore_line_preserved_by_phase_a() {
+        // The old `SEPARATOR_LINE_REGEX` rewrote `\_\_\_\_\_` lines to
+        // `---`, changing preview (paragraph of literal underscores →
+        // thematic break). Now Phase A MUST leave escaped-underscore
+        // runs untouched. Length-bucketing lives in the normalize
+        // layer, not here.
+        let input = "before paragraph.\n\n\\_\\_\\_\\_\\_\\_\\_\\_\\_\\_\n\nafter paragraph.\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
+        // And Phase A does NOT rewrite it to `---`.
+        assert!(!out.contains("\n---\n"),
+                "Phase A must not rewrite escaped-underscore runs to HR, got {out:?}");
     }
 
     // --- Negative controls: if equiv check is wrong, these would pass ---

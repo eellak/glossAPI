@@ -472,6 +472,79 @@ pub fn normalize_whitespace_runs(line: &str) -> Option<String> {
     }
 }
 
+/// Normalize a line of escaped-underscore pairs (`\_\_\_…`) per the
+/// tiered bucket rule. Each `\_` renders as one literal underscore
+/// in CommonMark preview (since `_` is ASCII punctuation, `\_` is a
+/// valid backslash-escape). A line of N escape pairs renders as a
+/// paragraph of N underscores.
+///
+/// Buckets the pair count via `bucket_run_length` ({0, 1, 3, 5, 20}),
+/// emits `\_` × bucketed count with the same leading / trailing
+/// whitespace preserved. Fires only on lines that are EXCLUSIVELY
+/// a run of escape pairs (plus optional surrounding whitespace) — so
+/// it doesn't touch `\_\_` that appear inline in a sentence.
+///
+/// Why not in Phase A: the transform changes the literal char count
+/// in the rendered paragraph (20 underscores vs 100 underscores is a
+/// different HTML text node). Phase A's strict preview-equivalence
+/// invariant disallows that. This normalizer lives alongside dot /
+/// whitespace / ellipsis bucketers — cosmetic normalization, accepted
+/// under the structural (subsequence) invariant.
+///
+/// Companion note: Phase A (`md_module::normalize_separator_line`)
+/// used to rewrite `\_\_\_\_…` to `---` (thematic break). That was
+/// wrong — it turned a paragraph of literal underscores into an HR,
+/// changing preview. Removed in the same wave as this normalizer
+/// was added.
+pub fn normalize_escaped_underscore_runs(line: &str) -> Option<String> {
+    // Require at least one `\_` pair — cheap early-out.
+    if !line.contains("\\_") {
+        return None;
+    }
+    // Parse: [leading ws] (\_)+ [trailing ws]. If anything else
+    // appears, bail (not a pure run line).
+    let bytes = line.as_bytes();
+    let mut i = 0usize;
+    // Leading whitespace.
+    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        i += 1;
+    }
+    let prefix_end = i;
+    // Count `\_` pairs.
+    let mut pairs = 0usize;
+    while i + 1 < bytes.len() && bytes[i] == b'\\' && bytes[i + 1] == b'_' {
+        pairs += 2;
+        i += 2;
+    }
+    if pairs == 0 {
+        return None;
+    }
+    let body_end = i;
+    // Trailing whitespace — must consume to end-of-line.
+    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        i += 1;
+    }
+    if i != bytes.len() {
+        // There's a non-whitespace, non-`\_` char after the run — not
+        // a pure escaped-underscore line, don't normalize.
+        return None;
+    }
+    let n_pairs = pairs / 2;
+    let m = bucket_run_length(n_pairs);
+    if m == n_pairs {
+        return None;
+    }
+    let leading = &line[..prefix_end];
+    let trailing = &line[body_end..];
+    let mut out = String::with_capacity(leading.len() + m * 2 + trailing.len());
+    out.push_str(leading);
+    for _ in 0..m {
+        out.push_str("\\_");
+    }
+    out.push_str(trailing);
+    Some(out)
+}
+
 /// Replace malformed HTML entities (`&gt` / `&lt` / `&amp` without a trailing `;`)
 /// with their decoded form.
 pub fn normalize_malformed_entities(line: &str) -> Option<String> {
@@ -1370,4 +1443,63 @@ mod wave2_tests {
     }
 
     // (reflow_* tests moved to md_module.rs.)
+
+    // --- Escaped-underscore run normalization ---
+
+    #[test]
+    fn escaped_underscore_short_runs_pass_through() {
+        // ≤5 pairs: bucket is identity per bucket_run_length (3→3, 5→5).
+        assert_eq!(normalize_escaped_underscore_runs(r"\_\_\_"), None);
+        assert_eq!(normalize_escaped_underscore_runs(r"\_\_\_\_\_"), None);
+    }
+
+    #[test]
+    fn escaped_underscore_medium_run_bucket_down_to_5() {
+        // 10 pairs → bucket to 5.
+        let input = r"\_\_\_\_\_\_\_\_\_\_";
+        let out = normalize_escaped_underscore_runs(input);
+        assert_eq!(out, Some(r"\_\_\_\_\_".to_string()));
+    }
+
+    #[test]
+    fn escaped_underscore_long_run_buckets_to_20() {
+        // 50 pairs → bucket to 20.
+        let input: String = r"\_".repeat(50);
+        let expected: String = r"\_".repeat(20);
+        assert_eq!(normalize_escaped_underscore_runs(&input), Some(expected));
+    }
+
+    #[test]
+    fn escaped_underscore_preserves_surrounding_whitespace() {
+        let input = r"   \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_   ";
+        // 30 pairs → 20. Leading/trailing whitespace preserved.
+        let out = normalize_escaped_underscore_runs(input).expect("should bucket");
+        let inner: String = r"\_".repeat(20);
+        assert_eq!(out, format!("   {inner}   "));
+    }
+
+    #[test]
+    fn escaped_underscore_leaves_inline_escapes_alone() {
+        // A prose line with `\_` inline (e.g. in "use \_ as a blank")
+        // must NOT be bucketed — the normalizer only fires on lines
+        // that are exclusively a run of `\_` pairs.
+        assert_eq!(
+            normalize_escaped_underscore_runs(r"prose \_\_\_ inline"),
+            None
+        );
+        // Mixed with other escape: don't touch.
+        assert_eq!(
+            normalize_escaped_underscore_runs(r"\_\_\_\_\_\_ hello"),
+            None
+        );
+    }
+
+    #[test]
+    fn escaped_underscore_no_pairs_returns_none() {
+        assert_eq!(normalize_escaped_underscore_runs("plain line"), None);
+        assert_eq!(normalize_escaped_underscore_runs(""), None);
+        // Literal underscore (no escape) is out of scope — Phase A's
+        // HR rule handles `_____` already.
+        assert_eq!(normalize_escaped_underscore_runs("______"), None);
+    }
 }

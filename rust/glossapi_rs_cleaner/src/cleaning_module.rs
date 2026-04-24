@@ -800,6 +800,9 @@ pub fn core_clean_text_with_stats(
             if let Some(n) = normalize::normalize_whitespace_runs(&s) {
                 s = n;
             }
+            if let Some(n) = normalize::normalize_escaped_underscore_runs(&s) {
+                s = n;
+            }
             s
         };
         // Normalize-pass accounting: delta between pre-normalize (with any
@@ -1801,18 +1804,47 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
     }
 
     #[test]
-    fn accounting_escaped_underscore_separator_normalizes_to_dash_and_counts() {
+    fn accounting_escaped_underscore_run_buckets_but_stays_as_underscores() {
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        // Markdown-escaped divider (common in EU legislative corpus).
-        // Raw bytes: \ _ \ _ \ _ \ _ \ _ = 10 chars; should collapse to `---`.
+        // Markdown-escaped-underscore divider (common in EU legislative
+        // corpus). Per CommonMark, `\_` is a valid escape — the line
+        // renders as a paragraph of LITERAL underscores, NOT as a
+        // thematic break. Phase A no longer rewrites it to `---` (that
+        // was a preview-violation bug found by formal verification in
+        // the 2026-04-24 audit).
+        //
+        // `normalize_escaped_underscore_runs` DOES apply the {1,3,5,20}
+        // tiered bucket to the pair count — 5 pairs buckets stays at 5
+        // (bucket threshold kicks in at n>5), so this specific input
+        // passes through. A longer run like 25 pairs would bucket to 20.
         let input = "ΠΕΡΙ: ΝΟΜΟΘΕΣΙΑΣ\n\\_\\_\\_\\_\\_\nΑιτιολογική έκθεση.\n";
-        let (cleaned, stats) =
+        let (cleaned, _stats) =
             core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
-        assert!(cleaned.contains("\n---\n"),
-                "escaped-underscore divider should collapse to `---`, got {cleaned:?}");
-        assert!(stats.chars_dropped_by_normalization > 0);
-        assert_accounting_invariant(input, &stats);
+        // Still a line of escaped underscores, NOT an HR.
+        assert!(cleaned.contains("\n\\_\\_\\_\\_\\_\n"),
+                "escaped-underscore line should pass through as literal \
+                 escapes, got {cleaned:?}");
+        // And definitely NOT rewritten to `---`.
+        assert!(!cleaned.contains("\n---\n"),
+                "escaped-underscore line must NOT be rewritten to `---` \
+                 (that would change preview). got {cleaned:?}");
+    }
+
+    #[test]
+    fn accounting_long_escaped_underscore_run_buckets_to_20() {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // 25 pairs → bucket `bucket_run_length` maps 25→20.
+        let long_run: String = "\\_".repeat(25);
+        let input = format!("heading\n{long_run}\nbody text.\n");
+        let (cleaned, _stats) =
+            core_clean_text_with_stats(&input, &allowed_chars, &unusual_chars, None);
+        // Should contain exactly 20 escape pairs (40 chars = 20 * 2).
+        let expected: String = "\\_".repeat(20);
+        assert!(cleaned.contains(&format!("\n{expected}\n")),
+                "25-pair escaped-underscore run should bucket to 20, \
+                 got {cleaned:?}");
     }
 
     #[test]
