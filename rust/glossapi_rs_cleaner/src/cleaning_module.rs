@@ -2095,4 +2095,54 @@ code fence content     stays
         let out = run_full_cleaner(input);
         assert!(out.contains(">"), "blockquote marker dropped: {:?}", out);
     }
+
+    #[test]
+    fn phase_b_v6_11_nbsp_does_not_fuse_words() {
+        // v6-11 regression: Docling emits NBSP (U+00A0) as the default
+        // word-separator on many PDFs. Prior cleaner stripped it as
+        // "unusual Latin-1 Supplement char", fusing Greek words into
+        // 70+ char blobs. Fix (2026-04-24): fold_codepoint now folds
+        // U+00A0 → U+0020 so downstream sees real whitespace.
+        let input = "Η\u{00A0}εργασία\u{00A0}αυτή\u{00A0}έχει\u{00A0}σκοπό.\n";
+        let out = run_full_cleaner(input);
+        // After the fix, words should still be separated by whitespace.
+        assert!(
+            out.contains("Η εργασία")
+                || out.contains("Η\u{00A0}εργασία"),
+            "NBSP fusion regressed — output lost word separator: {:?}",
+            out
+        );
+        // Structural subsequence should hold (no fusion in token space).
+        let r = crate::md_verify::verify_md_structural(input, &out);
+        assert!(
+            r.is_structural_equivalent(),
+            "NBSP doc should pass structural equivalence: {:?}",
+            r
+        );
+        assert_ne!(
+            r.subsequence_failure_kind.as_deref(),
+            Some("fusion"),
+            "should NOT be classified as fusion anymore: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn phase_b_other_unicode_spaces_also_preserved() {
+        // Narrow NBSP / thin space / em space / etc. all fold to
+        // regular space so word boundaries survive.
+        let input = "alpha\u{2009}beta\u{202F}gamma\u{2003}delta\n";
+        let out = run_full_cleaner(input);
+        // All four words should still appear as distinct tokens.
+        for word in ["alpha", "beta", "gamma", "delta"] {
+            assert!(
+                out.contains(word),
+                "word `{}` lost in output: {:?}",
+                word,
+                out
+            );
+        }
+        // Words should be whitespace-separated (not fused).
+        assert!(!out.contains("alphabeta"), "fusion across thin space: {:?}", out);
+    }
 }

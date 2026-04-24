@@ -105,8 +105,27 @@ pub fn fold_codepoint(ch: char) -> Option<&'static str> {
     }
 
     // Unicode whitespace variants folded to regular space.
+    //
+    // Before wave-2-post (2026-04-24) this set was only the narrow
+    // trio (U+2007 figure space, U+2009 thin space, U+202F narrow
+    // NBSP). U+00A0 (NO-BREAK SPACE) was missing — which caused
+    // v6-11: Docling emits NBSP as the default word-separator on
+    // many PDFs, and per-char filter then treated U+00A0 as "unusual
+    // Latin-1 Supplement char" and stripped it, fusing Greek words
+    // (`Η εργασία` → `Ηεργασία`). Empirical scorecard: 15/99
+    // openarchives docs had this fusion signature.
+    //
+    // Now all of the common no-break / visual space variants fold
+    // to U+0020 so they survive downstream as regular whitespace.
     match ch {
-        '\u{2007}' | '\u{2009}' | '\u{202F}' => return Some(" "),
+        '\u{00A0}'  // NO-BREAK SPACE (v6-11 fix)
+        | '\u{2000}' | '\u{2001}' | '\u{2002}' | '\u{2003}' // en/em/3-per/4-per quad
+        | '\u{2004}' | '\u{2005}' | '\u{2006}'              // 3/4/5/6-per-em
+        | '\u{2007}' | '\u{2008}' | '\u{2009}' | '\u{200A}' // figure/punct/thin/hair
+        | '\u{202F}'  // NARROW NO-BREAK SPACE
+        | '\u{205F}'  // MEDIUM MATHEMATICAL SPACE
+        | '\u{3000}'  // IDEOGRAPHIC SPACE
+        => return Some(" "),
         _ => {}
     }
 
@@ -744,6 +763,32 @@ mod tests {
         assert_eq!(fold_line("a\u{2007}b"), Some("a b".to_string())); // figure space
         assert_eq!(fold_line("a\u{2009}b"), Some("a b".to_string())); // thin space
         assert_eq!(fold_line("a\u{202F}b"), Some("a b".to_string())); // narrow NBSP
+    }
+
+    #[test]
+    fn fold_nbsp_to_regular_space() {
+        // v6-11 regression: NBSP (U+00A0) was being stripped by the
+        // per-char filter as "unusual Latin-1 Supplement char",
+        // fusing words like `Η εργασία` into `Ηεργασία`. Fix: fold
+        // to regular space so downstream sees whitespace.
+        assert_eq!(fold_line("Η\u{00A0}εργασία"), Some("Η εργασία".to_string()));
+    }
+
+    #[test]
+    fn fold_various_unicode_spaces() {
+        // en/em/thin/hair/medium-math/ideographic all collapse to
+        // regular space.
+        for cp in ['\u{2000}', '\u{2001}', '\u{2002}', '\u{2003}',
+                   '\u{2004}', '\u{2005}', '\u{2006}', '\u{2008}',
+                   '\u{200A}', '\u{205F}', '\u{3000}'] {
+            let input = format!("a{}b", cp);
+            assert_eq!(
+                fold_line(&input),
+                Some("a b".to_string()),
+                "codepoint U+{:04X} did not fold to regular space",
+                cp as u32
+            );
+        }
     }
 
     #[test]
