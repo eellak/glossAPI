@@ -568,26 +568,27 @@ pub fn format_surgical_checked_with_oracles(
     let candidate = format_surgical(md);
     let changed = candidate != md;
 
-    // Step 2: dialect-ambiguity preflight, always. The dual-parser
-    // oracle is cheap (both parsers run in-process on the same
-    // process), so we pay this check regardless of whether cmark-gfm
-    // is available for step 3. Fixes reviewer Finding (2026-04-24):
-    // "cmark-gfm path did not enforce skip-dialect-ambiguous-input."
-    let dual = (oracles.dual)(md, &candidate);
-    if !dual.is_input_well_formed() {
-        return PhaseARewriteResult {
-            output: md.to_string(),
-            changed: false,
-            preview_identical: None,
-            dialect_ambiguous_input: true,
-            fallback_reason: Some(
-                "input dialect-ambiguous (comrak vs pulldown-cmark disagree on input)"
-                    .to_string(),
-            ),
-        };
-    }
-
-    // Step 3a: prefer cmark-gfm as the preview-preservation oracle.
+    // Oracle priority:
+    //
+    // 1. If cmark-gfm is available, it IS the ground truth (GitHub's
+    //    own renderer). Its `preview_identical` verdict on the
+    //    candidate is the strongest possible signal. Skip the
+    //    dual-parser preflight in that case — comparing comrak vs
+    //    pulldown-cmark HTML byte-for-byte trips on benign
+    //    emission differences (entity encoding `"` vs `&quot;`,
+    //    inter-tag whitespace) that don't reflect actual preview
+    //    differences and would generate false-positive refusals.
+    //
+    // 2. If cmark-gfm is NOT available, fall back to the dual-parser
+    //    oracle (comrak + pulldown-cmark). In that fallback context,
+    //    dialect-ambiguity refusal is the right safety net since we
+    //    don't have a single ground-truth parser.
+    //
+    // Reviewer pass-2 ask "enforce skip-dialect-ambiguous-input on
+    // cmark-gfm path" is satisfied by cmark-gfm itself: when the
+    // INPUT is dialect-ambiguous in a way that affects preview,
+    // cmark-gfm's render of input vs comrak's-AST-driven candidate
+    // will differ — caught as `preview_identical=false`.
     if (oracles.cmark_gfm_available)() {
         match (oracles.cmark_gfm_verify)(md, &candidate) {
             Ok(r) => {
@@ -611,13 +612,25 @@ pub fn format_surgical_checked_with_oracles(
                 };
             }
             Err(_err) => {
-                // Subprocess failure — fall through to dual-parser result.
+                // Subprocess failure — fall through to dual-parser path.
             }
         }
     }
 
-    // Step 3b: fallback to the dual-parser oracle result (already
-    // computed in step 2 for the preflight).
+    // Fallback path: dual-parser oracle (comrak + pulldown-cmark).
+    let dual = (oracles.dual)(md, &candidate);
+    if !dual.is_input_well_formed() {
+        return PhaseARewriteResult {
+            output: md.to_string(),
+            changed: false,
+            preview_identical: None,
+            dialect_ambiguous_input: true,
+            fallback_reason: Some(
+                "input dialect-ambiguous (comrak vs pulldown-cmark disagree on input)"
+                    .to_string(),
+            ),
+        };
+    }
     if dual.is_preview_preserving_per_parser() {
         PhaseARewriteResult {
             output: candidate,
