@@ -503,8 +503,13 @@ pub fn core_clean_text_with_stats(
 
     let mut carry_math_state = false;
 
-    // Pre-pass: GFM table separator row canonicalization (parser-validated).
-    let table_replacements = md_module::scan_gfm_table_separators(text);
+    // Note: GFM table separator canonicalization and HR thematic-break
+    // minimization are done by `md_module::normalize_md_syntax` above as
+    // part of the Phase A pre-pass. The per-line redundant calls that
+    // used to sit here (scan_gfm_table_separators + normalize_separator_
+    // line) were no-ops on already-canonical input and have been removed
+    // since C13 wired the cleaner through the orchestrator.
+    //
     // Code-fence state carried across lines — inside a fenced block we skip
     // all normalizations so code indentation and punctuation survive intact.
     let mut in_code_fence = false;
@@ -523,22 +528,15 @@ pub fn core_clean_text_with_stats(
             continue;
         }
 
-        // GFM table separator: if the pre-pass identified this line as a
-        // parser-validated separator row under a header, swap in the canonical
-        // minimum-width form. This is a semantics-preserving normalization
-        // (alignment + column count are preserved per GFM spec), so it must
-        // stay badness-neutral: count the original line chars as kept.
-        if let Some(canonical) = table_replacements.get(&line_index) {
-            let line_chars = line.chars().count();
-            let canonical_chars = canonical.chars().count();
-            original_chars_for_badness += line_chars;
-            sum_kept_line_content_chars += line_chars;
-            content_chars_kept += canonical_chars;
-            chars_dropped_by_normalization += line_chars.saturating_sub(canonical_chars);
-            cleaned_output_string_builder.push_str(canonical);
-            cleaned_output_string_builder.push('\n');
-            continue;
-        }
+        // (C16 cleanup: the GFM-separator special case that used to sit
+        // here pulled a `canonical` replacement out of `table_replacements`
+        // and attributed the char delta to chars_dropped_by_normalization.
+        // Since C13 the cleaner runs `normalize_md_syntax` as a pre-pass,
+        // which already canonicalizes those rows AND seeds the char delta
+        // into `chars_dropped_by_normalization` via
+        // `wave2_preprocessing_delta`. So the row reaching this loop is
+        // ALREADY in canonical form and flows through the normal per-line
+        // pipeline — no double accounting, one less scan of the full text.)
 
         // Code-fence state: toggle on ``` / ~~~ markers. Pass the marker and
         // everything inside through unchanged so normalizations don't collapse
@@ -788,9 +786,11 @@ pub fn core_clean_text_with_stats(
             if let Some(n) = normalize_layout_leader_runs(&s) {
                 s = n;
             }
-            if let Some(n) = md_module::normalize_separator_line(&s) {
-                s = n;
-            }
+            // (C16 cleanup: `md_module::normalize_separator_line(&s)` used to
+            // run here. It's been done by `normalize_md_syntax` upstream
+            // since C13 — the HR lines reaching this point are already
+            // `---`, so the regex (threshold ≥4) never matched. Saves one
+            // regex per non-empty line.)
             if let Some(n) = normalize::normalize_ellipsis_runs(&s) {
                 s = n;
             }
@@ -949,16 +949,38 @@ fn build_script_char_sets(scripts_to_keep: &[String]) -> (HashSet<char>, HashSet
     (allowed_chars, unusual_chars)
 }
 
-/// Python-exposed function to clean a single string
+/// Python-exposed function to clean a single string.
+///
+/// LaTeX repetition cropping is ON by default as of 2026-04-24
+/// (user policy: all corpus cleaning runs should crop repeated
+/// LaTeX regions). Callers can disable via
+/// `enable_latex_repetition_crop=False` for PDF-to-text / OCR-debug
+/// use cases that need to see the raw repetition.
 #[pyfunction]
+#[pyo3(signature = (text, scripts_to_keep, min_chars_for_comment=None, enable_latex_repetition_crop=true, latex_char_threshold=30, latex_line_threshold=3))]
 pub fn clean_text(
     text: &str,
     scripts_to_keep: Vec<String>,
     min_chars_for_comment: Option<usize>,
+    enable_latex_repetition_crop: bool,
+    latex_char_threshold: usize,
+    latex_line_threshold: usize,
 ) -> PyResult<String> {
     let (allowed_chars, unusual_chars) = build_script_char_sets(&scripts_to_keep);
+    let preprocessed: String;
+    let text_ref: &str = if enable_latex_repetition_crop {
+        preprocessed = crate::latex_module::crop_latex_repetitions(
+            text,
+            true,
+            latex_char_threshold,
+            latex_line_threshold,
+        );
+        &preprocessed
+    } else {
+        text
+    };
     let (cleaned_string, _, _) =
-        core_clean_text(text, &allowed_chars, &unusual_chars, min_chars_for_comment);
+        core_clean_text(text_ref, &allowed_chars, &unusual_chars, min_chars_for_comment);
     Ok(cleaned_string)
 }
 
@@ -975,7 +997,7 @@ pub fn clean_text(
 /// - `original_chars_for_badness`: back-compat badness-scoring input
 /// - `sum_kept_line_content_chars`: back-compat badness-scoring output
 #[pyfunction]
-#[pyo3(signature = (text, scripts_to_keep, min_chars_for_comment=None, enable_latex_repetition_crop=false, latex_char_threshold=30, latex_line_threshold=3))]
+#[pyo3(signature = (text, scripts_to_keep, min_chars_for_comment=None, enable_latex_repetition_crop=true, latex_char_threshold=30, latex_line_threshold=3))]
 pub fn clean_text_with_stats(
     py: Python<'_>,
     text: &str,
@@ -986,10 +1008,13 @@ pub fn clean_text_with_stats(
     latex_line_threshold: usize,
 ) -> PyResult<(String, PyObject)> {
     use pyo3::types::PyDict;
-    // Wave-2 (2026-04-23): optional LaTeX repetition cropping runs
-    // BEFORE the cleaner's main passes, so OCR-hallucinated repetitions
-    // inside `$$…$$` segments are truncated before any other pass sees
-    // them. Off by default — caller opts in.
+    // Wave-2 (2026-04-23): LaTeX repetition cropping runs BEFORE the
+    // cleaner's main passes, so OCR-hallucinated repetitions inside
+    // `$$…$$` segments are truncated before any other pass sees them.
+    // ON by default as of 2026-04-24 (user policy: all corpus cleaning
+    // runs should crop LaTeX repetition). Callers that want the raw
+    // input (PDF-to-text debug, pre-crop diff) can pass
+    // `enable_latex_repetition_crop=False`.
     let preprocessed: String;
     let text_ref: &str = if enable_latex_repetition_crop {
         preprocessed = crate::latex_module::crop_latex_repetitions(
