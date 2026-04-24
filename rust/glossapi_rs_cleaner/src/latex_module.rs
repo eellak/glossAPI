@@ -273,9 +273,13 @@ fn next_latex_element(s: &str, pos: usize) -> Option<LatexElement> {
             continue;
         }
         // LaTeX thin-space markers: `\,` `\;` `\!` `\ ` (backslash-space).
+        // Also `\\` (v6-01 fix): display-math line break, pure formatting,
+        // not content. Without skipping it, `\quad \\ \quad` runs stream
+        // as (\quad, \, \, \quad) → detect_repeated_element_cut resets
+        // the run-counter and misses the repetition.
         if b == b'\\' && i + 1 < n {
             let next = bytes[i + 1];
-            if next == b',' || next == b';' || next == b'!' || next == b' ' {
+            if next == b',' || next == b';' || next == b'!' || next == b' ' || next == b'\\' {
                 i += 2;
                 continue;
             }
@@ -574,6 +578,236 @@ pub fn detect_small_vocab_run_cut(s: &str, threshold: usize) -> Option<usize> {
     None
 }
 
+/// v6-02 — detect a cyclic LaTeX-element run of cycle length
+/// `L ∈ [1..=cycle_max]` repeating `≥ threshold` times.
+///
+/// Example (doc 997003_000): `\intertext{…} \intertext{…}` alternating
+/// with two different braced payloads 6+ times in a row. Each cycle
+/// has two distinct compound elements (different arg values), so
+/// `detect_repeated_element_cut` (exact consecutive repetition) and
+/// `detect_monotonic_element_cut` (numeric progression) both miss
+/// it. The run IS noise — the doc's author didn't write a 12-fold
+/// alternation literally.
+///
+/// Algorithm:
+/// - Tokenize the text via `next_latex_element` into a canonical
+///   element sequence with byte-end positions.
+/// - For each cycle length `L ∈ [1..=cycle_max]`:
+///   - Starting at each position `i`, check whether the window of `L`
+///     elements at `i` equals the window of `L` elements at `i - L`.
+///     If so, increment the cycle-run counter; else reset.
+///   - When cycle-run has covered `threshold` full cycles (i.e. the
+///     SAME `L`-window repeated `threshold` times in a row), return
+///     the byte offset of the FIRST element in the run.
+/// - Shortest `L` wins on ties so a pure `a a a …` run registers as
+///   cycle-1 (== repeated-element) rather than cycle-2/3/etc.
+///
+/// Complexity: O(N * cycle_max) where N is element count; N ≪ chars
+/// because tokenization collapses braced sub-trees.
+pub fn detect_cyclic_element_cut(
+    s: &str,
+    cycle_max: usize,
+    threshold: usize,
+) -> Option<usize> {
+    if threshold < 2 || cycle_max == 0 {
+        return None;
+    }
+    // Tokenize.
+    let mut tokens: Vec<(String, usize, usize)> = Vec::new(); // (canonical, start, end)
+    let mut pos = 0;
+    while let Some(el) = next_latex_element(s, pos) {
+        // Use the start-before-separator-skip by backing from el.start —
+        // next_latex_element's `start` is post-skip. For the cut offset
+        // we want the token's visible start so the emitted prefix feels
+        // natural, which IS el.start.
+        tokens.push((el.canonical.clone(), el.start, el.end));
+        pos = el.end;
+        // Safety cap: pathological inputs shouldn't spin forever.
+        if tokens.len() > 200_000 {
+            break;
+        }
+    }
+    if tokens.len() < threshold {
+        return None;
+    }
+
+    // Search by ascending cycle length so shortest wins on collisions.
+    for l in 1..=cycle_max.min(tokens.len() / threshold) {
+        let mut i = l;
+        while i + l <= tokens.len() {
+            // Check windows[i-l..i] == windows[i..i+l]
+            let mut equal = true;
+            for k in 0..l {
+                if tokens[i - l + k].0 != tokens[i + k].0 {
+                    equal = false;
+                    break;
+                }
+            }
+            if equal {
+                // Start of potential cycle run is at i - l. Count how
+                // many consecutive equal-windows follow.
+                let mut reps: usize = 2; // we just matched two windows
+                let mut j = i + l;
+                while j + l <= tokens.len() {
+                    let mut wins = true;
+                    for k in 0..l {
+                        if tokens[i - l + k].0 != tokens[j + k].0 {
+                            wins = false;
+                            break;
+                        }
+                    }
+                    if !wins {
+                        break;
+                    }
+                    reps += 1;
+                    j += l;
+                }
+                if reps >= threshold {
+                    // Cut at the FIRST element's start offset.
+                    return Some(tokens[i - l].1);
+                }
+                // Not long enough — skip past the matched region.
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    None
+}
+
+/// v6-06a — brace / bracket / paren balance check inside a LaTeX
+/// span. Returns `Some(offset)` if the span has unbalanced delimiters
+/// (e.g. `[ 1 - \mu_2 s }{ 1 - \mu_2 s }` from v6-06 where `[` opens
+/// but the matching close is `}`), `None` if balanced.
+///
+/// Offset is 0 (cut the whole span) since we can't safely recover
+/// broken LaTeX: even partial emission risks feeding the tokenizer
+/// malformed math. Conservative drop.
+///
+/// Walks chars counting `( [ {` as pushes and `) ] }` as pops. Skips
+/// escaped delimiters (`\{` `\}` etc.). If at any point the pop
+/// doesn't match the top of the stack, OR the stack is non-empty at
+/// end-of-span, reports unbalanced.
+pub fn detect_unbalanced_braces_in_latex_span(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let n = bytes.len();
+    let mut stack: Vec<u8> = Vec::new();
+    let mut i = 0;
+    while i < n {
+        let b = bytes[i];
+        // Skip `\\` (LaTeX line break) and escaped delimiters.
+        if b == b'\\' && i + 1 < n {
+            let next = bytes[i + 1];
+            if matches!(next, b'{' | b'}' | b'[' | b']' | b'(' | b')' | b'\\') {
+                i += 2;
+                continue;
+            }
+        }
+        match b {
+            b'{' | b'[' | b'(' => stack.push(b),
+            b'}' | b']' | b')' => {
+                let expected = match b {
+                    b'}' => b'{',
+                    b']' => b'[',
+                    b')' => b'(',
+                    _ => unreachable!(),
+                };
+                match stack.pop() {
+                    Some(top) if top == expected => {}
+                    _ => return Some(0),
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if !stack.is_empty() {
+        return Some(0);
+    }
+    None
+}
+
+/// v6-05 — detect the FIRST structurally-degenerate `\frac{A}{A}` in
+/// `s`. A "degenerate" fraction has bitwise-equal numerator and
+/// denominator after whitespace collapse (modulo LaTeX display-
+/// insignificant whitespace).
+///
+/// Why this is noise: `\frac{A}{A}` always simplifies to `1`; no
+/// author writes it literally. When we see it, it's an extraction /
+/// OCR / hallucination artifact (the model emitted the same span
+/// twice instead of producing the real denominator). Not caught by
+/// any other detector (char-level, element-repeat, monotonic,
+/// small-vocab) because the outer `\frac` counts as ONE element with
+/// a single canonical form, and the sub-args aren't independently
+/// tokenized.
+///
+/// Returns the byte offset where the degenerate `\frac` begins —
+/// conservative tail-stop semantics (option B in
+/// `reports/v6_review_notes.md` v6-05): cut from the degenerate
+/// point onward, because a hallucinated fraction almost always
+/// indicates the rest of the span is also hallucinated. Caller
+/// decides replacement (strip marker / empty / `1`).
+///
+/// Also detects `\frac{A}{B}` where A == B after tolerant
+/// whitespace normalization — matches re-emitted identical spans
+/// with varying incidental whitespace.
+///
+/// Skips `\frac{A}{B}` when `A != B` (legit fractions).
+pub fn detect_degenerate_frac_cut(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let n = bytes.len();
+    let mut i = 0;
+    while i + 6 < n {
+        // Look for `\frac` followed by `{`.
+        if bytes[i] == b'\\'
+            && bytes[i + 1] == b'f'
+            && bytes[i + 2] == b'r'
+            && bytes[i + 3] == b'a'
+            && bytes[i + 4] == b'c'
+        {
+            let frac_start = i;
+            let mut j = i + 5;
+            // Skip whitespace between `\frac` and `{`.
+            while j < n && (bytes[j] == b' ' || bytes[j] == b'\t') {
+                j += 1;
+            }
+            if j < n && bytes[j] == b'{' {
+                if let Some(num_end) = find_balanced_close(s, j) {
+                    // Extract numerator content (without outer braces).
+                    let num_content = &s[j + 1..num_end];
+                    // Skip whitespace between arg groups.
+                    let mut k = num_end + 1;
+                    while k < n && (bytes[k] == b' ' || bytes[k] == b'\t') {
+                        k += 1;
+                    }
+                    if k < n && bytes[k] == b'{' {
+                        if let Some(den_end) = find_balanced_close(s, k) {
+                            let den_content = &s[k + 1..den_end];
+                            // Whitespace-collapse both and compare.
+                            if collapse_ws(num_content) == collapse_ws(den_content)
+                                && !num_content.trim().is_empty()
+                            {
+                                return Some(frac_start);
+                            }
+                            // Not degenerate — skip past the whole
+                            // `\frac{A}{B}` expression and keep scanning.
+                            i = den_end + 1;
+                            continue;
+                        }
+                    }
+                    // Malformed `\frac` (only one brace group) — skip
+                    // past the first group.
+                    i = num_end + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Detect a MONOTONIC-progression cut: same base with numeric sub- OR
 /// super-script incrementing by exactly 1 between consecutive elements
 /// (like `x_1, x_2, x_3, ...`). Threshold is the minimum progression
@@ -699,7 +933,21 @@ pub fn crop_latex_repetitions(
         // Threshold 12 (matches LATEX_SHORT_ATOM_BLOCK_REPEAT_MIN_ITEMS
         // in the corpus Python code).
         let cut_vocab = detect_small_vocab_run_cut(inner, 12);
-        let cut = [cut_char, cut_line, cut_elem, cut_mono, cut_vocab]
+        // v6-05 — `\frac{A}{A}` structurally degenerate. No threshold
+        // (any occurrence is noise). Conservative tail-stop: cut from
+        // the degenerate `\frac` onward.
+        let cut_degen = detect_degenerate_frac_cut(inner);
+        // v6-06a — mismatched / unbalanced `{}`, `[]`, `()` inside the
+        // span. If the span's delimiters don't pair correctly, the
+        // entire span is broken LaTeX; cut at 0 (drop the whole span).
+        let cut_braces = detect_unbalanced_braces_in_latex_span(inner);
+        // v6-02 — cyclic-element run. cycle_max=6, threshold=6 (six
+        // full cycles = at least 12 tokens for cycle-2). Matches the
+        // pattern `\intertext{lenN} \intertext{degN}` alternation the
+        // user flagged in doc 997003_000.
+        let cut_cycle = detect_cyclic_element_cut(inner, 6, 6);
+        let cut = [cut_char, cut_line, cut_elem, cut_mono, cut_vocab,
+                   cut_degen, cut_braces, cut_cycle]
             .into_iter()
             .flatten()
             .min();
@@ -1162,5 +1410,214 @@ mod tests {
         let doc = format!("$$ {} $$", inner);
         let out = crop_latex_repetitions(&doc, true, 100, 100);
         assert!(out.contains("repetition cropped"), "expected crop marker, got {:?}", out);
+    }
+
+    // -----------------------------------------------------------------
+    // v6-02 — cyclic-element run detection.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn v6_02_detects_cycle_2_intertext_alternation() {
+        // The actual corpus pattern: two distinct \intertext{…}
+        // alternating 6+ times.
+        let unit = r"\intertext{lenN} \intertext{degN} ";
+        let s = unit.repeat(6);
+        let cut = detect_cyclic_element_cut(&s, 6, 6);
+        assert!(cut.is_some(), "6× alternation of two \\intertext should trigger");
+        // Should point at or near the start.
+        assert!(cut.unwrap() < unit.len() * 2);
+    }
+
+    #[test]
+    fn v6_02_detects_cycle_1_equivalent_to_repeated_element() {
+        // `a a a a a a` — cycle length 1, threshold 6 → fires.
+        let s = r"a a a a a a trailing";
+        let cut = detect_cyclic_element_cut(s, 6, 6);
+        assert!(cut.is_some());
+    }
+
+    #[test]
+    fn v6_02_detects_cycle_3() {
+        let unit = r"\sin \cos \tan ";
+        let s = unit.repeat(8);
+        let cut = detect_cyclic_element_cut(&s, 6, 6);
+        assert!(cut.is_some(),
+                "8× cycle of 3 distinct elements should trigger");
+    }
+
+    #[test]
+    fn v6_02_negative_short_cycle_below_threshold() {
+        // 3 cycles of length 2 — below threshold 6.
+        let unit = r"\a \b ";
+        let s = unit.repeat(3);
+        assert!(detect_cyclic_element_cut(&s, 6, 6).is_none(),
+                "3 cycles should NOT trigger threshold-6");
+    }
+
+    #[test]
+    fn v6_02_negative_dot_separated_vars_short() {
+        // `a \cdot b \cdot a \cdot b` — alternation but short. No trigger.
+        let s = r"a \cdot b \cdot a \cdot b";
+        assert!(detect_cyclic_element_cut(s, 6, 6).is_none());
+    }
+
+    #[test]
+    fn v6_02_negative_distinct_math_sequence() {
+        // Diverse legit-math expression — no cycle.
+        let s = r"\sin(x) + \cos(x) - \tan(y) + \log(z) + e^x - \sqrt{y}";
+        assert!(detect_cyclic_element_cut(s, 6, 6).is_none());
+    }
+
+    #[test]
+    fn v6_02_shortest_cycle_wins_on_aaaa() {
+        // `a a a a a a a a` — cycle 1 should win over cycle 2/4/etc.
+        let s = r"a a a a a a a a";
+        let cut1 = detect_cyclic_element_cut(s, 6, 6);
+        assert!(cut1.is_some());
+    }
+
+    // -----------------------------------------------------------------
+    // v6-06a — brace/bracket/paren balance inside a $$…$$ span.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn v6_06a_balanced_latex_returns_none() {
+        let s = r"\frac{a+b}{c} \cdot \int_0^1 x \, dx = \gamma";
+        assert!(detect_unbalanced_braces_in_latex_span(s).is_none());
+    }
+
+    #[test]
+    fn v6_06a_mismatched_bracket_close_flagged() {
+        // `[ 1 - \mu_2 s }{ 1 - \mu_2 s }` — opens `[`, first close is
+        // `}` (mismatch).
+        let s = r"+ [ 1 - \mu_2 s }{ 1 - \mu_2 s }";
+        assert_eq!(detect_unbalanced_braces_in_latex_span(s), Some(0));
+    }
+
+    #[test]
+    fn v6_06a_unclosed_brace_flagged() {
+        let s = r"\frac{a + b}{c";
+        assert_eq!(detect_unbalanced_braces_in_latex_span(s), Some(0));
+    }
+
+    #[test]
+    fn v6_06a_escaped_braces_ignored() {
+        // `\{` and `\}` are literal LaTeX tokens, not delimiters.
+        let s = r"\{ a + b \} = c";
+        assert!(detect_unbalanced_braces_in_latex_span(s).is_none());
+    }
+
+    #[test]
+    fn v6_06a_nested_groups_ok() {
+        let s = r"\frac{\int_0^1 {x^2} dx}{\sum_i {a_i}}";
+        assert!(detect_unbalanced_braces_in_latex_span(s).is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // v6-05 — `\frac{A}{A}` structurally-degenerate fraction.
+    //
+    // Numerator == denominator after whitespace normalization =
+    // always simplifies to `1`, so literal occurrence is hallucination.
+    // Not caught by element-repeat / monotonic / small-vocab because
+    // the outer `\frac` tokenizes as one element.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn v6_05_detects_exact_duplicated_frac_numerator_denominator() {
+        let s = r"before \frac{\int_k^s e^x v_\kappa(x) dx}{\int_k^s e^x v_\kappa(x) dx} after";
+        let cut = detect_degenerate_frac_cut(s);
+        assert!(cut.is_some(),
+                "exact duplicated \\frac args should be detected");
+        // Cut should land at the `\frac` start.
+        let cut = cut.unwrap();
+        assert_eq!(&s[cut..cut + 5], "\\frac");
+    }
+
+    #[test]
+    fn v6_05_detects_duplicated_frac_with_whitespace_variation() {
+        // Same expression, different incidental whitespace inside
+        // the arg groups. collapse_ws should normalize both.
+        let s = r"\frac{ a + b }{a  +  b}";
+        let cut = detect_degenerate_frac_cut(s);
+        assert!(cut.is_some(),
+                "whitespace-normalized dup should be detected");
+    }
+
+    #[test]
+    fn v6_05_negative_legit_fraction_not_flagged() {
+        let s = r"\frac{a + b}{c}";
+        let cut = detect_degenerate_frac_cut(s);
+        assert!(cut.is_none(),
+                "legit \\frac{{A}}{{B}} should not trigger, got {:?}", cut);
+    }
+
+    #[test]
+    fn v6_05_negative_legit_frac_chain_not_flagged() {
+        let s = r"result = \frac{a}{b} \cdot \frac{c}{d} \cdot \frac{e}{f}";
+        assert!(detect_degenerate_frac_cut(s).is_none());
+    }
+
+    #[test]
+    fn v6_05_first_degenerate_frac_wins() {
+        // Degenerate frac at the SECOND position.
+        let s = r"\frac{a}{b} = 1 \cdot \frac{xyz}{xyz} + rest";
+        let cut = detect_degenerate_frac_cut(s);
+        assert!(cut.is_some());
+        let cut = cut.unwrap();
+        // Should point at the second `\frac` (the degenerate one).
+        assert!(&s[cut..].starts_with(r"\frac{xyz}{xyz}"),
+                "cut should point at the degenerate frac, got context {:?}",
+                &s[cut..cut + 20]);
+    }
+
+    #[test]
+    fn v6_05_empty_args_not_flagged() {
+        // `\frac{}{}` — weird but not our target class; don't fire.
+        let s = r"\frac{}{}";
+        assert!(detect_degenerate_frac_cut(s).is_none());
+    }
+
+    // -----------------------------------------------------------------
+    // v6-01 — `\quad \\ \quad \\ …` escapes element-repeat detector.
+    //
+    // `\\` is LaTeX display-math line break — pure formatting, not
+    // content. When it appears between repeated `\quad` elements,
+    // `next_latex_element` treats the `\` chars as distinct fallback
+    // elements, resetting the run-counter in
+    // `detect_repeated_element_cut`. Fix: add `\\` to the
+    // separator-skip set inside `next_latex_element`.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn v6_01_quad_repeat_with_linebreaks_is_caught() {
+        // Five `\quad` separated by `\\`. With `\\` treated as
+        // separator, detect_repeated_element_cut should fire at
+        // threshold=4 (four consecutive identical `\quad`).
+        let s = r"\quad \\ \quad \\ \quad \\ \quad \\ \quad trailing content";
+        let cut = detect_repeated_element_cut(s, 4);
+        assert!(
+            cut.is_some(),
+            "v6-01: repeated \\quad with \\\\ separators should be caught"
+        );
+    }
+
+    #[test]
+    fn v6_01_negative_short_multiline_math_not_flagged() {
+        // `a \\ b \\ c \\ d` — 4 DIFFERENT atoms separated by `\\`.
+        // With `\\` skipped, tokens are `a b c d` (distinct). Must
+        // NOT trigger the repeat detector at threshold 4.
+        let s = r"a \\ b \\ c \\ d";
+        let cut = detect_repeated_element_cut(s, 4);
+        assert!(cut.is_none(), "v6-01: distinct atoms must not trigger, got {:?}", cut);
+    }
+
+    #[test]
+    fn v6_01_negative_cases_env_not_flagged() {
+        // `\begin{cases} a \\ b \\ c \end{cases}` — three distinct
+        // atoms inside a matrix/cases environment. `\\` is a row
+        // separator, not repetition.
+        let s = r"\begin{cases} a \\ b \\ c \end{cases}";
+        let cut = detect_repeated_element_cut(s, 4);
+        assert!(cut.is_none(), "v6-01: cases env must not trigger, got {:?}", cut);
     }
 }
