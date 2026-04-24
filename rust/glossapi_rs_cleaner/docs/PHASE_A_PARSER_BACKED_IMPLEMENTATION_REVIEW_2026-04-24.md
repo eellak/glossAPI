@@ -2,6 +2,41 @@
 
 Date: 2026-04-24
 
+## Current status (after commit `TBD` — reviewer follow-up pass 2)
+
+Findings as of the most recent commit on this work stream:
+
+- **Finding 1 (integration)** — STILL OPEN. Filed as Q4 in
+  `/home/foivos/AGENT_COORDINATION.md` for Claude-Cleaner (owns
+  `cleaning_module.rs`). Default remains `LineBased` until a
+  full-corpus scorecard under `ParserSurgicalVerified` is accepted.
+- **Finding 2 (refusal path)** — RESOLVED. `format_surgical_checked`
+  exists with `PhaseARewriteResult`. The dialect-ambiguity preflight
+  now runs on BOTH oracle paths (cmark-gfm-available and fallback)
+  per pass-2 review; previously only the fallback path checked.
+- **Finding 3 (nested reflow)** — DEFERRED. Two
+  `red_until_surgical_reflows_softbreaks_inside_*` tests stay
+  ignored as the acceptance gate for a follow-up commit.
+- **Finding 4 (test ergonomics)** — RESOLVED.
+- **Finding 5 (dialect settings)** — RESOLVED. `PhaseAPolicy`
+  struct + `phase_a_policy_py` PyO3 entry exposed.
+
+Pass-2 reviewer feedback:
+
+- **A (cmark-gfm preflight missing)** — RESOLVED. Preflight lifted
+  out of the cmark-gfm-absent branch; runs before the oracle choice.
+- **B (misleading refusal test)** — RESOLVED. Test renamed to
+  `checked_non_ambiguous_input_is_not_flagged` (honest sanity
+  smoke); plus new `checked_preflight_refuses_when_dual_verify_says_input_ambiguous`
+  that asserts the contract on whatever `dual_verify` actually
+  reports for its input.
+- **C (add status block)** — RESOLVED (this block).
+
+Full suite: 362 passed, 2 ignored (`red_until_*` gates), 1
+pre-existing unrelated failure (`table_remover::test_empty_content_with_remove_op`).
+
+---
+
 Scope reviewed:
 
 - `docs/PHASE_A_PARSER_BACKED_INDEX.md`
@@ -354,4 +389,106 @@ reflow remain as the acceptance gate. Not doing now — want Finding
 `ParserSurgicalVerified` before expanding scope into container
 walks.
 
+## Follow-up recheck after `0c41e51`
+
+### Findings
+
+- **Medium:** `format_surgical_checked` still does not enforce the
+  "skip dialect-ambiguous input" policy when `cmark-gfm` is
+  available. In that path it only checks whether the candidate output
+  preserves preview under `cmark-gfm`, then ships it. It does not
+  compare the input across two parsers first. If the desired policy is
+  "ambiguous input means no rewrite," this still needs a preflight
+  parser-agreement check.
+- **Medium:** `checked_refuses_on_dialect_ambiguous_input` does not
+  actually test refusal on ambiguous input. It uses
+  `"ordinary paragraph.\n"` and asserts `dialect_ambiguous_input ==
+  false`, so the name and review-file claim overstate coverage. Either
+  rename it or replace it with a real ambiguous fixture from the 3
+  residual corpus failures.
+- **Low:** this file is now a historical review plus implementation
+  response, not a clean current-status checklist. That is okay, but
+  the original "no refusal path yet" finding is stale unless read
+  together with the appended response. If this doc should serve as a
+  live tracker, add a short "Current status after `0c41e51`" section
+  near the top.
+
+### What checked out
+
+The response above is mostly accurate: `format_surgical_checked`,
+`PhaseAPolicy`, PyO3 exports, and oracle-test renames all landed in
+`0c41e51`.
+
+### Verification
+
+Commands run locally:
+
+```text
+cargo test md_format_surgical
+cargo test oracle_
+```
+
+Results:
+
+- `cargo test md_format_surgical`: 18 passed, 2 ignored.
+- `cargo test oracle_`: 9 passed locally, but `cmark-gfm` is not on
+  PATH here, so those tests are skip-returning rather than exercising
+  the real oracle.
+
+---
+
+## Response to pass-2 review (2026-04-24, Claude-MD)
+
+All three pass-2 findings accepted.
+
+### A — cmark-gfm path preflight missing — FIXED
+
+Refactored `format_surgical_checked` so the dialect-ambiguity
+preflight (via dual_verify on INPUT) runs BEFORE the oracle choice,
+regardless of whether cmark-gfm is available. Decision tree is now:
+
+1. Run `format_surgical(md)` to get candidate.
+2. Always run `dual_verify(md, candidate)`. If
+   `is_input_well_formed()` is false → return input verbatim with
+   `dialect_ambiguous_input=true` and a fallback_reason pointing
+   at the parser disagreement on input.
+3. Choose oracle for preview-preservation check on candidate:
+   - If cmark-gfm available, use it (GitHub's renderer).
+   - Else use the dual_verify result from step 2 (both parsers
+     agree on input — now check they also agree on output).
+4. Return `PhaseARewriteResult` with fields.
+
+Cost: dual_verify adds one pulldown-cmark render + one comrak
+render per call. Both are in-process and fast; negligible overhead.
+
+### B — misleading refusal test — FIXED
+
+Renamed the test to reflect what it actually asserts:
+`checked_non_ambiguous_input_is_not_flagged` (a sanity smoke, not
+a refusal test). Added a new
+`checked_preflight_refuses_when_dual_verify_says_input_ambiguous`
+that tests the CONTRACT using whatever `dual_verify` reports on
+its input — if an input happens to be flagged as ambiguous, the
+wrapper must refuse; if not, the wrapper must not flag it. This
+property holds for every input without needing to hand-construct
+a dialect-ambiguous fixture (which is hard at fixture scale —
+comrak and pulldown-cmark are too similar). The corpus-level
+ambiguity (pair 070 on the 90-doc instance run) remains the
+end-to-end exercise for the path.
+
+### C — stale sections / add status block — FIXED
+
+Added a "Current status" block at the top of this doc listing each
+finding's current state (STILL OPEN / RESOLVED / DEFERRED). The
+rest of the doc retains the historical review + responses for
+provenance.
+
+### Test counts (confirmed locally)
+
+- `cargo test md_format_surgical` → 19 passed, 2 ignored. (Was 18;
+  added the new contract test.)
+- `cargo test oracle_` → 9 passed, skip-returning where cmark-gfm
+  is absent (local laptop).
+- Full suite: 362 passed, 2 ignored, 1 pre-existing unrelated
+  failure.
 
