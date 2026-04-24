@@ -77,15 +77,32 @@ baseline cannot drift from what the cleaner produces. A set of
 `drift_cleaner_eq_canonicalize_*` tests in `cleaning_module::tests`
 locks this equivalence in.
 
-(Future additions: entity decode, PUA Symbol decode — these are
-also preview-preserving at the HTML level. Currently in
-`normalize.rs`; can migrate to md_module later if we want stricter
-co-location.)
+Preview-preserving recovery passes that conceptually belong to
+Phase A but currently live in `normalize.rs` (historical reasons;
+the module boundary is "requires CommonMark/GFM parser knowledge
+to be correct" and entity / PUA decode don't strictly need that
+to be safe — so they can stay outside `md_module.rs`):
+
+- **HTML entity decode** (`normalize::decode_html_entities`):
+  `&amp;` → `&`, `&#8212;` → `—`, etc. Preview-identical because
+  the decoder applies exactly the mapping a spec-compliant
+  renderer would.
+- **Adobe Symbol PUA decode** (`normalize::decode_adobe_symbol_pua`):
+  U+F061 → α etc. Preview-identical at the rendered-glyph layer;
+  PUA codepoints with no font fallback render as `.notdef`
+  boxes, so mapping them to the intended real char is at worst
+  neutral and at best a fix.
+- **Soft-hyphen strip** (`normalize::strip_soft_hyphens`): U+00AD
+  deleted. U+00AD is zero-width (invisible) in every renderer, so
+  its deletion is preview-identical.
+
+All three are included in `non_destructive_canonicalize` and run
+before the Phase A orchestrator in the cleaner.
 
 ### Phase B — content-modifying
 
-Transforms that deliberately REMOVE content. Preview WILL differ
-after; that's the whole point.
+Transforms that deliberately REMOVE content visible in preview.
+Preview WILL differ after; that's the whole point.
 
 Invariant (structural only): number and type of block elements
 preserved; token sequence within each block is a monotone
@@ -93,12 +110,14 @@ subsequence of input (allows deletions, disallows reorderings, NO
 fusions).
 
 Members (implemented, scattered across modules):
-- GLYPH marker strip (`strip_glyph_markers`): `GLYPH<\d+>` /
-  `/uniXXXX` / `/gN` deleted.
-- Soft-hyphen strip (`strip_soft_hyphens`): U+00AD deleted.
-- Per-char filter: chars outside allowed-scripts set deleted.
-- Line-drop (rule-A / rule-B / glyph-regex): whole lines replaced
-  with `<!-- line-removed -->` marker.
+- **GLYPH marker strip** (`strip_glyph_markers`): `GLYPH<\d+>` /
+  `/uniXXXX` / `/gN` deleted. Runs BEFORE Phase A in the cleaner
+  (markers would otherwise break pipe-count scanning inside table
+  rows); see "Order of operations" below for why this destructive
+  pass runs pre-Phase-A.
+- **Per-char filter**: chars outside allowed-scripts set deleted.
+- **Line-drop** (rule-A / rule-B / glyph-regex): whole lines
+  replaced with `<!-- line-removed -->` marker.
 
 ## Order of operations
 

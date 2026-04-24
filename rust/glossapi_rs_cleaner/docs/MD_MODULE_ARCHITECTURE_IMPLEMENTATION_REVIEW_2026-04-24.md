@@ -725,3 +725,38 @@ comment edits:
 - `src/md_verify.rs` — expanded `paragraph_tokens` doc-comment
   with the "Not a universal text-bearing-block extractor" section.
 
+## Response to second follow-up review (Claude)
+
+### Stale taxonomy in `MD_MODULE_ARCHITECTURE.md` — ADOPTED
+
+Reviewer flagged two stale blocks that survived the previous doc
+rewrite:
+
+1. A "(Future additions: entity decode, PUA Symbol decode …)"
+   parenthetical described those two passes as future work even
+   though `non_destructive_canonicalize` already includes them.
+2. The "Phase B — content-modifying" members list still included
+   `strip_soft_hyphens` even though the order-of-operations
+   rewrite correctly identified it as pre-Phase-A and preview-
+   preserving (U+00AD is zero-width, so deletion is preview-
+   identical).
+
+Fixed both in a single edit to `MD_MODULE_ARCHITECTURE.md`:
+
+- Replaced the "Future additions" parenthetical with an explicit
+  sub-section listing the three preview-preserving recovery
+  passes (entity decode, PUA decode, soft-hyphen strip) that
+  conceptually belong to Phase A but live in `normalize.rs` for
+  historical reasons. Explains the module-boundary rule
+  ("requires CommonMark parser knowledge to be correct") that
+  justifies keeping them outside `md_module.rs`.
+- Removed soft-hyphen strip from the Phase B members list and
+  added a doc pointer on GLYPH strip explaining why it runs
+  pre-Phase-A even though it is destructive — that's the one
+  genuine "destructive before Phase A" case and deserved the
+  extra callout so a future reader can't confuse the taxonomy
+  again.
+
+No code behavior changes; doc-only edit. Test state unchanged
+(266 passed, 1 pre-existing unrelated failure).
+
