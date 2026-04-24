@@ -1946,4 +1946,153 @@ code fence content     stays
             elapsed.as_secs_f64(),
         );
     }
+
+    // ------------------------------------------------------------------
+    // Phase B end-to-end structural-equivalence regression tests.
+    //
+    // Runs the full `core_clean_text_with_stats` pipeline (Phase A
+    // MD-syntax + Phase B content-modifying) on realistic inputs and
+    // asserts `md_verify::verify_md_structural` passes. These catch
+    // regressions where the cleaner accidentally drops / reorders /
+    // fuses content in ways that violate the "output tokens are a
+    // monotone subsequence of input tokens" invariant.
+    //
+    // Phase B safeguards: docs with MD-syntax chars (`|`, `#`, `---`)
+    // in syntactic positions must still have those chars in the
+    // cleaner output. Regression net against future per-char-filter
+    // misconfigurations.
+    //
+    // See `docs/MD_MODULE_ARCHITECTURE.md`.
+    // ------------------------------------------------------------------
+
+    fn run_full_cleaner(input: &str) -> String {
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let (cleaned, _) =
+            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+        cleaned
+    }
+
+    #[test]
+    fn phase_b_structural_equiv_on_simple_prose() {
+        let input = "# Title\n\nFirst paragraph of Greek prose. Δεύτερη πρόταση.\n\nSecond paragraph.\n";
+        let out = run_full_cleaner(input);
+        let r = crate::md_verify::verify_md_structural(input, &out);
+        assert!(
+            r.is_structural_equivalent(),
+            "structural equivalence violated: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn phase_b_structural_equiv_on_entity_decode_and_glyph_strip() {
+        // Phase B deletions (GLYPH strip) + Phase A entity decode.
+        // Both change raw chars. Structural subsequence should still hold.
+        let input = "# Heading\n\nΗ εργασία &amp; GLYPH<216> αναφέρεται.\n";
+        let out = run_full_cleaner(input);
+        let r = crate::md_verify::verify_md_structural(input, &out);
+        assert!(
+            r.is_structural_equivalent(),
+            "{:?}",
+            r
+        );
+        assert!(r.token_retention_pct < 1.0, "expected some tokens dropped");
+    }
+
+    #[test]
+    fn phase_b_table_cells_preserved_after_cleaning() {
+        let input = "| Col A | Col B | Col C |\n| ---- | ---- | ---- |\n| α | β | γ |\n| 1 | 2 | 3 |\n";
+        let out = run_full_cleaner(input);
+        let r = crate::md_verify::verify_md_structural(input, &out);
+        assert!(r.table_cells_subsequence, "{:?}", r);
+    }
+
+    #[test]
+    fn phase_b_mixed_content_doc_passes_structural() {
+        let input = concat!(
+            "# Top heading\n\n",
+            "First soft-wrapped\nparagraph of Greek prose.\n\n",
+            "| a | b |\n| ---------- | ---------- |\n| α | β |\n\n",
+            "----------\n\n",
+            "## Section two\n\n",
+            "- item alpha\n- item beta\n\n",
+            "Final paragraph.\n"
+        );
+        let out = run_full_cleaner(input);
+        let r = crate::md_verify::verify_md_structural(input, &out);
+        assert!(r.is_structural_equivalent(), "{:?}", r);
+    }
+
+    // --- Phase B safeguards: MD-syntax chars must survive ---
+
+    #[test]
+    fn phase_b_preserves_heading_marker() {
+        let input = "# My Heading\n\nbody text.\n";
+        let out = run_full_cleaner(input);
+        assert!(
+            out.contains("# My Heading") || out.contains("#My Heading"),
+            "heading `#` stripped by Phase B: output={:?}",
+            out
+        );
+    }
+
+    #[test]
+    fn phase_b_preserves_table_pipes() {
+        let input = "| col1 | col2 |\n| --- | --- |\n| a | b |\n";
+        let out = run_full_cleaner(input);
+        // Count pipes — should have the same structural count.
+        let in_pipes = input.chars().filter(|&c| c == '|').count();
+        let out_pipes = out.chars().filter(|&c| c == '|').count();
+        assert_eq!(
+            in_pipes, out_pipes,
+            "table pipes lost: in={} out={} output={:?}",
+            in_pipes, out_pipes, out
+        );
+    }
+
+    #[test]
+    fn phase_b_preserves_hr_thematic_break() {
+        let input = "before\n\n---\n\nafter\n";
+        let out = run_full_cleaner(input);
+        assert!(
+            out.contains("---"),
+            "HR `---` stripped by Phase B: output={:?}",
+            out
+        );
+    }
+
+    #[test]
+    fn phase_b_preserves_fenced_code_backticks() {
+        let input = "before\n\n```\ncode body\n```\n\nafter\n";
+        let out = run_full_cleaner(input);
+        let in_fences = input.matches("```").count();
+        let out_fences = out.matches("```").count();
+        assert_eq!(
+            in_fences, out_fences,
+            "fenced code markers lost: in={} out={} output={:?}",
+            in_fences, out_fences, out
+        );
+    }
+
+    #[test]
+    fn phase_b_preserves_list_markers() {
+        let input = "- alpha item\n- beta item\n- gamma item\n";
+        let out = run_full_cleaner(input);
+        // Each `- ` at line start must survive.
+        let in_markers = input.lines().filter(|l| l.starts_with("- ")).count();
+        let out_markers = out.lines().filter(|l| l.starts_with("- ")).count();
+        assert_eq!(
+            in_markers, out_markers,
+            "list markers dropped: in={} out={} output={:?}",
+            in_markers, out_markers, out
+        );
+    }
+
+    #[test]
+    fn phase_b_preserves_blockquote_markers() {
+        let input = "> quoted text\n> continued\n";
+        let out = run_full_cleaner(input);
+        assert!(out.contains(">"), "blockquote marker dropped: {:?}", out);
+    }
 }
