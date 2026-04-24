@@ -523,6 +523,48 @@ pub struct PhaseARewriteResult {
 /// 4. Always return the chosen output with metadata explaining
 ///    what happened.
 pub fn format_surgical_checked(md: &str) -> PhaseARewriteResult {
+    format_surgical_checked_with_oracles(md, &default_oracles())
+}
+
+/// Pluggable oracles for `format_surgical_checked`. Production uses
+/// `default_oracles()`; tests can inject a mocked oracle that
+/// returns a forced dialect-ambiguity verdict — makes the refusal
+/// path deterministically testable without depending on finding a
+/// small natural comrak-vs-pulldown-cmark disagreement fixture
+/// (per pass-3 reviewer Finding).
+pub struct CheckOracles<'a> {
+    /// Preflight oracle. Takes (input, candidate) and returns
+    /// `Some(dual_report)` if the check should run, or `None` to
+    /// skip (not typically useful — always provided in production).
+    pub dual: Box<dyn Fn(&str, &str) -> crate::md_format::DualVerifyReport + 'a>,
+    /// Whether to consult cmark-gfm for the preview-preservation
+    /// check. Production returns
+    /// `crate::cmark_gfm_oracle::is_available()`; tests can force
+    /// this off to exercise the fallback branch.
+    pub cmark_gfm_available: Box<dyn Fn() -> bool + 'a>,
+    /// cmark-gfm verify call. Only invoked when
+    /// `cmark_gfm_available()` returns true.
+    pub cmark_gfm_verify: Box<
+        dyn Fn(&str, &str) -> Result<crate::cmark_gfm_oracle::CmarkGfmReport, String> + 'a,
+    >,
+}
+
+fn default_oracles() -> CheckOracles<'static> {
+    CheckOracles {
+        dual: Box::new(|a, b| crate::md_format::dual_verify(a, b)),
+        cmark_gfm_available: Box::new(crate::cmark_gfm_oracle::is_available),
+        cmark_gfm_verify: Box::new(|a, b| crate::cmark_gfm_oracle::verify(a, b)),
+    }
+}
+
+/// Oracle-injectable variant of `format_surgical_checked`. Same
+/// decision tree; production behavior is preserved by
+/// `default_oracles()`. Exposed as pub so tests inside this module
+/// can exercise the refusal paths deterministically.
+pub fn format_surgical_checked_with_oracles(
+    md: &str,
+    oracles: &CheckOracles<'_>,
+) -> PhaseARewriteResult {
     let candidate = format_surgical(md);
     let changed = candidate != md;
 
@@ -531,7 +573,7 @@ pub fn format_surgical_checked(md: &str) -> PhaseARewriteResult {
     // process), so we pay this check regardless of whether cmark-gfm
     // is available for step 3. Fixes reviewer Finding (2026-04-24):
     // "cmark-gfm path did not enforce skip-dialect-ambiguous-input."
-    let dual = crate::md_format::dual_verify(md, &candidate);
+    let dual = (oracles.dual)(md, &candidate);
     if !dual.is_input_well_formed() {
         return PhaseARewriteResult {
             output: md.to_string(),
@@ -546,8 +588,8 @@ pub fn format_surgical_checked(md: &str) -> PhaseARewriteResult {
     }
 
     // Step 3a: prefer cmark-gfm as the preview-preservation oracle.
-    if crate::cmark_gfm_oracle::is_available() {
-        match crate::cmark_gfm_oracle::verify(md, &candidate) {
+    if (oracles.cmark_gfm_available)() {
+        match (oracles.cmark_gfm_verify)(md, &candidate) {
             Ok(r) => {
                 if r.preview_identical {
                     return PhaseARewriteResult {
@@ -690,6 +732,50 @@ mod tests {
         let r = format_surgical_checked(input);
         assert!(!r.dialect_ambiguous_input);
         assert!(r.fallback_reason.is_none());
+    }
+
+    #[test]
+    fn checked_preflight_refuses_when_oracle_says_input_ambiguous() {
+        // Deterministic test using a mocked oracle that forces the
+        // dialect-ambiguity preflight to FALSE. Exercises the real
+        // refusal code path without needing a naturally-ambiguous
+        // comrak-vs-pulldown-cmark input (rare on small fixtures).
+        //
+        // Mocks the dual_verify result so `is_input_well_formed()`
+        // returns false; the wrapper MUST return input verbatim
+        // with `dialect_ambiguous_input = true` and a fallback
+        // reason that names the ambiguity.
+        let input = "anything works here — the oracle is mocked.\n\nAnother para.\n";
+        let oracles = CheckOracles {
+            dual: Box::new(|_a, _b| {
+                // Construct a DualVerifyReport that reports
+                // input-parser-disagreement. Fields not explicitly
+                // set stay at their `Default::default()` values.
+                let mut r = crate::md_format::DualVerifyReport::default();
+                r.input_parser_agreement = false;
+                // Output-side doesn't matter — preflight short-circuits.
+                r.output_parser_agreement = true;
+                r.pd_identity = true;
+                r.cm_identity = true;
+                r
+            }),
+            cmark_gfm_available: Box::new(|| false),
+            cmark_gfm_verify: Box::new(|_a, _b| {
+                Err("mock never consulted".to_string())
+            }),
+        };
+        let r = format_surgical_checked_with_oracles(input, &oracles);
+        assert!(r.dialect_ambiguous_input, "should flag as ambiguous");
+        assert_eq!(r.output, input, "output must be input verbatim");
+        assert!(!r.changed);
+        assert!(
+            r.fallback_reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("dialect-ambiguous"),
+            "fallback_reason should name the ambiguity, got {:?}",
+            r.fallback_reason,
+        );
     }
 
     #[test]

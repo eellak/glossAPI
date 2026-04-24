@@ -2,7 +2,7 @@
 
 Date: 2026-04-24
 
-## Current status (after commit `TBD` — reviewer follow-up pass 2)
+## Current status (after commits `9efd58c` pass 2 + pass-3 response commit)
 
 Findings as of the most recent commit on this work stream:
 
@@ -32,7 +32,19 @@ Pass-2 reviewer feedback:
   reports for its input.
 - **C (add status block)** — RESOLVED (this block).
 
-Full suite: 362 passed, 2 ignored (`red_until_*` gates), 1
+Pass-3 reviewer feedback:
+
+- **A (non-deterministic ambiguity test)** — RESOLVED.
+  `format_surgical_checked_with_oracles(md, &CheckOracles{...})`
+  pattern added; new `checked_preflight_refuses_when_oracle_says_input_ambiguous`
+  test injects a mock that forces `is_input_well_formed=false`,
+  deterministically exercising the refusal path without needing a
+  natural small ambiguous fixture.
+- **B (commit SHA TBD)** — RESOLVED. Status block now names
+  `9efd58c` explicitly.
+- **C (production path fix)** — ACKNOWLEDGED, no action needed.
+
+Full suite: 363 passed, 2 ignored (`red_until_*` gates), 1
 pre-existing unrelated failure (`table_remover::test_empty_content_with_remove_op`).
 
 ---
@@ -490,5 +502,63 @@ provenance.
 - `cargo test oracle_` → 9 passed, skip-returning where cmark-gfm
   is absent (local laptop).
 - Full suite: 362 passed, 2 ignored, 1 pre-existing unrelated
+  failure.
+
+---
+
+## Response to pass-3 review (2026-04-25, Claude-MD)
+
+Two substantive findings accepted, one trivial.
+
+### Pass-3 Finding: deterministic ambiguity test — FIXED
+
+Refactored the checked wrapper with a pluggable oracle:
+
+- `format_surgical_checked(md)` — unchanged public API, calls the
+  new oracle-injecting variant with `default_oracles()`.
+- `format_surgical_checked_with_oracles(md, &CheckOracles)` —
+  takes a `CheckOracles { dual, cmark_gfm_available,
+  cmark_gfm_verify }` struct of boxed closures.
+- Production: `default_oracles()` wires the real `dual_verify`,
+  `is_available`, and `verify` — byte-identical behavior.
+- Tests: can inject a mock that forces
+  `is_input_well_formed()=false` without needing a real corpus
+  fixture.
+
+New test `checked_preflight_refuses_when_oracle_says_input_ambiguous`
+exercises the refusal path DETERMINISTICALLY:
+
+1. Construct a `DualVerifyReport` with `input_parser_agreement=false`
+   (mocked — no parser actually ran).
+2. Call `format_surgical_checked_with_oracles`.
+3. Assert: output == input, `dialect_ambiguous_input=true`,
+   `!changed`, and `fallback_reason` mentions "dialect-ambiguous".
+
+This complements (rather than replaces) the
+`...dual_verify_says_input_ambiguous` contract test, which exercises
+the REAL oracle with whatever input it gets. Together the two tests
+cover: "refusal fires when the oracle says ambiguous" +
+"non-refusal fires when the oracle says well-formed."
+
+Real-world corpus ambiguity (pair 070) still exercises the full
+path end-to-end on the cleaning instance where cmark-gfm is
+present — small fixtures aren't the right place to test
+comrak-vs-pulldown-cmark disagreement (the two parsers are too
+close on small inputs; the disagreements surface at 4.8M-char
+document scale).
+
+### Pass-3 Finding: commit SHA TBD — FIXED
+
+Status block heading updated to name `9efd58c` explicitly.
+
+### Pass-3 Finding: production path fixed — ACKNOWLEDGED
+
+No action needed — reviewer confirmed the preflight lift.
+
+### Test counts after pass 3
+
+- `cargo test md_format_surgical` → 20 passed, 2 ignored (was 19;
+  added the oracle-injection test).
+- Full suite: 363 passed, 2 ignored, 1 pre-existing unrelated
   failure.
 
