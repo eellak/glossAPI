@@ -413,3 +413,74 @@ No Phase A regressions. The existing preview-equivalence tests
 (including orchestrator mixed-content, alignment-preserving tables,
 fenced-code-preserving reflow) all still pass.
 
+### Commit 13 (cleaner routes through orchestrator + hard-break
+preservation) landed
+
+**Part 1 — single Phase A entry.** Replaced
+`core_clean_text_with_stats`'s call to
+`md_module::reflow_paragraphs` with
+`md_module::normalize_md_syntax`. That routes the cleaner through
+the full Phase A pipeline in the correct order: GFM table
+separator canonicalization → HR minimization → paragraph reflow.
+This was the H-2 bug: optional-pipe GFM tables like
+`a | b\n--- | ---\n1 | 2` were previously invisible to reflow
+(rows don't start/end with `|`), so reflow fused the separator
+row with the first body row, destroying the table. With the
+orchestrator running first, `scan_gfm_table_separators` identifies
+the table before reflow touches it, reflow sees canonical
+`| --- | --- |` and refuses to join.
+
+**Part 2 — hard-break preservation.** Added two guards at the
+start of `can_join_lines`:
+
+- `prev.ends_with("  ")` → CommonMark hard break `  \n` (renders
+  as `<br>`). Refuse to join before `trim_end()` can destroy the
+  signal.
+- Count trailing backslashes; if odd, refuse to join. This
+  implements CommonMark's backslash hard-break rule correctly:
+  `foo\` joins, `foo\\` does not (escaped literal), `foo\\\`
+  does, etc.
+
+**Part 3 — canonical-HR recognition in reflow.** Added
+`HR_HARD_BREAK_REGEX` with the spec ≥3-char threshold (the
+rewrite regex `SEPARATOR_LINE_REGEX` stays at ≥4 because its
+rewrite rule only needs to fire on non-canonical runs). The
+reflow hard-break detector now uses the ≥3 regex, so the
+canonical `---` output and setext heading markers (`---`, `===`)
+are both recognized as block boundaries that reflow must not
+cross.
+
+**Part 4 — fenced-code awareness in `normalize_md_syntax` step 2.**
+The HR normalization step was not previously fence-aware and would
+rewrite a `----` line inside a fenced code block. Added fence-state
+tracking to step 2 (matching what steps 1 and 3 already do).
+
+**Tests turned GREEN:**
+
+- `red_until_c13_reflow_preserves_two_space_hard_break`.
+- `red_until_c13_reflow_preserves_backslash_hard_break`.
+- `red_until_c13_optional_pipe_gfm_table_survives_full_cleaner`.
+
+**Tests added as post-fix regression gates:**
+
+- `equiv_reflow_preserves_canonical_hr_as_hard_break` — verifies
+  that after HR collapse, reflow still recognizes `---`.
+- `equiv_reflow_preserves_setext_heading_marker` — verifies that
+  a setext H2 marker is not fused with the following paragraph.
+- `equiv_orchestrator_preserves_fenced_hr_content` — verifies
+  that a `----` inside a fenced block is not rewritten.
+
+**Test state at Commit 13 boundary:** 257 passed, 2 failing. The
+2 failures: C15 RED (`red_until_c15_heading_text_change_detected_
+by_structural`) and the pre-existing unrelated
+`table_remover::test_empty_content_with_remove_op`.
+
+**Scorecard re-run:** deferred until the full review-response
+series (C12–C16) lands. Rationale — the cleaner's Phase A
+behaviour is a monotonic quality improvement across these five
+commits (each strict-invariant violation being fixed), and a
+single scorecard comparison after the series finishes gives a
+cleaner signal than repeated runs between commits. If the
+corpus-scale strict pass-rate regresses at that point, the fix
+is narrowed per commit.
+

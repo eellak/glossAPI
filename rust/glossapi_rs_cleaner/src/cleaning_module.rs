@@ -433,16 +433,20 @@ pub fn core_clean_text_with_stats(
     // Applied BEFORE the per-line filter loop so recovered chars (from
     // entity decode and Adobe Symbol PUA decode) survive per-char
     // filtering. Char-count delta attributed to `chars_dropped_by_
-    // normalization`. Paragraph reflow is conservative — guarded by
-    // fenced-code state, hard-break detection, and sentence-terminator
-    // stops. See `reflow_paragraphs` in `normalize.rs`.
+    // normalization`. The final step is the full Phase A orchestrator
+    // (`md_module::normalize_md_syntax`) — a single entry point that
+    // canonicalizes GFM table separators, HR rules, and reflows
+    // paragraphs in the correct order. Routing through the orchestrator
+    // (rather than calling `reflow_paragraphs` alone) is required so
+    // optional-pipe GFM tables like `a | b\n--- | ---\n1 | 2` are
+    // identified as tables BEFORE reflow decides whether to fuse rows.
     // -----------------------------------------------------------------
     let wave2_in_len = text.chars().count();
     let step1 = normalize::decode_html_entities(text);
     let step2 = normalize::decode_adobe_symbol_pua(&step1);
     let step3 = normalize::strip_glyph_markers(&step2);
     let step4 = normalize::strip_soft_hyphens(&step3);
-    let step5 = md_module::reflow_paragraphs(&step4);
+    let step5 = md_module::normalize_md_syntax(&step4);
     let wave2_out_len = step5.chars().count();
     let wave2_preprocessing_delta = wave2_in_len.saturating_sub(wave2_out_len);
     // Re-alias `text` so the rest of the function sees the preprocessed

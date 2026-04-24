@@ -37,6 +37,11 @@ lazy_static! {
     /// `\_\_\_\_` that appears in EU legislative corpus docs — the
     /// escape preserves the same thematic-break render.
     ///
+    /// Threshold is ≥4 (not ≥3) so the rewriter only fires when a
+    /// collapse actually reduces characters — `---` / `___` / `***`
+    /// are already canonical and produce no-op rewrites, which is fine,
+    /// but keeping the threshold at ≥4 documents that intent.
+    ///
     /// Intentionally does NOT match `=` runs (`====` is a setext heading
     /// marker, not an HR), Unicode em-dash / horizontal-bar / box-drawing
     /// (these parse as literal paragraphs, not HRs, under CommonMark).
@@ -44,6 +49,23 @@ lazy_static! {
     /// violate the Phase A invariant — verifier catches it.
     pub static ref SEPARATOR_LINE_REGEX: Regex = Regex::new(
         r"^[ \t]*(?:-{4,}|_{4,}|(?:\\_){4,}|\*{4,})[ \t]*$",
+    )
+    .unwrap();
+
+    /// CommonMark thematic-break recognizer used for reflow hard-break
+    /// detection. Uses the spec threshold of ≥3 chars (different from
+    /// `SEPARATOR_LINE_REGEX`, which only fires on ≥4 runs because it
+    /// is the *rewrite* rule). Recognizing ≥3 here is required so:
+    ///
+    /// - Our own canonical output `---` (produced by
+    ///   `normalize_separator_line`) is still detected as a hard break
+    ///   by `reflow_paragraphs`, preventing the cleaner from fusing
+    ///   the HR line with an adjacent paragraph.
+    /// - Setext heading markers `---` / `===` are preserved — joining
+    ///   `---` with a following paragraph would demote an H2 to a
+    ///   regular paragraph, breaking preview.
+    static ref HR_HARD_BREAK_REGEX: Regex = Regex::new(
+        r"^[ \t]{0,3}(?:-{3,}|_{3,}|(?:\\_){3,}|\*{3,}|={3,})[ \t]*$",
     )
     .unwrap();
 }
@@ -331,6 +353,20 @@ pub fn reflow_paragraphs(text: &str) -> String {
 }
 
 fn can_join_lines(prev: &str, next: &str) -> bool {
+    // CommonMark hard break #1: prev ends in two (or more) trailing
+    // spaces → `<br>` in preview. Joining would strip the break.
+    // Detect BEFORE `trim_end()` destroys the signal.
+    if prev.ends_with("  ") {
+        return false;
+    }
+    // CommonMark hard break #2: prev ends in an unescaped backslash.
+    // An odd number of trailing backslashes means the last one escapes
+    // the newline → `<br>`. An even count means the last backslash is
+    // itself escaped and is a literal `\`, so no hard break.
+    let trailing_backslashes = prev.chars().rev().take_while(|c| *c == '\\').count();
+    if trailing_backslashes % 2 == 1 {
+        return false;
+    }
     let prev_trim = prev.trim_end();
     let next_trim = next.trim_start();
     // Both must be non-empty content.
@@ -410,8 +446,11 @@ fn line_is_hard_break(line: &str) -> bool {
     if line.starts_with('|') && line.ends_with('|') && line.matches('|').count() >= 2 {
         return true;
     }
-    // HR thematic-break lines (3+ of same separator char).
-    if SEPARATOR_LINE_REGEX.is_match(line) {
+    // HR thematic-break / setext heading marker lines. Uses the
+    // ≥3-char CM threshold so the canonical `---` output of
+    // `normalize_separator_line` is recognized, and so setext H1/H2
+    // markers (`===`, `---`) are preserved as block boundaries.
+    if HR_HARD_BREAK_REGEX.is_match(line) {
         return true;
     }
     false
@@ -464,13 +503,27 @@ pub fn normalize_md_syntax(text: &str) -> String {
         out
     };
 
-    // Step 2: HR thematic-break minimization — per-line.
+    // Step 2: HR thematic-break minimization — per-line, fence-aware.
+    // A dash/underscore/asterisk run inside a fenced code block is
+    // literal content (e.g., a horizontal ruler drawn by the code
+    // author); rewriting it would change preview and corrupt the
+    // code block.
     let step2: String = {
         let lines: Vec<&str> = step1.lines().collect();
         let mut out = String::with_capacity(step1.len());
+        let mut in_code_fence = false;
         for (i, line) in lines.iter().enumerate() {
             if i > 0 {
                 out.push('\n');
+            }
+            if is_code_fence_marker(line) {
+                in_code_fence = !in_code_fence;
+                out.push_str(line);
+                continue;
+            }
+            if in_code_fence {
+                out.push_str(line);
+                continue;
             }
             match normalize_separator_line(line) {
                 Some(canonical) => out.push_str(&canonical),
@@ -1026,6 +1079,44 @@ paragraph\n\n    | a | b |\n    | --- | --- |\n    | 1 | 2 |\n\nafter\n";
              join. {:?}",
             r
         );
+    }
+
+    // --- Post-C13 regression tests ---
+
+    #[test]
+    fn equiv_reflow_preserves_canonical_hr_as_hard_break() {
+        // After `normalize_separator_line` collapses `--------` to the
+        // canonical `---`, reflow must still recognize `---` as a hard
+        // break and NOT fuse it with adjacent paragraphs. This was the
+        // silent Phase A violation that Commit 13 fixed.
+        let input = "hello\n--------\nworld\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "canonical HR fused by reflow: {:?}", r);
+        assert!(out.contains("\n---\n"), "HR should remain isolated, got {out:?}");
+    }
+
+    #[test]
+    fn equiv_reflow_preserves_setext_heading_marker() {
+        // Setext H2: `text\n---\n` renders as <h2>text</h2>. If reflow
+        // joins `---` with the next paragraph, the H2 demotes to a
+        // regular paragraph of "text --- more", changing preview.
+        let input = "heading text\n---\n\nbody paragraph.\n";
+        let out = normalize_md_syntax(input);
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "setext heading demoted: {:?}", r);
+    }
+
+    #[test]
+    fn equiv_orchestrator_preserves_fenced_hr_content() {
+        // A `----` line inside a fenced code block is literal content
+        // (e.g., an author-drawn ruler). The HR normalizer must NOT
+        // fire there.
+        let input = "prose\n\n```\n----\n```\n\nafter\n";
+        let out = normalize_md_syntax(input);
+        assert!(out.contains("\n----\n"), "fenced ---- rewritten: {out:?}");
+        let r = crate::md_verify::verify_md_preview_equivalent(input, &out);
+        assert!(r.is_strict_equivalent(), "{:?}", r);
     }
 
     #[test]
