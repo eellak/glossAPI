@@ -94,10 +94,10 @@ def main():
     p.add_argument("--output-dir", required=True, type=Path)
     p.add_argument("--per-bucket", type=int, default=8)
     p.add_argument("--n-low", type=int, default=0,
-                   help="If >0, uniform-random N from <20% overriding "
+                   help="If >0, uniform-random N from <20%% overriding "
                         "per-bucket logic on the low side.")
     p.add_argument("--n-high", type=int, default=0,
-                   help="If >0, uniform-random N from >=20%.")
+                   help="If >0, uniform-random N from >=20%%.")
     p.add_argument("--pdf-sources-only", action="store_true",
                    help="Restrict LOW-band docs to PDF-extracted sources "
                         "(openarchives / greek_phd / Apothetirio_* / eurlex "
