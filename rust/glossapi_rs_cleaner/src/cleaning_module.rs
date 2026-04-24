@@ -2187,4 +2187,81 @@ code fence content     stays
         // Words should be whitespace-separated (not fused).
         assert!(!out.contains("alphabeta"), "fusion across thin space: {:?}", out);
     }
+
+    // -----------------------------------------------------------------
+    // Commit 14 — shared non-destructive canonicalization.
+    //
+    // The verifier's `canonicalize_for_verify` now delegates to
+    // `md_module::non_destructive_canonicalize`. These tests assert the
+    // invariant that drove the extraction: on inputs where the cleaner
+    // would delete nothing, cleaner output must equal canonicalize
+    // output. Future drift in either code path trips this gate.
+    // -----------------------------------------------------------------
+
+    /// Permissive allowed-set covering everything in the default
+    /// script sets plus the 0..=127 ASCII range, so the cleaner has
+    /// nothing to drop at the per-char filter on the sample inputs
+    /// used by the drift-prevention tests.
+    fn permissive_allowed_chars() -> HashSet<char> {
+        let mut allowed = default_allowed_chars();
+        for ch in 0u32..=127 {
+            if let Some(c) = char::from_u32(ch) {
+                allowed.insert(c);
+            }
+        }
+        allowed
+    }
+
+    fn assert_cleaner_matches_canonicalize(input: &str) {
+        let allowed = permissive_allowed_chars();
+        let unusual = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let (cleaned, _stats) =
+            core_clean_text_with_stats(input, &allowed, &unusual, None);
+        let canonical = md_module::non_destructive_canonicalize(input);
+        assert_eq!(
+            cleaned.trim_end_matches('\n'),
+            canonical.trim_end_matches('\n'),
+            "cleaner output diverged from non_destructive_canonicalize:\n\
+             input={:?}\ncleaner={:?}\ncanonical={:?}",
+            input,
+            cleaned,
+            canonical,
+        );
+    }
+
+    #[test]
+    fn drift_cleaner_eq_canonicalize_on_plain_prose() {
+        assert_cleaner_matches_canonicalize(
+            "Η εργασία αυτή έχει σκοπό την περιγραφή.\n",
+        );
+    }
+
+    #[test]
+    fn drift_cleaner_eq_canonicalize_on_optional_pipe_table() {
+        assert_cleaner_matches_canonicalize("a | b\n--- | ---\n1 | 2\n");
+    }
+
+    #[test]
+    fn drift_cleaner_eq_canonicalize_on_hr_collapse_with_adjacent_prose() {
+        assert_cleaner_matches_canonicalize(
+            "before paragraph.\n\n----------\n\nafter paragraph.\n",
+        );
+    }
+
+    #[test]
+    fn drift_cleaner_eq_canonicalize_on_soft_wrapped_paragraph() {
+        assert_cleaner_matches_canonicalize(
+            "first soft-wrapped\npiece of content\nhere.\n",
+        );
+    }
+
+    #[test]
+    fn drift_cleaner_eq_canonicalize_on_gfm_table_and_hr() {
+        assert_cleaner_matches_canonicalize(concat!(
+            "# Heading\n\n",
+            "| A | B |\n| ---------- | ---------- |\n| 1 | 2 |\n\n",
+            "----------\n\n",
+            "Paragraph soft-wrap\nacross two lines.\n",
+        ));
+    }
 }

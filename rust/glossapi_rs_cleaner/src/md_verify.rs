@@ -24,7 +24,6 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::md_module;
-use crate::normalize;
 
 /// Detailed report from a verification run. Boolean fields are what
 /// tests normally assert on; the diagnostic strings exist to make
@@ -105,64 +104,14 @@ fn strip_cleaner_markers(md: &str) -> String {
         .replace("<!-- image -->", "")
 }
 
-/// Apply every NON-destructive cleaner transform to `md`. Used by the
-/// structural verifier to canonicalize the INPUT before comparing
-/// against cleaner output — otherwise cosmetic differences like
-/// `&amp;` → `&`, `........(40 dots)` → `....(20)`, `-----` → `---`
-/// etc. are misclassified as "injections."
+/// Thin alias over `md_module::non_destructive_canonicalize`, kept
+/// here so the `verify_md_structural` code reads in document order.
 ///
-/// Transforms applied (all token-semantic-preserving or invisible):
-/// 1. HTML entity decode (`&amp;` → `&` etc.)
-/// 2. Adobe Symbol PUA decode (U+F061 → α etc.)
-/// 3. Soft-hyphen strip (U+00AD, invisible anyway)
-/// 4. Per-line character fold (NBSP → space, ligatures → pairs,
-///    Unicode whitespace variants → space, enclosed digits → ASCII)
-/// 5. Dot-run normalization (tiered bucket collapse)
-/// 6. Whitespace-run normalization (multi-space → tiered bucket)
-/// 7. Ellipsis-run normalization
-/// 8. HR thematic-break minimization (`-----` → `---`)
-/// 9. GFM table separator minimization (`|-----|` → `|---|`)
-/// 10. Paragraph reflow (soft-wrap `\n` → space within paragraphs)
-///
-/// NOT applied (destructive or content-removing):
-/// - GLYPH strip
-/// - Per-char allowlist filter
-/// - Line-drop rules
-/// - Rule-A/B filtering
-///
-/// The result is what the cleaner WOULD produce if every pass were
-/// non-destructive.
+/// Single source of truth lives in `md_module` — this call delegates
+/// so the verifier baseline can never drift from what the cleaner
+/// would produce if every pass were non-destructive.
 fn canonicalize_for_verify(md: &str) -> String {
-    // Step 1-3: content-level wave-2 preprocessing.
-    let step1 = normalize::decode_html_entities(md);
-    let step2 = normalize::decode_adobe_symbol_pua(&step1);
-    let step3 = normalize::strip_soft_hyphens(&step2);
-
-    // Step 4: per-line char fold + per-line normalizations.
-    let mut per_line_out = String::with_capacity(step3.len());
-    let lines: Vec<&str> = step3.split('\n').collect();
-    for (i, line) in lines.iter().enumerate() {
-        if i > 0 {
-            per_line_out.push('\n');
-        }
-        let mut cur = line.to_string();
-        if let Some(folded) = normalize::fold_line(&cur) {
-            cur = folded;
-        }
-        if let Some(normed) = normalize::normalize_dot_runs(&cur) {
-            cur = normed;
-        }
-        if let Some(normed) = normalize::normalize_whitespace_runs(&cur) {
-            cur = normed;
-        }
-        if let Some(normed) = normalize::normalize_ellipsis_runs(&cur) {
-            cur = normed;
-        }
-        per_line_out.push_str(&cur);
-    }
-
-    // Step 5: MD-syntax-aware Phase A (GFM sep min, HR min, reflow).
-    md_module::normalize_md_syntax(&per_line_out)
+    md_module::non_destructive_canonicalize(md)
 }
 
 fn gfm_options() -> Options {

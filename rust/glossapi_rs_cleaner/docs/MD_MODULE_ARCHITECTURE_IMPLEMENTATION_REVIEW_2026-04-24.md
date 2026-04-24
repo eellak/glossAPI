@@ -484,3 +484,25 @@ cleaner signal than repeated runs between commits. If the
 corpus-scale strict pass-rate regresses at that point, the fix
 is narrowed per commit.
 
+### Commit 14 (shared non-destructive canonicalization) landed
+
+Promoted `md_verify::canonicalize_for_verify` into
+`md_module::non_destructive_canonicalize` as the single source of
+truth for "what the cleaner would produce if every pass were
+non-destructive." The verifier's `canonicalize_for_verify` is now
+a thin delegator.
+
+Added five drift-prevention tests in `cleaning_module::tests` that
+run a permissive cleaner (allowed-chars superset so nothing is
+dropped) and assert its output equals
+`non_destructive_canonicalize(input)` on five representative
+shapes: plain prose, optional-pipe GFM table, HR collapse between
+paragraphs, soft-wrapped paragraph, and mixed heading/table/HR/
+paragraph. Any future change that silently drifts cleaner Phase A
+behaviour away from verifier-observed canonical form trips at
+least one of these gates.
+
+**Test state at Commit 14 boundary:** 262 passed, 2 failing. The 2
+failures are still the C15 RED and the pre-existing unrelated
+`table_remover` failure. No regressions from C13.
+

@@ -29,6 +29,8 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
 
+use crate::normalize;
+
 lazy_static! {
     /// Matches a standalone CommonMark horizontal-rule (`<hr/>` in the
     /// rendered output) — runs of `-` / `_` / `*` of length ≥4 on a line
@@ -538,6 +540,72 @@ pub fn normalize_md_syntax(text: &str) -> String {
 
     // Step 3: paragraph reflow — collapse soft-wraps within blocks.
     reflow_paragraphs(&step2)
+}
+
+// ---------------------------------------------------------------------------
+// Non-destructive canonicalization — single source of truth for what
+// the cleaner WOULD produce if every pass were non-destructive.
+// ---------------------------------------------------------------------------
+
+/// Apply every non-destructive cleaner transform to `md`, in the same
+/// order the cleaner applies them.
+///
+/// Used as the shared baseline by:
+/// - `md_verify::canonicalize_for_verify` — pre-canonicalizes INPUT
+///   before comparing against cleaner OUTPUT in structural mode, so
+///   cosmetic differences aren't misclassified as injections.
+/// - (regression test in `cleaning_module`) — asserts that for any
+///   input where the cleaner wouldn't delete anything, its output
+///   equals this function's output. That test catches drift between
+///   cleaner and verifier.
+///
+/// Transforms applied (all semantic- or preview-preserving):
+/// 1. HTML entity decode (`&amp;` → `&`).
+/// 2. Adobe Symbol PUA decode (U+F061 → α).
+/// 3. Soft-hyphen strip (U+00AD is invisible anyway).
+/// 4. Per-line char fold (NBSP → space, ligatures → pairs, Unicode
+///    whitespace variants → space, enclosed digits → ASCII).
+/// 5. Dot-run normalization (tiered bucket collapse).
+/// 6. Whitespace-run normalization (multi-space → tiered bucket).
+/// 7. Ellipsis-run normalization.
+/// 8. Phase A orchestrator (GFM sep min, HR min, paragraph reflow).
+///
+/// NOT applied (destructive or content-removing — belong to Phase B):
+/// - GLYPH-marker strip.
+/// - Per-char allowlist filter.
+/// - Line-drop rules.
+/// - Rule-A/B filtering.
+pub fn non_destructive_canonicalize(md: &str) -> String {
+    // Steps 1-3: content-level preprocessing.
+    let step1 = normalize::decode_html_entities(md);
+    let step2 = normalize::decode_adobe_symbol_pua(&step1);
+    let step3 = normalize::strip_soft_hyphens(&step2);
+
+    // Step 4-7: per-line char fold + per-line normalizations.
+    let mut per_line_out = String::with_capacity(step3.len());
+    let lines: Vec<&str> = step3.split('\n').collect();
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            per_line_out.push('\n');
+        }
+        let mut cur = line.to_string();
+        if let Some(folded) = normalize::fold_line(&cur) {
+            cur = folded;
+        }
+        if let Some(normed) = normalize::normalize_dot_runs(&cur) {
+            cur = normed;
+        }
+        if let Some(normed) = normalize::normalize_whitespace_runs(&cur) {
+            cur = normed;
+        }
+        if let Some(normed) = normalize::normalize_ellipsis_runs(&cur) {
+            cur = normed;
+        }
+        per_line_out.push_str(&cur);
+    }
+
+    // Step 8: MD-syntax-aware Phase A (GFM sep min, HR min, reflow).
+    normalize_md_syntax(&per_line_out)
 }
 
 // ---------------------------------------------------------------------------
