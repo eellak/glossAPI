@@ -264,21 +264,44 @@ pub fn cmark_gfm_verify_py(py: Python<'_>, input: &str, output: &str) -> PyResul
     Ok(d.into())
 }
 
+// NOTE ON LOCAL TEST ERGONOMICS (Finding 4 of the parser-backed
+// implementation review, 2026-04-24):
+//
+// The tests in this module require the `cmark-gfm` binary to be
+// installed (Debian package `cmark-gfm`, provides `/usr/bin/cmark-gfm`).
+// The cleaning instance has it; typical laptop dev environments
+// don't. When the binary is missing, each test returns early as a
+// silent pass — this is deliberate for developer ergonomics but
+// means these tests are NOT exercising the cmark-gfm oracle on
+// laptops without the binary.
+//
+// Test naming convention: every test whose name starts with
+// `oracle_` is a cmark-gfm-gated test (skips if binary absent).
+// The `skip_if_cmark_gfm_absent` helper documents the skip. For
+// real validation of the oracle, run `cargo test oracle_` on the
+// cleaning instance where `/usr/bin/cmark-gfm` is present.
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn skip_if_unavailable() -> bool {
+    /// Return true (and print a skip notice) if the cmark-gfm binary
+    /// isn't on PATH. Callers prefixed `oracle_` conventionally skip
+    /// their test body when this returns true.
+    fn skip_if_cmark_gfm_absent() -> bool {
         if !is_available() {
-            eprintln!("cmark-gfm not available — skipping");
+            eprintln!(
+                "[oracle test SKIPPED] cmark-gfm binary not on PATH. \
+                 Install `cmark-gfm` (Debian package) or run this \
+                 test on the cleaning instance where it's present."
+            );
             return true;
         }
         false
     }
 
     #[test]
-    fn cmark_basic_render() {
-        if skip_if_unavailable() {
+    fn oracle_cmark_basic_render() {
+        if skip_if_cmark_gfm_absent() {
             return;
         }
         let html = render_html("# hello\n").expect("render");
@@ -286,8 +309,8 @@ mod tests {
     }
 
     #[test]
-    fn cmark_verify_identity_passes() {
-        if skip_if_unavailable() {
+    fn oracle_cmark_verify_identity_passes() {
+        if skip_if_cmark_gfm_absent() {
             return;
         }
         let r = verify("hello world\n", "hello world\n").expect("verify");
@@ -296,8 +319,8 @@ mod tests {
     }
 
     #[test]
-    fn cmark_verify_difference_fails() {
-        if skip_if_unavailable() {
+    fn oracle_cmark_verify_difference_fails() {
+        if skip_if_cmark_gfm_absent() {
             return;
         }
         let r = verify("hello\n", "goodbye\n").expect("verify");
@@ -306,11 +329,11 @@ mod tests {
     }
 
     #[test]
-    fn cmark_verify_preview_identical_but_not_byte_identical() {
+    fn oracle_cmark_verify_preview_identical_but_not_byte_identical() {
         // A soft-wrap that reflow joins is preview-identical per
         // CM: both render as `<p>first second</p>` (pulldown
         // emits with internal `\n`, cmark-gfm emits... let's check).
-        if skip_if_unavailable() {
+        if skip_if_cmark_gfm_absent() {
             return;
         }
         let r = verify("first\nsecond\n", "first second\n").expect("verify");
@@ -324,8 +347,8 @@ mod tests {
     //     the cases where our old line-based code got them wrong). ---
 
     #[test]
-    fn ground_truth_escaped_underscore_is_literal_not_hr() {
-        if skip_if_unavailable() {
+    fn oracle_ground_truth_escaped_underscore_is_literal_not_hr() {
+        if skip_if_cmark_gfm_absent() {
             return;
         }
         // `\_\_\_\_\_\_\_\_` is a paragraph of literal underscores
@@ -336,8 +359,8 @@ mod tests {
     }
 
     #[test]
-    fn ground_truth_plain_underscore_is_hr() {
-        if skip_if_unavailable() {
+    fn oracle_ground_truth_plain_underscore_is_hr() {
+        if skip_if_cmark_gfm_absent() {
             return;
         }
         // Plain `________` (≥3 underscores) on its own line IS an
@@ -347,8 +370,8 @@ mod tests {
     }
 
     #[test]
-    fn ground_truth_optional_pipe_table_parses() {
-        if skip_if_unavailable() {
+    fn oracle_ground_truth_optional_pipe_table_parses() {
+        if skip_if_cmark_gfm_absent() {
             return;
         }
         let html = render_html("a | b\n--- | ---\n1 | 2\n").unwrap();
@@ -357,8 +380,8 @@ mod tests {
     }
 
     #[test]
-    fn ground_truth_two_space_hard_break() {
-        if skip_if_unavailable() {
+    fn oracle_ground_truth_two_space_hard_break() {
+        if skip_if_cmark_gfm_absent() {
             return;
         }
         let html = render_html("first  \nsecond\n").unwrap();
@@ -366,8 +389,8 @@ mod tests {
     }
 
     #[test]
-    fn ground_truth_soft_break_is_not_hard_break() {
-        if skip_if_unavailable() {
+    fn oracle_ground_truth_soft_break_is_not_hard_break() {
+        if skip_if_cmark_gfm_absent() {
             return;
         }
         let html = render_html("first\nsecond\n").unwrap();

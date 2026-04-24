@@ -22,7 +22,7 @@ use cleaning_module::{clean_text, clean_text_with_stats};
 use latex_module::crop_latex_repetitions_py;
 use cmark_gfm_oracle::cmark_gfm_verify_py;
 use md_format::{dual_verify_py, format_parsed_py};
-use md_format_surgical::format_surgical_py;
+use md_format_surgical::{format_surgical_checked_py, format_surgical_py, phase_a_policy_py};
 use md_module::{apply_phase_a, phase_a_alteration_stats, phase_a_stats_jsonl_line};
 use md_verify::{verify_md_preview_equivalent_py, verify_md_structural_py};
 use directory_processor::{
@@ -63,6 +63,8 @@ fn glossapi_rs_cleaner(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(dual_verify_py, m)?)?;
     m.add_function(wrap_pyfunction!(cmark_gfm_verify_py, m)?)?;
     m.add_function(wrap_pyfunction!(format_surgical_py, m)?)?;
+    m.add_function(wrap_pyfunction!(format_surgical_checked_py, m)?)?;
+    m.add_function(wrap_pyfunction!(phase_a_policy_py, m)?)?;
 
     // For now, only exposing the main pipeline function and essential classes.
     // Other individual functions from submodules can be re-exposed later if needed,
