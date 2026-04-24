@@ -104,20 +104,32 @@ pub fn leading_columns(line: &str) -> usize {
 // HR (thematic break) minimization.
 // ---------------------------------------------------------------------------
 
-/// Collapse a standalone HR-thematic-break line (hyphen / underscore /
-/// asterisk / equals runs, or em-dash / horizontal-bar / box-drawing
-/// runs) to the canonical `---`.
+/// Collapse a standalone CommonMark thematic-break line (runs of
+/// `-` / `_` / `*`, or the markdown-escaped-underscore form
+/// `\_\_\_\_`) to the canonical `---`.
 ///
 /// Per CommonMark: any run of ≥3 identical `-` / `_` / `*` characters
-/// (optionally surrounded by whitespace) parses to `<hr/>`. Length and
-/// choice of char are irrelevant to the parser — `-------` and `---`
-/// and `___` all produce identical HTML. We canonicalize to `---` so
-/// the raw form doesn't bloat the training corpus with 80-char dash
-/// runs.
+/// (optionally surrounded by whitespace, up to 3 leading spaces)
+/// parses to `<hr/>`. Length and choice of char are irrelevant to the
+/// parser — `-------` and `---` and `___` all produce identical HTML.
+/// We canonicalize to `---` so the raw form doesn't bloat the training
+/// corpus with 80-char dash runs.
 ///
-/// Does NOT fire on dot-leader lines (those are not HRs; they're
-/// handled separately in the cosmetic / layout-leader pass that lives
-/// outside this module).
+/// Intentionally NOT rewritten (rewriting would CHANGE preview and
+/// violate the Phase A invariant — verifier catches it):
+///
+/// - `====` runs: setext heading level-1 marker under CommonMark
+///   (when preceded by a non-blank line), or a literal paragraph of
+///   `=` chars otherwise. Never an HR.
+/// - Unicode em-dash / horizontal-bar / box-drawing / double-dash
+///   (`———`, `═══`, `───`): CommonMark renders these as a paragraph
+///   of literal chars, not as an HR.
+/// - Dot-leader lines (`..........`): parsed as paragraph text by
+///   CommonMark; handled separately in the cosmetic-leader pass that
+///   lives outside this module.
+///
+/// Also skips at `≥4` leading columns — that's indented code per
+/// CommonMark, not a thematic break.
 pub fn normalize_separator_line(line: &str) -> Option<String> {
     // Indented code block: `≥4` leading columns. CommonMark renders any
     // dash/underscore/asterisk run in this context as literal text, not

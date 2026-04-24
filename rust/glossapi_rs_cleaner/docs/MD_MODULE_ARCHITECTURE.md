@@ -44,11 +44,38 @@ Members:
   rewrite `| ---------- | ---------- |` to `| --- | --- |` while
   preserving alignment colons (`:---`, `---:`, `:---:`).
 - **HR thematic-break minimization** (`normalize_separator_line`):
-  rewrite `-------` / `___________` / `*****` / `=====` runs to
-  `---`. Unicode em-dash / box-drawing variants also accepted.
-  Markdown-escaped underscore form `\_\_\_\_` handled.
+  rewrite `-------` / `___________` / `*****` runs (≥4 chars) and
+  the markdown-escaped underscore form `\_\_\_\_` to `---`. Length
+  threshold ≥4 for the *rewrite* rule (`---` is already canonical,
+  so no-op). Rejected at ≥4 leading columns (indented code). A
+  *separate* ≥3-char recognizer (`HR_HARD_BREAK_REGEX`) is used by
+  the reflow hard-break detector so canonical `---` and setext
+  headings (`===`, `---`) are still treated as block boundaries.
+
+  **Intentionally NOT rewritten (would change preview):**
+  `====` runs (setext heading marker / literal `=` paragraph);
+  Unicode em-dash / horizontal-bar / box-drawing (`———`, `═══`,
+  `───`) — these parse as literal paragraphs under CommonMark.
 - **Fenced code detector** (`is_code_fence_marker`): predicate used
-  by the other three for state tracking.
+  by the other three (and by the cleaner) for code-fence state
+  tracking. Takes the RAW line and rejects at ≥4 leading columns
+  (indented `` ``` `` is literal code, not a fence opener).
+- **CommonMark indentation helper** (`leading_columns`): returns
+  the column of the first non-whitespace char under the CM tab rule
+  (tab advances to next multiple of 4). Used by every Phase A
+  detector to enforce the indented-code-block boundary.
+
+### Non-destructive canonical form
+
+A public function `non_destructive_canonicalize(md)` defines the
+single canonical form that the cleaner produces if every pass were
+non-destructive — entity decode + PUA decode + soft-hyphen strip +
+per-line char-fold/dot-runs/whitespace-runs/ellipsis-runs +
+orchestrator. The structural verifier (`md_verify`) delegates to
+this function for its input-side canonicalization, so the verifier
+baseline cannot drift from what the cleaner produces. A set of
+`drift_cleaner_eq_canonicalize_*` tests in `cleaning_module::tests`
+locks this equivalence in.
 
 (Future additions: entity decode, PUA Symbol decode — these are
 also preview-preserving at the HTML level. Currently in
@@ -126,7 +153,7 @@ Two verification modes.
 
 ### Strict mode (Phase A only)
 
-Via `md_verify.rs` (to be built) using `pulldown-cmark`.
+Via `md_verify.rs` using `pulldown-cmark`.
 
 Checks:
 1. **HTML-render equality**: parse both input and cleaner-output via
@@ -174,44 +201,79 @@ Too slow (pulldown-cmark parse per doc × 956k). Sample-based
 (100-500 docs) is sufficient for dev-time regression signal.
 Measurement is a periodic scorecard, not a hot-path check.
 
-## Commit plan
+## Commit history
 
-1. **Commit 1** — `md_module.rs` creation. Mechanical relocation of
-   Phase A fns + their tests from `normalize.rs`. No behavior change.
-   Orchestrator `normalize_md_syntax(text) -> String` added as
-   single entry point. **Status: in progress (this commit).**
-2. **Commit 2** — `md_verify.rs` using pulldown-cmark. Adds dep.
-   Strict-mode `verify_md_equivalent(input, output) -> Report`.
-   Exposed as PyO3 for sample-based Python callers.
-3. **Commit 3** — Verification-based tests. Every Phase A transform
-   gets a regression test using `verify_md_equivalent`. Any existing
-   bug in a Phase A transform surfaces here.
-4. **Commit 4** — Structural-mode verifier (`verify_md_structural`).
-   Block-count + token-subsequence checks for Phase B output.
-5. **Commit 5** — Phase-B safeguard tests. "After full cleaner,
-   MD-syntax chars (`|`, `#`, `---`) present in docs that had them."
-   Regression net against future per-char-filter misconfigurations.
-6. **Commit 6** — Corpus verification script
-   (`cleaning_scripts/verify_md_equivalence.py`). Samples N docs
-   from parquets, runs full cleaner, runs both verifiers, emits
-   pass/fail report + sample dir of failures for inspection.
+The original 6-commit plan landed (C1–C6, March–April 2026). The
+2026-04-24 independent review (`MD_MODULE_ARCHITECTURE_IMPLEMENTATION_
+REVIEW_2026-04-24.md`) surfaced five gaps and they were addressed
+across five follow-up commits:
 
-## Known bugs to fix AFTER this work lands
+- **C11** — failing tests first (RED): 6 expected-failure tests +
+  2 property-green tests documenting current coverage.
+- **C12** — CommonMark indentation awareness. Added
+  `leading_columns` helper; HR / GFM / fenced-code detectors all
+  bail at ≥4 leading columns (indented-code block per CM).
+- **C13** — cleaner routes through `normalize_md_syntax` as single
+  Phase A entry; reflow preserves CommonMark hard breaks (`  \n`
+  and `\\n`); reflow recognizes canonical `---` and setext markers
+  as hard breaks; orchestrator step 2 made fence-aware.
+- **C14** — extracted `non_destructive_canonicalize` as shared
+  source of truth for verifier and cleaner; five drift-prevention
+  tests lock equivalence in.
+- **C15** — structural verifier's token extractor broadened from
+  `Paragraph` only to also cover `Heading` and `Item` (tight list
+  items emit text directly inside `Item` under pulldown-cmark).
 
-These will show up as verification failures once the scorecard is in
-place — implementing them is out of scope for this plan:
+Not adopted (deferred): expanding reflow to join across sentence
+terminators. The reviewer's M-1 suggestion is reasonable spec-wise
+but would change raw training-corpus shape; gating on a corpus-
+level scorecard comparison and user review before landing. Until
+then, reflow remains conservative.
 
-- **v6-11**: NBSP (U+00A0) stripped by per-char filter, fusing
-  words. Structural-mode verifier will catch as "token sequence not
-  monotone subsequence" (input had `word1 word2`, output has
-  `word1word2` which is a different token).
+## Resolved bugs (formerly "known bugs to fix")
+
+These are landed in the implementation; preserved here so future
+readers understand why the architecture looks the way it does.
+
+- **v6-11**: NBSP (U+00A0) stripped by per-char filter fusing
+  words. Fixed by folding U+00A0 and other Unicode whitespace
+  variants to U+0020 in the pre-filter char-fold pass. Regression
+  test in `cleaning_module::tests`. Structural verifier catches any
+  reintroduction as a "Fusion" subsequence failure.
+- **Optional-pipe GFM table destruction** (H-2 from 2026-04-24
+  review): cleaner's Phase A pre-pass used to call
+  `reflow_paragraphs` directly, running before
+  `scan_gfm_table_separators` saw the text. Optional-pipe tables
+  like `a | b\n--- | ---\n1 | 2` weren't recognized as tables by
+  reflow, so the separator row got fused with the first body row.
+  Fixed in C13: cleaner now goes through `normalize_md_syntax` as
+  a single entry, so tables are identified first and then their
+  rows are treated as reflow hard breaks.
+- **CommonMark hard-break destruction** (H-3): reflow's
+  `can_join_lines` called `trim_end()` before checking for the
+  two-trailing-space / trailing-backslash hard-break markers,
+  silently dropping `<br>` renders. Fixed in C13: detection now
+  happens on the raw line before trimming, with proper
+  backslash-parity accounting.
+- **Indented-code corruption** (H-1): Phase A detectors used
+  `trim_start()` or whitespace-permissive regex, so a `----` or
+  `| a | b |` at ≥4 leading columns was rewritten even though
+  CommonMark parses it as literal code content. Fixed in C12:
+  `leading_columns` helper + early returns at ≥4 in all three
+  detectors.
+
+## Still out of scope / future work
+
 - **v6-07 / v6-10**: pseudo-tables (TOC wrapped as tables) —
-  currently pass through unchanged. Future cleaner pass will unwrap
-  them; that pass will fail strict equivalence by design (tables →
-  prose), needs a dedicated invariant.
+  currently pass through unchanged. A future cleaner pass will
+  unwrap them; that pass will fail strict equivalence by design
+  (tables → prose) and needs a dedicated invariant (not the strict
+  preview-equivalence one).
 - **v6-03**: single-line `$$…$$` LaTeX not excluded from
   `charset_punct_ratio` — ratio-computation bug, orthogonal to MD
   syntax.
+- **Reflow expansion across sentence terminators** (M-1 from
+  2026-04-24 review): deferred pending scorecard comparison.
 
 ## Terminology corrections captured during discussion
 

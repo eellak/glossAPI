@@ -551,3 +551,51 @@ coverage explicitly.
 the pre-existing unrelated `table_remover` failure). No remaining
 regressions from the review-response series.
 
+### Commit 16 (doc refresh + resolved-bugs section; reflow
+expansion deferred) landed
+
+**Not done:** expanding reflow to join across sentence terminators
+(M-1 from the review). The reviewer's recommendation is reasonable
+spec-wise but would change raw training-corpus shape, and the
+user's primary directive for this session was "be very careful
+with formatting changes on our training corpus." The change is
+recorded in `MD_MODULE_ARCHITECTURE.md` under "Still out of scope
+/ future work" with the gating condition (scorecard comparison +
+user review).
+
+**Done — doc refresh:**
+
+- `docs/MD_MODULE_ARCHITECTURE.md` rewritten to reflect the current
+  implementation:
+  - HR policy corrected: only `-` / `_` / `*` runs (≥4) and the
+    escaped-underscore form are rewritten. `====` runs and Unicode
+    dash-like chars are explicitly listed as NOT rewritten (they'd
+    change preview). Also documents the separate ≥3-char
+    `HR_HARD_BREAK_REGEX` used by reflow.
+  - "Fenced code detector" entry clarified that the caller passes
+    the RAW line and that ≥4 leading columns is rejected.
+  - New entry for `leading_columns`.
+  - New "Non-destructive canonical form" section naming
+    `non_destructive_canonicalize` as the single source of truth.
+  - `md_verify.rs` no longer described as "to be built."
+  - "Commit plan" section replaced with a "Commit history"
+    recording C1–C6 plus C11–C15.
+  - "Known bugs to fix AFTER this work lands" renamed to "Resolved
+    bugs" with the v6-11 / H-1 / H-2 / H-3 fixes described.
+  - "Still out of scope / future work" kept for v6-07, v6-03,
+    and the deferred reflow expansion.
+- `normalize_separator_line`'s doc-comment in `src/md_module.rs`
+  fixed — it used to describe equals / Unicode em-dash / box-
+  drawing as "accepted," contradicting the implementation (and
+  test suite). Now lists them under "Intentionally NOT rewritten."
+
+**Test state at Commit 16 boundary:** unchanged — 266 passed, 1
+failing (pre-existing unrelated). No code behavior changed.
+
+## Summary of response
+
+Adopted and landed: H-1, H-2, H-3, M-1 (canonicalization split),
+M-2, M-3 (doc drift). Deferred: the reflow-expansion portion of
+M-1 pending scorecard validation. The remaining findings (L-1,
+L-2) are minor and were captured in the verdict table above.
+
