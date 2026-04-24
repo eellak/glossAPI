@@ -17,6 +17,7 @@ mod table_remover_module;
 use charset_module::{analyze_charset, non_empty_line_stats};
 use cleaning_module::{clean_text, clean_text_with_stats};
 use latex_module::crop_latex_repetitions_py;
+use md_module::{apply_phase_a, phase_a_alteration_stats, phase_a_stats_jsonl_line};
 use md_verify::{verify_md_preview_equivalent_py, verify_md_structural_py};
 use directory_processor::{
     batch_generate_detailed_table_report_csv, batch_generate_table_summary_csv,
@@ -49,6 +50,9 @@ fn glossapi_rs_cleaner(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crop_latex_repetitions_py, m)?)?;
     m.add_function(wrap_pyfunction!(verify_md_preview_equivalent_py, m)?)?;
     m.add_function(wrap_pyfunction!(verify_md_structural_py, m)?)?;
+    m.add_function(wrap_pyfunction!(phase_a_alteration_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(apply_phase_a, m)?)?;
+    m.add_function(wrap_pyfunction!(phase_a_stats_jsonl_line, m)?)?;
 
     // For now, only exposing the main pipeline function and essential classes.
     // Other individual functions from submodules can be re-exposed later if needed,

@@ -29,6 +29,9 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
 
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
+
 use crate::normalize;
 
 lazy_static! {
@@ -358,14 +361,21 @@ pub fn is_code_fence_marker(line: &str) -> bool {
 /// - Prior line ends with a sentence terminator.
 /// - Next line is indented ≥4 spaces or a tab (= indented code block).
 pub fn reflow_paragraphs(text: &str) -> String {
+    reflow_paragraphs_with_count(text).0
+}
+
+/// Same as `reflow_paragraphs` but also returns the number of join
+/// operations performed (soft-wrap `\n` replaced with ` `). Used by
+/// Phase A instrumentation for the "most-altered files" audit.
+pub fn reflow_paragraphs_with_count(text: &str) -> (String, usize) {
     let lines: Vec<&str> = text.split('\n').collect();
     if lines.len() < 2 {
-        return text.to_string();
+        return (text.to_string(), 0);
     }
     let mut out_lines: Vec<String> = Vec::with_capacity(lines.len());
     let mut in_fenced_code = false;
+    let mut joins: usize = 0;
     for line in &lines {
-        // Track fenced code state so we don't reflow inside code blocks.
         if is_code_fence_marker(line) {
             in_fenced_code = !in_fenced_code;
             out_lines.push(line.to_string());
@@ -375,18 +385,18 @@ pub fn reflow_paragraphs(text: &str) -> String {
             out_lines.push(line.to_string());
             continue;
         }
-        // Can we append this line to the previous one in out_lines?
         if let Some(prev) = out_lines.last() {
             if can_join_lines(prev, line) {
                 let joined = format!("{} {}", prev.trim_end(), line.trim_start());
                 let idx = out_lines.len() - 1;
                 out_lines[idx] = joined;
+                joins += 1;
                 continue;
             }
         }
         out_lines.push(line.to_string());
     }
-    out_lines.join("\n")
+    (out_lines.join("\n"), joins)
 }
 
 fn can_join_lines(prev: &str, next: &str) -> bool {
@@ -496,6 +506,239 @@ fn line_is_hard_break(line: &str) -> bool {
 // ---------------------------------------------------------------------------
 // Phase A orchestrator — run all Phase A transforms in the correct order.
 // ---------------------------------------------------------------------------
+
+/// Per-transform counters for Phase A. Populated by
+/// `normalize_md_syntax_with_stats`; the plain `normalize_md_syntax`
+/// drops the counter side for callers that don't need them.
+///
+/// All char-saved counters are `chars_before - chars_after` for the
+/// lines the specific transform touched. Count counters are the
+/// number of lines / rows / joins the transform performed.
+#[derive(Debug, Clone, Default)]
+pub struct PhaseAStats {
+    pub hr_lines_normalized: usize,
+    pub hr_chars_saved: usize,
+    pub gfm_rows_normalized: usize,
+    pub gfm_chars_saved: usize,
+    pub reflow_joins: usize,
+    /// Chars removed across ALL three transforms combined. Equal to
+    /// `input.chars().count() - output.chars().count()` for the
+    /// `normalize_md_syntax` call that produced these stats. Reflow
+    /// usually contributes small amounts (whitespace collapse on
+    /// trim_end/trim_start); HR and GFM contribute the bulk.
+    pub total_chars_saved: usize,
+}
+
+/// Instrumented variant of `normalize_md_syntax`: returns the
+/// transformed text AND per-transform counters. Used for the
+/// "most-altered files" corpus audit (see
+/// `cleaning_scripts/compute_phase_a_stats_per_doc.py`).
+pub fn normalize_md_syntax_with_stats(text: &str) -> (String, PhaseAStats) {
+    let mut stats = PhaseAStats::default();
+    let input_char_count = text.chars().count();
+
+    // Step 1: GFM table separator minimization.
+    let replacements = scan_gfm_table_separators(text);
+    stats.gfm_rows_normalized = replacements.len();
+    let step1: String = if replacements.is_empty() {
+        text.to_string()
+    } else {
+        let lines: Vec<&str> = text.lines().collect();
+        let mut out = String::with_capacity(text.len());
+        for (i, line) in lines.iter().enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            if let Some(canonical) = replacements.get(&i) {
+                let before = line.chars().count();
+                let after = canonical.chars().count();
+                stats.gfm_chars_saved += before.saturating_sub(after);
+                out.push_str(canonical);
+            } else {
+                out.push_str(line);
+            }
+        }
+        if text.ends_with('\n') {
+            out.push('\n');
+        }
+        out
+    };
+
+    // Step 2: HR thematic-break minimization, fence-aware.
+    let step2: String = {
+        let lines: Vec<&str> = step1.lines().collect();
+        let mut out = String::with_capacity(step1.len());
+        let mut in_code_fence = false;
+        for (i, line) in lines.iter().enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            if is_code_fence_marker(line) {
+                in_code_fence = !in_code_fence;
+                out.push_str(line);
+                continue;
+            }
+            if in_code_fence {
+                out.push_str(line);
+                continue;
+            }
+            match normalize_separator_line(line) {
+                Some(canonical) => {
+                    let before = line.chars().count();
+                    let after = canonical.chars().count();
+                    stats.hr_lines_normalized += 1;
+                    stats.hr_chars_saved += before.saturating_sub(after);
+                    out.push_str(&canonical);
+                }
+                None => out.push_str(line),
+            }
+        }
+        if step1.ends_with('\n') {
+            out.push('\n');
+        }
+        out
+    };
+
+    // Step 3: paragraph reflow — count join operations.
+    let (step3, reflow_joins) = reflow_paragraphs_with_count(&step2);
+    stats.reflow_joins = reflow_joins;
+
+    stats.total_chars_saved = input_char_count.saturating_sub(step3.chars().count());
+    (step3, stats)
+}
+
+/// PyO3 entry: run Phase A on `text` and return the per-transform
+/// counters as a Python dict. Used by the "most-altered files" corpus
+/// audit so it doesn't need to shell through the full cleaner.
+///
+/// Keys in the returned dict:
+/// - `hr_lines_normalized`
+/// - `hr_chars_saved`
+/// - `gfm_rows_normalized`
+/// - `gfm_chars_saved`
+/// - `reflow_joins`
+/// - `total_chars_saved`
+/// - `input_chars`
+/// - `output_chars`
+/// PyO3 entry: apply Phase A (orchestrator) to `text` and return
+/// the transformed string. Used by the "most-altered files" review
+/// so the sampler can show RAW vs POST-Phase-A side-by-side without
+/// running the heavier per-char cleaner.
+#[pyfunction]
+pub fn apply_phase_a(text: &str) -> String {
+    normalize_md_syntax(text)
+}
+
+/// PyO3 entry: compute Phase A stats for one doc and return a
+/// ready-to-write JSON line (no trailing newline). This exists so
+/// the corpus-audit driver doesn't have to round-trip through a
+/// Python dict + `json.dumps` per doc — per the
+/// `feedback_rust_for_corpus_pipelines` rule, the hot per-doc path
+/// stays in Rust.
+///
+/// Field order matches the Python-side jsonl the driver used to
+/// emit; existing downstream consumers (the sampler) parse by key,
+/// so field order is documentation-only.
+#[pyfunction]
+pub fn phase_a_stats_jsonl_line(
+    source_dataset: &str,
+    source_doc_id: &str,
+    source_path: &str,
+    text: &str,
+) -> String {
+    let input_chars = text.chars().count();
+    let (out, stats) = normalize_md_syntax_with_stats(text);
+    let output_chars = out.chars().count();
+    let chars_saved_pct = if input_chars > 0 {
+        100.0 * (stats.total_chars_saved as f64) / (input_chars as f64)
+    } else {
+        0.0
+    };
+    let joins_per_1k_chars = if input_chars > 0 {
+        1000.0 * (stats.reflow_joins as f64) / (input_chars as f64)
+    } else {
+        0.0
+    };
+    let mut s = String::with_capacity(512);
+    s.push('{');
+    s.push_str(r#""source_dataset":"#);
+    push_json_str(&mut s, source_dataset);
+    s.push_str(r#","source_doc_id":"#);
+    push_json_str(&mut s, source_doc_id);
+    s.push_str(r#","source_path":"#);
+    push_json_str(&mut s, source_path);
+    s.push_str(&format!(
+        r#","input_chars":{},"output_chars":{},"#,
+        input_chars, output_chars
+    ));
+    s.push_str(&format!(
+        r#""hr_lines_normalized":{},"hr_chars_saved":{},"#,
+        stats.hr_lines_normalized, stats.hr_chars_saved
+    ));
+    s.push_str(&format!(
+        r#""gfm_rows_normalized":{},"gfm_chars_saved":{},"#,
+        stats.gfm_rows_normalized, stats.gfm_chars_saved
+    ));
+    s.push_str(&format!(
+        r#""reflow_joins":{},"total_chars_saved":{},"#,
+        stats.reflow_joins, stats.total_chars_saved
+    ));
+    s.push_str(&format!(
+        r#""chars_saved_pct":{},"joins_per_1k_chars":{}"#,
+        fmt_finite_f64(chars_saved_pct),
+        fmt_finite_f64(joins_per_1k_chars),
+    ));
+    s.push('}');
+    s
+}
+
+/// Minimal JSON string encoder: quotes, then escapes control chars
+/// and the two required characters (`"`, `\`). Covers what the
+/// corpus fields contain (dataset names, doc IDs, parquet
+/// filenames). Emits as a valid JSON string literal.
+fn push_json_str(out: &mut String, s: &str) {
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
+/// Format an `f64` without scientific notation and finite-only
+/// (NaN / inf collapse to 0.0 per JSON-safe convention since they
+/// can't appear for our ratios anyway — input_chars guards div-by-0).
+fn fmt_finite_f64(v: f64) -> String {
+    if !v.is_finite() {
+        return "0.0".to_string();
+    }
+    format!("{}", v)
+}
+
+#[pyfunction]
+pub fn phase_a_alteration_stats(py: Python<'_>, text: &str) -> PyResult<PyObject> {
+    let input_chars = text.chars().count();
+    let (out, stats) = normalize_md_syntax_with_stats(text);
+    let d = PyDict::new(py);
+    d.set_item("hr_lines_normalized", stats.hr_lines_normalized)?;
+    d.set_item("hr_chars_saved", stats.hr_chars_saved)?;
+    d.set_item("gfm_rows_normalized", stats.gfm_rows_normalized)?;
+    d.set_item("gfm_chars_saved", stats.gfm_chars_saved)?;
+    d.set_item("reflow_joins", stats.reflow_joins)?;
+    d.set_item("total_chars_saved", stats.total_chars_saved)?;
+    d.set_item("input_chars", input_chars)?;
+    d.set_item("output_chars", out.chars().count())?;
+    Ok(d.into())
+}
 
 /// Run the full MD-syntax normalization phase in the correct order.
 ///
