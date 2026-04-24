@@ -293,8 +293,16 @@ def _process_row_shard(
                 else:
                     text_for_cleaner = text
 
+                # v6 wave-2 (2026-04-23): enable LaTeX repetition crop.
+                # Default thresholds (char=30, line=3) tuned for typical
+                # math-OCR `+ + + + + …` runs and `x = x = x =` lines.
+                # See latex_module.rs::crop_latex_repetitions docs.
                 cleaned, clean_stats = cleaner.clean_text_with_stats(
                     text_for_cleaner, scripts_to_keep,
+                    None,           # min_chars_for_comment (default)
+                    True,           # enable_latex_repetition_crop
+                    30,             # latex_char_threshold
+                    3,              # latex_line_threshold
                 )
                 # Four-way char-drop attribution + line-drop count come from
                 # the Rust side. Quality stats (non-empty lines/chars in/out)

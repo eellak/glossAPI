@@ -393,20 +393,21 @@ def main():
         punct = float(rec.get("charset_punct_ratio") or 0)
         mojibake_noise = moji + punct
         if args.top_by:
-            # In top-by mode prefix by the sort field (descending order
-            # in `ls` is awkward — use 999999-value padding so highest
-            # values sort FIRST when ls is asc).
+            # Prefix = ACTUAL metric value, zero-padded (NOT inverted —
+            # so readers can eyeball the metric from the filename).
+            # `ls` sorts ascending-by-value; use `ls -r` or `ls | sort
+            # -rn` to view highest-first.
             try:
                 v = float(rec.get(args.top_by) or 0)
             except (TypeError, ValueError):
                 v = 0.0
-            # Ratio fields → ×10000; raw counters → as integer.
-            scale = 10000.0 if "ratio" in args.top_by else 1.0
-            scaled = int(round(v * scale))
-            # 999999 - value so descending ls order. 6-digit width handles
-            # ratios up to 99.99 and counters up to 999,998.
-            inv = max(0, 999999 - scaled)
-            prefix = f"{inv:06d}"
+            # Ratio fields → ×10000 → 5 digits (range 0..9999 → ratio
+            # 0.0000..0.9999). Raw counters → as integer, 6 digits
+            # (handles up to ~999,999 counter value).
+            if "ratio" in args.top_by:
+                prefix = f"{int(round(v * 10000)):05d}"
+            else:
+                prefix = f"{int(round(v)):06d}"
         else:
             # Filename prefix = mojibake_noise_ratio (moji + punct, ×10000
             # zero-padded) so ls within each subfolder orders by the
