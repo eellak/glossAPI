@@ -151,6 +151,12 @@ def main():
     p.add_argument("--save-failures", type=int, default=20,
                    help="Max structural-failing docs to write out for "
                         "inspection (per dataset).")
+    p.add_argument("--save-all-pairs", action="store_true",
+                   help="Write <id>_BEFORE.md + <id>_AFTER.md for every "
+                        "sampled doc (not just failures) to "
+                        "`--out/all_pairs/`. Useful for side-by-side "
+                        "manual inspection of cleaner behavior on a "
+                        "corpus-representative sample.")
     p.add_argument("--scripts-to-keep", nargs="*", default=DEFAULT_SCRIPTS)
     args = p.parse_args()
     ds_filter = [s.strip() for s in args.dataset_filter.split(",") if s.strip()]
@@ -158,6 +164,9 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     failures_dir = args.out / "structural_failures"
     failures_dir.mkdir(exist_ok=True)
+    all_pairs_dir = args.out / "all_pairs"
+    if args.save_all_pairs:
+        all_pairs_dir.mkdir(exist_ok=True)
 
     print(f"sampling {args.n} docs from {args.parquet_dir}"
           + (f" (filter={ds_filter})" if ds_filter else ""))
@@ -194,10 +203,24 @@ def main():
             "token_retention_pct": float(
                 v["structural"]["token_retention_pct"]
             ),
+            "subsequence_failure_kind":
+                v["structural"].get("subsequence_failure_kind"),
+            "code_blocks_preserved":
+                bool(v["structural"].get("code_blocks_preserved", True)),
             "strict_first_diff": v["strict"].get("first_diff"),
             "structural_first_diff": v["structural"].get("first_diff"),
         }
         results.append(rec)
+        # Save BEFORE/AFTER pair for every sampled doc (if requested).
+        if args.save_all_pairs:
+            ds = s["source_dataset"] or "unk"
+            stem = f"{ds}__{s['source_doc_id']}"
+            (all_pairs_dir / f"{stem}_BEFORE.md").write_text(
+                text, encoding="utf-8"
+            )
+            (all_pairs_dir / f"{stem}_AFTER.md").write_text(
+                cleaned, encoding="utf-8"
+            )
         if not rec["structural_pass"]:
             ds = s["source_dataset"] or "unk"
             if per_dataset_failure_counts[ds] < args.save_failures:
@@ -239,6 +262,26 @@ def main():
         d["mean_retention"] = d["retention_sum"] / d["n"]
         d.pop("retention_sum")
 
+    # Breakdown of paragraph-subsequence failure kinds (fusion /
+    # reordering / injection / other) for the structural-failing docs.
+    failure_kinds: Counter = Counter()
+    for r in structural_failures:
+        kind = r.get("subsequence_failure_kind")
+        if kind:
+            failure_kinds[kind] += 1
+        else:
+            # structural failed but wasn't a paragraph subsequence —
+            # block-count diff, table diff, or code-block diff.
+            d = r.get("structural_first_diff") or ""
+            if "block sequence" in d:
+                failure_kinds["block_sequence_diff"] += 1
+            elif "table" in d:
+                failure_kinds["table_diff"] += 1
+            elif "code block" in d:
+                failure_kinds["code_block_diff"] += 1
+            else:
+                failure_kinds["unclassified"] += 1
+
     summary = {
         "total_sampled": len(results),
         "errored": sum(1 for r in results if "error" in r),
@@ -246,6 +289,7 @@ def main():
         "strict_pass_rate": strict_passes / max(len(ok), 1),
         "structural_pass_rate": structural_passes / max(len(ok), 1),
         "mean_token_retention_pct": mean_retention,
+        "failure_kind_breakdown": dict(failure_kinds),
         "per_dataset": per_dataset,
         "n_structural_failures": len(structural_failures),
     }
@@ -266,6 +310,11 @@ def main():
     print(f"  structural pass rate:   {summary['structural_pass_rate']:>6.3f}")
     print(f"  mean token retention:   {summary['mean_token_retention_pct']:>6.3f}")
     print(f"  structural failures saved: {summary['n_structural_failures']:,}")
+    if failure_kinds:
+        print()
+        print("=== failure-kind breakdown ===")
+        for k, n in failure_kinds.most_common():
+            print(f"  {k:<22}  {n:>6}")
     print()
     print("=== per-dataset ===")
     print(f"  {'dataset':<46} {'n':>6} {'strict':>8} {'struct':>8} {'retention':>10}")

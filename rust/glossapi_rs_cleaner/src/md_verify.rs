@@ -67,10 +67,17 @@ pub struct MdStructuralReport {
     /// For each matched table, cell count per row matches AND each
     /// cell's output tokens are a subsequence of input tokens.
     pub table_cells_subsequence: bool,
+    /// Per-CodeBlock: output lines are a subsequence of input lines
+    /// (whitespace-preserved comparison, unlike paragraph tokens).
+    pub code_blocks_preserved: bool,
     /// Percentage of input tokens retained in output (continuous
     /// metric; useful even when booleans pass).
     pub token_retention_pct: f64,
     pub first_diff: Option<String>,
+    /// When `paragraph_tokens_subsequence` is false, categorizes the
+    /// failure: fusion (v6-11 NBSP signature), injection (added
+    /// content), reordering, or other.
+    pub subsequence_failure_kind: Option<String>,
 }
 
 impl MdStructuralReport {
@@ -78,6 +85,7 @@ impl MdStructuralReport {
         self.block_count_equal
             && self.paragraph_tokens_subsequence
             && self.table_cells_subsequence
+            && self.code_blocks_preserved
     }
 }
 
@@ -181,7 +189,9 @@ fn block_sequence(md: &str) -> Vec<BlockKind> {
 
 /// Extract one whitespace-tokenized vector per paragraph block, in
 /// source order. Text inside a paragraph (including inline formatting)
-/// is concatenated before tokenization.
+/// is concatenated before tokenization. Link/image URLs ARE included
+/// in the token stream so that a cleaner that silently rewrites a URL
+/// is detected.
 fn paragraph_tokens(md: &str) -> Vec<Vec<String>> {
     let mut paragraphs: Vec<Vec<String>> = Vec::new();
     let mut current: Option<String> = None;
@@ -199,10 +209,24 @@ fn paragraph_tokens(md: &str) -> Vec<Vec<String>> {
                     );
                 }
             }
-            Event::Text(t) | Event::Code(t) => {
+            Event::Text(t) | Event::Code(t) | Event::Html(t) => {
                 if let Some(buf) = current.as_mut() {
                     buf.push_str(&t);
                     buf.push(' ');
+                }
+            }
+            // Link / image URLs are meaningful content. Append them as
+            // space-separated tokens so they show up in the token
+            // sequence and a silent URL rewrite fails verification.
+            Event::Start(Tag::Link { dest_url, title, .. })
+            | Event::Start(Tag::Image { dest_url, title, .. }) => {
+                if let Some(buf) = current.as_mut() {
+                    buf.push_str(&dest_url);
+                    buf.push(' ');
+                    if !title.is_empty() {
+                        buf.push_str(&title);
+                        buf.push(' ');
+                    }
                 }
             }
             _ => {}
@@ -212,7 +236,8 @@ fn paragraph_tokens(md: &str) -> Vec<Vec<String>> {
 }
 
 /// Extract table structure: `Vec<Table>` where each Table is
-/// `Vec<Row>` and each Row is `Vec<Cell tokens>`.
+/// `Vec<Row>` and each Row is `Vec<Cell tokens>`. Link/image URLs
+/// inside cells are included in the token stream.
 fn table_structure(md: &str) -> Vec<Vec<Vec<Vec<String>>>> {
     let mut tables: Vec<Vec<Vec<Vec<String>>>> = Vec::new();
     let mut cur_table: Option<Vec<Vec<Vec<String>>>> = None;
@@ -246,16 +271,127 @@ fn table_structure(md: &str) -> Vec<Vec<Vec<Vec<String>>>> {
                     );
                 }
             }
-            Event::Text(t) | Event::Code(t) => {
+            Event::Text(t) | Event::Code(t) | Event::Html(t) => {
                 if let Some(buf) = cur_cell_buf.as_mut() {
                     buf.push_str(&t);
                     buf.push(' ');
+                }
+            }
+            Event::Start(Tag::Link { dest_url, title, .. })
+            | Event::Start(Tag::Image { dest_url, title, .. }) => {
+                if let Some(buf) = cur_cell_buf.as_mut() {
+                    buf.push_str(&dest_url);
+                    buf.push(' ');
+                    if !title.is_empty() {
+                        buf.push_str(&title);
+                        buf.push(' ');
+                    }
                 }
             }
             _ => {}
         }
     }
     tables
+}
+
+/// Extract code block contents as lines (preserves indentation and
+/// whitespace, unlike the paragraph tokenizer). One `Vec<String>` of
+/// lines per `CodeBlock`, in source order.
+fn code_block_lines(md: &str) -> Vec<Vec<String>> {
+    let mut out: Vec<Vec<String>> = Vec::new();
+    let mut current: Option<String> = None;
+    for ev in Parser::new_ext(md, gfm_options()) {
+        match ev {
+            Event::Start(Tag::CodeBlock(_)) => current = Some(String::new()),
+            Event::End(TagEnd::CodeBlock) => {
+                if let Some(buf) = current.take() {
+                    out.push(buf.lines().map(String::from).collect());
+                }
+            }
+            Event::Text(t) => {
+                if let Some(buf) = current.as_mut() {
+                    buf.push_str(&t);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Classification of a paragraph-subsequence failure — distinguishes
+/// the underlying cause so scorecard output is directly actionable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubsequenceFailureKind {
+    /// Output has a token not present in input (injection or fusion).
+    Injection,
+    /// Output has adjacent input tokens concatenated into one token
+    /// (the v6-11 NBSP-strip signature). Detected when an output token
+    /// is not in input but IS a concat of 2+ adjacent input tokens.
+    Fusion,
+    /// Input tokens are all present in output, but out of order.
+    Reordering,
+    /// Some other combination — couldn't be cleanly classified.
+    Other,
+}
+
+impl SubsequenceFailureKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Injection => "injection",
+            Self::Fusion => "fusion",
+            Self::Reordering => "reordering",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// Classify WHY output tokens are not a monotone subsequence of input
+/// tokens. Returns None if `output` IS a subsequence (no failure).
+pub fn classify_subsequence_failure(
+    input: &[String],
+    output: &[String],
+) -> Option<SubsequenceFailureKind> {
+    if is_subsequence(output, input) {
+        return None;
+    }
+    // Is every output token AT LEAST in the input set? If no, injection.
+    let input_set: std::collections::HashSet<&String> = input.iter().collect();
+    let missing_in_input: Vec<&String> =
+        output.iter().filter(|t| !input_set.contains(t)).collect();
+    if !missing_in_input.is_empty() {
+        // Fusion signature: the out-of-input token is a concat of 2+
+        // adjacent input tokens.
+        for missing in &missing_in_input {
+            if is_concat_of_adjacent_input_tokens(missing, input) {
+                return Some(SubsequenceFailureKind::Fusion);
+            }
+        }
+        return Some(SubsequenceFailureKind::Injection);
+    }
+    // All output tokens ARE in the input set, but not as a subsequence
+    // → order changed.
+    Some(SubsequenceFailureKind::Reordering)
+}
+
+/// Check if `needle` is exactly the concatenation of some window of
+/// adjacent tokens from `input` (with empty separator — as NBSP-strip
+/// would produce).
+fn is_concat_of_adjacent_input_tokens(needle: &str, input: &[String]) -> bool {
+    for start in 0..input.len() {
+        let mut acc = String::new();
+        for i in start..input.len() {
+            acc.push_str(&input[i]);
+            if acc.len() > needle.len() {
+                break;
+            }
+            // Need at least 2 tokens to call it a "fusion".
+            if acc == needle && i > start {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Strict Phase A verification: preview render must be identical.
@@ -335,6 +471,8 @@ pub fn verify_md_structural(input: &str, output: &str) -> MdStructuralReport {
     }
 
     // Paragraph tokens: output must be a subsequence of input.
+    // Classify failure kind (fusion / reordering / injection / other)
+    // when the check fails — makes scorecard output directly actionable.
     let par_in = paragraph_tokens(input);
     let par_out = paragraph_tokens(output);
     let mut all_pass = true;
@@ -345,11 +483,17 @@ pub fn verify_md_structural(input: &str, output: &str) -> MdStructuralReport {
         tokens_out_total += b.len();
         if !is_subsequence(b, a) {
             all_pass = false;
+            let kind = classify_subsequence_failure(a, b)
+                .unwrap_or(SubsequenceFailureKind::Other);
             if r.first_diff.is_none() {
                 r.first_diff = Some(format!(
-                    "paragraph {}: output tokens NOT a subsequence of input",
-                    i
+                    "paragraph {} subsequence failure ({}): in_len={} out_len={}",
+                    i,
+                    kind.as_str(),
+                    a.len(),
+                    b.len(),
                 ));
+                r.subsequence_failure_kind = Some(kind.as_str().to_string());
             }
         }
     }
@@ -385,8 +529,12 @@ pub fn verify_md_structural(input: &str, output: &str) -> MdStructuralReport {
                     if !is_subsequence(cell_out, cell_in) {
                         tbl_pass = false;
                         if r.first_diff.is_none() {
-                            r.first_diff =
-                                Some("table cell tokens NOT a subsequence".to_string());
+                            let kind = classify_subsequence_failure(cell_in, cell_out)
+                                .unwrap_or(SubsequenceFailureKind::Other);
+                            r.first_diff = Some(format!(
+                                "table cell subsequence failure ({})",
+                                kind.as_str()
+                            ));
                         }
                         break 'outer;
                     }
@@ -395,6 +543,32 @@ pub fn verify_md_structural(input: &str, output: &str) -> MdStructuralReport {
         }
     }
     r.table_cells_subsequence = tbl_pass;
+
+    // Code blocks: output lines are a subsequence of input lines.
+    // Code is whitespace-sensitive; line-based check (not whitespace-
+    // tokenized) catches accidental re-indentation.
+    let code_in = code_block_lines(input);
+    let code_out = code_block_lines(output);
+    let mut code_pass = code_in.len() == code_out.len();
+    if code_pass {
+        for (a, b) in code_in.iter().zip(code_out.iter()) {
+            if !is_subsequence(b, a) {
+                code_pass = false;
+                if r.first_diff.is_none() {
+                    r.first_diff =
+                        Some("code block lines NOT a subsequence".to_string());
+                }
+                break;
+            }
+        }
+    } else if r.first_diff.is_none() {
+        r.first_diff = Some(format!(
+            "code block count differs ({} in vs {} out)",
+            code_in.len(),
+            code_out.len(),
+        ));
+    }
+    r.code_blocks_preserved = code_pass;
 
     r
 }
@@ -446,9 +620,11 @@ pub fn verify_md_structural_py(
         r.paragraph_tokens_subsequence,
     )?;
     d.set_item("table_cells_subsequence", r.table_cells_subsequence)?;
+    d.set_item("code_blocks_preserved", r.code_blocks_preserved)?;
     d.set_item("token_retention_pct", r.token_retention_pct)?;
     d.set_item("is_structural_equivalent", r.is_structural_equivalent())?;
     d.set_item("first_diff", r.first_diff)?;
+    d.set_item("subsequence_failure_kind", r.subsequence_failure_kind)?;
     Ok(d.into())
 }
 
@@ -600,5 +776,144 @@ mod tests {
         assert!(is_subsequence(&make(&[]), &make(&["a", "b", "c"])));
         assert!(!is_subsequence(&make(&["c", "a"]), &make(&["a", "b", "c"])));
         assert!(!is_subsequence(&make(&["d"]), &make(&["a", "b", "c"])));
+    }
+
+    // --- URL capture (wave-3 enhancement) ---
+
+    #[test]
+    fn url_change_detected_by_strict_verifier() {
+        let input = "See [the site](https://example.com/a) for details.\n";
+        let output = "See [the site](https://example.com/b) for details.\n";
+        let r = verify_md_preview_equivalent(input, output);
+        assert!(
+            !r.is_strict_equivalent(),
+            "URL change in link should be detected: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn image_url_change_detected_by_strict_verifier() {
+        let input = "Image: ![alt](https://cdn.example.com/img/a.png)\n";
+        let output = "Image: ![alt](https://cdn.example.com/img/b.png)\n";
+        let r = verify_md_preview_equivalent(input, output);
+        assert!(
+            !r.is_strict_equivalent(),
+            "image URL change should be detected: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn url_change_detected_by_structural_verifier() {
+        // URL treated as a token; change = token injection.
+        let input = "Visit [here](https://a.example.com).\n";
+        let output = "Visit [here](https://b.example.com).\n";
+        let r = verify_md_structural(input, output);
+        assert!(
+            !r.is_structural_equivalent(),
+            "URL change should fail structural: {:?}",
+            r
+        );
+    }
+
+    // --- Subsequence failure classification ---
+
+    #[test]
+    fn classify_detects_fusion() {
+        // NBSP-strip signature: adjacent input tokens concat'd.
+        let input = vec!["Η".to_string(), "εργασία".to_string(), "αυτή".to_string()];
+        let output = vec!["Ηεργασία".to_string(), "αυτή".to_string()];
+        let kind = classify_subsequence_failure(&input, &output);
+        assert_eq!(kind, Some(SubsequenceFailureKind::Fusion));
+    }
+
+    #[test]
+    fn classify_detects_reordering() {
+        let input = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let output = vec!["c".to_string(), "a".to_string(), "b".to_string()];
+        let kind = classify_subsequence_failure(&input, &output);
+        assert_eq!(kind, Some(SubsequenceFailureKind::Reordering));
+    }
+
+    #[test]
+    fn classify_detects_injection() {
+        let input = vec!["a".to_string(), "b".to_string()];
+        let output = vec!["a".to_string(), "INJECTED".to_string(), "b".to_string()];
+        let kind = classify_subsequence_failure(&input, &output);
+        assert_eq!(kind, Some(SubsequenceFailureKind::Injection));
+    }
+
+    #[test]
+    fn classify_returns_none_when_subsequence() {
+        let input = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let output = vec!["a".to_string(), "c".to_string()];
+        let kind = classify_subsequence_failure(&input, &output);
+        assert_eq!(kind, None);
+    }
+
+    // --- Code block line-based comparison ---
+
+    #[test]
+    fn code_block_preserved_passes() {
+        let md = "before\n\n```\nfn foo() {\n    42\n}\n```\n\nafter\n";
+        let r = verify_md_structural(md, md);
+        assert!(r.code_blocks_preserved, "{:?}", r);
+        assert!(r.is_structural_equivalent());
+    }
+
+    #[test]
+    fn code_block_line_dropped_allowed() {
+        // Deleting a line in a code block counts as a subsequence.
+        let input = "```\nline one\nline two\nline three\n```\n";
+        let output = "```\nline one\nline three\n```\n";
+        let r = verify_md_structural(input, output);
+        assert!(r.code_blocks_preserved, "{:?}", r);
+    }
+
+    #[test]
+    fn code_block_line_changed_flagged() {
+        // Modifying a line breaks subsequence — new line not in input.
+        let input = "```\nfn foo() {\n    42\n}\n```\n";
+        let output = "```\nfn foo() {\n    43\n}\n```\n";
+        let r = verify_md_structural(input, output);
+        assert!(
+            !r.code_blocks_preserved,
+            "changed line should be caught: {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn code_block_reindented_flagged() {
+        // Re-indenting changes the line content → subsequence fails.
+        let input = "```\n    indented line\n    another\n```\n";
+        let output = "```\nindented line\nanother\n```\n";
+        let r = verify_md_structural(input, output);
+        assert!(
+            !r.code_blocks_preserved,
+            "reindent should be caught: {:?}",
+            r
+        );
+    }
+
+    // --- Structural report now exposes classification ---
+
+    #[test]
+    fn structural_report_exposes_failure_kind_on_fusion() {
+        let input = "Η εργασία αυτή\n";
+        let output = "Ηεργασία αυτή\n";
+        let r = verify_md_structural(input, output);
+        assert!(!r.is_structural_equivalent());
+        assert_eq!(r.subsequence_failure_kind.as_deref(), Some("fusion"));
+    }
+
+    #[test]
+    fn structural_report_exposes_failure_kind_on_injection() {
+        let input = "alpha beta\n";
+        let output = "alpha injected beta\n";
+        let r = verify_md_structural(input, output);
+        assert!(!r.is_structural_equivalent());
+        assert_eq!(r.subsequence_failure_kind.as_deref(), Some("injection"));
     }
 }
