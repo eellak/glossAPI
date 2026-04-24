@@ -6,6 +6,9 @@ mod charset_module;
 mod cleaning_module;
 mod directory_processor;
 mod latex_module;
+mod cmark_gfm_oracle;
+mod md_format;
+mod md_format_surgical;
 mod md_module;
 mod md_verify;
 mod normalize;
@@ -17,6 +20,9 @@ mod table_remover_module;
 use charset_module::{analyze_charset, non_empty_line_stats};
 use cleaning_module::{clean_text, clean_text_with_stats};
 use latex_module::crop_latex_repetitions_py;
+use cmark_gfm_oracle::cmark_gfm_verify_py;
+use md_format::{dual_verify_py, format_parsed_py};
+use md_format_surgical::format_surgical_py;
 use md_module::{apply_phase_a, phase_a_alteration_stats, phase_a_stats_jsonl_line};
 use md_verify::{verify_md_preview_equivalent_py, verify_md_structural_py};
 use directory_processor::{
@@ -53,6 +59,10 @@ fn glossapi_rs_cleaner(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(phase_a_alteration_stats, m)?)?;
     m.add_function(wrap_pyfunction!(apply_phase_a, m)?)?;
     m.add_function(wrap_pyfunction!(phase_a_stats_jsonl_line, m)?)?;
+    m.add_function(wrap_pyfunction!(format_parsed_py, m)?)?;
+    m.add_function(wrap_pyfunction!(dual_verify_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cmark_gfm_verify_py, m)?)?;
+    m.add_function(wrap_pyfunction!(format_surgical_py, m)?)?;
 
     // For now, only exposing the main pipeline function and essential classes.
     // Other individual functions from submodules can be re-exposed later if needed,

@@ -48,12 +48,22 @@ import glossapi_rs_cleaner as c
 
 
 LENSES = [
-    # (jsonl field name, short label for logging)
-    ("reflow_joins",       "reflow"),
-    ("hr_chars_saved",     "hr"),
-    ("gfm_chars_saved",    "gfm"),
-    ("joins_per_1k_chars", "reflow_density"),
+    # (jsonl field name, short label, per-lens pick budget).
+    # HR is deprioritized (the transform is trivial + the escaped-
+    # underscore bug has been fixed). Reflow + tables carry the
+    # difficulty — user directive 2026-04-24.
+    ("reflow_joins",       "reflow",         40),
+    ("gfm_chars_saved",    "gfm",            40),
+    ("hr_chars_saved",     "hr",              5),
+    ("joins_per_1k_chars", "reflow_density", 15),
 ]
+
+# Secondary lens — reflow-WITH-tables: reflow must recognize a GFM
+# row as a hard break so it doesn't fuse across table boundaries
+# (H-2 from the 2026-04-24 review). Composite = reflow_joins ×
+# log1p(gfm_rows) — docs with BOTH lots of reflow AND lots of
+# tables rank highest.
+REFLOW_WITH_TABLES_LENS = ("reflow_with_tables", 10)
 
 # Sources where the corpus-MD was Docling-extracted from PDFs. These
 # are the datasets where the cleaner's Phase A transforms are most
@@ -110,10 +120,11 @@ def main() -> int:
     p.add_argument("--stats-jsonl", required=True, type=Path)
     p.add_argument("--parquet-dir", required=True, type=Path)
     p.add_argument("--output-dir", required=True, type=Path)
-    p.add_argument("--per-lens", type=int, default=25,
-                   help="Top-N docs pulled from each metric lens before "
-                        "dedup. With 4 lenses and per-lens=25 → ~100 "
-                        "unique picks.")
+    p.add_argument("--per-lens", type=int, default=0,
+                   help="Override default per-lens budgets (40 reflow, "
+                        "40 gfm, 5 hr, 15 reflow_density, 10 "
+                        "reflow_with_tables = 110 picks before dedup). "
+                        "Use 0 to keep the per-lens defaults.")
     p.add_argument("--pdf-sources-only", action="store_true",
                    help="Restrict the pool to PDF-extracted datasets "
                         "(openarchives / greek_phd / Apothetirio_* / "
@@ -124,16 +135,15 @@ def main() -> int:
                         "top-K audit dilutes signal.")
     args = p.parse_args()
 
-    # Streaming top-K-heap per lens — avoids materializing 160k rows
-    # just to take 25 from each end (the OOM we hit when combined
-    # with a 1.9M-char doc in memory).
+    # Streaming top-K-heap per lens — avoids materializing all rows.
     import heapq
-    # Each heap stores (metric_value, tie_break_str, row_dict). Using a
-    # min-heap of size `per_lens` → pop smallest when full and new is
-    # larger. Result: the lens's top-N by value.
-    heaps: Dict[str, List] = {k: [] for k, _ in LENSES}
-    # Track corpus-wide max per metric for combined-score normalization.
-    maxes: Dict[str, float] = {k: 0.0 for k, _ in LENSES}
+    # Per-lens budget: override if --per-lens is set, else per-lens defaults.
+    def budget(metric: str, default: int) -> int:
+        return args.per_lens if args.per_lens > 0 else default
+    heaps: Dict[str, List] = {k: [] for k, _, _ in LENSES}
+    heaps[REFLOW_WITH_TABLES_LENS[0]] = []
+    maxes: Dict[str, float] = {k: 0.0 for k, _, _ in LENSES}
+    maxes[REFLOW_WITH_TABLES_LENS[0]] = 0.0
     n_rows = 0
     n_filtered = 0
     with args.stats_jsonl.open() as fh:
@@ -143,13 +153,33 @@ def main() -> int:
             if args.pdf_sources_only and r.get("source_dataset") not in PDF_SOURCES:
                 n_filtered += 1
                 continue
-            for metric, _ in LENSES:
+            for metric, _, default_n in LENSES:
                 v = r.get(metric, 0) or 0
                 if v > maxes[metric]:
                     maxes[metric] = float(v)
                 h = heaps[metric]
                 key = (v, r["source_doc_id"])
-                if len(h) < args.per_lens:
+                b = budget(metric, default_n)
+                if len(h) < b:
+                    heapq.heappush(h, (key, r))
+                elif key > h[0][0]:
+                    heapq.heapreplace(h, (key, r))
+            # Reflow-with-tables composite lens: only consider docs
+            # that had BOTH reflow joins AND GFM normalization fired.
+            # Metric = reflow_joins * log(1 + gfm_rows_normalized) so
+            # a doc with lots of reflow AND lots of tables ranks
+            # higher than one with only one or the other.
+            reflow = r.get("reflow_joins", 0) or 0
+            gfm_rows = r.get("gfm_rows_normalized", 0) or 0
+            if reflow > 0 and gfm_rows > 0:
+                import math
+                composite = reflow * math.log1p(gfm_rows)
+                if composite > maxes[REFLOW_WITH_TABLES_LENS[0]]:
+                    maxes[REFLOW_WITH_TABLES_LENS[0]] = composite
+                h = heaps[REFLOW_WITH_TABLES_LENS[0]]
+                key = (composite, r["source_doc_id"])
+                b = budget(REFLOW_WITH_TABLES_LENS[0], REFLOW_WITH_TABLES_LENS[1])
+                if len(h) < b:
                     heapq.heappush(h, (key, r))
                 elif key > h[0][0]:
                     heapq.heapreplace(h, (key, r))
@@ -158,24 +188,37 @@ def main() -> int:
               f"(kept {n_rows - n_filtered:,} / {n_rows:,})")
     print(f"  streamed {n_rows:,} rows")
     print("per-lens max:")
-    for k, label in LENSES:
-        print(f"  {label:>14} ({k}): {maxes[k]}")
-    # Zero-guard the maxes so the combined score doesn't div-zero.
+    for k, label, _ in LENSES:
+        print(f"  {label:>18} ({k}): {maxes[k]}")
+    rwt_key, rwt_default = REFLOW_WITH_TABLES_LENS
+    print(f"  {'reflow_with_tables':>18} ({rwt_key}): {maxes[rwt_key]:.2f}")
+    # Zero-guard.
     for k in maxes:
         if maxes[k] == 0:
             maxes[k] = 1.0
 
     # Dedup across lenses by (dataset, doc_id).
     picks_by_key: Dict[tuple, Dict] = {}
-    for metric, label in LENSES:
+    for metric, label, default_n in LENSES:
         h_rows = sorted(heaps[metric], reverse=True)
         n_before = len(picks_by_key)
         for _, r in h_rows:
             key = (r["source_dataset"], r["source_doc_id"])
             picks_by_key[key] = r
-        print(f"  lens {label!r}: top-{args.per_lens} → "
+        b = budget(metric, default_n)
+        print(f"  lens {label!r}: top-{b} → "
               f"+{len(picks_by_key) - n_before} unique "
               f"(top value = {h_rows[0][0][0] if h_rows else 0})")
+    # Reflow-with-tables composite.
+    h_rows = sorted(heaps[rwt_key], reverse=True)
+    n_before = len(picks_by_key)
+    for _, r in h_rows:
+        key = (r["source_dataset"], r["source_doc_id"])
+        picks_by_key[key] = r
+    b = budget(rwt_key, rwt_default)
+    print(f"  lens 'reflow_with_tables': top-{b} → "
+          f"+{len(picks_by_key) - n_before} unique "
+          f"(top composite = {h_rows[0][0][0] if h_rows else 0:.2f})")
 
     picks = list(picks_by_key.values())
 
