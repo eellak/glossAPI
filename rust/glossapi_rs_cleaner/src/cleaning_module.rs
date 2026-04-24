@@ -538,8 +538,10 @@ pub fn core_clean_text_with_stats(
 
         // Code-fence state: toggle on ``` / ~~~ markers. Pass the marker and
         // everything inside through unchanged so normalizations don't collapse
-        // meaningful code indentation or punctuation.
-        if md_module::is_code_fence_marker(trimmed_line) {
+        // meaningful code indentation or punctuation. Pass the RAW line so
+        // the detector can apply CommonMark's ≥4-column indented-code rule
+        // (a ``` at that indentation is literal content, not a fence).
+        if md_module::is_code_fence_marker(line) {
             in_code_fence = !in_code_fence;
             let line_chars = line.chars().count();
             original_chars_for_badness += line_chars;

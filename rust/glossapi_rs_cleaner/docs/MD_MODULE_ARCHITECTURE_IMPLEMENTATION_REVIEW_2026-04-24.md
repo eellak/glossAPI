@@ -371,5 +371,45 @@ quality. Commits 11–15 are bug fixes with clean invariants.
 
 ## Discovered while executing
 
-_(I will append findings here as commits land.)_
+### Commit 12 (CommonMark indentation awareness) landed
+
+Added `leading_columns(line) -> usize` in `src/md_module.rs` applying
+CommonMark's column rule (tab advances to the next multiple of 4).
+Three call sites now gate on `< 4` columns:
+
+- `normalize_separator_line` (HR detector) — early-`None` at ≥4.
+- `scan_gfm_table_separators` — separator row AND header row both
+  must sit at `< 4` columns; otherwise both are indented-code leaf
+  blocks, not a GFM table.
+- `is_code_fence_marker` — contract changed: caller now MUST pass the
+  raw (un-trimmed) line. At ≥4 columns the detector returns `false`.
+
+Updated the one internal caller that was discarding indentation:
+`cleaning_module::core_clean_text_with_stats` now passes the raw
+`line` (not `trimmed_line`) to `is_code_fence_marker`. That was
+latent bug #2 — a fence marker indented ≥4 inside a real indented
+code block would have toggled cleaner fence-state and caused
+normalization to skip/resume at the wrong spots.
+
+Also added five indent-aware unit tests (leading-columns arithmetic,
+fence-at-4-cols rejection, HR/GFM-at-4-cols rejection). The two C12
+RED regression tests are now GREEN.
+
+**Test state at Commit 12 boundary:** 251 passed, 5 failing. The 5
+failures break down as:
+
+1. `red_until_c13_reflow_preserves_two_space_hard_break` — expected
+   (Commit 13).
+2. `red_until_c13_reflow_preserves_backslash_hard_break` — expected
+   (Commit 13).
+3. `red_until_c13_optional_pipe_gfm_table_survives_full_cleaner` —
+   expected (Commit 13).
+4. `red_until_c15_heading_text_change_detected_by_structural` —
+   expected (Commit 15).
+5. `table_remover_module::test_empty_content_with_remove_op` —
+   pre-existing, unrelated to this review stream.
+
+No Phase A regressions. The existing preview-equivalence tests
+(including orchestrator mixed-content, alignment-preserving tables,
+fenced-code-preserving reflow) all still pass.
 

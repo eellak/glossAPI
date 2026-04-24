@@ -49,6 +49,34 @@ lazy_static! {
 }
 
 // ---------------------------------------------------------------------------
+// CommonMark indentation helper.
+// ---------------------------------------------------------------------------
+
+/// Column width of the line's leading whitespace under CommonMark's
+/// indentation rule.
+///
+/// Per CommonMark: a space advances the column by 1; a tab advances to
+/// the next multiple of 4. `≥4` columns of leading whitespace triggers
+/// an indented code block, which is a different leaf-block type than
+/// any of the markers Phase A rewrites (thematic break, GFM table
+/// separator, fenced code opener). Our detectors must bail out at that
+/// threshold or they'll corrupt indented-code content.
+///
+/// Returns the column position of the first non-whitespace char (or
+/// the total column width if the line is whitespace-only).
+pub fn leading_columns(line: &str) -> usize {
+    let mut col: usize = 0;
+    for c in line.chars() {
+        match c {
+            ' ' => col += 1,
+            '\t' => col = (col / 4 + 1) * 4,
+            _ => return col,
+        }
+    }
+    col
+}
+
+// ---------------------------------------------------------------------------
 // HR (thematic break) minimization.
 // ---------------------------------------------------------------------------
 
@@ -67,6 +95,12 @@ lazy_static! {
 /// handled separately in the cosmetic / layout-leader pass that lives
 /// outside this module).
 pub fn normalize_separator_line(line: &str) -> Option<String> {
+    // Indented code block: `≥4` leading columns. CommonMark renders any
+    // dash/underscore/asterisk run in this context as literal text, not
+    // as an HR — rewriting it would change preview.
+    if leading_columns(line) >= 4 {
+        return None;
+    }
     if !SEPARATOR_LINE_REGEX.is_match(line) {
         return None;
     }
@@ -106,11 +140,20 @@ pub fn scan_gfm_table_separators(text: &str) -> HashMap<usize, String> {
         if i == 0 {
             continue;
         }
+        // CommonMark: a leaf block starting at ≥4 leading columns is an
+        // indented code block, not a GFM table. If either the separator
+        // or its header lies at that indentation, leave both alone.
+        if leading_columns(line) >= 4 {
+            continue;
+        }
         let sep = match parse_gfm_separator_row(line) {
             Some(s) => s,
             None => continue,
         };
         let header = lines[i - 1];
+        if leading_columns(header) >= 4 {
+            continue;
+        }
         let header_cells = count_gfm_row_cells(header);
         if header_cells != sep.cells.len() {
             continue;
@@ -220,10 +263,16 @@ fn count_gfm_row_cells(line: &str) -> usize {
 /// this module's own `scan_gfm_table_separators` and
 /// `reflow_paragraphs`, and `cleaning_module::core_clean_text_with_stats`.
 ///
-/// Per CommonMark: `^ {0,3}(?:`{3,}|~{3,})[info]?$` roughly. We accept
-/// up to 3 leading spaces (beyond 3 = indented code block, different
-/// element).
+/// Per CommonMark: `^ {0,3}(?:`{3,}|~{3,})[info]?$` roughly. Caller
+/// MUST pass the raw (un-trimmed) line — at `≥4` leading columns the
+/// same visual shape is an indented code block, not a fence opener,
+/// and wrongly toggling fence state there would make the cleaner skip
+/// normalization on real prose (or, symmetrically, normalize inside
+/// a real fenced code block).
 pub fn is_code_fence_marker(line: &str) -> bool {
+    if leading_columns(line) >= 4 {
+        return false;
+    }
     let t = line.trim_start();
     // Require at least 3 backticks or 3 tildes.
     t.starts_with("```") || t.starts_with("~~~")
@@ -567,6 +616,34 @@ mod tests {
         assert_eq!(reps.len(), 2);
     }
 
+    // --- CommonMark indentation helper ---
+
+    #[test]
+    fn leading_columns_counts_spaces() {
+        assert_eq!(leading_columns(""), 0);
+        assert_eq!(leading_columns("abc"), 0);
+        assert_eq!(leading_columns(" abc"), 1);
+        assert_eq!(leading_columns("   abc"), 3);
+        assert_eq!(leading_columns("    abc"), 4);
+    }
+
+    #[test]
+    fn leading_columns_applies_tab_rule() {
+        // A tab advances to the next multiple of 4.
+        assert_eq!(leading_columns("\tabc"), 4);
+        assert_eq!(leading_columns(" \tabc"), 4);
+        assert_eq!(leading_columns("   \tabc"), 4);
+        assert_eq!(leading_columns("    \tabc"), 8);
+        // Two tabs.
+        assert_eq!(leading_columns("\t\tabc"), 8);
+    }
+
+    #[test]
+    fn leading_columns_ignores_non_leading_whitespace() {
+        assert_eq!(leading_columns("abc   "), 0);
+        assert_eq!(leading_columns("a\tb"), 0);
+    }
+
     // --- Fenced code detection ---
 
     #[test]
@@ -580,6 +657,35 @@ mod tests {
         assert!(!is_code_fence_marker("`inline`"));
         assert!(!is_code_fence_marker("``double``"));
         assert!(!is_code_fence_marker("no fence"));
+    }
+
+    #[test]
+    fn code_fence_rejects_at_four_leading_columns() {
+        // CommonMark: `≥4` leading columns = indented code block. The
+        // same visual shape is NOT a fence opener in that context.
+        assert!(!is_code_fence_marker("    ```"));
+        assert!(!is_code_fence_marker("    ```python"));
+        assert!(!is_code_fence_marker("    ~~~"));
+        // Tab counts as 4 columns.
+        assert!(!is_code_fence_marker("\t```"));
+        // Mixed-whitespace cases that add up to ≥4 columns.
+        assert!(!is_code_fence_marker("   \t```"));
+    }
+
+    #[test]
+    fn hr_and_gfm_rejected_at_four_leading_columns() {
+        // HR detector bails: `    ----` is indented code.
+        assert_eq!(normalize_separator_line("    ----"), None);
+        assert_eq!(normalize_separator_line("\t----"), None);
+        // 3 leading spaces still fine.
+        assert_eq!(normalize_separator_line("   ----"), Some("---".to_string()));
+
+        // GFM scanner: both separator and header must be outside
+        // indented-code range.
+        let indented_table = "\
+paragraph\n\n    | a | b |\n    | --- | --- |\n    | 1 | 2 |\n\nafter\n";
+        let reps = scan_gfm_table_separators(indented_table);
+        assert!(reps.is_empty(), "indented table must be left alone");
     }
 
     // --- Paragraph reflow ---
