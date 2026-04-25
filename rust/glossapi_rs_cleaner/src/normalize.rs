@@ -1312,6 +1312,64 @@ pub fn strip_glyph_markers(text: &str) -> String {
     GLYPH_MARKER_REGEX.replace_all(text, "").into_owned()
 }
 
+/// True if a line shows the Greek-CID-mojibake / Latin-Ext residue
+/// signature that warrants line-drop, replacing the older PAGE-level
+/// `counter_script_residue ≥ 9` rule with finer line-level granularity.
+///
+/// Combination of two rules empirically validated on the v7 sample
+/// `top500_by_counter_script_residue` (2.6 M body lines):
+///
+/// - **R1 (per-token)**: at least one whitespace-bounded token of
+///   length > 20 with > 10 % chars in U+0100..U+024F (Latin Ext-A/B).
+///   Catches PDF extractions that concatenated whole Greek phrases
+///   into single >20-char unbroken tokens of residue.
+/// - **R2 (per-line)**: longest consecutive residue run ≥ 4. Catches
+///   the structural mojibake pattern where 4+ Latin-Ext chars appear
+///   in a row — rare in legit foreign text (Polish/Czech/Turkish
+///   words have isolated diacritics, not chains).
+///
+/// On the v7 sample, R1∪R2 fires on 18,091 lines / 2.6 M (0.7 %).
+/// 76.6 % of residue chars on those lines are in Latin Extended-B
+/// (U+0180..U+024F — the Greek-CID-mojibake range) vs 47.4 %
+/// corpus-wide, indicating strong noise-class bias.
+pub fn is_residue_mojibake_line(line: &str) -> bool {
+    let mut max_run: usize = 0;
+    let mut cur_run: usize = 0;
+    let mut tok_len: usize = 0;
+    let mut tok_residue: usize = 0;
+    let mut r1_hit = false;
+    for ch in line.chars() {
+        let cp = ch as u32;
+        let is_residue = (0x0100..=0x024F).contains(&cp);
+        if is_residue {
+            cur_run += 1;
+            if cur_run > max_run {
+                max_run = cur_run;
+            }
+        } else {
+            cur_run = 0;
+        }
+        if ch.is_whitespace() {
+            // Token boundary — evaluate R1 on the just-finished token.
+            if tok_len > 20 && tok_residue * 10 > tok_len {
+                r1_hit = true;
+            }
+            tok_len = 0;
+            tok_residue = 0;
+        } else {
+            tok_len += 1;
+            if is_residue {
+                tok_residue += 1;
+            }
+        }
+    }
+    // End-of-line: evaluate the final token (no trailing whitespace).
+    if tok_len > 20 && tok_residue * 10 > tok_len {
+        r1_hit = true;
+    }
+    r1_hit || max_run >= 4
+}
+
 /// Strip inline base64-encoded image data URIs and replace each with
 /// the upstream-standard `<!-- image -->` placeholder. See the regex
 /// docstring for shape + size bounds.
@@ -1434,6 +1492,81 @@ mod wave2_tests {
         let input = "prefix GLYPH<c=3,font=/QCMXYA+CenturyGothic> suffix";
         assert_eq!(strip_glyph_markers(input), "prefix  suffix");
     }
+
+    // ---------- is_residue_mojibake_line (R1 ∪ R2) ----------
+
+    #[test]
+    fn residue_drop_R2_pure_residue_word_fires() {
+        // 12 consecutive Latin-Ext-B chars (Greek-CID rendering of
+        // ΑΡΙΣΤΟΤΕΛΕΙΟ). max_run = 12 → R2 fires.
+        let line = "ǹȇǿȈȉȅȉǼȁǼǿȅ ȆǹȃǼȆǿȈȉǾȂǿȅ ĬǼȈȈǹȁȅȃǿȀǾȈ";
+        assert!(is_residue_mojibake_line(line));
+    }
+
+    #[test]
+    fn residue_drop_R2_short_run_fires() {
+        // exactly 4 consecutive residue chars → R2 fires.
+        let line = "Greek prose ǹȇǿȈ followed by more Greek prose";
+        assert!(is_residue_mojibake_line(line));
+    }
+
+    #[test]
+    fn residue_drop_R2_run_of_3_does_not_fire() {
+        // 3 consecutive residue chars — below R2 threshold (≥4).
+        let line = "Greek prose ǹȇǿ followed by more Greek prose";
+        assert!(!is_residue_mojibake_line(line));
+    }
+
+    #[test]
+    fn residue_drop_R1_long_concatenated_token_fires() {
+        // One token of length 25 with 100% residue → R1 fires
+        // (>20 chars, >10% residue). Surrounding context is plain
+        // Latin so R2 doesn't fire on its own (max_run 25 actually
+        // also fires R2, but the point is R1 covers it independently).
+        let line = "context ǹȇǿȈȉȅȉǼȁǼǿȅȆǹȃǼȆǿȈȉǾ context";
+        assert!(is_residue_mojibake_line(line));
+    }
+
+    #[test]
+    fn residue_drop_legit_foreign_short_words_do_not_fire() {
+        // Bulgarian/Turkish names: each token is short, residue is
+        // a single isolated char per word. Neither R1 nor R2 fires.
+        let line = "Ljubomir Miletič and Márta Sebestyén signed the petition.";
+        assert!(!is_residue_mojibake_line(line),
+                "legit Bulgarian + Hungarian names should NOT be flagged");
+    }
+
+    #[test]
+    fn residue_drop_music_notation_oe_does_not_fire() {
+        // The Sample-2 false-positive case from R1-line-level: music
+        // notation with `œ` (U+0153) chars. Each `œ` is its own
+        // whitespace-separated token of length 1 — R1 ignores
+        // (token < 20). Run length = 1 — R2 doesn't fire.
+        let line = "| 3 ? ∑ | mp p œ œ œ #œ œ J ‰ | Œ Œ | 2 4 ∑ |";
+        assert!(!is_residue_mojibake_line(line),
+                "music notation with single œ tokens must not flag");
+    }
+
+    #[test]
+    fn residue_drop_mixed_run_of_5_fires() {
+        // Greek text where Docling injected a 5-char Latin-Ext-B run.
+        let line = "Καλημέρα ǹȇǿȈȉ κόσμε";
+        assert!(is_residue_mojibake_line(line));
+    }
+
+    #[test]
+    fn residue_drop_pure_greek_does_not_fire() {
+        let line = "Καλημέρα κόσμε όλοι";
+        assert!(!is_residue_mojibake_line(line));
+    }
+
+    #[test]
+    fn residue_drop_pure_ascii_does_not_fire() {
+        let line = "The quick brown fox jumps over the lazy dog";
+        assert!(!is_residue_mojibake_line(line));
+    }
+
+    // ---------- strip_base64_images ----------
 
     #[test]
     fn strip_base64_images_basic_jpeg() {

@@ -618,7 +618,8 @@ pub fn core_clean_text_with_stats(
 
         if !skip_bad_line_check
             && (BAD_LINE_AC.is_match(&post_rule_strip)
-                || has_decoded_glyph_font_artefact(&post_rule_strip))
+                || has_decoded_glyph_font_artefact(&post_rule_strip)
+                || normalize::is_residue_mojibake_line(&post_rule_strip))
         {
             let line_chars = line.chars().count();
             original_chars_for_badness += line_chars;

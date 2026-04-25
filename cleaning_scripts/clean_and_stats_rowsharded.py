@@ -252,22 +252,21 @@ def _process_row_shard(
                     }) + "\n")
                     continue
 
-                # Page-level drop for script_residue (granularity Gemini reviewed).
-                sr_threshold = thresholds.get("script_residue_restricted")
+                # Page-level script_residue rule REMOVED 2026-04-25.
+                # Replaced by the LINE-level R1 ∪ R2 rule in the Rust
+                # cleaner (`normalize::is_residue_mojibake_line` →
+                # invoked from `cleaning_module::core_clean_text_with_stats`
+                # alongside BAD_LINE_AC and has_decoded_glyph_font_artefact).
+                # The line-level rule is finer-grained (drops only the
+                # offending line, not a whole page) and was empirically
+                # validated on the v7 sample
+                # `top500_by_counter_script_residue` (2.6 M body lines).
+                # Kept the per-doc accounting fields below for backward
+                # compatibility with downstream consumers; they always
+                # report 0 now.
                 pages_dropped_sr = 0
                 chars_dropped_sr_pages = 0
-                if sr_threshold is not None and len(pages) > 1:
-                    surviving_page_text: List[str] = []
-                    for page in pages:
-                        page_sr = _page_script_residue_count(page)
-                        if page_sr >= sr_threshold:
-                            pages_dropped_sr += 1
-                            chars_dropped_sr_pages += int(page.get("page_char_count", 0) or 0)
-                            continue
-                        surviving_page_text.append(str(page.get("page_text", "")))
-                    text_for_cleaner = "\n".join(surviving_page_text) if pages_dropped_sr else text
-                else:
-                    text_for_cleaner = text
+                text_for_cleaner = text
 
                 # v6 wave-2 (2026-04-23): enable LaTeX repetition crop.
                 # Default thresholds (char=30, line=3) tuned for typical
