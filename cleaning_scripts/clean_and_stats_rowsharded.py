@@ -53,19 +53,25 @@ def _load_thresholds(path: Path) -> Dict[str, Optional[int]]:
 
 
 def _doc_drop_reason(doc_counters, thresholds):
-    """Only font_name_literal and glyph_font_like decide DOC-level drop.
-    script_residue_restricted is applied at PAGE level — Gemini
-    reviewed it at synthetic-page granularity, so we must apply the
-    threshold at that same granularity (not at doc level, which would
-    be an unreviewed generalization per feedback_dont_generalize_beyond_
-    test_parameters.md).
+    """Doc-level drop rules removed 2026-04-25.
+
+    `font_name_literal` and `glyph_font_like` doc-drops were removed
+    after the user observed that the line-drop rules in the Rust
+    cleaner already cover the same noise patterns at finer
+    granularity:
+
+    - `PDF_FONT_SUBSET_REGEX` line-drop uses the IDENTICAL pattern
+      `/[A-Z]{6}\\+[A-Z][A-Za-z0-9-]+` as the `font_name_literal`
+      counter — line-drop is strictly less destructive.
+    - `BAD_LINE_AC` + `GLYPH_FONT_TAG_REGEX` + `FONT_GLYPH_TAG_REGEX`
+      line-drops cover the structural-PDF-residue subset of
+      `glyph_font_like`. The 50 PostScript glyph names + `/uni`/`/g`
+      regex part of `glyph_font_like` is more aggressive but no
+      longer drives doc rejection.
+
+    The script_residue_restricted page-level rule is unaffected and
+    still applied separately in the main loop.
     """
-    for name in ("font_name_literal", "glyph_font_like"):
-        threshold = thresholds.get(name)
-        if threshold is None:
-            continue
-        if doc_counters.get(name, 0) >= threshold:
-            return f"counter:{name}"
     return ""
 
 
@@ -178,44 +184,16 @@ def _process_row_shard(
                 source_stem = _safe(f"{source_dataset}__{source_doc_id}")[:200]
                 base_stem = _safe(source_dataset)
 
-                # Pre-clean charset quality filter (2026-04-22 addition):
-                # three-rule drop. Thresholds re-calibrated after sub-agent
-                # Pre-clean charset analysis. Only `greek_letter_ratio`
-                # drives rejection by default (catches non-Greek docs in
-                # bilingual / HPLT slices). The moji + punct rules were
-                # removed 2026-04-25 after user review of v7
-                # `top500_by_charset_moji_ratio` and
-                # `top500_by_charset_punct_ratio` samples — neither
-                # signal's max value indicated an actual issue, and both
-                # produced ~3,090 false-positive rejects in v7. The
-                # ratios are still emitted in stats for review-time
-                # threshold studies and as optional levers.
-                #
-                # - greek_letter_ratio < 0.02 → not a Greek doc at all
-                #   (was 0.05; shifted down because bilingual Greek PhDs /
-                #   EU treaties / openarchives theses have substantial
-                #   Greek content but denominator is inflated by table
-                #   scaffolding, base64 blobs, LaTeX math, English refs —
-                #   agent found 9/25 false-drops at 0.05 cutoff)
+                # Pre-clean charset analysis. As of 2026-04-25, NO charset
+                # ratio drives a doc-level rejection here — the moji /
+                # punct / greek-low / counter-{glyph,font_name} rules
+                # were all removed after user review of v7 samples
+                # showed they were too aggressive. The ratios + counters
+                # are still emitted in the per-doc stats jsonl as
+                # diagnostic / threshold-study levers, and the line-drop
+                # rules in the Rust cleaner already cover the noise
+                # patterns these doc-drops were targeting.
                 cs = cleaner.analyze_charset(text)
-                if cs["greek_letter_ratio"] < 0.02:
-                    reason = "charset_greek_low"
-                    rows_dropped[reason] = rows_dropped.get(reason, 0) + 1
-                    total_chars_dropped += chars_before
-                    stats_fh.write(json.dumps({
-                        "source_path": source_path,
-                        "source_doc_id": source_doc_id,
-                        "source_dataset": source_dataset,
-                        "chars_before": chars_before, "chars_after": 0,
-                        "chars_removed": chars_before, "pct_removed": 100.0,
-                        "counter_font_marker": 0, "counter_glyph_marker": 0,
-                        "counter_script_residue": 0,
-                        "charset_greek_ratio": round(cs["greek_letter_ratio"], 4),
-                        "charset_moji_ratio": round(cs["moji_residue_ratio"], 4),
-                        "charset_punct_ratio": round(cs["ascii_punct_ratio"], 4),
-                        "drop_reason": reason,
-                    }) + "\n")
-                    continue
 
                 # write_files=False → skip the per-match .md disk writes that
                 # dominated wall time at 56 workers (see step-2 profiling).
