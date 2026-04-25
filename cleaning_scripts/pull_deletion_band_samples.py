@@ -196,7 +196,13 @@ def main():
     for d in _iter_stats(args.stats_glob,
                          ds_prefix_filter=DS_FILTER if DS_FILTER else None):
         if d.get("drop_reason"):
-            continue
+            # In top-by mode we WANT to see high-counter docs, including
+            # those that hit a doc-level rejection rule (counter:* /
+            # charset_*). Excluding them filters out exactly the
+            # interesting tail. Deletion-band mode keeps the skip — the
+            # band requires non-rejected docs.
+            if not args.top_by:
+                continue
         # Apply --dataset-filter early so the pool itself is restricted
         # (used for per-dataset elbow review, e.g. just openarchives).
         if DS_FILTER and d.get("source_dataset") not in DS_FILTER:
