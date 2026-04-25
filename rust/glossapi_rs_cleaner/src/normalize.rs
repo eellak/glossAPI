@@ -1173,6 +1173,31 @@ lazy_static! {
         r"GLYPH<[^>]{1,200}>|/uni[0-9A-Fa-f]{4,6}|/g(?:id)?\d+"
     ).unwrap();
 
+    /// Inline base64-encoded image data URIs that PDF extractors (e.g.
+    /// Docling) produce when they encounter embedded raster images. The
+    /// payload — `[A-Za-z0-9+/=]+` — can be hundreds of KB on a single
+    /// MD line, polluting the corpus with binary garbage that contributes
+    /// nothing to tokenizer training. We strip the entire markdown image
+    /// node and replace with the upstream-standard `<!-- image -->`
+    /// placeholder so position is preserved without the payload.
+    ///
+    /// Pattern shape: `![alt-text](data:image/jpg;base64,/9j/4AAQ…)`.
+    /// The alt-text is non-greedy, the MIME type is permissive
+    /// (`image/jpg`, `image/jpeg`, `image/png`, `image/gif` all observed
+    /// in the v7 corpus), and the base64 payload accepts the full RFC-4648
+    /// alphabet plus `=` padding plus whitespace breaks (some extractors
+    /// hard-wrap the base64 every 76 cols).
+    ///
+    /// `(?s)` (dotall) so the payload can span multiple lines if the
+    /// extractor wrapped it. Lower bound 200 chars for the base64
+    /// payload — a legit favicon-shaped data URI is typically much
+    /// smaller, while Docling's Image-N inlines are all multi-KB.
+    /// No upper bound (the bounded quantifier blew the regex DFA size
+    /// limit at 16 MB; unbounded keeps the compiled NFA small).
+    static ref BASE64_IMAGE_REGEX: Regex = Regex::new(
+        r"(?s)!\[[^\]]{0,500}\]\(data:image/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]{200,}\)"
+    ).unwrap();
+
     /// Adobe Symbol font PUA → real Unicode (Case 10a). 100% of the
     /// top-30 PUA chars observed on openarchives 01500_pct0033_… were
     /// recovered to real Greek / math chars via this mapping.
@@ -1287,6 +1312,20 @@ pub fn strip_glyph_markers(text: &str) -> String {
     GLYPH_MARKER_REGEX.replace_all(text, "").into_owned()
 }
 
+/// Strip inline base64-encoded image data URIs and replace each with
+/// the upstream-standard `<!-- image -->` placeholder. See the regex
+/// docstring for shape + size bounds.
+///
+/// Cheap fast-path: if the input doesn't contain `data:image/`, return
+/// unchanged (the regex compile is non-trivial and most docs are
+/// unaffected).
+pub fn strip_base64_images(text: &str) -> String {
+    if !text.contains("data:image/") {
+        return text.to_string();
+    }
+    BASE64_IMAGE_REGEX.replace_all(text, "<!-- image -->").into_owned()
+}
+
 /// Silently strip soft hyphens U+00AD (Case 13). Invisible format-only
 /// chars; their presence inflates `charset_moji_ratio` despite having
 /// no semantic content.
@@ -1394,6 +1433,61 @@ mod wave2_tests {
         // PDF extractors sometimes emit `GLYPH<c=N,font=/Subset+Family>`.
         let input = "prefix GLYPH<c=3,font=/QCMXYA+CenturyGothic> suffix";
         assert_eq!(strip_glyph_markers(input), "prefix  suffix");
+    }
+
+    #[test]
+    fn strip_base64_images_basic_jpeg() {
+        let payload = "/9j/4AAQSkZJRgABAQEAyADIAAD".to_string()
+            + &"X".repeat(500);  // realistic Docling-blob size
+        let input = format!("before ![Image 1](data:image/jpg;base64,{}) after", payload);
+        let out = strip_base64_images(&input);
+        assert_eq!(out, "before <!-- image --> after",
+                   "expected base64 image stripped, got: {:?}", out);
+    }
+
+    #[test]
+    fn strip_base64_images_multiple_payloads_in_doc() {
+        let payload = "A".repeat(500);
+        let input = format!(
+            "intro\n![](data:image/png;base64,{p}) caption A\n\
+             middle\n![](data:image/jpeg;base64,{p}) caption B\nend",
+            p = payload,
+        );
+        let out = strip_base64_images(&input);
+        assert!(!out.contains("base64,"), "still has base64: {:?}", out);
+        assert_eq!(out.matches("<!-- image -->").count(), 2);
+        // The non-image text and caption labels survive.
+        assert!(out.contains("intro"));
+        assert!(out.contains("caption A"));
+        assert!(out.contains("middle"));
+        assert!(out.contains("caption B"));
+        assert!(out.contains("end"));
+    }
+
+    #[test]
+    fn strip_base64_images_noop_when_absent() {
+        let input = "regular Greek prose χωρίς εικόνα";
+        assert_eq!(strip_base64_images(input), input);
+    }
+
+    #[test]
+    fn strip_base64_images_skips_legit_short_inline_data_uri() {
+        // Tiny inline data URI (< 200 chars in the payload) shouldn't
+        // match — the rule targets the multi-KB Docling blobs.
+        let input = "![pixel](data:image/png;base64,iVBORw0KGgo=)";
+        assert_eq!(strip_base64_images(input), input,
+                   "tiny payload (< 200 chars) should pass through");
+    }
+
+    #[test]
+    fn strip_base64_images_handles_alt_text_and_extra_whitespace() {
+        let payload = "B".repeat(300);
+        let input = format!(
+            "![Figure 3 — Schematic of the apparatus](data:image/png;base64,{}\n)",
+            payload,
+        );
+        let out = strip_base64_images(&input);
+        assert_eq!(out, "<!-- image -->");
     }
 
     #[test]

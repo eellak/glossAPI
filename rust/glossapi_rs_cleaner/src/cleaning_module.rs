@@ -446,7 +446,14 @@ pub fn core_clean_text_with_stats(
     let step2 = normalize::decode_adobe_symbol_pua(&step1);
     let step3 = normalize::strip_glyph_markers(&step2);
     let step4 = normalize::strip_soft_hyphens(&step3);
-    let step5 = md_module::normalize_md_syntax(&step4);
+    // Strip inline base64 image data URIs (Docling-extracted PDFs
+    // embed JPEG/PNG payloads as `![alt](data:image/jpg;base64,…)`,
+    // hundreds of KB per image). Replace with the upstream-standard
+    // `<!-- image -->` placeholder so downstream Phase A still sees
+    // the position. This must run BEFORE Phase A so the md module
+    // doesn't see massive unbroken lines.
+    let step4b = normalize::strip_base64_images(&step4);
+    let step5 = md_module::normalize_md_syntax(&step4b);
     let wave2_out_len = step5.chars().count();
     let wave2_preprocessing_delta = wave2_in_len.saturating_sub(wave2_out_len);
     // Re-alias `text` so the rest of the function sees the preprocessed
