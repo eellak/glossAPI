@@ -267,6 +267,21 @@ def main():
                 return float(v) if v is not None else 0.0
             except (TypeError, ValueError):
                 return 0.0
+        # Apply PDF-source filter to the top-by pool (was previously
+        # only applied in the n_low/n_high branch — bug fixed
+        # 2026-04-25).
+        if args.pdf_sources_only and not DS_FILTER:
+            before = len(top_pool)
+            top_pool = [r for r in top_pool
+                        if r.get("source_dataset") in PDF_SOURCES]
+            print(f"  top-by PDF-source filter: {before:,} → {len(top_pool):,}")
+        # Floor: drop records with metric==0 from the pool. Otherwise
+        # the tail of top-N is padded with zero-valued docs (which by
+        # definition aren't "top" anything).
+        before_floor = len(top_pool)
+        top_pool = [r for r in top_pool if _key(r) > 0]
+        if before_floor != len(top_pool):
+            print(f"  top-by zero-floor filter: {before_floor:,} → {len(top_pool):,}")
         top_pool.sort(key=lambda r: (_key(r), str(r.get("source_doc_id"))),
                       reverse=True)
         picks = top_pool[: args.top_n]
@@ -444,6 +459,14 @@ def main():
             f"- charset_punct_ratio: {rec.get('charset_punct_ratio')}",
             f"- **mojibake_noise_ratio (moji + punct)**: "
             f"{rec.get('mojibake_noise_ratio', round((float(rec.get('charset_moji_ratio') or 0) + float(rec.get('charset_punct_ratio') or 0)), 4))}",
+            "",
+            f"## Three-counter matcher scores (doc-level totals)",
+            "",
+            f"- counter_font_marker (font_name_literal): {rec.get('counter_font_marker')}",
+            f"- counter_glyph_marker (glyph_font_like): {rec.get('counter_glyph_marker')}",
+            f"- counter_script_residue (script_residue_restricted): {rec.get('counter_script_residue')}",
+            f"- pages_dropped_script_residue (page-level rule): {rec.get('pages_dropped_script_residue', 0)}",
+            f"- chars_dropped_script_residue_pages: {rec.get('chars_dropped_script_residue_pages', 0)}",
             "",
             f"## Upstream pre-existing scores (preserve, do not overwrite)",
             "",
