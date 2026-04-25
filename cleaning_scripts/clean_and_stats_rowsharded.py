@@ -180,13 +180,17 @@ def _process_row_shard(
 
                 # Pre-clean charset quality filter (2026-04-22 addition):
                 # three-rule drop. Thresholds re-calibrated after sub-agent
-                # review on borderline bands:
-                # - moji_residue_ratio > 0.25 → Latin-1/IPA/PUA mojibake
-                #   (was 0.30; shifted down to catch MacGreek/PUA-Greek
-                #   encoding leakage in 0.21-0.27 band — agent found ~3/11
-                #   false-negatives at 0.30 cutoff)
-                # - ascii_punct_ratio  > 0.30 → font-substitution mojibake
-                #   (kept 0.30; 0 miscalls on agent review)
+                # Pre-clean charset analysis. Only `greek_letter_ratio`
+                # drives rejection by default (catches non-Greek docs in
+                # bilingual / HPLT slices). The moji + punct rules were
+                # removed 2026-04-25 after user review of v7
+                # `top500_by_charset_moji_ratio` and
+                # `top500_by_charset_punct_ratio` samples — neither
+                # signal's max value indicated an actual issue, and both
+                # produced ~3,090 false-positive rejects in v7. The
+                # ratios are still emitted in stats for review-time
+                # threshold studies and as optional levers.
+                #
                 # - greek_letter_ratio < 0.02 → not a Greek doc at all
                 #   (was 0.05; shifted down because bilingual Greek PhDs /
                 #   EU treaties / openarchives theses have substantial
@@ -194,14 +198,8 @@ def _process_row_shard(
                 #   scaffolding, base64 blobs, LaTeX math, English refs —
                 #   agent found 9/25 false-drops at 0.05 cutoff)
                 cs = cleaner.analyze_charset(text)
-                if (cs["moji_residue_ratio"] > 0.25
-                        or cs["ascii_punct_ratio"] > 0.30
-                        or cs["greek_letter_ratio"] < 0.02):
-                    reason = (
-                        "charset_moji" if cs["moji_residue_ratio"] > 0.25
-                        else "charset_punct" if cs["ascii_punct_ratio"] > 0.30
-                        else "charset_greek_low"
-                    )
+                if cs["greek_letter_ratio"] < 0.02:
+                    reason = "charset_greek_low"
                     rows_dropped[reason] = rows_dropped.get(reason, 0) + 1
                     total_chars_dropped += chars_before
                     stats_fh.write(json.dumps({
