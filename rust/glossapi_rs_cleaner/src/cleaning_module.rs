@@ -62,6 +62,69 @@ pub struct CleanStats {
     // Back-compat fields used by `perform_text_analysis` for badness scoring.
     pub original_chars_for_badness: usize,
     pub sum_kept_line_content_chars: usize,
+    /// CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 9 / Q4 wiring.
+    /// Reason `format_surgical_checked` fell back to the input verbatim
+    /// instead of accepting its rewrite. `None` when the rewrite was
+    /// shipped, or when Phase A ran in `LineBased` mode (no oracle).
+    pub phase_a_fallback_reason: Option<String>,
+    /// True if `format_surgical_checked` flagged the input as
+    /// dialect-ambiguous (two parsers disagreed on input rendering).
+    pub phase_a_dialect_ambiguous_input: bool,
+    /// CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 7 wiring —
+    /// per-rule match counts. The cleaner emits these as a SIDE
+    /// EFFECT of cleaning, replacing the standalone matcher crate's
+    /// per-doc counters. Aligned by construction with what the
+    /// cleaner actually acts on, so sample-cut and review-wave
+    /// scripts can sort by these without drift.
+    ///
+    /// Counts are summed across all lines in the doc:
+    ///   - `rule_a_match_count`: total Rule A literal hits
+    ///     (PostScript glyph names like `/space`, `/period`).
+    ///   - `rule_b_match_count`: total Rule B regex hits
+    ///     (`GLYPH<…>`, `<c=…,font=/…>glyph`, font subsets,
+    ///     `/uniXXXX`, `/gN`).
+    ///   - `residue_line_drop_count`: lines dropped by R1 ∪ R2
+    ///     (`is_residue_mojibake_line`).
+    pub rule_a_match_count: u64,
+    pub rule_b_match_count: u64,
+    pub residue_line_drop_count: u64,
+}
+
+/// Phase A integration mode (CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25
+/// Point 9, Q4 in `AGENT_COORDINATION.md`). Default flipped to
+/// `ParserSurgicalVerified` 2026-04-25 per user direction ("Pilot B
+/// is clearly the better choice"). The checked wrapper guarantees
+/// input-verbatim fallback whenever the cmark-gfm / dual-parser
+/// oracle disagrees, so the default-flip cannot regress preview.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PhaseAMode {
+    /// Legacy line-based normalization via `md_module::normalize_md_syntax`.
+    /// Kept as an explicit-opt-in for diff-against-baseline scorecard
+    /// runs and any caller that needs the historical behaviour.
+    LineBased,
+    /// Pilot B (`md_format_surgical::format_surgical`) without oracle
+    /// checking. Useful for scorecard runs that want raw rewrite output.
+    ParserSurgical,
+    /// Pilot B with the safe checked wrapper
+    /// (`md_format_surgical::format_surgical_checked`). On any oracle
+    /// disagreement, ships input verbatim and records `fallback_reason`.
+    /// PRODUCTION DEFAULT.
+    #[default]
+    ParserSurgicalVerified,
+}
+
+impl PhaseAMode {
+    /// Parse from the PyO3 string used by Python callers. Unrecognised
+    /// or empty strings fall back to the production default
+    /// (`ParserSurgicalVerified`).
+    pub fn from_str_or_default(s: &str) -> Self {
+        match s {
+            "line_based" => PhaseAMode::LineBased,
+            "parser_surgical" => PhaseAMode::ParserSurgical,
+            "parser_surgical_verified" | "" => PhaseAMode::ParserSurgicalVerified,
+            _ => PhaseAMode::ParserSurgicalVerified,
+        }
+    }
 }
 
 lazy_static! {
@@ -74,24 +137,35 @@ lazy_static! {
 
     // Regex for HTML comments (captures the whole comment) - STILL USED
     pub static ref COMMENT_REGEX: Regex = Regex::new(r"<!--.*?-->").unwrap();
-    pub static ref GLYPH_FONT_TAG_REGEX: Regex =
-        Regex::new(r"(?i)glyph<c=\d+,font=/[^>]+>").unwrap();
-    pub static ref FONT_GLYPH_TAG_REGEX: Regex =
-        Regex::new(r"(?i)<c=\d+,font=/[^>]+>glyph").unwrap();
     pub static ref DOT_LEADER_RUN_REGEX: Regex = Regex::new(r"\.{4,}").unwrap();
-    // PostScript-glyph-name residue from PDF extraction. `/uni<hex>` is the
-    // Unicode-codepoint glyph-name form (e.g. /uni03B1 for α); `/gid<N>` is
-    // the glyph-ID form. Both appear when a PDF extractor dumps raw Adobe
-    // glyph names instead of decoding to Unicode. Probe on openarchives.gr
-    // first 5k rows (2026-04-21) found 45 docs / 68,510 total hits for
-    // /uni<hex> and 24 docs / 19,085 hits for /gid<N> — catastrophic
-    // corruption never caught by the current BAD_LINE_AC triggers.
-    pub static ref PDF_GLYPH_NAME_REGEX: Regex =
-        Regex::new(r"/uni[0-9A-Fa-f]{4,6}|/g(?:id)?\d+").unwrap();
-    // PDF font-subset naming convention /<6-uppercase>+<FontName>
-    // (e.g. /XQDMQS+CenturyGothic, /NUMPTY+ImprintMTnum).
-    pub static ref PDF_FONT_SUBSET_REGEX: Regex =
-        Regex::new(r"/[A-Z]{6}\+[A-Z][A-Za-z0-9-]+").unwrap();
+    /// Three-or-more consecutive newlines. Collapsed to exactly two
+    /// (one blank line) at the end of `core_clean_text_with_stats_with_mode`.
+    /// CommonMark renders any number of blank lines as one block
+    /// separator, so this collapse is lossless under preview. Catches
+    /// the pattern where per-char strip empties adjacent single-char
+    /// lines (e.g. PUA bracket glyphs not in the Adobe Symbol fold map)
+    /// and the surrounding `\n\n` separators accumulate.
+    pub static ref BLANK_LINE_RUN_REGEX: Regex = Regex::new(r"\n{3,}").unwrap();
+    // Unified Rule B regex per CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25
+    // Points 1+4+5. Single regex covering ALL PostScript-glyph and
+    // PDF-font residue patterns. Every alternative is anchored on
+    // structural punctuation (`<`, `/`, `+`, `=`, digits) — NO bare-
+    // word matches.
+    //
+    //   GLYPH<…>                              — bracket form, up to 200 chars
+    //   glyph<c=…,font=/…>                    — verbose forward form
+    //   <c=…,font=/…>glyph                    — reversed-order form
+    //   /[A-Z]{6}+FontName                    — PDF font subset
+    //   /uni<hex 4-6>                         — Unicode codepoint reference
+    //   /g<digits> or /gid<digits>            — glyph index
+    //
+    // Rule A's 50 PostScript glyph-name LITERALS (/space, /period,
+    // /hyphenminus, …, CID+) are kept as a separate Aho-Corasick
+    // engine (RULE_A_LITERALS_AC below) for speed but contribute to
+    // the SAME count + coverage line-drop gate (Point 5).
+    pub static ref PDF_GLYPH_NAME_REGEX: Regex = Regex::new(
+        r"(?i)GLYPH<[^>]{1,200}>|glyph<c=\d+,font=/[^>]+>|<c=\d+,font=/[^>]+>glyph|/[A-Z]{6}\+[A-Z][A-Za-z0-9-]+|/uni[0-9A-Fa-f]{4,6}|/g(?:id)?\d+"
+    ).unwrap();
 
     // Regex for HTML/XML tags (for cleaning, non-comment tags) - Replaced by strip_tags_custom
     // pub static ref ANY_TAG_CLEANING_REGEX: Regex = Regex::new(r"<[^>]*>").unwrap();
@@ -154,29 +228,40 @@ lazy_static! {
         map.insert("common_symbols".to_string(), common_symbols_set);
 
         let mut unusual_chars = HashSet::new();
-        for code in 0x0080..0x0100 { // Latin-1 Supplement
-            if let Some(c) = std::char::from_u32(code) {
-                if !french_specific.contains(c) && !spanish_specific.contains(c) &&
-                   !accented_greek.contains(c) && !common_symbols.contains(c) &&
-                   !punctuation.contains(c) {
-                    unusual_chars.insert(c);
-                }
+        // Per CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 3:
+        //
+        //   - Latin-1 Supplement (U+0080..U+00FF): KEEP entirely.
+        //     French/Spanish/German/Italian/Nordic accented letters
+        //     plus the few formatting symbols (¬ ¦ ¨ ª ¶) — all
+        //     European content, none belong in `unusual`.
+        //   - Latin Extended-A (U+0100..U+017F): KEEP entirely.
+        //     Polish/Czech/Slovak/Hungarian/Croatian/Romanian-most/
+        //     Turkish/Maltese/Welsh — all European-language content.
+        //   - Latin Extended-B (U+0180..U+024F): STRIP, EXCEPT the
+        //     Romanian comma-below allowlist {Ș, ș, Ț, ț}. Mostly
+        //     Vietnamese / African / IPA-like / Greek-CID-mojibake.
+        //   - IPA Extensions: STRIP.
+        //   - Latin Extended Additional: STRIP (Vietnamese).
+        //   - Coptic: STRIP (not modern Greek corpus content).
+        //   - Cyrillic + Cyrillic Supp (U+0400..U+052F): KEEP entirely.
+        //     Russian/Bulgarian/Serbian/Ukrainian/Macedonian — all
+        //     European-language content the corpus may carry.
+        //
+        // Dense-residue mojibake (where these European-allowed chars
+        // appear in clustered Greek-CID extraction-failure runs) is
+        // caught at LINE granularity by Rule B + R1∪R2, not at
+        // per-char granularity here.
+        const ROMANIAN_ALLOWLIST: [u32; 4] = [0x0218, 0x0219, 0x021A, 0x021B];
+        for code in 0x0180..0x0250 {
+            if ROMANIAN_ALLOWLIST.contains(&code) {
+                continue;
             }
+            unusual_chars.extend(std::char::from_u32(code));
         }
-        for code in 0x0100..0x0180 { // Latin Extended-A
-            if let Some(c) = std::char::from_u32(code) {
-                if !french_specific.contains(c) && !spanish_specific.contains(c) {
-                    unusual_chars.insert(c);
-                }
-            }
-        }
-        for code in 0x0180..0x0250 { unusual_chars.extend(std::char::from_u32(code)); } // Latin Extended-B
         for code in 0x0250..0x02B0 { unusual_chars.extend(std::char::from_u32(code)); } // IPA Extensions
         for code in 0x1E00..0x1F00 { unusual_chars.extend(std::char::from_u32(code)); } // Latin Extended Additional
         for code in 0x03E2..0x03F0 { unusual_chars.extend(std::char::from_u32(code)); } // Coptic from Greek block
         for code in 0x2C80..0x2D00 { unusual_chars.extend(std::char::from_u32(code)); } // Dedicated Coptic block
-        for code in 0x0400..0x0500 { unusual_chars.extend(std::char::from_u32(code)); } // Cyrillic block
-        for code in 0x0500..0x0530 { unusual_chars.extend(std::char::from_u32(code)); } // Cyrillic Supplement
         // Armenian, Hebrew, Arabic, Georgian, Math Alphanumeric Greek etc.
         // are INTENTIONALLY NOT stripped here. Policy (2026-04-21): we only
         // add a range to `unusual` (strip) when the codepoints carry no
@@ -191,36 +276,22 @@ lazy_static! {
     };
 }
 
-// Artefact triggers for Aho-Corasick (Step 2.1)
-//
-// Expanded 2026-04-21 to cover PostScript glyph-name residue from PDF
-// extraction that was previously missed. The five-char `GLYPH` literal
-// (without `<` after) matched 172 docs / 84,798 hits in an openarchives
-// probe of 5,000 rows — catastrophic noise that passed through
-// unrejected because the original set only matched `GLYPH<`. PS glyph
-// names like /hyphenminus, /space, /period are appended too (see
-// `glyph_marker_extended_spec.md`).
-// Structural-PDF-residue triggers: line gets dropped (emits
-// LINE_REMOVED_COMMENT). These are whole-line PDF-extractor artefact
-// markers with zero legitimate-prose use.
-static BAD_LINE_AC: Lazy<AhoCorasick> = Lazy::new(|| {
-    AhoCorasick::new([
-        "glyph<c=",
-        "glyph&lt;c=",
-        "GLYPH<",
-        "GLYPH&lt;",
-        "MS-Bold-",
-        "font=/",
-        "FontName=",
-        "GLYPH",        // bare word — 84k hits in 172 docs per 5k-row probe
-        "hyphenminus",  // bare PostScript glyph name (not a real word)
-    ])
-    .unwrap()
-});
+// `BAD_LINE_AC` was deleted in CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25
+// Point 4. Its structural triggers (`GLYPH<`, `glyph<c=`, `font=/`,
+// reversed `<c=…,font=/…>glyph`) are all subsumed by the unified
+// `PDF_GLYPH_NAME_REGEX` above. Its bare-word triggers (`GLYPH`,
+// `hyphenminus`, `MS-Bold-`, `FontName=`) are explicitly REMOVED per
+// the no-bare-words rule — Rule B detects only structurally-anchored
+// patterns. End result: one line-drop engine for PostScript glyph
+// residue (Rule B), not four.
 
-// Rule A literals — PostScript glyph-name + CID prefix. Gemini wave on
-// 1000 sampled lines (2026-04-22) showed 86.5% span-drop preferred.
-// Stripped inline as spans; never triggers line-removal on their own.
+// Rule A literals — 50 PostScript glyph-name forms + CID prefix.
+// Gemini wave on 1000 sampled lines (2026-04-22) showed 86.5% of
+// hits prefer span-strip (don't line-drop on a single literal).
+// Per Point 5, Rule A's match COUNT now contributes to Rule B's
+// gate — a line of 20× `/space` markers reaches the count + coverage
+// threshold and drops as a CMap dump, while a line with 1-2 stray
+// markers continues to pass through with the markers stripped.
 static RULE_A_LITERALS_AC: Lazy<AhoCorasick> = Lazy::new(|| {
     // LeftmostLongest prevents `/hyphen` from eating the `/hyphen` prefix
     // of `/hyphenminus` (leaving "minus" residue). Same concern for
@@ -245,30 +316,47 @@ static RULE_A_LITERALS_AC: Lazy<AhoCorasick> = Lazy::new(|| {
         .unwrap()
 });
 
-/// Strip rule A + rule B matches from a line. Rule A is always span-
-/// stripped. For rule B (PDF_GLYPH_NAME_REGEX = /uni<hex> | /g<N>),
-/// also check the coverage predicate: if rule-B match count ≥ 10
-/// AND rule-B-matches / non-whitespace-length ≥ 0.09, the line is
-/// flagged for removal (caller emits LINE_REMOVED_COMMENT).
+/// Per-line output of `apply_glyph_span_strip_and_rule_b`.
+struct GlyphStripResult {
+    stripped: String,
+    line_drop: bool,
+    rule_a_count: usize,
+    rule_b_count: usize,
+}
+
+/// Strip Rule A literal spans + Rule B regex spans from a line, and
+/// flag the line for removal if combined Rule A + Rule B match count
+/// reaches the count+coverage gate.
 ///
-/// Gemini wave (2026-04-22, 1000 rule-B cases): coverage ≥ 0.10
-/// alone gave precision 95.7% / recall 82%. User chose the more
-/// conservative `count ≥ 10 AND coverage ≥ 0.09` (precision 96.3%,
-/// recall 60.4% — trades recall for precision).
+/// CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Points 4 + 5:
+///   - PDF_GLYPH_NAME_REGEX (Rule B) is the unified PostScript-glyph
+///     /font residue regex (GLYPH<…>, <c=…,font=/…>glyph, font subset,
+///     /uniXXXX, /gN).
+///   - Rule A's 50 PostScript-name LITERALS contribute to the SAME
+///     count+coverage gate (instead of being span-strip-only as before).
+///   - Bare-word matchers (`GLYPH`, `hyphenminus`, etc.) are
+///     intentionally NOT in either engine — only structurally-anchored
+///     patterns participate.
 ///
-/// Returns (stripped_line, rule_b_line_drop_flag).
-fn apply_glyph_span_strip_and_rule_b(line: &str) -> (String, bool) {
-    // Count rule B matches before we strip
+/// Gate: `(count_A + count_B) ≥ 10 AND (count_A + count_B) /
+/// non_ws_chars ≥ 0.09` → line drops.
+///
+/// Per-rule counts are returned for Point 7's per-doc accumulation
+/// in `CleanStats`.
+fn apply_glyph_span_strip_and_rule_b(line: &str) -> GlyphStripResult {
+    // Count rule A and rule B hits BEFORE stripping.
+    let rule_a_count = RULE_A_LITERALS_AC.find_iter(line).count();
     let rule_b_count = PDF_GLYPH_NAME_REGEX.find_iter(line).count();
+    let combined_count = rule_a_count + rule_b_count;
     let non_ws_len = line.chars().filter(|c| !c.is_whitespace()).count();
-    let rule_b_coverage = if non_ws_len > 0 {
-        rule_b_count as f64 / non_ws_len as f64
+    let coverage = if non_ws_len > 0 {
+        combined_count as f64 / non_ws_len as f64
     } else {
         0.0
     };
-    let rule_b_line_drop = rule_b_count >= 10 && rule_b_coverage >= 0.09;
+    let line_drop = combined_count >= 10 && coverage >= 0.09;
 
-    // Strip rule A literal spans
+    // Strip rule A literal spans first.
     let mut out = String::with_capacity(line.len());
     let mut last_end = 0;
     for m in RULE_A_LITERALS_AC.find_iter(line) {
@@ -276,22 +364,16 @@ fn apply_glyph_span_strip_and_rule_b(line: &str) -> (String, bool) {
         last_end = m.end();
     }
     out.push_str(&line[last_end..]);
-    // Strip rule B regex spans (subsequent pass — RULE_A shouldn't overlap)
+    // Strip rule B regex spans (subsequent pass — RULE_A shouldn't overlap
+    // since the regex requires `<`/digits/+ punctuation that the literal
+    // /<name> patterns don't contain).
     let stripped = PDF_GLYPH_NAME_REGEX.replace_all(&out, "").into_owned();
-    (stripped, rule_b_line_drop)
-}
-
-fn has_decoded_glyph_font_artefact(line: &str) -> bool {
-    // GLYPH_FONT_TAG_REGEX / FONT_GLYPH_TAG_REGEX are structural PDF
-    // font-tag residue; PDF_FONT_SUBSET_REGEX (/XQDMQS+CenturyGothic)
-    // is the Adobe font-subset convention. All stay as whole-line
-    // drop triggers (user-review classification: ✅).
-    //
-    // PDF_GLYPH_NAME_REGEX is now handled by apply_glyph_span_strip_
-    // and_rule_b per the 2026-04-22 Gemini wave.
-    GLYPH_FONT_TAG_REGEX.is_match(line)
-        || FONT_GLYPH_TAG_REGEX.is_match(line)
-        || PDF_FONT_SUBSET_REGEX.is_match(line)
+    GlyphStripResult {
+        stripped,
+        line_drop,
+        rule_a_count,
+        rule_b_count,
+    }
 }
 
 fn is_unicode_noise_char(ch: char) -> bool {
@@ -422,11 +504,39 @@ pub fn core_clean_text(
 /// Core text cleaning function with full char accounting.
 ///
 /// See `CleanStats` for the invariant and field meanings.
+///
+/// Defaults to `PhaseAMode::ParserSurgicalVerified` (Pilot B with
+/// the safe checked wrapper) per CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25
+/// Point 9. Callers that explicitly want the legacy line-based
+/// `md_module::normalize_md_syntax` path should call
+/// `core_clean_text_with_stats_with_mode(..., PhaseAMode::LineBased)`.
 pub fn core_clean_text_with_stats(
     text: &str,
     allowed_chars: &HashSet<char>,
     unusual_chars_set: &HashSet<char>,
     min_chars_for_comment_override: Option<usize>,
+) -> (String, CleanStats) {
+    core_clean_text_with_stats_with_mode(
+        text,
+        allowed_chars,
+        unusual_chars_set,
+        min_chars_for_comment_override,
+        PhaseAMode::default(),
+    )
+}
+
+/// Mode-explicit core entry. Branches Phase A on `phase_a_mode`:
+///   - `LineBased`              → `md_module::normalize_md_syntax`.
+///   - `ParserSurgical`         → `md_format_surgical::format_surgical`.
+///   - `ParserSurgicalVerified` → `md_format_surgical::format_surgical_checked`,
+///     populates `phase_a_fallback_reason` and
+///     `phase_a_dialect_ambiguous_input` in the returned `CleanStats`.
+pub fn core_clean_text_with_stats_with_mode(
+    text: &str,
+    allowed_chars: &HashSet<char>,
+    unusual_chars_set: &HashSet<char>,
+    min_chars_for_comment_override: Option<usize>,
+    phase_a_mode: PhaseAMode,
 ) -> (String, CleanStats) {
     // -----------------------------------------------------------------
     // Wave-2 preprocessing (Cases 4, 7, 10a, 8 — 2026-04-23).
@@ -442,18 +552,38 @@ pub fn core_clean_text_with_stats(
     // identified as tables BEFORE reflow decides whether to fuse rows.
     // -----------------------------------------------------------------
     let wave2_in_len = text.chars().count();
+    // Pre-pass shape after CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Points 2+4:
+    //   1. HTML entities (multi-char sequence → single codepoint).
+    //   2. Inline base64 image data URIs (Docling JPEG/PNG payloads
+    //      replaced with `<!-- image -->` so Phase A doesn't see
+    //      massive unbroken lines).
+    //   3. Markdown formatting (md_module).
+    //
+    // Removed in Point 2: `decode_adobe_symbol_pua`, `strip_soft_hyphens`
+    // (now per-line via fold_codepoint / is_unicode_noise_char).
+    // Removed in Point 4: `strip_glyph_markers` (subsumed by the
+    // per-line Rule B regex which strips the same patterns AND
+    // line-drops dense ones via the count/coverage gate).
     let step1 = normalize::decode_html_entities(text);
-    let step2 = normalize::decode_adobe_symbol_pua(&step1);
-    let step3 = normalize::strip_glyph_markers(&step2);
-    let step4 = normalize::strip_soft_hyphens(&step3);
-    // Strip inline base64 image data URIs (Docling-extracted PDFs
-    // embed JPEG/PNG payloads as `![alt](data:image/jpg;base64,…)`,
-    // hundreds of KB per image). Replace with the upstream-standard
-    // `<!-- image -->` placeholder so downstream Phase A still sees
-    // the position. This must run BEFORE Phase A so the md module
-    // doesn't see massive unbroken lines.
-    let step4b = normalize::strip_base64_images(&step4);
-    let step5 = md_module::normalize_md_syntax(&step4b);
+    let step4b = normalize::strip_base64_images(&step1);
+    // Phase A — mode-selectable per Q4 / Point 9. Default
+    // `ParserSurgicalVerified` (Pilot B with the safe checked wrapper)
+    // surfaces fallback signals into `CleanStats`. `LineBased` is
+    // the explicit-opt-in legacy path for diff-against-baseline runs.
+    let mut phase_a_fallback_reason: Option<String> = None;
+    let mut phase_a_dialect_ambiguous_input = false;
+    let step5 = match phase_a_mode {
+        PhaseAMode::LineBased => md_module::normalize_md_syntax(&step4b),
+        PhaseAMode::ParserSurgical => {
+            crate::md_format_surgical::format_surgical(&step4b)
+        }
+        PhaseAMode::ParserSurgicalVerified => {
+            let r = crate::md_format_surgical::format_surgical_checked(&step4b);
+            phase_a_fallback_reason = r.fallback_reason;
+            phase_a_dialect_ambiguous_input = r.dialect_ambiguous_input;
+            r.output
+        }
+    };
     let wave2_out_len = step5.chars().count();
     let wave2_preprocessing_delta = wave2_in_len.saturating_sub(wave2_out_len);
     // Re-alias `text` so the rest of the function sees the preprocessed
@@ -466,6 +596,13 @@ pub fn core_clean_text_with_stats(
     let min_comment_chars = min_chars_for_comment_override.unwrap_or(5);
     let mut cleaned_output_string_builder = String::new(); // Used to build the final string with newlines
     let mut original_chars_for_badness: usize = 0; // Sum of original line content lengths (excluding their newlines)
+
+    // Point 7: per-doc per-rule match counts (replaces the standalone
+    // matcher crate's counters by accumulating directly inside the
+    // cleaner). Aligned by construction with cleaner activity.
+    let mut rule_a_match_count: u64 = 0;
+    let mut rule_b_match_count: u64 = 0;
+    let mut residue_line_drop_count: u64 = 0;
 
     // New counter for the sum of *content characters* of lines added to the output,
     // before specific placeholder penalties are applied.
@@ -521,7 +658,7 @@ pub fn core_clean_text_with_stats(
     // all normalizations so code indentation and punctuation survive intact.
     let mut in_code_fence = false;
 
-    for (line_index, line) in text.lines().enumerate() {
+    for (_line_index, line) in text.lines().enumerate() {
         let trimmed_line = line.trim();
         if trimmed_line == TEXT_MISSING_COMMENT {
             let line_chars = line.chars().count();
@@ -600,10 +737,14 @@ pub fn core_clean_text_with_stats(
             rule_b_line_drop = false;
             line_after_entity_decoding_str.clone()
         } else {
-            let (stripped, drop) =
-                apply_glyph_span_strip_and_rule_b(&line_after_entity_decoding_str);
-            rule_b_line_drop = drop;
-            stripped
+            let r = apply_glyph_span_strip_and_rule_b(&line_after_entity_decoding_str);
+            // Point 7: accumulate per-rule match counts even when the
+            // gate doesn't fire — these feed `CleanStats.rule_a_match_count`
+            // / `rule_b_match_count` for sample-cutting downstream.
+            rule_a_match_count += r.rule_a_count as u64;
+            rule_b_match_count += r.rule_b_count as u64;
+            rule_b_line_drop = r.line_drop;
+            r.stripped
         };
         if rule_b_line_drop {
             let line_chars = line.chars().count();
@@ -616,11 +757,21 @@ pub fn core_clean_text_with_stats(
             continue;
         }
 
+        // After CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 4 the
+        // line-drop check has TWO independent engines, both line-level
+        // threshold rules:
+        //   - Rule B's count + coverage gate (already evaluated above
+        //     by `apply_glyph_span_strip_and_rule_b`, surfaced via the
+        //     `rule_b_line_drop` path).
+        //   - `is_residue_mojibake_line` (R1 ∪ R2): residue-density
+        //     mojibake signature.
+        // `BAD_LINE_AC` (literal-set) and `has_decoded_glyph_font_artefact`
+        // (regex-set) were both subsumed by Rule B's regex.
         if !skip_bad_line_check
-            && (BAD_LINE_AC.is_match(&post_rule_strip)
-                || has_decoded_glyph_font_artefact(&post_rule_strip)
-                || normalize::is_residue_mojibake_line(&post_rule_strip))
+            && normalize::is_residue_mojibake_line(&post_rule_strip)
         {
+            // Point 7: count R1∪R2 line drops for downstream sampling.
+            residue_line_drop_count += 1;
             let line_chars = line.chars().count();
             original_chars_for_badness += line_chars;
             chars_dropped_by_line_drop += line_chars;
@@ -855,6 +1006,22 @@ pub fn core_clean_text_with_stats(
 
     let mut final_cleaned_text = cleaned_output_string_builder;
 
+    // Collapse runs of 3+ consecutive newlines to exactly 2 (single
+    // blank-line paragraph separator). CommonMark renders any number
+    // of blank lines as one block separator, so this is lossless under
+    // markdown preview. Bytes removed go into `chars_dropped_by_normalization`
+    // — they are removed by a normalization pass, not by line-drop or
+    // per-char-filter.
+    if BLANK_LINE_RUN_REGEX.is_match(&final_cleaned_text) {
+        let pre_chars = final_cleaned_text.chars().count();
+        final_cleaned_text = BLANK_LINE_RUN_REGEX
+            .replace_all(&final_cleaned_text, "\n\n")
+            .into_owned();
+        let post_chars = final_cleaned_text.chars().count();
+        chars_dropped_by_normalization =
+            chars_dropped_by_normalization.saturating_add(pre_chars.saturating_sub(post_chars));
+    }
+
     // Adjust final newline if original text didn't have one.
     // This affects the final string, but sum_kept_line_content_chars and original_chars_for_badness
     // are based on line contents only, so they remain unaffected by this specific string manipulation.
@@ -930,6 +1097,11 @@ pub fn core_clean_text_with_stats(
         marker_chars_added,
         original_chars_for_badness,
         sum_kept_line_content_chars: adjusted_kept_chars_for_badness,
+        phase_a_fallback_reason,
+        phase_a_dialect_ambiguous_input,
+        rule_a_match_count,
+        rule_b_match_count,
+        residue_line_drop_count,
     };
 
     (final_cleaned_text, stats)
@@ -938,7 +1110,7 @@ pub fn core_clean_text_with_stats(
 /// Build (allowed_chars, unusual_chars) for the requested script set.
 /// Ensures `punctuation`, `numbers`, `common_symbols` are always included
 /// and that whitespace chars are always allowed.
-fn build_script_char_sets(scripts_to_keep: &[String]) -> (HashSet<char>, HashSet<char>) {
+pub fn build_script_char_sets(scripts_to_keep: &[String]) -> (HashSet<char>, HashSet<char>) {
     let mut allowed_chars = HashSet::new();
     for key in scripts_to_keep {
         if let Some(script_set) = SCRIPT_SETS.get(key) {
@@ -968,7 +1140,7 @@ fn build_script_char_sets(scripts_to_keep: &[String]) -> (HashSet<char>, HashSet
 /// `enable_latex_repetition_crop=False` for PDF-to-text / OCR-debug
 /// use cases that need to see the raw repetition.
 #[pyfunction]
-#[pyo3(signature = (text, scripts_to_keep, min_chars_for_comment=None, enable_latex_repetition_crop=true, latex_char_threshold=30, latex_line_threshold=3))]
+#[pyo3(signature = (text, scripts_to_keep, min_chars_for_comment=None, enable_latex_repetition_crop=true, latex_char_threshold=30, latex_line_threshold=3, phase_a_mode="parser_surgical_verified"))]
 pub fn clean_text(
     text: &str,
     scripts_to_keep: Vec<String>,
@@ -976,6 +1148,7 @@ pub fn clean_text(
     enable_latex_repetition_crop: bool,
     latex_char_threshold: usize,
     latex_line_threshold: usize,
+    phase_a_mode: &str,
 ) -> PyResult<String> {
     let (allowed_chars, unusual_chars) = build_script_char_sets(&scripts_to_keep);
     let preprocessed: String;
@@ -990,8 +1163,17 @@ pub fn clean_text(
     } else {
         text
     };
-    let (cleaned_string, _, _) =
-        core_clean_text(text_ref, &allowed_chars, &unusual_chars, min_chars_for_comment);
+    // Parity with `clean_text_with_stats` — Phase A mode is selectable
+    // here too (P2 fix). Default `parser_surgical_verified` matches
+    // the production default; pass `"line_based"` for the legacy path.
+    let mode = PhaseAMode::from_str_or_default(phase_a_mode);
+    let (cleaned_string, _stats) = core_clean_text_with_stats_with_mode(
+        text_ref,
+        &allowed_chars,
+        &unusual_chars,
+        min_chars_for_comment,
+        mode,
+    );
     Ok(cleaned_string)
 }
 
@@ -1008,7 +1190,7 @@ pub fn clean_text(
 /// - `original_chars_for_badness`: back-compat badness-scoring input
 /// - `sum_kept_line_content_chars`: back-compat badness-scoring output
 #[pyfunction]
-#[pyo3(signature = (text, scripts_to_keep, min_chars_for_comment=None, enable_latex_repetition_crop=true, latex_char_threshold=30, latex_line_threshold=3))]
+#[pyo3(signature = (text, scripts_to_keep, min_chars_for_comment=None, enable_latex_repetition_crop=true, latex_char_threshold=30, latex_line_threshold=3, phase_a_mode="parser_surgical_verified"))]
 pub fn clean_text_with_stats(
     py: Python<'_>,
     text: &str,
@@ -1017,6 +1199,7 @@ pub fn clean_text_with_stats(
     enable_latex_repetition_crop: bool,
     latex_char_threshold: usize,
     latex_line_threshold: usize,
+    phase_a_mode: &str,
 ) -> PyResult<(String, PyObject)> {
     use pyo3::types::PyDict;
     // Wave-2 (2026-04-23): LaTeX repetition cropping runs BEFORE the
@@ -1039,11 +1222,13 @@ pub fn clean_text_with_stats(
         text
     };
     let (allowed_chars, unusual_chars) = build_script_char_sets(&scripts_to_keep);
-    let (cleaned_string, stats) = core_clean_text_with_stats(
+    let mode = PhaseAMode::from_str_or_default(phase_a_mode);
+    let (cleaned_string, stats) = core_clean_text_with_stats_with_mode(
         text_ref,
         &allowed_chars,
         &unusual_chars,
         min_chars_for_comment,
+        mode,
     );
     let dict = PyDict::new(py);
     dict.set_item("content_chars_kept", stats.content_chars_kept)?;
@@ -1055,6 +1240,15 @@ pub fn clean_text_with_stats(
     dict.set_item("marker_chars_added", stats.marker_chars_added)?;
     dict.set_item("original_chars_for_badness", stats.original_chars_for_badness)?;
     dict.set_item("sum_kept_line_content_chars", stats.sum_kept_line_content_chars)?;
+    // Q4 / Point 9 fields — None when not in ParserSurgicalVerified mode.
+    dict.set_item("phase_a_fallback_reason", stats.phase_a_fallback_reason)?;
+    dict.set_item("phase_a_dialect_ambiguous_input", stats.phase_a_dialect_ambiguous_input)?;
+    // Point 7 per-rule match counts — drives sample-cutting +
+    // review-wave selection, replacing the noise-matcher's separate
+    // counter pass.
+    dict.set_item("rule_a_match_count", stats.rule_a_match_count)?;
+    dict.set_item("rule_b_match_count", stats.rule_b_match_count)?;
+    dict.set_item("residue_line_drop_count", stats.residue_line_drop_count)?;
     Ok((cleaned_string, dict.into()))
 }
 
@@ -1347,6 +1541,47 @@ mod tests {
         allowed_chars
     }
 
+    /// Test helper: pin Phase A to `LineBased` for tests that depend
+    /// on the legacy line-based markdown normalizer's specific output
+    /// shape (separator collapse to `---`, escaped-underscore
+    /// bucketing, etc.). Pilot B preserves the input markdown more
+    /// strictly; tests asserting on collapse-style outputs need to
+    /// pin LineBased explicitly.
+    fn linebased_clean_text(
+        text: &str,
+        allowed_chars: &HashSet<char>,
+        unusual_chars_set: &HashSet<char>,
+        min_chars_for_comment_override: Option<usize>,
+    ) -> (String, usize, usize) {
+        let (cleaned, stats) = core_clean_text_with_stats_with_mode(
+            text,
+            allowed_chars,
+            unusual_chars_set,
+            min_chars_for_comment_override,
+            PhaseAMode::LineBased,
+        );
+        (
+            cleaned,
+            stats.original_chars_for_badness,
+            stats.sum_kept_line_content_chars,
+        )
+    }
+
+    fn linebased_clean_text_with_stats(
+        text: &str,
+        allowed_chars: &HashSet<char>,
+        unusual_chars_set: &HashSet<char>,
+        min_chars_for_comment_override: Option<usize>,
+    ) -> (String, CleanStats) {
+        core_clean_text_with_stats_with_mode(
+            text,
+            allowed_chars,
+            unusual_chars_set,
+            min_chars_for_comment_override,
+            PhaseAMode::LineBased,
+        )
+    }
+
     #[test]
     fn core_clean_text_decoded_glyph_tag_stripped_keeps_prose() {
         // Wave-2 (Case 7): entity-decode + GLYPH-strip pre-passes mean
@@ -1394,15 +1629,47 @@ mod tests {
     }
 
     #[test]
-    fn core_clean_text_rejects_bare_glyph_word() {
-        // Bare `GLYPH` — structural trigger, line-drop with marker.
+    fn core_clean_text_collapses_runs_of_3plus_newlines_to_2() {
+        // CommonMark renders any number of blank lines as one block
+        // separator, so a `\n{3+}` run is preview-equivalent to `\n\n`.
+        // The cleaner can produce these accidentally when per-char
+        // strip empties adjacent single-char lines (e.g. PUA bracket
+        // glyphs surrounded by `\n\n` separators in the source).
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        // Five PUA chars (U+F8EB..U+F8F7) on their own lines, separated
+        // by blank lines. None are in the Adobe Symbol fold map → each
+        // line gets stripped, leaving 10 consecutive `\n`.
+        let input =
+            "παρακάτω σχέση:\n\n\u{F8EC}\n\n\u{F8EB}\n\n\u{F8F7}\n\n\u{F8F6}\n\n$$x = 1$$\n\n\u{F8ED}\n";
+        let (cleaned, stats) =
+            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+        assert!(
+            !cleaned.contains("\n\n\n"),
+            "collapse rule must reduce \\n{{3+}} → \\n\\n, got {cleaned:?}"
+        );
+        // Sanity: legitimate single blank line between paragraphs survives.
+        assert!(cleaned.contains("\n\n"));
+        // Bytes removed should be reflected in the normalization bucket.
+        assert!(stats.chars_dropped_by_normalization > 0);
+    }
+
+    #[test]
+    fn core_clean_text_bare_glyph_word_passes_through() {
+        // CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 4 explicitly
+        // removes bare-word matchers. `GLYPH` (no `<`, no `/`) is a
+        // legitimate English word in PDF/PostScript documentation;
+        // pre-Point-4 BAD_LINE_AC over-rejected it. Rule B's regex
+        // requires structural anchors (`GLYPH<…>`), so the bare
+        // word now passes through.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         let input = "some text with GLYPH in the middle\n";
         let (cleaned, _, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
-        assert_eq!(kept_chars, 0);
+        assert_ne!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
+        assert!(cleaned.contains("GLYPH"));
+        assert!(kept_chars > 0);
     }
 
     #[test]
@@ -1442,16 +1709,44 @@ mod tests {
     }
 
     #[test]
-    fn core_clean_text_rejects_pdf_font_subset_form() {
-        // /<SUBSET>+<FontName> — Adobe font-subset convention, still
-        // line-drop (user classified ✅ not-flagged).
+    fn core_clean_text_span_strips_pdf_font_subset_form() {
+        // CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 4: PDF font
+        // subset references (Adobe `/[A-Z]{6}+FontName` convention)
+        // are now SPAN-STRIPPED by the unified Rule B regex. A single
+        // occurrence below the count+coverage gate does NOT line-drop
+        // — surrounding prose is preserved with the marker removed.
+        // (Pre-Point-4 PDF_FONT_SUBSET_REGEX in
+        // `has_decoded_glyph_font_artefact` line-dropped on any-match;
+        // that engine is gone.)
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         let input = "Text /XQDMQS+CenturyGothic in it.\n";
         let (cleaned, _, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
-        assert_eq!(kept_chars, 0);
+        assert_ne!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
+        assert!(cleaned.contains("Text"));
+        assert!(cleaned.contains("in it."));
+        assert!(!cleaned.contains("/XQDMQS+CenturyGothic"));
+        assert!(kept_chars > 0);
+    }
+
+    #[test]
+    fn core_clean_text_dense_pdf_font_subsets_line_drop() {
+        // 12 adjacent font-subset markers — Rule B's regex requires
+        // 2+ chars after the `+` (`[A-Z][A-Za-z0-9-]+`), so `+Tn`.
+        // Coverage = 12/120 = 0.10 ≥ 0.09; count = 12 ≥ 10.
+        // Verifies the count+coverage gate now includes font-subset
+        // matches (Point 4 unification).
+        let allowed_chars = default_allowed_chars();
+        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
+        let input =
+            "/AAAAAA+Tn/BBBBBB+Tn/CCCCCC+Tn/DDDDDD+Tn\
+/EEEEEE+Tn/FFFFFF+Tn/GGGGGG+Tn/HHHHHH+Tn\
+/IIIIII+Tn/JJJJJJ+Tn/KKKKKK+Tn/LLLLLL+Tn\n";
+        let (cleaned, _, _) =
+            core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        assert!(cleaned.contains(LINE_REMOVED_COMMENT),
+                "dense font-subset line should hit the gate, got {:?}", cleaned);
     }
 
     #[test]
@@ -1478,16 +1773,21 @@ mod tests {
     }
 
     #[test]
-    fn core_clean_text_bare_hyphenminus_still_line_drops() {
-        // `hyphenminus` (no slash) is a BAD_LINE_AC structural trigger —
-        // still line-drops per user-review classification ✅.
+    fn core_clean_text_bare_hyphenminus_passes_through() {
+        // CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 4: Rule B's
+        // "no bare-word matchers" rule means bare `hyphenminus`
+        // (without the leading `/`) is NO LONGER a line-drop trigger.
+        // Pre-Point-4 BAD_LINE_AC matched it; Rule B's regex does not.
+        // The bare word survives. (`/hyphenminus` with the slash
+        // continues to span-strip via Rule A literals.)
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         let input = "hello hyphenminus world\n";
         let (cleaned, _, kept_chars) =
             core_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
-        assert_eq!(kept_chars, 0);
+        assert_ne!(cleaned, format!("{LINE_REMOVED_COMMENT}\n"));
+        assert!(cleaned.contains("hyphenminus"));
+        assert!(kept_chars > 0);
     }
 
     #[test]
@@ -1519,12 +1819,13 @@ mod tests {
 
     #[test]
     fn core_clean_text_strips_unicode_noise_chars() {
-        // Wave-2 changed the order: soft hyphen U+00AD is now stripped
-        // by the wave-2 `strip_soft_hyphens` pre-pass (silent invisible
-        // strip). U+F0B7 is not in our Adobe Symbol map (passes
-        // through preprocessing, then stripped by per-char filter).
-        // U+FFFD and U+03A2 (non-existent Greek codepoint) are still
-        // stripped by per-char filter.
+        // After CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 2:
+        // - U+00AD soft hyphen → stripped by `is_unicode_noise_char`
+        //   (unified Group 1 STRIP) inside the per-line loop.
+        // - U+F0B7 is not in the Adobe Symbol PUA fold map → falls
+        //   through fold_codepoint → stripped by per-char filter.
+        // - U+FFFD and U+03A2 (non-existent Greek codepoint) → also
+        //   stripped by per-char filter.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         let input = "A\u{00AD}B \u{F0B7} C\u{FFFD}D \u{03A2}\n";
@@ -1543,10 +1844,14 @@ mod tests {
 
     #[test]
     fn core_clean_text_normalizes_separator_line() {
+        // LineBased Phase A: collapses 6-dash to 3-dash. Pilot B
+        // preserves input verbatim under setext-heading interpretation,
+        // so this test pins the legacy mode it was designed for.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         let input = "Before\n------\nAfter\n";
-        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        let (cleaned, _, _) =
+            linebased_clean_text(input, &allowed_chars, &unusual_chars, None);
         assert_eq!(cleaned, "Before\n---\nAfter\n");
     }
 
@@ -1655,6 +1960,9 @@ mod tests {
         // End-to-end exercise: polytonic + math italic + ligature + separator
         // + whitespace run + ellipsis + malformed entity + code fence, all in
         // one document. Asserts the composed behavior.
+        // Pinned to LineBased — assertions check the legacy normalizer's
+        // specific output shape (separator collapse to `---`, fence
+        // preservation). Pilot B has different output shape.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         let input = "\
@@ -1676,7 +1984,8 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
 | :------- | ---: |
 | a | b |
 ";
-        let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
+        let (cleaned, _, _) =
+            linebased_clean_text(input, &allowed_chars, &unusual_chars, None);
         // 4-space indented line inside code fence is preserved.
         assert!(cleaned.contains("    4 spaces stay"));
         // `----` inside code fence is NOT collapsed.
@@ -1759,13 +2068,15 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
 
     #[test]
     fn accounting_line_drop_bumps_counter_and_chars() {
-        // Wave-2: changed trigger from `/g<N>` density (now stripped
-        // up-front by Case 7 GLYPH-marker pass) to a confirmed
-        // line-drop trigger — `hyphenminus` literal is still in the
-        // RULE_A literal set and reliably triggers line removal.
+        // Post-Point-4: Rule B's count+coverage gate is the primary
+        // line-drop signal for PostScript-glyph residue. 12 dense
+        // `/uniXXXX` markers (>10 count, >9% coverage) trigger a drop.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        let input = "Καλημέρα.\nhyphenminus hyphenminus hyphenminus hyphenminus hyphenminus\nΕπίλογος.\n";
+        let input = "Καλημέρα.\n\
+/uni0301/uni0302/uni0303/uni0304/uni0305/uni0306\
+/uni0307/uni0308/uni0309/uni030A/uni030B/uni030C\n\
+Επίλογος.\n";
         let (cleaned, stats) =
             core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
         assert!(stats.lines_dropped_count >= 1,
@@ -1782,9 +2093,11 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
 
     #[test]
     fn accounting_content_chars_excludes_line_removed_marker() {
+        // Single dense Rule B line — only line in input, must drop.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        let input = "hello hyphenminus world\n";
+        let input = "/uni0301/uni0302/uni0303/uni0304/uni0305/uni0306\
+/uni0307/uni0308/uni0309/uni030A/uni030B/uni030C\n";
         let (cleaned, stats) =
             core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
         // The whole line dropped — content_chars_kept MUST be 0 even
@@ -1797,13 +2110,14 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
 
     #[test]
     fn accounting_normalization_tracks_separator_collapse() {
+        // LineBased-pinned: tests the legacy normalizer's separator collapse.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         // 20-dash separator → collapses to `---` (3 chars). normalize delta
         // should reflect the reduction.
         let input = "hello\n--------------------\nworld\n";
         let (cleaned, stats) =
-            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+            linebased_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
         assert!(cleaned.contains("\n---\n"), "expected collapsed separator, got {cleaned:?}");
         assert!(stats.chars_dropped_by_normalization >= 17,
                 "expected ≥17 normalization chars dropped, got {stats:?}");
@@ -1813,22 +2127,13 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
 
     #[test]
     fn accounting_escaped_underscore_run_buckets_but_stays_as_underscores() {
+        // LineBased-pinned: tests the legacy normalizer's
+        // escaped-underscore bucketing.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        // Markdown-escaped-underscore divider (common in EU legislative
-        // corpus). Per CommonMark, `\_` is a valid escape — the line
-        // renders as a paragraph of LITERAL underscores, NOT as a
-        // thematic break. Phase A no longer rewrites it to `---` (that
-        // was a preview-violation bug found by formal verification in
-        // the 2026-04-24 audit).
-        //
-        // `normalize_escaped_underscore_runs` DOES apply the {1,3,5,20}
-        // tiered bucket to the pair count — 5 pairs buckets stays at 5
-        // (bucket threshold kicks in at n>5), so this specific input
-        // passes through. A longer run like 25 pairs would bucket to 20.
         let input = "ΠΕΡΙ: ΝΟΜΟΘΕΣΙΑΣ\n\\_\\_\\_\\_\\_\nΑιτιολογική έκθεση.\n";
         let (cleaned, _stats) =
-            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+            linebased_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
         // Still a line of escaped underscores, NOT an HR.
         assert!(cleaned.contains("\n\\_\\_\\_\\_\\_\n"),
                 "escaped-underscore line should pass through as literal \
@@ -1841,13 +2146,15 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
 
     #[test]
     fn accounting_long_escaped_underscore_run_buckets_to_20() {
+        // LineBased-pinned: tests the legacy normalizer's
+        // escaped-underscore bucket-to-20 behaviour.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
         // 25 pairs → bucket `bucket_run_length` maps 25→20.
         let long_run: String = "\\_".repeat(25);
         let input = format!("heading\n{long_run}\nbody text.\n");
         let (cleaned, _stats) =
-            core_clean_text_with_stats(&input, &allowed_chars, &unusual_chars, None);
+            linebased_clean_text_with_stats(&input, &allowed_chars, &unusual_chars, None);
         // Should contain exactly 20 escape pairs (40 chars = 20 * 2).
         let expected: String = "\\_".repeat(20);
         assert!(cleaned.contains(&format!("\n{expected}\n")),
@@ -1859,12 +2166,14 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
     fn accounting_per_char_filter_tracks_unusual_script_strip() {
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        // Cyrillic letters aren't in the default greek/latin/french/spanish
-        // allowed set; they're in `unusual` (stripped per SCRIPT_SETS policy).
-        let input = "Καλημέρα Здравствуйте.\n";
+        // Coptic letters (U+2C80..U+2D00) are in `unusual` per Point 3
+        // (not modern-Greek-corpus content, stripped by per-char filter).
+        // Cyrillic, by contrast, is now KEPT entirely (European-language
+        // content), so don't use it for this test.
+        let input = "Καλημέρα ⲁⲃⲅⲇⲉⲋⲍⲏⲑⲓⲕⲗⲙⲛ.\n";
         let (_cleaned, stats) =
             core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
-        // All 12 cyrillic chars should be stripped by the per-char filter.
+        // All 14 Coptic chars should be stripped by the per-char filter.
         assert!(stats.chars_dropped_by_per_char_filter >= 12,
                 "expected ≥12 per-char-filter chars dropped, got {stats:?}");
         assert_eq!(stats.chars_dropped_by_line_drop, 0);
@@ -1873,18 +2182,23 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
 
     #[test]
     fn accounting_mixed_doc_invariant_holds() {
+        // LineBased-pinned: the input includes a 20-dash separator and
+        // 5-pair escaped-underscore run, both of which trigger LineBased's
+        // normalize-collapse. Pilot B preserves these as-is (different
+        // chars_dropped_by_normalization shape).
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        // Wave-2: replaced the dense `/g<N>` line (now stripped early
-        // by Case 7) with a `hyphenminus`-density line that still
-        // triggers line-drop reliably.
-        let input = "Καλημέρα, Здравствуйте.\n\
-hyphenminus hyphenminus hyphenminus hyphenminus hyphenminus\n\
+        // Per Point 3: Cyrillic is now KEPT (European content). Use
+        // Coptic for the per-char-filter strip signal — still in `unusual`.
+        // Per Point 4: bare `hyphenminus` is no longer a line-drop
+        // trigger; use a dense `/uniXXXX` line for the Rule B gate.
+        let input = "Καλημέρα, ⲁⲃⲅⲇⲉ.\n\
+/uni0301/uni0302/uni0303/uni0304/uni0305/uni0306/uni0307/uni0308/uni0309/uni030A/uni030B/uni030C\n\
 --------------------\n\
 \\_\\_\\_\\_\\_\n\
 Επίλογος.\n";
         let (_cleaned, stats) =
-            core_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
+            linebased_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
         assert!(stats.lines_dropped_count >= 1,
                 "expected at least one line drop, got {stats:?}");
         assert!(stats.chars_dropped_by_line_drop > 0);
@@ -1921,10 +2235,11 @@ hyphenminus hyphenminus hyphenminus hyphenminus hyphenminus\n\
         // 6-space gaps in the output.
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        // Cyrillic word stripped by per-char filter → 6 consecutive spaces
+        // Coptic word stripped by per-char filter → 6 consecutive spaces
         // (3 + 3 around the removed word). bucket_run_length(6) = 5, so a
-        // 6-space run means normalize didn't fire.
-        let input = "Καλημέρα   Здравствуйте   world\n";
+        // 6-space run means normalize didn't fire. (Was Cyrillic pre-Point-3,
+        // but Cyrillic is now KEPT as European content.)
+        let input = "Καλημέρα   ⲁⲃⲅⲇⲉⲋⲍ   world\n";
         let (cleaned, _, _) = core_clean_text(input, &allowed_chars, &unusual_chars, None);
         assert!(cleaned.contains(TEXT_MISSING_COMMENT));
         assert!(!cleaned.contains("      "),
@@ -1989,7 +2304,15 @@ code fence content     stays
     /// on this mixed-content doc. The threshold below is deliberately well
     /// under that (5 M chars/sec) — this test should only trip on major
     /// regressions, not normal CI-machine variability.
+    /// Bug 2 (CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25): the 5 M
+    /// chars/sec floor is a release-profile expectation. Default
+    /// `cargo test` runs in DEBUG profile (~7× slower) so the floor
+    /// always trips. `#[ignore]` keeps the test out of the default
+    /// run; invoke explicitly with
+    /// `cargo test perf_mixed_doc_throughput_floor -- --ignored --release`
+    /// when checking for regressions.
     #[test]
+    #[ignore = "release-only perf check; run with --ignored --release"]
     fn perf_mixed_doc_throughput_floor() {
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();

@@ -1,4 +1,42 @@
-//! PyO3 bindings for noise-based markdown quality metrics
+//! PyO3 bindings for noise-based markdown quality metrics.
+//!
+//! # Boundary with `glossapi_rs_cleaner`
+//!
+//! Per `CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25` Point 7, this crate
+//! and the cleaner crate have a strict ownership split:
+//!
+//! - **`glossapi_rs_cleaner`** owns *cleaning behaviour* AND its
+//!   *production-aligned counters*. The cleaner emits per-rule match
+//!   counts (`rule_a_match_count`, `rule_b_match_count`,
+//!   `residue_line_drop_count`) directly in `CleanStats`, aligned by
+//!   construction with what the cleaner actually acts on. Production
+//!   driver scripts (e.g. `clean_and_stats_rowsharded.py`) source
+//!   their parquet counter columns from the cleaner, NOT from this
+//!   crate.
+//! - **`glossapi_rs_noise`** (this crate) owns *diagnostic /
+//!   exploratory / debug exports*: OCR-side scoring
+//!   (`evaluate_page_character_noise`, `score_markdown_*`),
+//!   word-repeat / numeric-debug span extraction, and the
+//!   token-category match exports
+//!   (`export_token_category_debug_pages`,
+//!   `match_token_category_debug_text`) used by
+//!   `Corpus.clean_token_category_debug` for review-wave bundling.
+//!
+//! Production cleaning never imports anything from this crate. Debug
+//! / discovery / inspection workflows do. Keep new functionality on
+//! the side of this split that matches its purpose; if a counter is
+//! a faithful mirror of cleaner activity, it belongs in the cleaner.
+
+// Lint posture (CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Item 5):
+// `dead_code` is allowed crate-wide because several noise-side helpers
+// (e.g. `annotate_line_with_numeric_debug_matches`,
+// `match_token_category_debug_text_internal` /
+// `export_token_category_debug_pages_internal`) are kept as part of
+// the diagnostic / debug-export surface — invoked by tests, by the
+// PyO3 wrappers, or as part of the discovery toolkit even if some
+// branches don't currently reach them. Real bugs (unused vars,
+// unread assignments) still warn.
+#![allow(dead_code)]
 
 mod noise_metrics;
 
@@ -320,28 +358,7 @@ fn export_token_category_debug_pages(
 
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(rows.len());
     for row in rows {
-        let item = PyDict::new(py);
-        item.set_item("source_path", row.source_path)?;
-        item.set_item("output_path", row.output_path)?;
-        item.set_item("source_stem", row.source_stem)?;
-        item.set_item("base_stem", row.base_stem)?;
-        item.set_item("page_kind", row.page_kind)?;
-        item.set_item("page_number", row.page_number)?;
-        item.set_item("page_index_in_file", row.page_index_in_file)?;
-        item.set_item("page_char_count", row.page_char_count)?;
-        item.set_item("match_categories", row.match_categories)?;
-        item.set_item("match_pattern_families", row.match_pattern_families)?;
-        item.set_item("match_count", row.match_count)?;
-        item.set_item("page_text", row.page_text)?;
-        item.set_item("matches_json", row.matches_json)?;
-        // Precomputed per-category match count — avoids Python having to
-        // json.loads(matches_json) to tally counters. 2026-04-23 speedup.
-        let counts = PyDict::new(py);
-        for (cat, n) in &row.per_category_match_count {
-            counts.set_item(cat, n)?;
-        }
-        item.set_item("per_category_match_count", counts)?;
-        out.push(item.into());
+        out.push(token_category_row_to_py(py, row)?);
     }
     Ok(out)
 }
@@ -379,30 +396,35 @@ fn match_token_category_debug_text(
 
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(rows.len());
     for row in rows {
-        let item = PyDict::new(py);
-        item.set_item("source_path", row.source_path)?;
-        item.set_item("output_path", row.output_path)?;
-        item.set_item("source_stem", row.source_stem)?;
-        item.set_item("base_stem", row.base_stem)?;
-        item.set_item("page_kind", row.page_kind)?;
-        item.set_item("page_number", row.page_number)?;
-        item.set_item("page_index_in_file", row.page_index_in_file)?;
-        item.set_item("page_char_count", row.page_char_count)?;
-        item.set_item("match_categories", row.match_categories)?;
-        item.set_item("match_pattern_families", row.match_pattern_families)?;
-        item.set_item("match_count", row.match_count)?;
-        item.set_item("page_text", row.page_text)?;
-        item.set_item("matches_json", row.matches_json)?;
-        // Precomputed per-category match count — avoids Python having to
-        // json.loads(matches_json) to tally counters. 2026-04-23 speedup.
-        let counts = PyDict::new(py);
-        for (cat, n) in &row.per_category_match_count {
-            counts.set_item(cat, n)?;
-        }
-        item.set_item("per_category_match_count", counts)?;
-        out.push(item.into());
+        out.push(token_category_row_to_py(py, row)?);
     }
     Ok(out)
+}
+
+fn token_category_row_to_py(
+    py: Python<'_>,
+    row: noise_metrics::TokenCategoryDebugPageRow,
+) -> PyResult<Py<PyDict>> {
+    let item = PyDict::new(py);
+    item.set_item("source_path", row.source_path)?;
+    item.set_item("output_path", row.output_path)?;
+    item.set_item("source_stem", row.source_stem)?;
+    item.set_item("base_stem", row.base_stem)?;
+    item.set_item("page_kind", row.page_kind)?;
+    item.set_item("page_number", row.page_number)?;
+    item.set_item("page_index_in_file", row.page_index_in_file)?;
+    item.set_item("page_char_count", row.page_char_count)?;
+    item.set_item("match_categories", row.match_categories)?;
+    item.set_item("match_pattern_families", row.match_pattern_families)?;
+    item.set_item("match_count", row.match_count)?;
+    item.set_item("page_text", row.page_text)?;
+    item.set_item("matches_json", row.matches_json)?;
+    let counts = PyDict::new(py);
+    for (cat, n) in &row.per_category_match_count {
+        counts.set_item(cat, n)?;
+    }
+    item.set_item("per_category_match_count", counts)?;
+    Ok(item.into())
 }
 
 #[pyfunction]

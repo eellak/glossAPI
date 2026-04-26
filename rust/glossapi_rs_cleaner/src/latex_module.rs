@@ -143,12 +143,10 @@ pub fn detect_repeated_char_cut(s: &str, threshold: usize) -> Option<usize> {
                 // Keep up to `threshold` chars; cut after.
                 // run_start is the BYTE index of the run's first char;
                 // `threshold` chars later in BYTES requires walking.
-                let mut byte_offset = run_start;
                 let cur = &s[run_start..];
                 for (n, (off, _ch)) in cur.char_indices().enumerate() {
                     if n == threshold {
-                        byte_offset = run_start + off;
-                        return Some(byte_offset);
+                        return Some(run_start + off);
                     }
                 }
                 // If we hit EOS before `threshold` chars, no cut needed.

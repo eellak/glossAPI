@@ -1859,18 +1859,31 @@ fn render_token_category_debug_candidate(
         candidate.source_stem, candidate.page_kind, candidate.page_number
     );
     let output_path = output_dir.join(output_name);
+    // Bug 1 fix (CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 10):
+    // emit CHARACTER offsets in the JSON, not BYTE offsets. Python
+    // consumers slice `page_text[start:end]` which is char-indexed in
+    // Python; byte offsets shift any non-ASCII prefix and silently
+    // drop rows whose end exceeds char-length. We keep span.start /
+    // span.end as bytes for internal Rust slicing
+    // (`candidate.page_text[span.start..span.end]`), and convert to
+    // chars only at the export boundary.
     let export_matches: Vec<TokenCategoryExportMatchRow> = candidate
         .merged_spans
         .iter()
         .enumerate()
-        .map(|(idx, span)| TokenCategoryExportMatchRow {
-            match_index_in_page: (idx + 1) as u64,
-            start: span.start,
-            end: span.end,
-            categories: span.categories.clone(),
-            pattern_families: span.pattern_families.clone(),
-            matched_text: candidate.page_text[span.start..span.end].to_string(),
-            raw_texts: span.raw_texts.clone(),
+        .map(|(idx, span)| {
+            let start_char = candidate.page_text[..span.start].chars().count();
+            let end_char = start_char
+                + candidate.page_text[span.start..span.end].chars().count();
+            TokenCategoryExportMatchRow {
+                match_index_in_page: (idx + 1) as u64,
+                start: start_char,
+                end: end_char,
+                categories: span.categories.clone(),
+                pattern_families: span.pattern_families.clone(),
+                matched_text: candidate.page_text[span.start..span.end].to_string(),
+                raw_texts: span.raw_texts.clone(),
+            }
         })
         .collect();
     let matches_json = serde_json::to_string(&export_matches)?;
@@ -1936,6 +1949,8 @@ fn render_token_category_debug_candidate(
     })
 }
 
+// Dead code post-Point-7 — kept until a follow-up extraction.
+#[allow(dead_code)]
 pub fn match_token_category_debug_text_internal(
     output_dir: &Path,
     category_specs_path: &Path,
@@ -4257,6 +4272,8 @@ pub fn export_numeric_match_debug_pages_internal(
     Ok(flat)
 }
 
+// Dead code post-Point-7 — kept until a follow-up extraction.
+#[allow(dead_code)]
 pub fn export_token_category_debug_pages_internal(
     root: &Path,
     output_dir: &Path,

@@ -37,15 +37,23 @@ const CMARK_GFM_BIN: &str = "cmark-gfm";
 const GFM_EXTENSIONS: &[&str] = &["table", "strikethrough", "tasklist", "autolink"];
 
 /// Test whether the `cmark-gfm` binary is callable in this
-/// environment. Used by tests to skip when unavailable.
+/// environment. Result is cached for the process lifetime — the
+/// binary's presence doesn't change between probes, and at corpus
+/// scale the per-doc subprocess spawn that uncached probing
+/// triggered was a measurable hot-path cost (Pilot B as default
+/// hits this on every doc through `format_surgical_checked`).
 pub fn is_available() -> bool {
-    Command::new(CMARK_GFM_BIN)
-        .arg("--help")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        Command::new(CMARK_GFM_BIN)
+            .arg("--help")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
 }
 
 /// Render Markdown via `cmark-gfm --to html` with GFM extensions

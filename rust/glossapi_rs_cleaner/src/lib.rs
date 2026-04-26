@@ -1,5 +1,36 @@
-// Main module for the text_cleaner_rs Python module
-// Implements refactored code with better separation of concerns
+//! GlossAPI Rust cleaner — production cleaning pipeline (PyO3 module).
+//!
+//! # Boundary with `glossapi_rs_noise`
+//!
+//! Per `CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25` Point 7:
+//!
+//! - **This crate** owns *cleaning* and the *production counters*
+//!   that drive corpus-cleaning sample cuts. `clean_text_with_stats`
+//!   emits per-rule counts (`rule_a_match_count`, `rule_b_match_count`,
+//!   `residue_line_drop_count`) directly inside `CleanStats`, so
+//!   production drivers don't need a second pass through `glossapi_rs_noise`.
+//! - **`glossapi_rs_noise`** owns *diagnostic / debug exports* —
+//!   OCR scoring, word-repeat span extraction, token-category review
+//!   bundling. Cleaner production paths never import from it.
+//!
+//! Phase A (markdown formatting): default is Pilot B
+//! (`PhaseAMode::ParserSurgicalVerified` → `md_format_surgical::format_surgical_checked`).
+//! `LineBased` is regression-test-only — never use for production.
+//! `cmark-gfm` is OPTIONAL: if installed, it serves as ground-truth
+//! oracle (per-doc subprocess overhead); if not, the in-process
+//! `dual_verify` (comrak + pulldown-cmark) path is used. Production
+//! assumes the dual_verify path.
+
+// Lint posture (CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Item 5):
+// `dead_code` is allowed at crate level because several utility
+// functions / variants are kept around as parts of an evolving public
+// surface (e.g. `analyze_text`, `list_available_scripts`,
+// `drop_low_salvage_pages`, `process_directory_native`,
+// `batch_clean_markdown_files`) — they are documented dev/audit tools
+// or back-compat exports that are not invoked from the production
+// hot path but should remain available. Real bugs (unused variables,
+// unread assignments) still warn; only DEAD-CODE noise is silenced.
+#![allow(dead_code)]
 
 // Internal modules
 mod charset_module;

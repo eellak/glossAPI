@@ -101,7 +101,22 @@ pub fn fold_codepoint(ch: char) -> Option<&'static str> {
         '\u{FB04}' => return Some("ffl"),
         '\u{FB05}' => return Some("st"),
         '\u{FB06}' => return Some("st"),
+        // U+00B5 MICRO SIGN → U+03BC GREEK SMALL LETTER MU. Common
+        // mojibake from Latin-1 codepage assumptions for Greek µ
+        // (Point 3 sub-resolution, 2026-04-25).
+        '\u{00B5}' => return Some("\u{03BC}"),
         _ => {}
+    }
+
+    // Adobe Symbol PUA → real Unicode (was the standalone
+    // `decode_adobe_symbol_pua` pre-pass; merged into Group 2 FOLD
+    // per CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 2). Fast
+    // path: only consult the map for chars in the PUA range.
+    let code_pua = ch as u32;
+    if (0xF000..=0xF8FF).contains(&code_pua) {
+        if let Some(&replacement) = ADOBE_SYMBOL_PUA_MAP.get(&ch) {
+            return Some(replacement);
+        }
     }
 
     // Unicode whitespace variants folded to regular space.
@@ -1162,16 +1177,12 @@ lazy_static! {
     static ref HTML_NUMERIC_ENTITY_REGEX: Regex =
         Regex::new(r"&#(x[0-9A-Fa-f]+|[0-9]+);").unwrap();
 
-    /// GLYPH/uni/gN marker regex (Case 7). Font-local glyph indices
-    /// survive text extraction when ToUnicode CMaps are missing; we
-    /// delete them rather than substitute (per user-verdict-resolved
-    /// Case 7 / Case 9: the N is font-local, no safe global mapping).
-    /// `GLYPH<…>` covers both bare numeric forms (`GLYPH<216>`) and
-    /// the longer attribute forms emitted by some PDF extractors
-    /// (`GLYPH<c=3,font=/SubsetName+FontFamily>`).
-    static ref GLYPH_MARKER_REGEX: Regex = Regex::new(
-        r"GLYPH<[^>]{1,200}>|/uni[0-9A-Fa-f]{4,6}|/g(?:id)?\d+"
-    ).unwrap();
+    // GLYPH_MARKER_REGEX deleted in CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25
+    // Point 4: superseded by `cleaning_module::PDF_GLYPH_NAME_REGEX`,
+    // which covers the same patterns (GLYPH<…>, /uniXXXX, /gN) plus
+    // `glyph<c=…,font=/…>`, reversed `<c=…,font=/…>glyph`, and PDF
+    // font subsets, AND drives the per-line count+coverage gate in
+    // `apply_glyph_span_strip_and_rule_b`.
 
     /// Inline base64-encoded image data URIs that PDF extractors (e.g.
     /// Docling) produce when they encounter embedded raster images. The
@@ -1304,13 +1315,11 @@ pub fn decode_html_entities(text: &str) -> String {
         .into_owned()
 }
 
-/// Delete GLYPH<N> / `/uni...` / `/gN` markers (Case 7). These are
-/// font-local glyph indices that survive PDF extraction when a
-/// ToUnicode CMap is missing. Per Case 9, there's no safe global
-/// substitution (N is per-font, not per-corpus), so we delete.
-pub fn strip_glyph_markers(text: &str) -> String {
-    GLYPH_MARKER_REGEX.replace_all(text, "").into_owned()
-}
+// `strip_glyph_markers` deleted in CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25
+// Point 4. The same patterns (GLYPH<…>, /uniXXXX, /gN) are now
+// stripped by Rule B inside `cleaning_module::apply_glyph_span_strip_and_rule_b`,
+// which ALSO drives a count+coverage line-drop gate. Calling code
+// no longer needs a separate text-wide strip pre-pass.
 
 /// True if a line shows the Greek-CID-mojibake / Latin-Ext residue
 /// signature that warrants line-drop, replacing the older PAGE-level
@@ -1333,6 +1342,16 @@ pub fn strip_glyph_markers(text: &str) -> String {
 /// (U+0180..U+024F — the Greek-CID-mojibake range) vs 47.4 %
 /// corpus-wide, indicating strong noise-class bias.
 pub fn is_residue_mojibake_line(line: &str) -> bool {
+    // Residue range narrowed to match Group 1 STRIP set per
+    // CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 3:
+    //   - Latin Extended-A (U+0100..U+017F): NOT residue (kept as
+    //     legitimate Polish/Czech/Hungarian/etc. European content).
+    //   - Latin Extended-B (U+0180..U+024F): residue, EXCEPT the
+    //     Romanian comma-below allowlist {Ș, ș, Ț, ț}.
+    //
+    // Result: dense Latin-Ext-A text (foreign citations, names) no
+    // longer triggers line-drop; dense Latin-Ext-B clusters (the
+    // Greek-CID-mojibake signature) still do.
     let mut max_run: usize = 0;
     let mut cur_run: usize = 0;
     let mut tok_len: usize = 0;
@@ -1340,7 +1359,8 @@ pub fn is_residue_mojibake_line(line: &str) -> bool {
     let mut r1_hit = false;
     for ch in line.chars() {
         let cp = ch as u32;
-        let is_residue = (0x0100..=0x024F).contains(&cp);
+        let is_residue = (0x0180..=0x024F).contains(&cp)
+            && !matches!(cp, 0x0218 | 0x0219 | 0x021A | 0x021B);
         if is_residue {
             cur_run += 1;
             if cur_run > max_run {
@@ -1384,9 +1404,21 @@ pub fn strip_base64_images(text: &str) -> String {
     BASE64_IMAGE_REGEX.replace_all(text, "<!-- image -->").into_owned()
 }
 
-/// Silently strip soft hyphens U+00AD (Case 13). Invisible format-only
-/// chars; their presence inflates `charset_moji_ratio` despite having
-/// no semantic content.
+// CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 2 retired these as
+// CLEANER PRE-PASSES (the cleaner now relies on the per-line loop's
+// unified Group 1 STRIP / Group 2 FOLD partition). The functions
+// remain `pub` for `md_module::non_destructive_canonicalize`, which
+// runs a parallel preview-equivalence pipeline; it continues to
+// call these directly until Point 9 (Pilot B integration) gives
+// md_module a different normalization shape.
+//
+// Both functions are now thin wrappers that delegate to the unified
+// path, so behaviour stays identical regardless of caller.
+
+/// Strip U+00AD soft hyphens from `text`. Thin wrapper kept for
+/// `md_module::non_destructive_canonicalize` use; the cleaner
+/// itself relies on `is_unicode_noise_char` inside the per-line
+/// loop instead.
 pub fn strip_soft_hyphens(text: &str) -> String {
     if !text.contains('\u{00AD}') {
         return text.to_string();
@@ -1394,12 +1426,12 @@ pub fn strip_soft_hyphens(text: &str) -> String {
     text.chars().filter(|&c| c != '\u{00AD}').collect()
 }
 
-/// Decode Adobe Symbol font PUA chars (Case 10a). 100% of the top-30
-/// observed PUA chars in a sample math thesis were recovered via
-/// this mapping. Chars not in the map pass through unchanged; the
-/// per-char filter then decides whether to strip them.
+/// Decode Adobe Symbol PUA chars in `text` via the unified
+/// `fold_codepoint` map (Point 2 absorbed this). Kept as a `pub`
+/// function for `md_module::non_destructive_canonicalize`; the
+/// cleaner itself calls `fold_codepoint` directly per char.
 pub fn decode_adobe_symbol_pua(text: &str) -> String {
-    // Fast check: any PUA chars at all? If not, skip.
+    // Fast path: no PUA chars at all.
     if !text.chars().any(|c| {
         let cp = c as u32;
         (0xF000..=0xF8FF).contains(&cp)
@@ -1408,7 +1440,7 @@ pub fn decode_adobe_symbol_pua(text: &str) -> String {
     }
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
-        match ADOBE_SYMBOL_PUA_MAP.get(&c) {
+        match fold_codepoint(c) {
             Some(replacement) => out.push_str(replacement),
             None => out.push(c),
         }
@@ -1468,30 +1500,9 @@ mod wave2_tests {
         );
     }
 
-    #[test]
-    fn strip_glyph_markers_handles_all_variants() {
-        assert_eq!(strip_glyph_markers("a GLYPH<216> b"), "a  b");
-        assert_eq!(strip_glyph_markers("a /uni03B1 b"), "a  b");
-        assert_eq!(strip_glyph_markers("a /g12 b /gid34 c"), "a  b  c");
-        assert_eq!(
-            strip_glyph_markers("GLYPH<1> GLYPH<216> GLYPH<99>"),
-            "  "
-        );
-    }
-
-    #[test]
-    fn strip_glyph_markers_leaves_unrelated_text() {
-        assert_eq!(strip_glyph_markers("καλημέρα"), "καλημέρα");
-        // Empty `<>` not matched (regex requires 1+ chars inside).
-        assert_eq!(strip_glyph_markers("GLYPH<>"), "GLYPH<>");
-    }
-
-    #[test]
-    fn strip_glyph_markers_handles_long_attribute_form() {
-        // PDF extractors sometimes emit `GLYPH<c=N,font=/Subset+Family>`.
-        let input = "prefix GLYPH<c=3,font=/QCMXYA+CenturyGothic> suffix";
-        assert_eq!(strip_glyph_markers(input), "prefix  suffix");
-    }
+    // strip_glyph_markers tests moved to cleaning_module's Rule B tests
+    // (Point 4: the patterns are now matched by `PDF_GLYPH_NAME_REGEX`
+    // and stripped by `apply_glyph_span_strip_and_rule_b`).
 
     // ---------- is_residue_mojibake_line (R1 ∪ R2) ----------
 
@@ -1623,50 +1634,47 @@ mod wave2_tests {
         assert_eq!(out, "<!-- image -->");
     }
 
+    // Soft-hyphen handling: U+00AD strip is now part of the
+    // unified Group 1 strip predicate (`is_unicode_noise_char` in
+    // cleaning_module.rs). End-to-end coverage lives in
+    // `cleaning_module::tests::core_clean_text_strips_unicode_noise_chars`.
+
     #[test]
-    fn strip_soft_hyphens_removes_u00ad() {
-        let shy = '\u{00AD}';
-        let input = format!("co{}operate", shy);
-        assert_eq!(strip_soft_hyphens(&input), "cooperate");
+    fn fold_adobe_pua_ascii_mirrored() {
+        assert_eq!(fold_codepoint('\u{F02D}'), Some("-"));
+        assert_eq!(fold_codepoint('\u{F03D}'), Some("="));
+        assert_eq!(fold_codepoint('\u{F02B}'), Some("+"));
     }
 
     #[test]
-    fn strip_soft_hyphens_noop_when_absent() {
-        assert_eq!(strip_soft_hyphens("plain text"), "plain text");
+    fn fold_adobe_pua_greek_letters() {
+        assert_eq!(fold_codepoint('\u{F061}'), Some("α"));
+        assert_eq!(fold_codepoint('\u{F06C}'), Some("λ"));
+        assert_eq!(fold_codepoint('\u{F06D}'), Some("μ"));
     }
 
     #[test]
-    fn decode_pua_recovers_ascii_mirrored_chars() {
-        assert_eq!(decode_adobe_symbol_pua("\u{F02D}"), "-");
-        assert_eq!(decode_adobe_symbol_pua("\u{F03D}"), "=");
-        assert_eq!(decode_adobe_symbol_pua("\u{F02B}"), "+");
+    fn fold_adobe_pua_math_operators() {
+        assert_eq!(fold_codepoint('\u{F0A3}'), Some("≤"));
+        assert_eq!(fold_codepoint('\u{F0B3}'), Some("≥"));
+        assert_eq!(fold_codepoint('\u{F0CE}'), Some("∈"));
     }
 
     #[test]
-    fn decode_pua_recovers_greek_letters() {
-        assert_eq!(decode_adobe_symbol_pua("\u{F061}"), "α");
-        assert_eq!(decode_adobe_symbol_pua("\u{F06C}"), "λ");
-        assert_eq!(decode_adobe_symbol_pua("\u{F06D}"), "μ");
+    fn fold_adobe_pua_unmapped_returns_none() {
+        assert_eq!(fold_codepoint('\u{F500}'), None);
     }
 
     #[test]
-    fn decode_pua_recovers_math_operators() {
-        assert_eq!(decode_adobe_symbol_pua("\u{F0A3}"), "≤");
-        assert_eq!(decode_adobe_symbol_pua("\u{F0B3}"), "≥");
-        assert_eq!(decode_adobe_symbol_pua("\u{F0CE}"), "∈");
+    fn fold_adobe_pua_via_fold_line() {
+        assert_eq!(fold_line("\u{F061}\u{F062}\u{F063}"), Some("αβχ".to_string()));
     }
 
     #[test]
-    fn decode_pua_skips_unmapped_chars() {
-        // Some random PUA codepoint not in our map.
-        let unmapped = '\u{F500}';
-        let s = unmapped.to_string();
-        assert_eq!(decode_adobe_symbol_pua(&s), s);
-    }
-
-    #[test]
-    fn decode_pua_fast_path_noop_when_no_pua() {
-        assert_eq!(decode_adobe_symbol_pua("plain Greek καλημέρα"), "plain Greek καλημέρα");
+    fn fold_micro_sign_to_greek_mu() {
+        // U+00B5 MICRO SIGN → U+03BC GREEK SMALL LETTER MU.
+        assert_eq!(fold_codepoint('\u{00B5}'), Some("\u{03BC}"));
+        assert_eq!(fold_line("5 \u{00B5}m"), Some("5 μm".to_string()));
     }
 
     // (reflow_* tests moved to md_module.rs.)

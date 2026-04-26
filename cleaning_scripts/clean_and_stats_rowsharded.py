@@ -135,7 +135,11 @@ def _process_row_shard(
     batch_size: int,
 ) -> Dict[str, Any]:
     import glossapi_rs_cleaner as cleaner
-    import glossapi_rs_noise as noise
+    # CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 7: the matcher's
+    # three-counter PyO3 surface (`match_token_category_debug_text`)
+    # is gone. The cleaner now emits per-rule match counts directly
+    # in `clean_stats` (`rule_a_match_count`, `rule_b_match_count`,
+    # `residue_line_drop_count`). No separate matcher invocation.
 
     scratch_root = Path(stats_path).parent
     scratch = scratch_root / f"_scratch_{Path(stats_path).stem}"
@@ -148,6 +152,8 @@ def _process_row_shard(
     total_chars_before = 0
     total_chars_after = 0
     total_chars_dropped = 0
+    phase_a_fallback_count = 0
+    phase_a_dialect_ambiguous_count = 0
 
     global_row_idx = 0
     with open(stats_path, "w", encoding="utf-8") as stats_fh, \
@@ -195,29 +201,12 @@ def _process_row_shard(
                 # patterns these doc-drops were targeting.
                 cs = cleaner.analyze_charset(text)
 
-                # write_files=False → skip the per-match .md disk writes that
-                # dominated wall time at 56 workers (see step-2 profiling).
-                # All data we need (categories, match counts, matches_json,
-                # page_text, page_char_count) is returned in-memory.
-                pages = noise.match_token_category_debug_text(
-                    text, str(scratch), category_specs_path,
-                    source_path, source_stem, base_stem,
-                    write_files=False,
-                )
-                # Use Rust-precomputed per-category counts from each page.
-                # Saves two json.loads(matches_json) passes per doc at
-                # Python level (measured 2026-04-23 as the dominant per-doc
-                # Python overhead).
+                # Doc-level counters initialised; populated AFTER cleaning
+                # from `clean_stats` per-rule fields (Point 7). Pre-cleaning
+                # matcher invocation removed.
                 doc_counters: Dict[str, int] = {
                     "font_name_literal": 0, "glyph_font_like": 0, "script_residue_restricted": 0,
                 }
-                for page in pages:
-                    pc = page.get("per_category_match_count") or {}
-                    for category in doc_counters:
-                        doc_counters[category] += int(pc.get(category, 0) or 0)
-                # write_files=False above means no scratch .md files are
-                # produced — the per-doc pruning loop that used to live here
-                # is obsolete.
 
                 # Attach the charset ratios computed above so kept-docs
                 # records show them (distribution/threshold calibration).
@@ -278,6 +267,27 @@ def _process_row_shard(
                     True,           # enable_latex_repetition_crop
                     30,             # latex_char_threshold
                     3,              # latex_line_threshold
+                )
+                if clean_stats.get("phase_a_fallback_reason") is not None:
+                    phase_a_fallback_count += 1
+                    if clean_stats.get("phase_a_dialect_ambiguous_input"):
+                        phase_a_dialect_ambiguous_count += 1
+                # Point 7 migration: populate doc_counters from cleaner's
+                # per-rule match counts (replaces the deleted matcher).
+                # Note Rule B is now ONE engine (not split into
+                # font_name_literal vs glyph_font_like at cleaner-level).
+                # We attribute Rule A to glyph_marker (PostScript glyph-name
+                # literals) and Rule B to glyph_marker too (regex covers
+                # GLYPH<…>, /uniXXXX, /gN, font subsets, ...). The
+                # font_name_literal counter is no longer separately
+                # measurable post-unification — kept at 0 for back-compat.
+                doc_counters["font_name_literal"] = 0
+                doc_counters["glyph_font_like"] = int(
+                    clean_stats.get("rule_a_match_count", 0)
+                    + clean_stats.get("rule_b_match_count", 0)
+                )
+                doc_counters["script_residue_restricted"] = int(
+                    clean_stats.get("residue_line_drop_count", 0)
                 )
                 # Four-way char-drop attribution + line-drop count come from
                 # the Rust side. Quality stats (non-empty lines/chars in/out)
@@ -391,6 +401,8 @@ def _process_row_shard(
         "chars_after_total_kept_docs": total_chars_after,
         "chars_removed_by_per_line_strip": total_chars_before - total_chars_after,
         "chars_removed_by_drop": total_chars_dropped,
+        "phase_a_fallback_count": phase_a_fallback_count,
+        "phase_a_dialect_ambiguous_count": phase_a_dialect_ambiguous_count,
         "elapsed_seconds": time.time() - start,
     }
 
@@ -483,11 +495,15 @@ def main(argv=None) -> int:
     total_chars_after = 0
     total_chars_removed_strip = 0
     total_chars_removed_drop = 0
+    total_phase_a_fallback = 0
+    total_phase_a_dialect_ambiguous = 0
     for r in results:
         total_chars_before += r["chars_before_total_kept_docs"]
         total_chars_after += r["chars_after_total_kept_docs"]
         total_chars_removed_strip += r["chars_removed_by_per_line_strip"]
         total_chars_removed_drop += r["chars_removed_by_drop"]
+        total_phase_a_fallback += r.get("phase_a_fallback_count", 0)
+        total_phase_a_dialect_ambiguous += r.get("phase_a_dialect_ambiguous_count", 0)
         for k, v in r["rows_dropped"].items():
             total_drop_counts[k] = total_drop_counts.get(k, 0) + v
 
@@ -502,6 +518,8 @@ def main(argv=None) -> int:
         "chars_removed_by_drop": total_chars_removed_drop,
         "pct_chars_removed_by_strip": round(
             100.0 * total_chars_removed_strip / max(total_chars_before, 1), 3),
+        "phase_a_fallback_count": total_phase_a_fallback,
+        "phase_a_dialect_ambiguous_count": total_phase_a_dialect_ambiguous,
     }
     (args.stats_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False),
