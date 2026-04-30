@@ -51,10 +51,12 @@ cuda = [
     "torchvision==0.20.1",
 ]
 # DeepSeek OCR backend extras (Torch should be installed from the PyTorch index).
+# vLLM is the supported runtime backend. transformers is pulled transitively by
+# vllm; we no longer pin it here because the DeepSeek-OCR-2 bundled modeling
+# code requires the pre-4.46 attention API and the only working path is via
+# vllm's own model loader.
 deepseek = [
     "vllm==0.18.0",
-    "transformers==4.57.6",
-    "tokenizers==0.22.2",
     "accelerate>=1.2.1,<2",
     "pymupdf==1.24.10",
     "Pillow==12.1.1",
