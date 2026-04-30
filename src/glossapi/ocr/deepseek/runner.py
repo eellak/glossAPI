@@ -1531,16 +1531,26 @@ def run_for_files(
         metrics_path = metrics_dir / f"{stem}.metrics.json"
         if not md_path.exists():
             raise FileNotFoundError(f"DeepSeek OCR did not produce markdown for {name}: {md_path}")
-        if not md_path.read_text(encoding="utf-8").strip():
-            raise RuntimeError(f"DeepSeek OCR produced empty markdown for {name}: {md_path}")
+        text_payload = md_path.read_text(encoding="utf-8")
         page_count = _page_count(pdf_path)
+        result_payload: Optional[Dict[str, Any]] = None
         if metrics_path.exists():
             try:
-                results[stem] = json.loads(metrics_path.read_text(encoding="utf-8"))
-                continue
+                result_payload = json.loads(metrics_path.read_text(encoding="utf-8"))
             except Exception:
-                pass
-        results[stem] = {"page_count": page_count}
-        metrics_path.write_text(json.dumps(results[stem], indent=2), encoding="utf-8")
+                result_payload = None
+        if result_payload is None:
+            result_payload = {"page_count": page_count}
+        else:
+            result_payload.setdefault("page_count", page_count)
+        if not text_payload.strip():
+            result_payload["empty_markdown"] = True
+            metrics_path.write_text(json.dumps(result_payload, indent=2), encoding="utf-8")
+            LOGGER.warning("DeepSeek OCR produced empty markdown for %s: %s", name, md_path)
+            results[stem] = result_payload
+            continue
+        results[stem] = result_payload
+        if not metrics_path.exists():
+            metrics_path.write_text(json.dumps(result_payload, indent=2), encoding="utf-8")
 
     return results
