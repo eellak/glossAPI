@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-DEFAULT_RUNTIME_BACKEND = "transformers"
+DEFAULT_RUNTIME_BACKEND = "vllm"
 DEFAULT_OCR_PROFILE = "markdown_grounded"
 DEFAULT_ATTN_BACKEND = "auto"
 DEFAULT_RENDER_DPI = 144
