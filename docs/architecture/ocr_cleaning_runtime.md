@@ -20,6 +20,74 @@ debug logic to evolve faster than the real cleaner. Sharing one analyzer avoids
 that drift: if the debug page is right, the clean page is operating on the same
 decisions.
 
+The same alignment rule applies to metadata. When `clean_ocr()` writes cleaned
+markdown, it now scores parquet-facing OCR metrics from that cleaned directory.
+Without that, downstream `export` can read cleaned text while still carrying
+raw-OCR `char_count_no_comments`, `is_empty`, or repeat diagnostics in parquet.
+
+## Code Layout
+
+The OCR cleaner is split by responsibility so detector policy does not drift
+into rendering or table-specific cleanup:
+
+- `src/glossapi/corpus/phase_clean.py`
+  - owns analyzer order, worker orchestration, and clean/debug mode selection
+- `src/glossapi/corpus/ocr_table.py`
+  - owns HTML-table classification, dropping policy, and HTML->Markdown conversion
+- `src/glossapi/corpus/ocr_render.py`
+  - owns span merging, clean/debug rendering, and `match_index.jsonl` row generation
+- `src/glossapi/corpus/text_surface_metrics.py`
+  - owns shared published-surface metric helpers such as `char_count_no_comments`
+    and `is_empty`
+
+This split is deliberate. The project needs one place to decide *what* a match
+is, and a separate place to decide *how* that decision becomes visible output.
+That boundary is one of the main protections against random debug/clean drift.
+
+## Stage Boundary: `clean_ocr()` vs `clean()`
+
+These two stages deliberately remain separate:
+
+- `clean_ocr()`
+  - sits on the `corpus.ocr` path
+  - owns OCR artifact removal and OCR-specific metrics
+- `clean()`
+  - sits primarily on the `corpus.extract` path
+  - owns broader clean/export quality metrics
+
+The OCR rerun path reuses `clean()` afterward because `export` still expects the
+generic clean/export fields. That reuse is intentional orchestration, not an
+argument that the two stages should collapse into one function.
+
+## Field Ownership
+
+The practical parquet contract is:
+
+- OCR-owned fields
+  - `percentage_greek`
+  - `latin_percentage`
+  - `polytonic_ratio`
+  - `char_count_no_comments`
+  - `is_empty`
+  - `ocr_noise_suspect`
+  - `ocr_noise_flags`
+  - `ocr_repeat_phrase_run_max`
+  - `ocr_repeat_line_run_max`
+  - `ocr_repeat_suspicious_line_count`
+  - `ocr_repeat_suspicious_line_ratio`
+- clean/export-owned fields
+  - `greek_badness_score`
+  - `mojibake_badness_score`
+  - `needs_ocr`
+  - `filter`
+  - other generic quality-routing fields
+
+This ownership split is the reason the post-OCR sequence is explicit:
+
+1. `clean_ocr()` updates the OCR-owned layer on the OCR-cleaned text surface.
+2. `clean(..., write_cleaned_files=False)` refreshes the generic clean/export
+   layer on that same surface.
+
 ## Why The Cleaner Is Not One Generic Matcher
 
 The cleaner is trying to remove OCR- or VLM-induced garbage, not every repeated
