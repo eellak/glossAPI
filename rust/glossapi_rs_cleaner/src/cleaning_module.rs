@@ -788,7 +788,13 @@ pub fn core_clean_text_with_stats_with_mode(
     allowed_chars: &HashSet<char>,
     unusual_chars_set: &HashSet<char>,
     min_chars_for_comment_override: Option<usize>,
-    phase_a_mode: PhaseAMode,
+    // PhaseAMode kept in the signature for back-compat with tests +
+    // PyO3 callers that still pass a phase_a_mode kwarg. After the
+    // dead-code excision (md_format Pilot A removed; md_module
+    // LineBased removed), every variant routes to the same Pilot B
+    // checked path. The arg is ignored; a follow-up PR removes the
+    // enum + parameter entirely.
+    _phase_a_mode: PhaseAMode,
 ) -> (String, CleanStats) {
     // -----------------------------------------------------------------
     // Wave-2 preprocessing (Cases 4, 7, 10a, 8 — 2026-04-23).
@@ -822,17 +828,16 @@ pub fn core_clean_text_with_stats_with_mode(
     // `ParserSurgicalVerified` (Pilot B with the safe checked wrapper)
     // surfaces fallback signals into `CleanStats`. `LineBased` is
     // the explicit-opt-in legacy path for diff-against-baseline runs.
-    let mut phase_a_fallback_reason: Option<String> = None;
-    let mut phase_a_dialect_ambiguous_input = false;
-    let step5 = match phase_a_mode {
-        PhaseAMode::LineBased => md_module::normalize_md_syntax(&step4b),
-        PhaseAMode::ParserSurgical => crate::md_format_surgical::format_surgical(&step4b),
-        PhaseAMode::ParserSurgicalVerified => {
-            let r = crate::md_format_surgical::format_surgical_checked(&step4b);
-            phase_a_fallback_reason = r.fallback_reason;
-            phase_a_dialect_ambiguous_input = r.dialect_ambiguous_input;
-            r.output
-        }
+    let phase_a_fallback_reason: Option<String>;
+    let phase_a_dialect_ambiguous_input: bool;
+    let step5 = {
+        // Pilot B is the only Phase A path. The checked wrapper runs
+        // dual_verify on input vs output and ships input verbatim if
+        // they disagree — surfaced via phase_a_fallback_reason.
+        let r = crate::md_format_surgical::format_surgical_checked(&step4b);
+        phase_a_fallback_reason = r.fallback_reason;
+        phase_a_dialect_ambiguous_input = r.dialect_ambiguous_input;
+        r.output
     };
     let wave2_out_len = step5.chars().count();
     let wave2_preprocessing_delta = wave2_in_len.saturating_sub(wave2_out_len);
@@ -1829,41 +1834,6 @@ mod tests {
     /// bucketing, etc.). Pilot B preserves the input markdown more
     /// strictly; tests asserting on collapse-style outputs need to
     /// pin LineBased explicitly.
-    fn linebased_clean_text(
-        text: &str,
-        allowed_chars: &HashSet<char>,
-        unusual_chars_set: &HashSet<char>,
-        min_chars_for_comment_override: Option<usize>,
-    ) -> (String, usize, usize) {
-        let (cleaned, stats) = core_clean_text_with_stats_with_mode(
-            text,
-            allowed_chars,
-            unusual_chars_set,
-            min_chars_for_comment_override,
-            PhaseAMode::LineBased,
-        );
-        (
-            cleaned,
-            stats.original_chars_for_badness,
-            stats.sum_kept_line_content_chars,
-        )
-    }
-
-    fn linebased_clean_text_with_stats(
-        text: &str,
-        allowed_chars: &HashSet<char>,
-        unusual_chars_set: &HashSet<char>,
-        min_chars_for_comment_override: Option<usize>,
-    ) -> (String, CleanStats) {
-        core_clean_text_with_stats_with_mode(
-            text,
-            allowed_chars,
-            unusual_chars_set,
-            min_chars_for_comment_override,
-            PhaseAMode::LineBased,
-        )
-    }
-
     #[test]
     fn core_clean_text_decoded_glyph_tag_stripped_keeps_prose() {
         // Wave-2 (Case 7): entity-decode + GLYPH-strip pre-passes mean
@@ -2212,18 +2182,6 @@ see https://example.org/path/hyphenminus/file\n";
     }
 
     #[test]
-    fn core_clean_text_normalizes_separator_line() {
-        // LineBased Phase A: collapses 6-dash to 3-dash. Pilot B
-        // preserves input verbatim under setext-heading interpretation,
-        // so this test pins the legacy mode it was designed for.
-        let allowed_chars = default_allowed_chars();
-        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        let input = "Before\n------\nAfter\n";
-        let (cleaned, _, _) = linebased_clean_text(input, &allowed_chars, &unusual_chars, None);
-        assert_eq!(cleaned, "Before\n---\nAfter\n");
-    }
-
-    #[test]
     fn core_clean_text_normalizes_gfm_table_separator() {
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
@@ -2337,61 +2295,6 @@ see https://example.org/path/hyphenminus/file\n";
         assert_eq!(cleaned, "Let α + β = γ in Greek.\n");
     }
 
-    #[test]
-    fn core_clean_text_composite_roundtrip() {
-        // End-to-end exercise: polytonic + math italic + ligature + separator
-        // + whitespace run + ellipsis + malformed entity + code fence, all in
-        // one document. Asserts the composed behavior.
-        // Pinned to LineBased — assertions check the legacy normalizer's
-        // specific output shape (separator collapse to `---`, fence
-        // preservation). Pilot B has different output shape.
-        let allowed_chars = default_allowed_chars();
-        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        let input = "\
-# Document
-
-Let 𝑥    be defined as follows……
-
-Separator:
---------
-
-The eﬃcient λόγος ἀγαθός &amp 𝐴.
-
-```
-    4 spaces stay
-----
-```
-
-| H1 | H2 |
-| :------- | ---: |
-| a | b |
-";
-        let (cleaned, _, _) = linebased_clean_text(input, &allowed_chars, &unusual_chars, None);
-        // 4-space indented line inside code fence is preserved.
-        assert!(cleaned.contains("    4 spaces stay"));
-        // `----` inside code fence is NOT collapsed.
-        assert!(cleaned.lines().any(|l| l == "----"));
-        // Outside the fence, separator collapses.
-        assert!(cleaned.contains("\n---\n"));
-        // Math italic folds to ASCII. Tiered whitespace: 4 spaces → 3.
-        assert!(cleaned.contains("Let x   be"));
-        // Original 4-space run no longer present.
-        assert!(!cleaned.contains("x    be"));
-        // Ligature folds.
-        assert!(cleaned.contains("efficient"));
-        // Polytonic preserved.
-        assert!(cleaned.contains("λόγος"));
-        assert!(cleaned.contains("ἀγαθός"));
-        // Ellipsis normalizes onto the shared ASCII dot ladder.
-        assert!(cleaned.contains("follows....."));
-        assert!(!cleaned.contains("follows……"));
-        // Malformed entity fallback.
-        assert!(cleaned.contains("& A"));
-        assert!(!cleaned.contains("&amp"));
-        // GFM table separator normalized.
-        assert!(cleaned.contains("| :--- | ---: |"));
-    }
-
     // -----------------------------------------------------------------
     // Char accounting regression suite (added 2026-04-22)
     // -----------------------------------------------------------------
@@ -2498,71 +2401,6 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
     }
 
     #[test]
-    fn accounting_normalization_tracks_separator_collapse() {
-        // LineBased-pinned: tests the legacy normalizer's separator collapse.
-        let allowed_chars = default_allowed_chars();
-        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        // 20-dash separator → collapses to `---` (3 chars). normalize delta
-        // should reflect the reduction.
-        let input = "hello\n--------------------\nworld\n";
-        let (cleaned, stats) =
-            linebased_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
-        assert!(
-            cleaned.contains("\n---\n"),
-            "expected collapsed separator, got {cleaned:?}"
-        );
-        assert!(
-            stats.chars_dropped_by_normalization >= 17,
-            "expected ≥17 normalization chars dropped, got {stats:?}"
-        );
-        assert_eq!(stats.chars_dropped_by_line_drop, 0);
-        assert_accounting_invariant(input, &stats);
-    }
-
-    #[test]
-    fn accounting_escaped_underscore_run_buckets_but_stays_as_underscores() {
-        // LineBased-pinned: tests the legacy normalizer's
-        // escaped-underscore bucketing.
-        let allowed_chars = default_allowed_chars();
-        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        let input = "ΠΕΡΙ: ΝΟΜΟΘΕΣΙΑΣ\n\\_\\_\\_\\_\\_\nΑιτιολογική έκθεση.\n";
-        let (cleaned, _stats) =
-            linebased_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
-        // Still a line of escaped underscores, NOT an HR.
-        assert!(
-            cleaned.contains("\n\\_\\_\\_\\_\\_\n"),
-            "escaped-underscore line should pass through as literal \
-                 escapes, got {cleaned:?}"
-        );
-        // And definitely NOT rewritten to `---`.
-        assert!(
-            !cleaned.contains("\n---\n"),
-            "escaped-underscore line must NOT be rewritten to `---` \
-                 (that would change preview). got {cleaned:?}"
-        );
-    }
-
-    #[test]
-    fn accounting_long_escaped_underscore_run_buckets_to_20() {
-        // LineBased-pinned: tests the legacy normalizer's
-        // escaped-underscore bucket-to-20 behaviour.
-        let allowed_chars = default_allowed_chars();
-        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        // 25 pairs → bucket `bucket_run_length` maps 25→20.
-        let long_run: String = "\\_".repeat(25);
-        let input = format!("heading\n{long_run}\nbody text.\n");
-        let (cleaned, _stats) =
-            linebased_clean_text_with_stats(&input, &allowed_chars, &unusual_chars, None);
-        // Should contain exactly 20 escape pairs (40 chars = 20 * 2).
-        let expected: String = "\\_".repeat(20);
-        assert!(
-            cleaned.contains(&format!("\n{expected}\n")),
-            "25-pair escaped-underscore run should bucket to 20, \
-                 got {cleaned:?}"
-        );
-    }
-
-    #[test]
     fn accounting_per_char_filter_tracks_unusual_script_strip() {
         let allowed_chars = default_allowed_chars();
         let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
@@ -2579,36 +2417,6 @@ The eﬃcient λόγος ἀγαθός &amp 𝐴.
             "expected ≥12 per-char-filter chars dropped, got {stats:?}"
         );
         assert_eq!(stats.chars_dropped_by_line_drop, 0);
-        assert_accounting_invariant(input, &stats);
-    }
-
-    #[test]
-    fn accounting_mixed_doc_invariant_holds() {
-        // LineBased-pinned: the input includes a 20-dash separator and
-        // 5-pair escaped-underscore run, both of which trigger LineBased's
-        // normalize-collapse. Pilot B preserves these as-is (different
-        // chars_dropped_by_normalization shape).
-        let allowed_chars = default_allowed_chars();
-        let unusual_chars = SCRIPT_SETS.get("unusual").cloned().unwrap_or_default();
-        // Per Point 3: Cyrillic is now KEPT (European content). Use
-        // Coptic for the per-char-filter strip signal — still in `unusual`.
-        // Per Point 4: bare `hyphenminus` is no longer a line-drop
-        // trigger; use a dense `/uniXXXX` line for the Rule B gate.
-        let input = "Καλημέρα, ⲁⲃⲅⲇⲉ.\n\
-/uni0301/uni0302/uni0303/uni0304/uni0305/uni0306/uni0307/uni0308/uni0309/uni030A/uni030B/uni030C\n\
---------------------\n\
-\\_\\_\\_\\_\\_\n\
-Επίλογος.\n";
-        let (_cleaned, stats) =
-            linebased_clean_text_with_stats(input, &allowed_chars, &unusual_chars, None);
-        assert!(
-            stats.lines_dropped_count >= 1,
-            "expected at least one line drop, got {stats:?}"
-        );
-        assert!(stats.chars_dropped_by_line_drop > 0);
-        assert!(stats.chars_dropped_by_normalization > 0);
-        assert!(stats.chars_dropped_by_per_char_filter > 0);
-        assert!(stats.content_chars_kept > 0);
         assert_accounting_invariant(input, &stats);
     }
 

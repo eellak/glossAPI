@@ -1,35 +1,34 @@
-//! Parser-backed Phase A formatter (pilot).
+//! Dual-parser verifier (`dual_verify`) — used by Pilot B's checked
+//! wrapper (`md_format_surgical::format_surgical_checked`) to confirm
+//! that a Phase A rewrite preserved the rendered HTML preview.
 //!
-//! This module is the *minimal* parser-backed Phase A: parse MD with
-//! a real CommonMark/GFM parser (`comrak`), then re-serialize with
-//! `format_commonmark`. Correctness follows from the parser + the
-//! dual-parser verifier in `dual_verify`. No line heuristics.
+//! Historical note: this module also held Pilot A
+//! (`format_parsed`, a whole-doc round-trip through comrak's
+//! `format_commonmark`). Pilot A was abandoned per the 2026-04-25
+//! cleanup plan — it over-normalized things outside the 3 target
+//! transforms (50 of 66 audit failures traced to non-target
+//! normalizations of list markers, link forms, escapes). Pilot B
+//! (`md_format_surgical::format_surgical`) supersedes it; only the
+//! dual-parser verifier remains here.
 //!
-//! Design per the 2026-04-24 MD library survey (§1 "Add parser-backed
-//! Phase A as a pilot") and the user's direction that the right
-//! solution is parser semantics, not heuristics.
+//! What `dual_verify` checks:
+//! - INPUT parser agreement: comrak and pulldown-cmark agree on what
+//!   the input renders to (well-formedness signal — the doc isn't
+//!   dialect-ambiguous).
+//! - OUTPUT parser agreement: same for the rewrite output.
+//! - Identity per parser: the rewrite preserves the rendered HTML
+//!   under EACH parser independently.
 //!
-//! This module is DELIBERATELY SMALL. The hypothesis is that a full
-//! round-trip through comrak already produces the corpus we want —
-//! paragraphs unwrapped (soft breaks → spaces), tables minimized,
-//! thematic breaks canonicalized, all by comrak's own formatter.
-//! We verify with `dual_verify` (pulldown-cmark + comrak HTML
-//! agreement across input and output). If the dual verifier passes,
-//! the output is safe.
-//!
-//! If full round-trip over-normalizes (e.g. rewrites link forms or
-//! heading styles we want preserved), we'll escalate to a surgical
-//! rewrite — parse, keep most spans verbatim, re-serialize only the
-//! paragraph / table / thematic-break nodes. Not done in this pilot.
+//! On any disagreement, `format_surgical_checked` ships the input
+//! verbatim and records `phase_a_fallback_reason`.
 
 use comrak::{nodes::AstNode, parse_document, Arena, Options};
 use pulldown_cmark::{html as pd_html, Options as PdOptions, Parser as PdParser};
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
 
-/// Build the comrak options we use for Phase A. GFM extensions
-/// enabled so tables / strikethrough / tasklists / footnotes parse
-/// correctly. CommonMark-compatible output by default.
+/// Build the comrak options the verifier uses to render input + output
+/// to HTML for comparison. GFM extensions match what
+/// `md_format_surgical` parses with so the comparison is on the same
+/// dialect.
 fn phase_a_options() -> Options<'static> {
     let mut opts = Options::default();
     opts.extension.table = true;
@@ -44,21 +43,6 @@ fn phase_a_options() -> Options<'static> {
     opts.extension.tagfilter = false;
     opts.render.unsafe_ = true; // don't filter HTML on HTML render
     opts
-}
-
-/// Parser-backed Phase A: parse with comrak, re-serialize to
-/// CommonMark. Returns the rewritten markdown.
-///
-/// Panics / parse errors propagate — comrak is permissive, should
-/// not normally error; if it does the caller should fall back to the
-/// line-based path.
-pub fn format_parsed(md: &str) -> String {
-    let arena = Arena::new();
-    let opts = phase_a_options();
-    let root: &AstNode = parse_document(&arena, md, &opts);
-    let mut out: Vec<u8> = Vec::with_capacity(md.len());
-    comrak::format_commonmark(root, &opts, &mut out).expect("format_commonmark write");
-    String::from_utf8(out).unwrap_or_else(|_| md.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +125,7 @@ fn pulldown_render(md: &str) -> String {
 fn comrak_render(md: &str) -> String {
     let arena = Arena::new();
     let opts = phase_a_options();
-    let root = parse_document(&arena, md, &opts);
+    let root: &AstNode = parse_document(&arena, md, &opts);
     let mut html = Vec::new();
     comrak::format_html(root, &opts, &mut html).expect("format_html write");
     collapse_ws(&String::from_utf8_lossy(&html))
@@ -312,284 +296,4 @@ fn common_prefix_len(a: &str, b: &str) -> usize {
         n += ca.len_utf8();
     }
     n
-}
-
-// ---------------------------------------------------------------------------
-// PyO3 surface.
-// ---------------------------------------------------------------------------
-
-/// PyO3: apply parser-backed Phase A. Returns the rewritten markdown.
-#[pyfunction]
-pub fn format_parsed_py(md: &str) -> String {
-    format_parsed(md)
-}
-
-/// PyO3: run the dual-parser verifier, return a Python dict.
-#[pyfunction]
-pub fn dual_verify_py(py: Python<'_>, input: &str, output: &str) -> PyResult<PyObject> {
-    let r = dual_verify(input, output);
-    let d = PyDict::new(py);
-    d.set_item("input_parser_agreement", r.input_parser_agreement)?;
-    d.set_item("output_parser_agreement", r.output_parser_agreement)?;
-    d.set_item("pd_identity", r.pd_identity)?;
-    d.set_item("cm_identity", r.cm_identity)?;
-    d.set_item(
-        "is_well_formed_and_identical",
-        r.is_well_formed_and_identical(),
-    )?;
-    d.set_item(
-        "is_preview_preserving_per_parser",
-        r.is_preview_preserving_per_parser(),
-    )?;
-    d.set_item("is_input_well_formed", r.is_input_well_formed())?;
-    d.set_item("first_diff", r.first_diff)?;
-    // Expose the rendered HTMLs for diagnosis — they can be large
-    // (millions of chars on corpus docs) but are cheap to skip on
-    // the Python side if not needed.
-    d.set_item("pd_input_html", r.pd_input_html)?;
-    d.set_item("pd_output_html", r.pd_output_html)?;
-    d.set_item("cm_input_html", r.cm_input_html)?;
-    d.set_item("cm_output_html", r.cm_output_html)?;
-    Ok(d.into())
-}
-
-// ---------------------------------------------------------------------------
-// Tests — small curated fixture set covering every Phase A concern.
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Helper: assert that `format_parsed(input)` passes the dual
-    /// verifier (parsers agree on input, parsers agree on output,
-    /// both renders identical).
-    fn assert_formatter_preserves_preview(input: &str) {
-        let out = format_parsed(input);
-        let r = dual_verify(input, &out);
-        assert!(
-            r.is_well_formed_and_identical(),
-            "\n=== INPUT ===\n{}\n=== OUTPUT ===\n{}\n=== DIFF ===\n{:?}\n",
-            input,
-            out,
-            r.first_diff,
-        );
-    }
-
-    // --- Paragraph reflow: soft-wrap prose → one line ---
-
-    #[test]
-    fn fx_paragraph_soft_wrapped_prose_unwraps() {
-        let input =
-            "This is a\nsoft-wrapped\nparagraph of prose.\n\nSecond paragraph\non two lines.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_paragraph_with_hard_break_preserved() {
-        // Two trailing spaces before newline = `<br>` in preview.
-        let input = "first line  \nsecond line\n\nnext paragraph.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_paragraph_with_backslash_hard_break_preserved() {
-        let input = "first line\\\nsecond line\n\nnext paragraph.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- GFM tables ---
-
-    #[test]
-    fn fx_gfm_table_with_long_dash_separator() {
-        let input = "| A | B |\n| ---------- | ---------- |\n| 1 | 2 |\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_gfm_table_with_alignment_colons() {
-        let input = "| a | b | c | d |\n| :---- | -----: | :----: | ---- |\n| 1 | 2 | 3 | 4 |\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_gfm_optional_pipe_table() {
-        // GFM allows tables without leading/trailing pipes.
-        let input = "a | b\n--- | ---\n1 | 2\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- HR thematic breaks ---
-
-    #[test]
-    fn fx_hr_long_dash_run() {
-        let input = "before\n\n----------\n\nafter\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_hr_underscore_run() {
-        let input = "before\n\n__________\n\nafter\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_hr_asterisk_run() {
-        let input = "before\n\n**********\n\nafter\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- Escaped underscores (must NOT become HR) ---
-
-    #[test]
-    fn fx_escaped_underscores_stay_literal() {
-        let input = "before para.\n\n\\_\\_\\_\\_\\_\\_\\_\\_\n\nafter para.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- Fenced code blocks ---
-
-    #[test]
-    fn fx_fenced_code_content_preserved() {
-        let input = "before\n\n```\nsome code\nwith -----\nand ```` inline\n```\n\nafter\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_fenced_code_with_info_string() {
-        let input = "```rust\nfn main() {}\n```\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- Blockquotes ---
-
-    #[test]
-    fn fx_blockquote_single_line() {
-        let input = "> quoted text\n\nafter\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_blockquote_multi_line() {
-        let input = "> first line\n> second line\n> third line\n\nafter\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- Lists ---
-
-    #[test]
-    fn fx_tight_unordered_list() {
-        let input = "- alpha\n- beta\n- gamma\n\nafter.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_loose_unordered_list() {
-        let input = "- alpha\n\n- beta\n\n- gamma\n\nafter.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_ordered_list() {
-        let input = "1. first\n2. second\n3. third\n\nafter.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_nested_list() {
-        let input = "- outer\n  - inner\n  - inner2\n- outer2\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- Headings ---
-
-    #[test]
-    fn fx_atx_headings() {
-        let input = "# H1\n\n## H2\n\n### H3\n\nbody.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_setext_heading_level1() {
-        let input = "Heading text\n============\n\nbody.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_setext_heading_level2() {
-        let input = "Heading text\n------------\n\nbody.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- Mixed / realistic Greek corpus shapes ---
-
-    #[test]
-    fn fx_greek_paragraph_soft_wrapped() {
-        let input = "Το παρόν έργο\nαδειοδοτείται υπό\nτους όρους της άδειας\nCreative Commons.\n\nΤέλος κειμένου.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_mixed_heading_table_prose() {
-        let input = concat!(
-            "# Top heading\n\n",
-            "A soft-wrapped\nparagraph of prose.\n\n",
-            "| Col A | Col B |\n| ---------- | ---------- |\n| 1 | 2 |\n\n",
-            "-----------\n\n",
-            "## Section two\n\n",
-            "- item alpha\n- item beta\n\n",
-            "Final\nparagraph\nsoft-wrapped.\n",
-        );
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- Indented code block ---
-
-    #[test]
-    fn fx_indented_code_block() {
-        let input = "paragraph\n\n    code line one\n    code line two\n\nafter\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- Inline code with pipe (common GFM gotcha) ---
-
-    #[test]
-    fn fx_inline_code_with_pipe() {
-        let input = "Use `foo | bar` to filter.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- Links and images ---
-
-    #[test]
-    fn fx_inline_link() {
-        let input = "See [the docs](https://example.com) for details.\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    #[test]
-    fn fx_reference_link() {
-        let input = "See [the docs][1] for details.\n\n[1]: https://example.com\n";
-        assert_formatter_preserves_preview(input);
-    }
-
-    // --- Dual-verifier itself (negative controls) ---
-
-    #[test]
-    fn dual_verifier_catches_dropped_paragraph() {
-        let input = "para1\n\npara2\n\npara3\n";
-        let broken = "para1\n\npara3\n";
-        let r = dual_verify(input, broken);
-        assert!(!r.is_well_formed_and_identical());
-        assert!(!r.pd_identity);
-        assert!(!r.cm_identity);
-    }
-
-    #[test]
-    fn dual_verifier_catches_fused_words() {
-        let input = "alpha beta gamma\n";
-        let broken = "alphabeta gamma\n";
-        let r = dual_verify(input, broken);
-        assert!(!r.is_well_formed_and_identical());
-    }
 }
