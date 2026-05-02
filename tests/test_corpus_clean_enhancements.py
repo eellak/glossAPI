@@ -9,6 +9,7 @@ import pytest
 
 from glossapi import Corpus
 from glossapi.corpus.phase_clean import (
+    DEFAULT_OCR_WORD_REPEAT_WINDOW,
     _find_word_repeat_spans,
     _find_word_repeat_spans_python,
     _merge_labeled_raw_spans,
@@ -326,6 +327,21 @@ def test_clean_ocr_supports_score_only_mode(tmp_path: Path) -> None:
     corpus.clean_ocr(write_cleaned_files=False)
     assert not any(corpus.cleaned_markdown_dir.glob("*.md"))
     assert corpus.markdown_dir == corpus.output_dir / "markdown"
+
+
+def test_clean_ocr_ignores_chunk_markdown_when_canonical_doc_exists(tmp_path: Path) -> None:
+    corpus = _build_corpus(tmp_path)
+    (corpus.markdown_dir / "doc.md").write_text("Κανονικό κείμενο.\n", encoding="utf-8")
+    (corpus.markdown_dir / "doc__p00001-00010.md").write_text("Θορυβώδες chunk.\n", encoding="utf-8")
+
+    corpus.clean_ocr()
+
+    cleaned_files = sorted(path.name for path in corpus.cleaned_markdown_dir.glob("*.md"))
+    assert cleaned_files == ["doc.md"]
+
+    parquet = corpus.output_dir / "download_results" / "download_results.parquet"
+    df = pd.read_parquet(parquet)
+    assert "doc.pdf" in df["filename"].tolist()
 
 
 def test_clean_ocr_supports_combined_clean_and_debug_outputs(tmp_path: Path) -> None:
@@ -842,6 +858,30 @@ def test_rust_word_repeat_spans_match_python_reference(tmp_path: Path) -> None:
             min_period=3,
             window=96,
         )
+
+
+def test_long_accent_shift_repeat_needs_wider_default_window() -> None:
+    line_a = "\"Ελληνική\" ειδήματα, θανεί σει σάφησαν τ' άγχιλίαν"
+    line_b = "\"Ελληνική\" ειδήματα, θανεί σει σάφησαν τ' άγχίλιαν"
+    normalized, _ = _normalize_alnum_with_map_skip_tags("\n".join([line_a, line_b] * 6))
+
+    legacy_spans = _find_word_repeat_spans_python(
+        normalized,
+        rep_threshold=4,
+        min_period=3,
+        window=96,
+    )
+    default_spans = _find_word_repeat_spans_python(
+        normalized,
+        rep_threshold=4,
+        min_period=3,
+        window=DEFAULT_OCR_WORD_REPEAT_WINDOW,
+    )
+
+    assert legacy_spans == []
+    assert default_spans
+    assert default_spans[0]["period"] == 40
+    assert default_spans[0]["repetitions"] >= 6
 
 
 def test_clean_ocr_numeric_word_debug_docs_flags_empty_html_table_collapse(tmp_path: Path) -> None:
