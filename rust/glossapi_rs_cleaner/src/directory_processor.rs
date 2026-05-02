@@ -65,7 +65,7 @@ struct FileTableSummary {
 
 // Struct for detailed table issue reporting
 #[derive(Debug, Serialize, Clone)]
-struct DetailedTableIssueReportEntry {
+pub(crate) struct DetailedTableIssueReportEntry {
     file_path: String,
     issue_description: String,
     table_start_line: usize,
@@ -294,25 +294,13 @@ pub fn generate_analysis_report_for_directory(
 ) -> PyResult<PyObject> {
     let debug_logging = std::env::var_os("GLOSSAPI_RS_DEBUG").is_some();
 
-    // Initialize script character sets
-    let mut allowed_chars = HashSet::new();
-    for key in &scripts_to_keep {
-        if let Some(script_set) = cleaning_module::SCRIPT_SETS.get(key) {
-            allowed_chars.extend(script_set);
-        }
-    }
-    // Ensure essential whitespace is always allowed for cleaning and analysis coherence
-    allowed_chars.insert(' ');
-    allowed_chars.insert('\t');
-    allowed_chars.insert('\n');
-
+    // Single policy builder shared with `clean_text` / `clean_text_with_stats`.
+    // Auto-adds `punctuation`, `numbers`, `common_symbols` so the directory
+    // pipeline's allowed-char set matches the direct-clean path. Fixes
+    // CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 8.
+    let (allowed_chars, unusual_chars) = cleaning_module::build_script_char_sets(&scripts_to_keep);
     let final_allowed_chars_arc = Arc::new(allowed_chars);
-    let unusual_chars_arc = Arc::new(
-        cleaning_module::SCRIPT_SETS
-            .get("unusual")
-            .cloned()
-            .unwrap_or_default(),
-    );
+    let unusual_chars_arc = Arc::new(unusual_chars);
 
     let input_path = PathBuf::from(input_dir_str);
     let output_cleaned_path_opt = output_dir_cleaned_files_str.map(PathBuf::from);
@@ -648,9 +636,6 @@ pub fn batch_clean_markdown_files(
     println!("DEBUG: Output dir: {}", output_dir);
     println!("DEBUG: Scripts to keep: {:?}", scripts_to_keep);
 
-    // Prepare character sets for cleaning
-    let mut allowed_chars = HashSet::new();
-
     // Debug print for available CPU cores
     println!(
         "INFO: Available CPU cores: {}, using {} threads",
@@ -658,63 +643,14 @@ pub fn batch_clean_markdown_files(
         num_threads
     );
 
-    // Fix script mapping to match what's in SCRIPT_SETS (lat->lat, not lat->latin)
-    println!(
-        "DEBUG: Script mapping from user input: {:?}",
-        scripts_to_keep
-    );
-
-    // Check if scripts exist and add their characters
-    for key in &scripts_to_keep {
-        if let Some(script_set) = cleaning_module::SCRIPT_SETS.get(key) {
-            println!(
-                "DEBUG: Adding {} characters from script: {}",
-                script_set.len(),
-                key
-            );
-            allowed_chars.extend(script_set);
-        } else {
-            println!("WARNING: Script '{}' not found in SCRIPT_SETS", key);
-        }
-    }
-
-    // Include common non-alphabetic sets if not specified - use correct keys that match SCRIPT_SETS
-    let keys_to_include = ["punctuation", "numbers", "common_symbols"]; // Corrected keys
-    println!("DEBUG: Also adding characters from: {:?}", keys_to_include);
-
-    for key_to_always_include in keys_to_include {
-        if !scripts_to_keep.contains(&key_to_always_include.to_string()) {
-            if let Some(script_set) = cleaning_module::SCRIPT_SETS.get(key_to_always_include) {
-                println!(
-                    "DEBUG: Adding {} characters from always-included script: {}",
-                    script_set.len(),
-                    key_to_always_include
-                );
-                allowed_chars.extend(script_set);
-            } else {
-                println!(
-                    "WARNING: Always-include script '{}' not found in SCRIPT_SETS",
-                    key_to_always_include
-                );
-            }
-        }
-    }
-
-    // Add essential whitespace characters
-    allowed_chars.insert(' ');
-    allowed_chars.insert('\t');
-    allowed_chars.insert('\n');
-    println!("DEBUG: Added whitespace characters");
-
-    let unusual_chars = cleaning_module::SCRIPT_SETS
-        .get("unusual")
-        .cloned()
-        .unwrap_or_default();
+    // Single policy builder shared with `clean_text` / `clean_text_with_stats`
+    // and `generate_analysis_report_for_directory` (Point 8).
+    let (allowed_chars, unusual_chars) = cleaning_module::build_script_char_sets(&scripts_to_keep);
+    println!("DEBUG: Total allowed characters: {}", allowed_chars.len());
     println!(
         "DEBUG: Using {} unusual characters for detection",
         unusual_chars.len()
     );
-    println!("DEBUG: Total allowed characters: {}", allowed_chars.len());
 
     let config = Arc::new(BatchCleanOpConfig {
         allowed_chars,
