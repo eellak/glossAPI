@@ -71,6 +71,11 @@ WORD_REPEAT_HASH_BASE = 1469598103934665603
 # still small enough to read as one corrupted region rather than two separate
 # failures. This is intentionally more permissive than the older 10-char rule.
 WORD_REPEAT_MERGE_MAX_NONWHITESPACE_GAP = 40
+# Default word-repeat detection window for OCR cleaning. Wider than the
+# legacy 96 so accent-shifted Greek repetitions (period > 32 chars) get
+# caught — see test_long_accent_shift_repeat_needs_wider_default_window.
+DEFAULT_OCR_WORD_REPEAT_MAX_PERIOD = 130
+DEFAULT_OCR_WORD_REPEAT_WINDOW = DEFAULT_OCR_WORD_REPEAT_MAX_PERIOD * 4
 EXISTING_MATCH_BLOCK_RE = re.compile(r"(?is)<match\b[^>]*>.*?</match\s*>")
 LATEX_BLOCK_RE = re.compile(r"(?is)\$\$.*?\$\$")
 LATEX_BRACKET_RE = re.compile(r"(?is)\\\[.*?\\\]")
@@ -2986,6 +2991,18 @@ class CleanPhaseMixin:
         report_parquet_path = self.cleaned_markdown_dir.parent / "cleaning_report.parquet"
 
         md_files = sorted(input_dir.glob("*.md"))
+        if md_files:
+            # Skip per-page-range chunk markdown when the canonical merged
+            # doc.md exists alongside doc__pNNNNN-NNNNN.md outputs from the
+            # OCR runner. Cleaning both would double-count the same content.
+            canonical_files = {canonical_stem(path.name): path for path in md_files if "__p" not in path.stem}
+            if canonical_files:
+                filtered_md_files = []
+                for path in md_files:
+                    if "__p" in path.stem and canonical_stem(path.name) in canonical_files:
+                        continue
+                    filtered_md_files.append(path)
+                md_files = filtered_md_files
         total_files = len(md_files)
 
         self.logger.info(
@@ -3481,7 +3498,7 @@ class CleanPhaseMixin:
         min_same_digit_steps: int = 10,
         word_rep_threshold: int = 4,
         word_min_period: int = 3,
-        word_window: int = 96,
+        word_window: int = DEFAULT_OCR_WORD_REPEAT_WINDOW,
     ) -> None:
         """Clean OCR markdown with the shared page loop and update OCR-noise metrics.
 
@@ -3520,6 +3537,18 @@ class CleanPhaseMixin:
             max_workers=n_threads,
         )
         md_files = sorted(input_dir.glob("*.md"))
+        if md_files:
+            # Skip per-page-range chunk markdown when the canonical merged
+            # doc.md exists alongside doc__pNNNNN-NNNNN.md outputs from the
+            # OCR runner. Cleaning both would double-count the same content.
+            canonical_files = {canonical_stem(path.name): path for path in md_files if "__p" not in path.stem}
+            if canonical_files:
+                filtered_md_files = []
+                for path in md_files:
+                    if "__p" in path.stem and canonical_stem(path.name) in canonical_files:
+                        continue
+                    filtered_md_files.append(path)
+                md_files = filtered_md_files
         debug_dir: Optional[Path] = None
         debug_manifest_path: Optional[Path] = None
         debug_page_metrics_path: Optional[Path] = None
@@ -4118,7 +4147,7 @@ class CleanPhaseMixin:
         min_same_digit_steps: int = 10,
         word_rep_threshold: int = 4,
         word_min_period: int = 3,
-        word_window: int = 96,
+        word_window: int = DEFAULT_OCR_WORD_REPEAT_WINDOW,
     ) -> List[Dict[str, Any]]:
         """Annotate complete markdown documents with table, numeric, LaTeX, hybrid, then shared-repeat matches.
 
@@ -4493,7 +4522,7 @@ class CleanPhaseMixin:
         doc_offset: int = 0,
         word_rep_threshold: int = 4,
         word_min_period: int = 3,
-        word_window: int = 96,
+        word_window: int = DEFAULT_OCR_WORD_REPEAT_WINDOW,
     ) -> List[Dict[str, Any]]:
         """Export only matched pages for all LaTeX repeat classes."""
         if input_dir is None:
