@@ -1,16 +1,54 @@
-//! PyO3 bindings for noise-based markdown quality metrics
+//! PyO3 bindings for noise-based markdown quality metrics.
+//!
+//! # Boundary with `glossapi_rs_cleaner`
+//!
+//! Per `CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25` Point 7, this crate
+//! and the cleaner crate have a strict ownership split:
+//!
+//! - **`glossapi_rs_cleaner`** owns *cleaning behaviour* AND its
+//!   *production-aligned counters*. The cleaner emits per-rule match
+//!   counts (`rule_a_match_count`, `rule_b_match_count`,
+//!   `residue_line_drop_count`) directly in `CleanStats`, aligned by
+//!   construction with what the cleaner actually acts on. Production
+//!   driver scripts (e.g. `clean_and_stats_rowsharded.py`) source
+//!   their parquet counter columns from the cleaner, NOT from this
+//!   crate.
+//! - **`glossapi_rs_noise`** (this crate) owns *diagnostic /
+//!   exploratory / debug exports*: OCR-side scoring
+//!   (`evaluate_page_character_noise`, `score_markdown_*`),
+//!   word-repeat / numeric-debug span extraction, and the
+//!   token-category match exports
+//!   (`export_token_category_debug_pages`,
+//!   `match_token_category_debug_text`) used by
+//!   `Corpus.clean_token_category_debug` for review-wave bundling.
+//!
+//! Production cleaning never imports anything from this crate. Debug
+//! / discovery / inspection workflows do. Keep new functionality on
+//! the side of this split that matches its purpose; if a counter is
+//! a faithful mirror of cleaner activity, it belongs in the cleaner.
+
+// Lint posture (CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Item 5):
+// `dead_code` is allowed crate-wide because several noise-side helpers
+// (e.g. `annotate_line_with_numeric_debug_matches`,
+// `match_token_category_debug_text_internal` /
+// `export_token_category_debug_pages_internal`) are kept as part of
+// the diagnostic / debug-export surface — invoked by tests, by the
+// PyO3 wrappers, or as part of the discovery toolkit even if some
+// branches don't currently reach them. Real bugs (unused vars,
+// unread assignments) still warn.
+#![allow(dead_code)]
 
 mod noise_metrics;
 
 use noise_metrics::{
     annotate_numeric_debug_page_internal, evaluate_page_character_noise_internal,
     export_numeric_match_debug_pages_internal, export_ocr_match_debug_pages_internal,
-    find_hybrid_repeat_spans_internal, find_labeled_shared_repeat_spans_internal,
-    find_numeric_debug_page_spans_internal,
-    find_word_repeat_spans_internal,
-    score_markdown_directory_detailed_internal,
-    score_markdown_directory_internal, score_markdown_directory_ocr_profile_internal,
-    score_markdown_file_detailed_internal, score_markdown_file_internal,
+    export_token_category_debug_pages_internal, find_hybrid_repeat_spans_internal,
+    find_labeled_shared_repeat_spans_internal, find_numeric_debug_page_spans_internal,
+    find_word_repeat_spans_internal, match_token_category_debug_text_internal,
+    score_markdown_directory_detailed_internal, score_markdown_directory_internal,
+    score_markdown_directory_ocr_profile_internal, score_markdown_file_detailed_internal,
+    score_markdown_file_internal, score_text_detailed_internal, score_texts_detailed_internal,
 };
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -95,6 +133,88 @@ fn score_markdown_file_detailed(py: Python<'_>, path: &str) -> PyResult<Py<PyTup
         ],
     );
     Ok(tup.into())
+}
+
+fn detailed_score_tuple(py: Python<'_>, metrics: noise_metrics::DetailedScore) -> Py<PyTuple> {
+    let (
+        score,
+        latin_pct,
+        table_ratio,
+        poly_ratio,
+        len_greek,
+        total_words,
+        v_pen,
+        c_pen,
+        bad_dbl,
+        misplaced_sigma,
+        invalid_bigram,
+        long_word_count,
+        longest_word,
+        short_word_count,
+        max_run,
+        v_rate,
+        c_rate,
+        d_rate,
+        sigma_end_rate,
+        bigram_rate,
+        long_word_rate,
+        short_ratio,
+        short_pen,
+        flags,
+    ) = metrics;
+    PyTuple::new(
+        py,
+        vec![
+            score.into_py(py),
+            latin_pct.into_py(py),
+            table_ratio.into_py(py),
+            poly_ratio.into_py(py),
+            (len_greek as u128).into_py(py),
+            (total_words as u128).into_py(py),
+            (v_pen as u128).into_py(py),
+            (c_pen as u128).into_py(py),
+            (bad_dbl as u128).into_py(py),
+            (misplaced_sigma as u128).into_py(py),
+            (invalid_bigram as u128).into_py(py),
+            (long_word_count as u128).into_py(py),
+            (longest_word as u128).into_py(py),
+            (short_word_count as u128).into_py(py),
+            (max_run as u128).into_py(py),
+            v_rate.into_py(py),
+            c_rate.into_py(py),
+            d_rate.into_py(py),
+            sigma_end_rate.into_py(py),
+            bigram_rate.into_py(py),
+            long_word_rate.into_py(py),
+            short_ratio.into_py(py),
+            short_pen.into_py(py),
+            flags.into_py(py),
+        ],
+    )
+    .into()
+}
+
+#[pyfunction]
+fn score_text_detailed(py: Python<'_>, text: &str) -> PyResult<Py<PyTuple>> {
+    let metrics = py.allow_threads(|| score_text_detailed_internal(text));
+    Ok(detailed_score_tuple(py, metrics))
+}
+
+#[pyfunction]
+#[pyo3(signature = (texts, n_threads=None))]
+fn score_texts_detailed(
+    py: Python<'_>,
+    texts: Vec<String>,
+    n_threads: Option<usize>,
+) -> PyResult<Vec<Py<PyTuple>>> {
+    let rows = py
+        .allow_threads(move || score_texts_detailed_internal(texts, n_threads))
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+    let mut out: Vec<Py<PyTuple>> = Vec::with_capacity(rows.len());
+    for metrics in rows {
+        out.push(detailed_score_tuple(py, metrics));
+    }
+    Ok(out)
 }
 
 /// Detailed scores for directory: returns a list of Python tuples with path followed by all metrics
@@ -292,6 +412,104 @@ fn export_numeric_match_debug_pages(
 }
 
 #[pyfunction]
+#[pyo3(signature = (input_dir, output_dir, category_specs_path, n_threads=None, max_pages=None, sample_seed=0, synthetic_page_target_chars=4000, synthetic_page_min_header_chars=1200, synthetic_page_hard_max_chars=6000))]
+fn export_token_category_debug_pages(
+    py: Python<'_>,
+    input_dir: &str,
+    output_dir: &str,
+    category_specs_path: &str,
+    n_threads: Option<usize>,
+    max_pages: Option<usize>,
+    sample_seed: u64,
+    synthetic_page_target_chars: usize,
+    synthetic_page_min_header_chars: usize,
+    synthetic_page_hard_max_chars: usize,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let rows = export_token_category_debug_pages_internal(
+        std::path::Path::new(input_dir),
+        std::path::Path::new(output_dir),
+        std::path::Path::new(category_specs_path),
+        n_threads,
+        max_pages,
+        sample_seed,
+        synthetic_page_target_chars,
+        synthetic_page_min_header_chars,
+        synthetic_page_hard_max_chars,
+    )
+    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    let mut out: Vec<Py<PyDict>> = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(token_category_row_to_py(py, row)?);
+    }
+    Ok(out)
+}
+
+#[pyfunction]
+#[pyo3(signature = (text, output_dir, category_specs_path, source_path, source_stem, base_stem, start_page=1, synthetic_page_target_chars=4000, synthetic_page_min_header_chars=1200, synthetic_page_hard_max_chars=6000, write_files=true))]
+fn match_token_category_debug_text(
+    py: Python<'_>,
+    text: &str,
+    output_dir: &str,
+    category_specs_path: &str,
+    source_path: &str,
+    source_stem: &str,
+    base_stem: &str,
+    start_page: u64,
+    synthetic_page_target_chars: usize,
+    synthetic_page_min_header_chars: usize,
+    synthetic_page_hard_max_chars: usize,
+    write_files: bool,
+) -> PyResult<Vec<Py<PyDict>>> {
+    let rows = match_token_category_debug_text_internal(
+        std::path::Path::new(output_dir),
+        std::path::Path::new(category_specs_path),
+        source_path,
+        source_stem,
+        base_stem,
+        start_page,
+        text,
+        synthetic_page_target_chars,
+        synthetic_page_min_header_chars,
+        synthetic_page_hard_max_chars,
+        write_files,
+    )
+    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    let mut out: Vec<Py<PyDict>> = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(token_category_row_to_py(py, row)?);
+    }
+    Ok(out)
+}
+
+fn token_category_row_to_py(
+    py: Python<'_>,
+    row: noise_metrics::TokenCategoryDebugPageRow,
+) -> PyResult<Py<PyDict>> {
+    let item = PyDict::new(py);
+    item.set_item("source_path", row.source_path)?;
+    item.set_item("output_path", row.output_path)?;
+    item.set_item("source_stem", row.source_stem)?;
+    item.set_item("base_stem", row.base_stem)?;
+    item.set_item("page_kind", row.page_kind)?;
+    item.set_item("page_number", row.page_number)?;
+    item.set_item("page_index_in_file", row.page_index_in_file)?;
+    item.set_item("page_char_count", row.page_char_count)?;
+    item.set_item("match_categories", row.match_categories)?;
+    item.set_item("match_pattern_families", row.match_pattern_families)?;
+    item.set_item("match_count", row.match_count)?;
+    item.set_item("page_text", row.page_text)?;
+    item.set_item("matches_json", row.matches_json)?;
+    let counts = PyDict::new(py);
+    for (cat, n) in &row.per_category_match_count {
+        counts.set_item(cat, n)?;
+    }
+    item.set_item("per_category_match_count", counts)?;
+    Ok(item.into())
+}
+
+#[pyfunction]
 #[pyo3(signature = (page, min_progress_steps=10, min_repeat_steps=8, min_same_digit_steps=10))]
 fn annotate_numeric_debug_page(
     py: Python<'_>,
@@ -353,8 +571,9 @@ fn find_word_repeat_spans(
     min_period: usize,
     window: usize,
 ) -> PyResult<Vec<Py<PyDict>>> {
-    let spans =
-        py.allow_threads(|| find_word_repeat_spans_internal(normalized_text, rep_threshold, min_period, window));
+    let spans = py.allow_threads(|| {
+        find_word_repeat_spans_internal(normalized_text, rep_threshold, min_period, window)
+    });
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(spans.len());
     for span in spans {
         let item = PyDict::new(py);
@@ -433,10 +652,14 @@ fn glossapi_rs_noise(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(score_markdown_file, m)?)?;
     m.add_function(wrap_pyfunction!(score_markdown_directory, m)?)?;
     m.add_function(wrap_pyfunction!(score_markdown_file_detailed, m)?)?;
+    m.add_function(wrap_pyfunction!(score_text_detailed, m)?)?;
+    m.add_function(wrap_pyfunction!(score_texts_detailed, m)?)?;
     m.add_function(wrap_pyfunction!(score_markdown_directory_detailed, m)?)?;
     m.add_function(wrap_pyfunction!(score_markdown_directory_ocr_profile, m)?)?;
     m.add_function(wrap_pyfunction!(export_ocr_match_debug_pages, m)?)?;
     m.add_function(wrap_pyfunction!(export_numeric_match_debug_pages, m)?)?;
+    m.add_function(wrap_pyfunction!(export_token_category_debug_pages, m)?)?;
+    m.add_function(wrap_pyfunction!(match_token_category_debug_text, m)?)?;
     m.add_function(wrap_pyfunction!(annotate_numeric_debug_page, m)?)?;
     m.add_function(wrap_pyfunction!(find_numeric_debug_page_spans, m)?)?;
     m.add_function(wrap_pyfunction!(find_word_repeat_spans, m)?)?;

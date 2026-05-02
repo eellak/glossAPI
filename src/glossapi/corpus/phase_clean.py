@@ -2277,6 +2277,106 @@ def _build_match_index_rows(
     return rows
 
 
+def _build_token_category_page_metric_row(
+    page_row: Dict[str, Any],
+    matches: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    category_counts: Counter[str] = Counter()
+    pattern_family_counts: Counter[str] = Counter()
+    for match in matches:
+        for category in list(match.get("categories") or []):
+            category_counts[str(category)] += 1
+        for family in list(match.get("pattern_families") or []):
+            pattern_family_counts[str(family)] += 1
+
+    page_char_count = int(page_row.get("page_char_count", 0) or 0)
+    match_count = int(page_row.get("match_count", 0) or 0)
+    return {
+        "source_path": str(page_row.get("source_path", "")),
+        "source_stem": str(page_row.get("source_stem", "")),
+        "base_stem": str(page_row.get("base_stem", "")),
+        "debug_output_path": str(page_row.get("output_path", "")),
+        "page_kind": str(page_row.get("page_kind", "")),
+        "page_number": int(page_row.get("page_number", 0) or 0),
+        "page_index_in_file": int(page_row.get("page_index_in_file", 0) or 0),
+        "page_char_count": page_char_count,
+        "match_count": match_count,
+        "match_density_per_1k_chars": (
+            float(match_count) * 1000.0 / float(page_char_count)
+            if page_char_count > 0
+            else 0.0
+        ),
+        "match_categories": str(page_row.get("match_categories", "")),
+        "match_pattern_families": str(page_row.get("match_pattern_families", "")),
+        "category_match_counts": dict(category_counts),
+        "pattern_family_match_counts": dict(pattern_family_counts),
+    }
+
+
+def _build_token_category_match_index_rows(
+    page_text: str,
+    matches: List[Dict[str, Any]],
+    *,
+    page_row: Dict[str, Any],
+    context_window_chars: int = 240,
+) -> List[Dict[str, Any]]:
+    if not matches:
+        return []
+
+    byte_offsets = _utf8_prefix_byte_offsets(page_text)
+    rows: List[Dict[str, Any]] = []
+    source_stem = str(page_row.get("source_stem", ""))
+    page_kind = str(page_row.get("page_kind", ""))
+    page_number = int(page_row.get("page_number", 0) or 0)
+    page_index_in_file = int(page_row.get("page_index_in_file", 0) or 0)
+    page_char_count = int(page_row.get("page_char_count", 0) or 0)
+    output_path = str(page_row.get("output_path", ""))
+    for fallback_index, match in enumerate(matches, start=1):
+        start = int(match.get("start", 0) or 0)
+        end = int(match.get("end", 0) or 0)
+        if start < 0 or end < start or end > len(page_text):
+            continue
+        match_index = int(match.get("match_index_in_page", fallback_index) or fallback_index)
+        categories = [str(item) for item in list(match.get("categories") or []) if str(item)]
+        pattern_families = [
+            str(item) for item in list(match.get("pattern_families") or []) if str(item)
+        ]
+        excerpt_start = max(0, start - int(context_window_chars))
+        excerpt_end = min(len(page_text), end + int(context_window_chars))
+        rows.append(
+            {
+                "match_id": f"{source_stem}:{page_kind}:{page_number}:match:{match_index}",
+                "source_path": str(page_row.get("source_path", "")),
+                "source_stem": source_stem,
+                "base_stem": str(page_row.get("base_stem", "")),
+                "debug_output_path": output_path,
+                "page_kind": page_kind,
+                "page_number": page_number,
+                "page_index_in_file": page_index_in_file,
+                "page_char_count": page_char_count,
+                "match_index_in_page": match_index,
+                "start_char": start,
+                "end_char": end,
+                "start_byte": int(byte_offsets[start]),
+                "end_byte": int(byte_offsets[end]),
+                "match_length_chars": int(end - start),
+                "match_length_bytes": int(byte_offsets[end] - byte_offsets[start]),
+                "start_line": int(page_text.count("\n", 0, start) + 1),
+                "end_line": int(page_text.count("\n", 0, max(start, end - 1)) + 1),
+                "categories": categories,
+                "category": ",".join(categories),
+                "pattern_families": pattern_families,
+                "pattern_family": ",".join(pattern_families),
+                "matched_text": page_text[start:end],
+                "raw_texts": [str(item) for item in list(match.get("raw_texts") or [])],
+                "context_before": page_text[excerpt_start:start],
+                "context_after": page_text[end:excerpt_end],
+                "context_excerpt": page_text[excerpt_start:excerpt_end],
+            }
+        )
+    return rows
+
+
 def _find_labeled_shared_repeat_spans(
     page_text: str,
     *,
@@ -4196,6 +4296,146 @@ class CleanPhaseMixin:
             output_dir,
         )
         return [dict(row) for row in rows]
+
+    def clean_token_category_debug(
+        self,
+        output_dir: Union[str, Path],
+        category_specs_path: Union[str, Path],
+        input_dir: Union[str, Path] = None,
+        num_threads: int = None,
+        *,
+        max_pages: Optional[int] = 1000,
+        sample_seed: int = 0,
+        synthetic_page_target_chars: int = 4000,
+        synthetic_page_min_header_chars: int = 1200,
+        synthetic_page_hard_max_chars: int = 6000,
+    ) -> List[Dict[str, Any]]:
+        """Export synthetic-page debug files for token/category review experiments.
+
+        This is the debug substrate for token-noise and normalization review work.
+        It mirrors the OCR debug workflow style: Rust-backed matching, annotated
+        debug pages, manifest output, and a compact summary for later review steps.
+        """
+        if input_dir is None:
+            input_dir = self.markdown_dir
+        else:
+            input_dir = Path(input_dir)
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for stale in output_dir.glob("*.md"):
+            stale.unlink()
+        manifest_path = output_dir / "manifest.jsonl"
+        if manifest_path.exists():
+            manifest_path.unlink()
+        page_metrics_path = output_dir / "page_metrics.jsonl"
+        if page_metrics_path.exists():
+            page_metrics_path.unlink()
+        match_index_path = output_dir / "match_index.jsonl"
+        if match_index_path.exists():
+            match_index_path.unlink()
+        summary_path = output_dir / "summary.json"
+        if summary_path.exists():
+            summary_path.unlink()
+
+        category_specs_path = Path(category_specs_path)
+        noise_mod = self._load_rust_extension(
+            "glossapi_rs_noise",
+            "rust/glossapi_rs_noise/Cargo.toml",
+            required_attrs=("export_token_category_debug_pages",),
+        )
+        n_threads = int(num_threads or os.cpu_count() or 4)
+        self.logger.info(
+            "Exporting token category debug pages from %s into %s using specs %s with glossapi_rs_noise…",
+            input_dir,
+            output_dir,
+            category_specs_path,
+        )
+
+        rows = list(
+            noise_mod.export_token_category_debug_pages(
+                str(input_dir),
+                str(output_dir),
+                str(category_specs_path),
+                n_threads,
+                None if max_pages is None else int(max_pages),
+                int(sample_seed),
+                int(synthetic_page_target_chars),
+                int(synthetic_page_min_header_chars),
+                int(synthetic_page_hard_max_chars),
+            )
+        )
+
+        manifest_rows: List[Dict[str, Any]] = []
+        page_metric_rows: List[Dict[str, Any]] = []
+        match_index_rows: List[Dict[str, Any]] = []
+        category_page_counter: Counter[str] = Counter()
+        category_match_counter: Counter[str] = Counter()
+        pattern_family_page_counter: Counter[str] = Counter()
+        pattern_family_match_counter: Counter[str] = Counter()
+        page_kind_counter: Counter[str] = Counter()
+
+        for raw_row in rows:
+            row = dict(raw_row)
+            page_text = str(row.pop("page_text", ""))
+            matches = json.loads(str(row.pop("matches_json", "[]")))
+            manifest_rows.append(row)
+            page_metric_rows.append(_build_token_category_page_metric_row(row, matches))
+            match_index_rows.extend(
+                _build_token_category_match_index_rows(page_text, matches, page_row=row)
+            )
+            page_kind_counter[str(row.get("page_kind", ""))] += 1
+            for category in str(row.get("match_categories", "")).split(","):
+                if category:
+                    category_page_counter[category] += 1
+            for family in str(row.get("match_pattern_families", "")).split(","):
+                if family:
+                    pattern_family_page_counter[family] += 1
+            for match in matches:
+                for category in list(match.get("categories") or []):
+                    category_match_counter[str(category)] += 1
+                for family in list(match.get("pattern_families") or []):
+                    pattern_family_match_counter[str(family)] += 1
+
+        with manifest_path.open("w", encoding="utf-8") as handle:
+            for row in manifest_rows:
+                handle.write(json.dumps(row, ensure_ascii=False))
+                handle.write("\n")
+        with page_metrics_path.open("w", encoding="utf-8") as handle:
+            for row in page_metric_rows:
+                handle.write(json.dumps(row, ensure_ascii=False))
+                handle.write("\n")
+        with match_index_path.open("w", encoding="utf-8") as handle:
+            for row in match_index_rows:
+                handle.write(json.dumps(row, ensure_ascii=False))
+                handle.write("\n")
+
+        summary = {
+            "input_dir": str(input_dir),
+            "output_dir": str(output_dir),
+            "category_specs_path": str(category_specs_path),
+            "page_count": len(manifest_rows),
+            "match_count": int(len(match_index_rows)),
+            "category_page_counts": dict(category_page_counter),
+            "category_match_counts": dict(category_match_counter),
+            "pattern_family_page_counts": dict(pattern_family_page_counter),
+            "pattern_family_match_counts": dict(pattern_family_match_counter),
+            "page_kind_counts": dict(page_kind_counter),
+            "synthetic_page_target_chars": int(synthetic_page_target_chars),
+            "synthetic_page_min_header_chars": int(synthetic_page_min_header_chars),
+            "synthetic_page_hard_max_chars": int(synthetic_page_hard_max_chars),
+        }
+        summary_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        self.logger.info(
+            "Exported %d token category debug pages with matches to %s",
+            len(manifest_rows),
+            output_dir,
+        )
+        return manifest_rows
 
     def clean_ocr_numeric_word_debug_docs(
         self,

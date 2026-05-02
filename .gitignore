@@ -78,6 +78,7 @@ glossapi_vanilla_venv/
 deepseek_venv/
 dependency_setup/.venvs/
 .venv_docling/
+.venv*/
 deepseek-ocr/DeepSeek-OCR-empty/
 # Local DeepSeek checkout and repro scripts (keep out of master)
 deepseek-ocr/
