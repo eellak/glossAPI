@@ -1,3 +1,10 @@
+// CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Item 5: pyo3 0.19's
+// `#[pymethods]` macro emits non-local `impl` blocks that newer
+// Rust flags via `non_local_definitions`. Upgrading pyo3 is a
+// separate change — silence the lint at module level so the build
+// is warning-clean against the pinned pyo3 version.
+#![allow(non_local_definitions)]
+
 use lazy_static::lazy_static;
 use pyo3::prelude::*;
 use regex::Regex;
