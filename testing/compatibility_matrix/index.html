@@ -1,0 +1,2814 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Academic document processing pipeline (Docling + DeepSeek + Rust)">
+      
+      
+      
+      
+        <link rel="prev" href="../../troubleshooting/">
+      
+      
+        <link rel="next" href="../../code_map/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Compatibility And Regression Matrix - GlossAPI</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#compatibility-and-regression-matrix" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="GlossAPI" class="md-header__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            GlossAPI
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Compatibility And Regression Matrix
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting_started/" class="md-tabs__link">
+          
+  
+  
+  Onboarding
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../pipeline/" class="md-tabs__link">
+          
+  
+  
+  Pipeline
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../configuration/" class="md-tabs__link">
+          
+  
+  
+  Configuration & Ops
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../code_map/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="GlossAPI" class="md-nav__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    GlossAPI
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Onboarding
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../lightweight_corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lightweight PDF Corpus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/core_design_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/docling_throughput_and_batching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docling Throughput and Batching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/docling_failure_recovery_and_skiplist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Failure Recovery and Skiplist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/greek_text_validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Greek Text Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/metadata_artifacts_and_run_diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metadata, Artifacts, and Run Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/artifact_layout_and_stage_handoffs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Artifact Layout and Stage Handoffs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/resumability_recovery_and_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resumability, Recovery, and Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Pipeline
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ocr_and_math_enhancement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR & Math Enrichment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../multi_gpu/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-GPU & Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Stage Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/download/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Download
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/extract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/clean/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Clean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/ocr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/section/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Section
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/annotate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Annotate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration & Ops
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration & Ops
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../aws_job_distribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWS Job Distribution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/deepseek_gcp_a100_setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DeepSeek GCP A100 Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/ocr_changes_2026-04-01_to_2026-04-03/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Changes 2026-04-01 to 2026-04-03
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/openarchives_ocr_rollout_plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenArchives OCR Rollout Plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility And Regression Matrix
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility And Regression Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test levels
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test levels">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#l0-install-and-import-sanity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        L0: Install and import sanity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#l1-lightweight-smoke-corpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        L1: Lightweight smoke corpus
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#l2-real-pdf-contract-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        L2: Real-PDF contract validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#l3-multi-gpu-and-operational-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        L3: Multi-GPU and operational recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#l4-comparative-corpus-evaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        L4: Comparative corpus evaluation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mandatory-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mandatory invariants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-gate-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release-gate matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detailed-test-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detailed test groups
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detailed test groups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#install-and-runtime-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install and runtime compatibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extraction-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extraction contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cleaning-and-greek-quality-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cleaning and Greek-quality routing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deepseek-ocr-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DeepSeek OCR contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#formula-and-code-enrichment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Formula and code enrichment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#section-annotate-and-export-contracts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Section, annotate, and export contracts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resumability-and-operational-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resumability and operational recovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparative-evaluation-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Comparative evaluation set
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#suggested-release-sequence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Suggested release sequence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exit-criteria-per-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit criteria per stage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Exit criteria per stage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stage-1-exit-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 1 exit criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-2-exit-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 2 exit criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-3-exit-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 3 exit criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-4-exit-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 4 exit criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-5-exit-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 5 exit criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../code_map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Corpus API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api_corpus_tmp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy Corpus API Notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../math_enrichment_runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math Enrichment Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test levels
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Test levels">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#l0-install-and-import-sanity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        L0: Install and import sanity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#l1-lightweight-smoke-corpus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        L1: Lightweight smoke corpus
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#l2-real-pdf-contract-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        L2: Real-PDF contract validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#l3-multi-gpu-and-operational-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        L3: Multi-GPU and operational recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#l4-comparative-corpus-evaluation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        L4: Comparative corpus evaluation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mandatory-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mandatory invariants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#release-gate-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Release-gate matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#detailed-test-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Detailed test groups
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Detailed test groups">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#install-and-runtime-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install and runtime compatibility
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extraction-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extraction contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cleaning-and-greek-quality-routing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cleaning and Greek-quality routing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deepseek-ocr-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DeepSeek OCR contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#formula-and-code-enrichment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Formula and code enrichment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#section-annotate-and-export-contracts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Section, annotate, and export contracts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resumability-and-operational-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resumability and operational recovery
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#comparative-evaluation-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Comparative evaluation set
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#suggested-release-sequence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Suggested release sequence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exit-criteria-per-stage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit criteria per stage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Exit criteria per stage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stage-1-exit-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 1 exit criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-2-exit-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 2 exit criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-3-exit-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 3 exit criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-4-exit-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 4 exit criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-5-exit-criteria" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 5 exit criteria
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="compatibility-and-regression-matrix">Compatibility And Regression Matrix<a class="headerlink" href="#compatibility-and-regression-matrix" title="Permanent link">&para;</a></h1>
+<p>This document defines the release-validation matrix for the DeepSeek-only migration and subsequent Docling upgrades.</p>
+<p>It is not a generic unit-test list. It is a contract-based validation plan tied to the documented pipeline behavior.</p>
+<h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
+<p>This matrix applies to changes in:</p>
+<ul>
+<li>DeepSeek-only OCR migration</li>
+<li>no-stub enforcement</li>
+<li>installation simplification</li>
+<li>Docling dependency upgrades</li>
+<li>page-level reevaluation experiments</li>
+</ul>
+<h2 id="validation-policy">Validation policy<a class="headerlink" href="#validation-policy" title="Permanent link">&para;</a></h2>
+<p>Release validation for this migration must use:</p>
+<ul>
+<li>real PDFs</li>
+<li>real Docling</li>
+<li>real DeepSeek</li>
+<li>real GPUs where the code path requires them</li>
+<li><code>GLOSSAPI_DEEPSEEK_ALLOW_STUB=0</code></li>
+</ul>
+<p>Developer-only tests may still use mocks or lightweight stubs for fast iteration, but those do not satisfy release gates for this migration.</p>
+<h2 id="test-levels">Test levels<a class="headerlink" href="#test-levels" title="Permanent link">&para;</a></h2>
+<h3 id="l0-install-and-import-sanity">L0: Install and import sanity<a class="headerlink" href="#l0-install-and-import-sanity" title="Permanent link">&para;</a></h3>
+<p>Purpose:</p>
+<ul>
+<li>prove the supported environments install cleanly and that removed components are truly gone</li>
+</ul>
+<p>Typical inputs:</p>
+<ul>
+<li>fresh venv</li>
+<li>supported Python version</li>
+</ul>
+<h3 id="l1-lightweight-smoke-corpus">L1: Lightweight smoke corpus<a class="headerlink" href="#l1-lightweight-smoke-corpus" title="Permanent link">&para;</a></h3>
+<p>Purpose:</p>
+<ul>
+<li>prove the baseline end-to-end flow still works on the small repo corpus</li>
+</ul>
+<p>Typical inputs:</p>
+<ul>
+<li><code>samples/lightweight_pdf_corpus/</code></li>
+</ul>
+<h3 id="l2-real-pdf-contract-validation">L2: Real-PDF contract validation<a class="headerlink" href="#l2-real-pdf-contract-validation" title="Permanent link">&para;</a></h3>
+<p>Purpose:</p>
+<ul>
+<li>prove the documented artifacts and metadata contracts still hold on real documents</li>
+</ul>
+<p>Typical inputs:</p>
+<ul>
+<li>real PDFs from a representative sample</li>
+</ul>
+<h3 id="l3-multi-gpu-and-operational-recovery">L3: Multi-GPU and operational recovery<a class="headerlink" href="#l3-multi-gpu-and-operational-recovery" title="Permanent link">&para;</a></h3>
+<p>Purpose:</p>
+<ul>
+<li>prove the runtime behavior remains correct under parallel execution and rerun conditions</li>
+</ul>
+<p>Typical inputs:</p>
+<ul>
+<li>multiple real PDFs</li>
+<li>at least two visible GPUs</li>
+</ul>
+<h3 id="l4-comparative-corpus-evaluation">L4: Comparative corpus evaluation<a class="headerlink" href="#l4-comparative-corpus-evaluation" title="Permanent link">&para;</a></h3>
+<p>Purpose:</p>
+<ul>
+<li>compare baseline and changed behavior on a real evaluation slice</li>
+</ul>
+<p>Typical inputs:</p>
+<ul>
+<li>real corpus slice such as the Pergamos sample</li>
+</ul>
+<h2 id="mandatory-invariants">Mandatory invariants<a class="headerlink" href="#mandatory-invariants" title="Permanent link">&para;</a></h2>
+<p>The following must remain true unless a change explicitly revises the contract and updates the docs:</p>
+<ul>
+<li>canonical Markdown is written to <code>markdown/&lt;stem&gt;.md</code></li>
+<li>Docling JSON artifacts are emitted when requested</li>
+<li>cleaner output still drives <code>needs_ocr</code></li>
+<li>OCR remains selective rather than defaulting to all documents</li>
+<li>metadata parquet remains the durable operational record</li>
+<li>reruns skip completed work unless forced</li>
+<li>skiplist semantics remain explicit and stable</li>
+<li>no production path silently falls back to stub OCR</li>
+</ul>
+<h2 id="release-gate-matrix">Release-gate matrix<a class="headerlink" href="#release-gate-matrix" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Level</th>
+<th>Contract</th>
+<th>Input</th>
+<th>Run</th>
+<th>Pass criteria</th>
+<th>Negative assertions</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENV-001</code></td>
+<td>L0</td>
+<td>Python and packaging</td>
+<td>Fresh environment</td>
+<td>install supported profile(s)</td>
+<td>install completes on supported Python floor</td>
+<td>no reference to removed legacy OCR install modes</td>
+</tr>
+<tr>
+<td><code>ENV-002</code></td>
+<td>L0</td>
+<td>Dependency simplification</td>
+<td>Fresh environment</td>
+<td>import <code>glossapi</code>, <code>glossapi.ocr.deepseek</code>, extract-path modules</td>
+<td>imports succeed</td>
+<td>no dead imports from removed OCR integrations</td>
+</tr>
+<tr>
+<td><code>EXT-001</code></td>
+<td>L1</td>
+<td>Safe Phase-1 extraction</td>
+<td>lightweight corpus</td>
+<td><code>Corpus.extract(input_format="pdf")</code></td>
+<td>canonical Markdown produced</td>
+<td>extraction must not depend on OCR extras</td>
+</tr>
+<tr>
+<td><code>EXT-002</code></td>
+<td>L2</td>
+<td>Docling Phase-1 extraction</td>
+<td>real PDFs</td>
+<td><code>Corpus.extract(..., phase1_backend="docling", export_doc_json=True)</code></td>
+<td>Markdown, Docling JSON, metrics written to documented locations</td>
+<td>artifact layout must not drift</td>
+</tr>
+<tr>
+<td><code>CLN-001</code></td>
+<td>L1/L2</td>
+<td>Cleaner metadata contract</td>
+<td>extracted docs</td>
+<td><code>clean(drop_bad=False)</code></td>
+<td>metadata parquet updated with routing-relevant fields</td>
+<td>no collapse of <code>needs_ocr</code> behavior</td>
+</tr>
+<tr>
+<td><code>OCR-001</code></td>
+<td>L2</td>
+<td>DeepSeek-only remediation</td>
+<td>docs with <code>needs_ocr=True</code></td>
+<td><code>ocr(backend="deepseek", fix_bad=True)</code></td>
+<td>recovered docs updated, metadata marks <code>ocr_success=True</code></td>
+<td>no stub output, no silent success</td>
+</tr>
+<tr>
+<td><code>OCR-002</code></td>
+<td>L2</td>
+<td>No-stub enforcement</td>
+<td>broken/missing DeepSeek runtime</td>
+<td>run OCR with <code>GLOSSAPI_DEEPSEEK_ALLOW_STUB=0</code></td>
+<td>run fails explicitly</td>
+<td>failure must not produce placeholder success artifacts</td>
+</tr>
+<tr>
+<td><code>MTH-001</code></td>
+<td>L2</td>
+<td>Formula/code enrichment compatibility</td>
+<td>math-heavy real PDF</td>
+<td>Docling extract plus Phase-2 enrichment</td>
+<td>enriched outputs and metadata remain coherent</td>
+<td>no schema drift breaking enrichment</td>
+</tr>
+<tr>
+<td><code>SEC-001</code></td>
+<td>L2</td>
+<td>Sectioning contract</td>
+<td>usable real docs</td>
+<td><code>section()</code></td>
+<td><code>sections/sections_for_annotation.parquet</code> produced</td>
+<td>no empty-output regression caused by upstream changes</td>
+</tr>
+<tr>
+<td><code>ANN-001</code></td>
+<td>L2</td>
+<td>Annotation contract</td>
+<td>section parquet</td>
+<td><code>annotate()</code></td>
+<td>classified outputs produced</td>
+<td>model integration must not break on changed upstream text/layout</td>
+</tr>
+<tr>
+<td><code>EXP-001</code></td>
+<td>L2</td>
+<td>Export contract</td>
+<td>processed docs</td>
+<td><code>jsonl()</code> / <code>jsonl_sharded()</code></td>
+<td>JSONL and metadata outputs match documented layout</td>
+<td>no dropped metadata fields without explicit design change</td>
+</tr>
+<tr>
+<td><code>RES-001</code></td>
+<td>L3</td>
+<td>Resumability</td>
+<td>interrupted or partial run</td>
+<td>rerun with defaults</td>
+<td>completed items skipped correctly</td>
+<td>no duplicate reprocessing by default</td>
+</tr>
+<tr>
+<td><code>RES-002</code></td>
+<td>L3</td>
+<td>Force/reprocess semantics</td>
+<td>prior successful run</td>
+<td>rerun with force/reprocess flag</td>
+<td>selected items are reprocessed</td>
+<td>no stale completion flags blocking intended rerun</td>
+</tr>
+<tr>
+<td><code>SKP-001</code></td>
+<td>L3</td>
+<td>Skiplist semantics</td>
+<td>run with known problematic items</td>
+<td>extract/OCR rerun</td>
+<td>skiplist excludes intended stems only</td>
+<td>no hidden filtering of healthy items</td>
+</tr>
+<tr>
+<td><code>GPU-001</code></td>
+<td>L3</td>
+<td>Multi-GPU OCR</td>
+<td>real PDF slice on 2 GPUs</td>
+<td>DeepSeek OCR in parallel</td>
+<td>work is distributed and completes per GPU</td>
+<td>no worker success masking failures</td>
+</tr>
+<tr>
+<td><code>CMP-001</code></td>
+<td>L4</td>
+<td>Baseline quality comparison</td>
+<td>Pergamos sample slice</td>
+<td>compare pre/post change outputs</td>
+<td>no material regression in artifact completeness and downstream usability</td>
+<td>runtime improvement alone does not justify quality loss</td>
+</tr>
+<tr>
+<td><code>CMP-002</code></td>
+<td>L4</td>
+<td>Whole-text vs page-level experiment</td>
+<td>long PDFs</td>
+<td>compare baseline branch vs page-level branch</td>
+<td>quality/runtime tradeoff explicitly measured</td>
+<td>experimental branch does not replace baseline without evidence</td>
+</tr>
+</tbody>
+</table>
+<h2 id="detailed-test-groups">Detailed test groups<a class="headerlink" href="#detailed-test-groups" title="Permanent link">&para;</a></h2>
+<h3 id="install-and-runtime-compatibility">Install and runtime compatibility<a class="headerlink" href="#install-and-runtime-compatibility" title="Permanent link">&para;</a></h3>
+<p>What to prove:</p>
+<ul>
+<li>supported environment installs cleanly</li>
+<li>unsupported/removed OCR components are not required</li>
+<li>Python floor matches actual upstream dependencies</li>
+</ul>
+<p>Critical checks:</p>
+<ul>
+<li>packaging metadata uses a supported Python minimum</li>
+<li>setup docs expose only supported install paths</li>
+<li>removal of the old OCR integration does not leave dead GlossAPI imports or entrypoints</li>
+</ul>
+<h2 id="extraction-contract">Extraction contract<a class="headerlink" href="#extraction-contract" title="Permanent link">&para;</a></h2>
+<p>What to prove:</p>
+<ul>
+<li>Phase-1 still produces canonical Markdown</li>
+<li>Docling extraction still produces JSON artifacts when requested</li>
+<li>metrics continue to be written where downstream stages expect them</li>
+</ul>
+<p>Artifacts to check:</p>
+<ul>
+<li><code>markdown/&lt;stem&gt;.md</code></li>
+<li><code>json/&lt;stem&gt;.docling.json(.zst)</code></li>
+<li><code>json/&lt;stem&gt;.formula_index.jsonl</code> when requested</li>
+<li><code>json/metrics/&lt;stem&gt;.metrics.json</code></li>
+<li><code>json/metrics/&lt;stem&gt;.per_page.metrics.json</code></li>
+</ul>
+<h2 id="cleaning-and-greek-quality-routing">Cleaning and Greek-quality routing<a class="headerlink" href="#cleaning-and-greek-quality-routing" title="Permanent link">&para;</a></h2>
+<p>What to prove:</p>
+<ul>
+<li>cleaner still computes routing decisions required for selective OCR</li>
+<li>Greek-text validation remains first-class rather than incidental cleanup</li>
+</ul>
+<p>Fields to check in metadata parquet:</p>
+<ul>
+<li><code>needs_ocr</code></li>
+<li><code>filter</code></li>
+<li>Greek-quality and badness-related fields currently emitted by the cleaner</li>
+</ul>
+<h2 id="deepseek-ocr-contract">DeepSeek OCR contract<a class="headerlink" href="#deepseek-ocr-contract" title="Permanent link">&para;</a></h2>
+<p>What to prove:</p>
+<ul>
+<li>DeepSeek is the only OCR remediation backend</li>
+<li>no-stub enforcement is real</li>
+<li>recovered documents update metadata correctly</li>
+</ul>
+<p>Required environment behavior:</p>
+<ul>
+<li><code>GLOSSAPI_DEEPSEEK_ALLOW_STUB=0</code></li>
+<li>real model weights present</li>
+<li>real CLI/runtime path present</li>
+</ul>
+<p>Negative checks:</p>
+<ul>
+<li>no markdown contains placeholder stub markers</li>
+<li>no OCR pass succeeds after a DeepSeek CLI failure unless real output exists</li>
+<li>no removed OCR backend is referenced during final validation</li>
+</ul>
+<h2 id="formula-and-code-enrichment">Formula and code enrichment<a class="headerlink" href="#formula-and-code-enrichment" title="Permanent link">&para;</a></h2>
+<p>What to prove:</p>
+<ul>
+<li>if retained, enrichment still works with the upgraded Docling stack</li>
+<li>if later removed, the removal is justified by evaluation rather than convenience</li>
+</ul>
+<p>Checks:</p>
+<ul>
+<li>enriched Markdown is generated where expected</li>
+<li><code>json/&lt;stem&gt;.latex_map.jsonl</code> remains coherent when enrichment is enabled</li>
+<li>metadata updates for math enrichment still work</li>
+</ul>
+<h2 id="section-annotate-and-export-contracts">Section, annotate, and export contracts<a class="headerlink" href="#section-annotate-and-export-contracts" title="Permanent link">&para;</a></h2>
+<p>What to prove:</p>
+<ul>
+<li>downstream stages still consume the extraction outputs</li>
+<li>output layout and metadata structure remain compatible with the documented pipeline</li>
+</ul>
+<p>Artifacts to check:</p>
+<ul>
+<li><code>sections/sections_for_annotation.parquet</code></li>
+<li><code>classified_sections.parquet</code></li>
+<li><code>fully_annotated_sections.parquet</code></li>
+<li>exported JSONL shards and related metadata</li>
+</ul>
+<h2 id="resumability-and-operational-recovery">Resumability and operational recovery<a class="headerlink" href="#resumability-and-operational-recovery" title="Permanent link">&para;</a></h2>
+<p>What to prove:</p>
+<ul>
+<li>reruns still honor completion state</li>
+<li>skiplist semantics remain intact</li>
+<li>multi-worker failures remain visible and recoverable</li>
+</ul>
+<p>Checks:</p>
+<ul>
+<li>default rerun skips completed items</li>
+<li>explicit force/reprocess reruns the intended items</li>
+<li>problematic stems are persisted and not silently lost</li>
+</ul>
+<h2 id="comparative-evaluation-set">Comparative evaluation set<a class="headerlink" href="#comparative-evaluation-set" title="Permanent link">&para;</a></h2>
+<p>Suggested real-world slice:</p>
+<ul>
+<li>lightweight corpus for smoke validation</li>
+<li>representative real PDFs spanning:</li>
+<li>short documents</li>
+<li>medium documents</li>
+<li>long documents</li>
+<li>structure-rich documents</li>
+<li>math-heavy documents where applicable</li>
+</ul>
+<p>For current local evaluation work, a Pergamos sample manifest has been prepared outside the repo and can be used as the L3/L4 real-PDF slice.</p>
+<h2 id="suggested-release-sequence">Suggested release sequence<a class="headerlink" href="#suggested-release-sequence" title="Permanent link">&para;</a></h2>
+<p>For the planned migration, run gates in this order:</p>
+<ol>
+<li><code>ENV-*</code></li>
+<li><code>EXT-*</code></li>
+<li><code>CLN-*</code></li>
+<li><code>OCR-*</code></li>
+<li><code>MTH-*</code></li>
+<li><code>SEC-*</code>, <code>ANN-*</code>, <code>EXP-*</code></li>
+<li><code>RES-*</code>, <code>SKP-*</code>, <code>GPU-*</code></li>
+<li><code>CMP-*</code></li>
+</ol>
+<p>This keeps low-level compatibility failures from being confused with downstream quality regressions.</p>
+<h2 id="exit-criteria-per-stage">Exit criteria per stage<a class="headerlink" href="#exit-criteria-per-stage" title="Permanent link">&para;</a></h2>
+<h3 id="stage-1-exit-criteria">Stage 1 exit criteria<a class="headerlink" href="#stage-1-exit-criteria" title="Permanent link">&para;</a></h3>
+<ul>
+<li>DeepSeek-only OCR path works on real PDFs</li>
+<li>no-stub enforcement verified</li>
+<li>no supported GlossAPI OCR backend remains besides DeepSeek</li>
+</ul>
+<h3 id="stage-2-exit-criteria">Stage 2 exit criteria<a class="headerlink" href="#stage-2-exit-criteria" title="Permanent link">&para;</a></h3>
+<ul>
+<li>install paths reduced to supported environments</li>
+<li>packaging/docs no longer reference removed OCR components</li>
+</ul>
+<h3 id="stage-3-exit-criteria">Stage 3 exit criteria<a class="headerlink" href="#stage-3-exit-criteria" title="Permanent link">&para;</a></h3>
+<ul>
+<li>upgraded Docling passes <code>EXT-*</code>, <code>MTH-*</code>, <code>SEC-*</code>, <code>ANN-*</code>, and <code>EXP-*</code></li>
+</ul>
+<h3 id="stage-4-exit-criteria">Stage 4 exit criteria<a class="headerlink" href="#stage-4-exit-criteria" title="Permanent link">&para;</a></h3>
+<ul>
+<li>retained or removed Docling capabilities are justified by evaluation evidence</li>
+</ul>
+<h3 id="stage-5-exit-criteria">Stage 5 exit criteria<a class="headerlink" href="#stage-5-exit-criteria" title="Permanent link">&para;</a></h3>
+<ul>
+<li>page-level branch is compared against the stabilized baseline before any adoption decision</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

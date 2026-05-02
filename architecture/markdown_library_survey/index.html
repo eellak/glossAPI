@@ -1,0 +1,2203 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Academic document processing pipeline (Docling + DeepSeek + Rust)">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Markdown Library Survey - GlossAPI</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#markdown-library-survey" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="GlossAPI" class="md-header__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            GlossAPI
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Markdown Library Survey
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting_started/" class="md-tabs__link">
+          
+  
+  
+  Onboarding
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../pipeline/" class="md-tabs__link">
+          
+  
+  
+  Pipeline
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../configuration/" class="md-tabs__link">
+          
+  
+  
+  Configuration & Ops
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../code_map/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="GlossAPI" class="md-nav__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    GlossAPI
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Onboarding
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../lightweight_corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lightweight PDF Corpus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../core_design_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docling_throughput_and_batching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docling Throughput and Batching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docling_failure_recovery_and_skiplist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Failure Recovery and Skiplist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../greek_text_validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Greek Text Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../metadata_artifacts_and_run_diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metadata, Artifacts, and Run Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../artifact_layout_and_stage_handoffs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Artifact Layout and Stage Handoffs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../resumability_recovery_and_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resumability, Recovery, and Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Pipeline
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ocr_and_math_enhancement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR & Math Enrichment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../multi_gpu/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-GPU & Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Stage Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/download/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Download
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/extract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/clean/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Clean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/ocr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/section/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Section
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/annotate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Annotate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stages/export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration & Ops
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration & Ops
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../aws_job_distribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWS Job Distribution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/deepseek_gcp_a100_setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DeepSeek GCP A100 Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/ocr_changes_2026-04-01_to_2026-04-03/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Changes 2026-04-01 to 2026-04-03
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/openarchives_ocr_rollout_plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenArchives OCR Rollout Plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../testing/compatibility_matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility And Regression Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../code_map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Corpus API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api_corpus_tmp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Legacy Corpus API Notes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../math_enrichment_runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math Enrichment Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#sources-consulted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sources consulted
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#executive-takeaways" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Executive takeaways
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#library-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Library notes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Library notes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#rust-pulldown-cmark" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rust: pulldown-cmark
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rust-comrak" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rust: comrak
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#c-cmark-gfm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        C: cmark-gfm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#javascripttypescript-remark-unified" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JavaScript/TypeScript: remark / unified
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#javascript-markdown-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JavaScript: markdown-it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-mdformat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python: mdformat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prettier-markdown" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prettier Markdown
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#go-goldmark" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Go: goldmark
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pandoc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pandoc
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#design-changes-that-landed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design changes that landed
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Design changes that landed">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-parser-backed-phase-a-landed-as-pilot-b" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Parser-backed Phase A — ✅ landed as Pilot B
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-line-based-path-removed-entirely" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Line-based path — ✅ removed entirely
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-multi-parser-verification-oracles-landed-as-dual_verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Multi-parser verification oracles — ✅ landed as dual_verify
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-explicit-dialect-and-formatting-policy-landed-as-phaseapolicy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Explicit dialect and formatting policy — ✅ landed as PhaseAPolicy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-ast-preserving-transformations-as-the-strongest-invariant-landed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. AST-preserving transformations as the strongest invariant — ✅ landed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#still-open" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Still open
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Still open">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pseudo-table-unwrapping-as-a-separate-semantic-transform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pseudo-table unwrapping as a separate semantic transform
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#raw-readability-scorecard-metrics-beyond-cleanstats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raw-readability scorecard metrics beyond CleanStats
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lint-style-diagnostic-categories" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lint-style diagnostic categories
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="markdown-library-survey">Markdown Library Survey<a class="headerlink" href="#markdown-library-survey" title="Permanent link">&para;</a></h1>
+<p>This document captures the design rationale behind the cleaner's parser-backed Phase A. It surveys established Markdown parsers, formatters, and renderers across Rust, C, JavaScript/TypeScript, Python, Go, and Pandoc/Haskell, then maps the lessons onto the choices that landed in the production cleaner.</p>
+<p>The goal was never to replace the cleaner with one of these tools wholesale. The goal was to extract design lessons for Docling-produced Markdown corpus cleanup: make raw Markdown closer to rendered preview while preserving the rendered element graph.</p>
+<p>The conclusions of this survey shipped as <strong>Pilot B</strong> — the parser-backed <code>format_surgical_checked</code> path that is now the production Phase A. See <a href="../ocr_cleaning_runtime/">OCR Cleaning Runtime</a> for the runtime architecture that consumes this layer, and <code>rust/glossapi_rs_cleaner/src/md_format_surgical.rs</code> for the implementation.</p>
+<h2 id="sources-consulted">Sources consulted<a class="headerlink" href="#sources-consulted" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="https://comrak.ee/">Comrak</a> and <a href="https://docs.rs/comrak/latest/comrak/">comrak docs.rs</a></li>
+<li><a href="https://pulldown-cmark.github.io/pulldown-cmark/">pulldown-cmark guide</a></li>
+<li><a href="https://github.com/github/cmark-gfm">cmark-gfm</a></li>
+<li><a href="https://unifiedjs.com/explore/package/remark/">remark</a></li>
+<li><a href="https://github.com/markdown-it/markdown-it">markdown-it</a></li>
+<li><a href="https://mdformat.readthedocs.io/en/stable/">mdformat</a></li>
+<li><a href="https://prettier.io/docs/next/options">Prettier options</a></li>
+<li><a href="https://github.com/yuin/goldmark">goldmark</a></li>
+<li><a href="https://pandoc.org/MANUAL.html">Pandoc manual</a></li>
+<li><a href="https://github.github.com/gfm/">GitHub Flavored Markdown spec</a></li>
+</ul>
+<h2 id="executive-takeaways">Executive takeaways<a class="headerlink" href="#executive-takeaways" title="Permanent link">&para;</a></h2>
+<p>The main ecosystem lesson: do not hand-roll Markdown grammar with regexes when correctness matters. Mature projects either parse Markdown into an AST or event stream and then transform/serialize, or they make formatting choices explicit and configurable.</p>
+<p>The original line-based cleaner moved in the right direction with <code>pulldown-cmark</code> verification, but the transforms themselves still relied on line heuristics — that is exactly where the highest-risk findings in the implementation review came from.</p>
+<p>Direction adopted (status as of the cleaner integration):</p>
+<ol>
+<li>✅ Rust remained the production implementation language.</li>
+<li>✅ A parser-backed Markdown normalization path landed using <code>comrak</code> (Pilot B / <code>md_format_surgical</code>).</li>
+<li>✅ <code>pulldown-cmark</code> is kept as the fast independent verifier in <code>dual_verify</code>, not as the formatter.</li>
+<li>✅ cmark-gfm/Pandoc/mdformat are treated as differential oracles in sampled tests, not hot-path dependencies. cmark-gfm is the dev-only ground-truth oracle when installed; production uses <code>dual_verify</code> (comrak + pulldown-cmark) only.</li>
+<li>✅ Raw-readability is explicit: the corpus default unwraps soft-wrapped prose while preserving hard breaks (Pilot B's three target transforms — paragraph reflow, GFM separator minimization, HR canonicalization).</li>
+</ol>
+<h2 id="library-notes">Library notes<a class="headerlink" href="#library-notes" title="Permanent link">&para;</a></h2>
+<h3 id="rust-pulldown-cmark">Rust: pulldown-cmark<a class="headerlink" href="#rust-pulldown-cmark" title="Permanent link">&para;</a></h3>
+<p>What it offers:</p>
+<ul>
+<li>Pull-parser event stream for CommonMark with GFM-style options such as tables, task lists, strikethrough, footnotes, admonitions, and math.</li>
+<li>Low memory, high performance, and a good fit for verification because it can render HTML from events.</li>
+<li>The guide highlights pull parsing and notes that consecutive text events can occur, with <code>TextMergeStream</code> available to smooth text iteration.</li>
+</ul>
+<p>What we learned:</p>
+<ul>
+<li>Use it for strict/structural verification, especially as an independent parser from any future formatter.</li>
+<li>Use its <code>Event::SoftBreak</code> and <code>Event::HardBreak</code> semantics as a model for reflow: only rewrite soft breaks, never hard breaks.</li>
+<li>Avoid building production formatting around HTML output alone; event streams are excellent for checking, but source-preserving rewriting needs either source spans or an AST renderer.</li>
+</ul>
+<h3 id="rust-comrak">Rust: comrak<a class="headerlink" href="#rust-comrak" title="Permanent link">&para;</a></h3>
+<p>What it offers:</p>
+<ul>
+<li>CommonMark and GFM-compatible parser/renderer in Rust.</li>
+<li>Parses to an AST, allows AST manipulation, and supports <code>format_commonmark</code> / <code>markdown_to_commonmark</code>.</li>
+<li>Fine-grained parse/render options and custom formatter support to override rendering of node types.</li>
+</ul>
+<p>What we learned:</p>
+<ul>
+<li>This was the best Rust candidate for a parser-backed Phase A. Pilot B uses comrak's AST + sourcepos to walk top-level block children and render only Paragraph/Table/ThematicBreak nodes, copying everything else verbatim from source.</li>
+<li>Full reserialization (the abandoned Pilot A approach) over-normalized list markers, link forms, escapes, and other syntax. The surgical approach — re-render only the three target node types — was needed to avoid those side effects.</li>
+</ul>
+<h3 id="c-cmark-gfm">C: cmark-gfm<a class="headerlink" href="#c-cmark-gfm" title="Permanent link">&para;</a></h3>
+<p>What it offers:</p>
+<ul>
+<li>GitHub's fork of the C CommonMark reference implementation, with GFM extensions.</li>
+<li>Parses to an AST, supports AST manipulation, and renders to HTML, CommonMark, XML, LaTeX, groff man, and more.</li>
+<li>Conformance, speed, fuzzing, and standardized behavior.</li>
+</ul>
+<p>What we learned:</p>
+<ul>
+<li>Use cmark-gfm as a differential oracle when installed (development hosts only).</li>
+<li>Its XML AST output is useful for golden fixtures.</li>
+<li>Do not bind it into production. C FFI is extra operational surface area; comrak is already Rust-native and sufficient for <code>dual_verify</code>.</li>
+</ul>
+<h3 id="javascripttypescript-remark-unified">JavaScript/TypeScript: remark / unified<a class="headerlink" href="#javascripttypescript-remark-unified" title="Permanent link">&para;</a></h3>
+<p>What it offers:</p>
+<ul>
+<li>Unified processor that parses Markdown and serializes Markdown using <code>remark-parse</code> and <code>remark-stringify</code>.</li>
+<li>Uses mdast as the syntax tree.</li>
+<li>Lint plugins and configurable stringify settings for stylistic rules such as ordered-list markers and setext/ATX heading choices.</li>
+</ul>
+<p>What we learned:</p>
+<ul>
+<li>Separate "parse", "transform", "lint", and "stringify" as distinct phases. That maps cleanly onto the Phase A / Phase B / verification split.</li>
+<li>Add lint-like diagnostics to the scorecard, not only pass/fail verification.</li>
+<li>Markdown dialect handling should be modular, not encoded as ad hoc checks scattered across the cleaner.</li>
+</ul>
+<h3 id="javascript-markdown-it">JavaScript: markdown-it<a class="headerlink" href="#javascript-markdown-it" title="Permanent link">&para;</a></h3>
+<p>What it offers:</p>
+<ul>
+<li>CommonMark-oriented parser with GFM tables/strikethrough, plugin rules, and configurable syntax.</li>
+<li>CommonMark support, extensibility, high speed, and safe rendering defaults.</li>
+</ul>
+<p>What we learned:</p>
+<ul>
+<li>Treat dialect features as enabled rule sets. There should be a clear <code>MarkdownDialect::GfmDocling</code> profile instead of assuming every pipe-like line means one thing.</li>
+<li>Safety defaults matter. For us that means "do not normalize unknown syntax unless the parser confirms it is a known Markdown element."</li>
+</ul>
+<h3 id="python-mdformat">Python: mdformat<a class="headerlink" href="#python-mdformat" title="Permanent link">&para;</a></h3>
+<p>What it offers:</p>
+<ul>
+<li>CommonMark-compliant Markdown formatter, CLI and Python library.</li>
+<li>Opinionated style: consistent indentation/whitespace, ATX headings, sorted link references, fenced code instead of indented code, <code>1.</code> ordered-list markers.</li>
+<li>Intentionally does not change word wrapping by default to support semantic line breaks.</li>
+<li>Plugins for additional Markdown engines/dialects; escapes engine-specific syntax when it cannot safely understand it.</li>
+</ul>
+<p>What we learned:</p>
+<ul>
+<li>Full-document formatters make many style decisions outside our scope. We should not blindly run mdformat over corpus rows.</li>
+<li>The plugin/dialect model is valuable. Unknown dialect syntax should be either preserved or escaped/diagnosed, not "cleaned" by regex.</li>
+<li>Default wrapping caution is relevant, but our objective differs: Docling line breaks are usually layout artifacts, not semantic line breaks. The policy is now explicit (see §Executive takeaways item 5).</li>
+</ul>
+<h3 id="prettier-markdown">Prettier Markdown<a class="headerlink" href="#prettier-markdown" title="Permanent link">&para;</a></h3>
+<p>What it offers:</p>
+<ul>
+<li>A <code>proseWrap</code> option with modes: <code>always</code>, <code>never</code>, and <code>preserve</code>.</li>
+<li>Default is <code>preserve</code> because some services have linebreak-sensitive renderers, but <code>never</code> intentionally unwraps prose blocks into single lines.</li>
+</ul>
+<p>What we learned:</p>
+<ul>
+<li>The cleaner's corpus default is the equivalent of Prettier's <code>never</code> for prose paragraphs (Docling layout-induced soft breaks are unwrapped).</li>
+<li>Verification enforces that unwrap only rewrites parser-observed soft breaks, not hard breaks, code, HTML-sensitive blocks, tables, or line-block-like content.</li>
+</ul>
+<h3 id="go-goldmark">Go: goldmark<a class="headerlink" href="#go-goldmark" title="Permanent link">&para;</a></h3>
+<p>What it offers:</p>
+<ul>
+<li>CommonMark-compliant Go parser with AST, source positions, parser transformers, AST transformers, and renderers.</li>
+<li>Built-in GFM extension bundle.</li>
+<li>Extension APIs include block parsers, inline parsers, paragraph transformers, AST transformers, and renderers.</li>
+</ul>
+<p>What we learned:</p>
+<ul>
+<li>Source positions are the missing primitive that comrak's <code>sourcepos: true</code> provides — it is what lets Pilot B map AST nodes back to byte ranges and rewrite only the paragraph/table/HR spans we intend to touch.</li>
+<li>Paragraph transformers are a strong pattern for the reflow pass: normalize paragraph text after block parsing, before final rendering.</li>
+<li>The architecture reinforces the need to separate block parsing from inline parsing.</li>
+</ul>
+<h3 id="pandoc">Pandoc<a class="headerlink" href="#pandoc" title="Permanent link">&para;</a></h3>
+<p>What it offers:</p>
+<ul>
+<li>Many Markdown variants and writer options.</li>
+<li><code>--wrap=auto|none|preserve</code> controls source-level output wrapping.</li>
+<li>The Markdown philosophy that plain text should be readable; ordinary paragraph newlines are treated as spaces, while two trailing spaces or backslash create hard line breaks.</li>
+</ul>
+<p>What we learned:</p>
+<ul>
+<li>Pandoc's <code>--wrap=none</code> is the closest existing user-facing behavior to the desired raw corpus mode.</li>
+<li>Pandoc is a good differential oracle for small samples but is too heavyweight for the hot path.</li>
+</ul>
+<h2 id="design-changes-that-landed">Design changes that landed<a class="headerlink" href="#design-changes-that-landed" title="Permanent link">&para;</a></h2>
+<h3 id="1-parser-backed-phase-a-landed-as-pilot-b">1. Parser-backed Phase A — ✅ landed as Pilot B<a class="headerlink" href="#1-parser-backed-phase-a-landed-as-pilot-b" title="Permanent link">&para;</a></h3>
+<p>Implemented in <code>rust/glossapi_rs_cleaner/src/md_format_surgical.rs</code>:</p>
+<pre><code class="language-text">input markdown
+  → parse with comrak (GFM options + sourcepos)
+  → walk top-level block children
+  → re-render Paragraph / Table / ThematicBreak nodes
+  → copy everything else verbatim from source
+  → verify with dual_verify (comrak + pulldown-cmark HTML agreement on input + output)
+  → on disagreement: ship input verbatim; record fallback_reason
+</code></pre>
+<p>The three target transformations:</p>
+<ul>
+<li><strong>Thematic break canonicalization</strong> — render parser-confirmed <code>ThematicBreak</code> as <code>---</code>.</li>
+<li><strong>Table delimiter canonicalization</strong> — render parser-confirmed table delimiter cells as <code>---</code>, <code>:---</code>, <code>---:</code>, or <code>:---:</code>.</li>
+<li><strong>Paragraph softbreak unwrap</strong> — serialize parser-confirmed paragraph soft breaks as spaces, while preserving hard breaks.</li>
+</ul>
+<h3 id="2-line-based-path-removed-entirely">2. Line-based path — ✅ removed entirely<a class="headerlink" href="#2-line-based-path-removed-entirely" title="Permanent link">&para;</a></h3>
+<p>The original "fast line-based path as conservative fallback" recommendation was reconsidered: with <code>dual_verify</code> providing per-doc safety, the line-based path's value as fallback was eclipsed by Pilot B's verbatim-on-disagreement behavior. The line-based code (<code>md_module::normalize_md_syntax</code>) was removed in the cleaner integration.</p>
+<h3 id="3-multi-parser-verification-oracles-landed-as-dual_verify">3. Multi-parser verification oracles — ✅ landed as dual_verify<a class="headerlink" href="#3-multi-parser-verification-oracles-landed-as-dual_verify" title="Permanent link">&para;</a></h3>
+<p>Production cleaning runs <code>dual_verify(input, output)</code> on every Pilot B rewrite — comrak + pulldown-cmark HTML agreement. cmark-gfm is consulted when present (development hosts) as the ground-truth oracle.</p>
+<h3 id="4-explicit-dialect-and-formatting-policy-landed-as-phaseapolicy">4. Explicit dialect and formatting policy — ✅ landed as PhaseAPolicy<a class="headerlink" href="#4-explicit-dialect-and-formatting-policy-landed-as-phaseapolicy" title="Permanent link">&para;</a></h3>
+<p><code>md_format_surgical::PhaseAPolicy</code> carries the active dialect choices (comrak/cmark-gfm autolink behavior, hard-break preservation, softbreak whitespace trim policy). Surfaced through PyO3 as <code>phase_a_policy_py</code> so callers and scorecards can log what was in effect.</p>
+<h3 id="5-ast-preserving-transformations-as-the-strongest-invariant-landed">5. AST-preserving transformations as the strongest invariant — ✅ landed<a class="headerlink" href="#5-ast-preserving-transformations-as-the-strongest-invariant-landed" title="Permanent link">&para;</a></h3>
+<p>The <code>dual_verify</code> check enforces preview-preservation under both parsers. When either parser sees the input rendering differently from the output, the rewrite is refused and input is shipped verbatim. The <code>phase_a_fallback_reason</code> field surfaces the cause for downstream sampling.</p>
+<h2 id="still-open">Still open<a class="headerlink" href="#still-open" title="Permanent link">&para;</a></h2>
+<p>These directions from the survey have NOT yet landed. They remain reasonable next steps if the cleaner's correctness or coverage is extended further.</p>
+<h3 id="pseudo-table-unwrapping-as-a-separate-semantic-transform">Pseudo-table unwrapping as a separate semantic transform<a class="headerlink" href="#pseudo-table-unwrapping-as-a-separate-semantic-transform" title="Permanent link">&para;</a></h3>
+<p>The ecosystem tools preserve tables because they are valid Markdown structures. If the corpus needs TOC pseudo-tables converted to prose, that is not formatting — it is a semantic structural rewrite. It needs its own module, its own classifier, a distinct invariant (table-to-list/prose mapping with preserved cell text order), and separate scorecard metrics. Do not mix pseudo-table unwrapping into Phase A.</p>
+<h3 id="raw-readability-scorecard-metrics-beyond-cleanstats">Raw-readability scorecard metrics beyond CleanStats<a class="headerlink" href="#raw-readability-scorecard-metrics-beyond-cleanstats" title="Permanent link">&para;</a></h3>
+<p><code>CleanStats</code> already tracks per-rule counts and per-doc 4-way char accounting. The survey suggested extra readability-oriented metrics (<code>softbreaks_before/after</code>, <code>mean_physical_lines_per_paragraph_before/after</code>, <code>hr_run_width_before/after</code>, etc.) that would give a more direct answer to "did raw Markdown become closer to rendered Markdown?". These are not in the current <code>CleanStats</code> schema.</p>
+<h3 id="lint-style-diagnostic-categories">Lint-style diagnostic categories<a class="headerlink" href="#lint-style-diagnostic-categories" title="Permanent link">&para;</a></h3>
+<p>Pass/fail verification (<code>dual_verify</code> agreement) is in production. Per-category lint diagnostics (<code>hard_break_preserved</code>, <code>softbreak_unwrapped</code>, <code>table_delimiter_minimized</code>, etc.) would help when investigating regressions but are not implemented today.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../ocr_cleaning_runtime/">OCR Cleaning Runtime</a> — how the cleaner is split between analyzer and renderer responsibilities.</li>
+<li><code>rust/glossapi_rs_cleaner/src/md_format_surgical.rs</code> — Pilot B implementation.</li>
+<li><code>rust/glossapi_rs_cleaner/src/md_format.rs</code> — <code>dual_verify</code> (the in-process production oracle).</li>
+<li><code>rust/glossapi_rs_cleaner/src/cmark_gfm_oracle.rs</code> — optional dev-only ground-truth oracle.</li>
+<li><code>rust/glossapi_rs_cleaner/docs/PHASE_A_PARSER_BACKED_INDEX.md</code> — internal index of Phase A pilot reviews.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
