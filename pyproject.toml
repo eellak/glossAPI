@@ -25,6 +25,7 @@ dependencies = [
     "tenacity>=8.0.0",
     "tqdm>=4.67.0",
     "pyyaml>=6.0",
+    "google-genai>=1.30.0",
     # Math/JSON enrichment helpers
     "pypdfium2>=4.0.0",
     "zstandard>=0.22.0",

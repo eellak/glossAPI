@@ -14,6 +14,7 @@ from glossapi.corpus.phase_clean import (
     _merge_labeled_raw_spans,
     _normalize_alnum_with_map_skip_tags,
 )
+from glossapi.scripts.build_token_category_review_bundle import build_token_category_review_bundle
 from glossapi.scripts.table_markdown_audit import audit_table, write_clean_markdown_file
 from glossapi.scripts.review_manifest_materialize import materialize_manifest_categories
 
@@ -121,6 +122,33 @@ def _run_clean_ocr_numeric_debug_export(
     md_path.write_text(markdown_text, encoding="utf-8")
     debug_dir = corpus.output_dir / "ocr_numeric_debug"
     rows = corpus.clean_ocr_numeric_debug(debug_dir, max_pages=max_pages)
+    return rows, debug_dir
+
+
+def _run_clean_token_category_debug_export(
+    corpus: Corpus,
+    markdown_text: str,
+    specs: list[dict],
+    *,
+    stem: str = "sample",
+    max_pages: int | None = 1000,
+    synthetic_page_target_chars: int = 4000,
+    synthetic_page_min_header_chars: int = 1200,
+    synthetic_page_hard_max_chars: int = 6000,
+) -> tuple[list[dict], Path]:
+    md_path = corpus.markdown_dir / f"{stem}.md"
+    md_path.write_text(markdown_text, encoding="utf-8")
+    specs_path = corpus.output_dir / "token_category_specs.json"
+    specs_path.write_text(json.dumps(specs, ensure_ascii=False, indent=2), encoding="utf-8")
+    debug_dir = corpus.output_dir / "token_category_debug"
+    rows = corpus.clean_token_category_debug(
+        debug_dir,
+        specs_path,
+        max_pages=max_pages,
+        synthetic_page_target_chars=synthetic_page_target_chars,
+        synthetic_page_min_header_chars=synthetic_page_min_header_chars,
+        synthetic_page_hard_max_chars=synthetic_page_hard_max_chars,
+    )
     return rows, debug_dir
 
 
@@ -446,6 +474,79 @@ def test_clean_ocr_debug_respects_sample_limit(tmp_path: Path) -> None:
     manifest = debug_dir / "manifest.jsonl"
     lines = manifest.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 2
+
+
+def test_clean_token_category_debug_exports_synthetic_pages(tmp_path: Path) -> None:
+    corpus = _build_corpus(tmp_path)
+    rows, debug_dir = _run_clean_token_category_debug_export(
+        corpus,
+        (
+            "# Section One\n\n"
+            "Κανονικό κείμενο χωρίς ύποπτα μοτίβα.\n\n"
+            "# Section Two\n\n"
+            "Intro .................. 15\n"
+            "GLYPH<1> GLYPH<2> GLYPH<3>\n"
+        ),
+        specs=[
+            {
+                "category": "glyph_font_like",
+                "pattern_family": "glyph_marker",
+                "pattern": r"GLYPH<\\d+>",
+            },
+            {
+                "category": "dot_leader_like",
+                "pattern_family": "dot_run",
+                "pattern": r"\\.{4,}",
+            },
+        ],
+        synthetic_page_target_chars=120,
+        synthetic_page_min_header_chars=20,
+        synthetic_page_hard_max_chars=240,
+    )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["page_kind"].startswith("synthetic")
+    assert row["match_count"] >= 2
+    assert "glyph_font_like" in row["match_categories"]
+    assert "dot_leader_like" in row["match_categories"]
+    assert "glyph_marker" in row["match_pattern_families"]
+    assert "dot_run" in row["match_pattern_families"]
+
+    exported = Path(row["output_path"])
+    assert exported.exists()
+    assert exported.parent == debug_dir
+    content = exported.read_text(encoding="utf-8")
+    assert "<match category=" in content
+    assert "GLYPH<1>" in content
+    assert ".................." in content
+
+    manifest = debug_dir / "manifest.jsonl"
+    page_metrics = debug_dir / "page_metrics.jsonl"
+    match_index = debug_dir / "match_index.jsonl"
+    summary = debug_dir / "summary.json"
+    assert manifest.exists()
+    assert page_metrics.exists()
+    assert match_index.exists()
+    assert summary.exists()
+    page_metric_rows = [
+        json.loads(line)
+        for line in page_metrics.read_text(encoding="utf-8").strip().splitlines()
+    ]
+    assert len(page_metric_rows) == 1
+    assert page_metric_rows[0]["page_kind"].startswith("synthetic")
+    assert page_metric_rows[0]["category_match_counts"]["glyph_font_like"] >= 1
+    match_rows = [
+        json.loads(line)
+        for line in match_index.read_text(encoding="utf-8").strip().splitlines()
+    ]
+    assert any(row["category"] == "glyph_font_like" for row in match_rows)
+    assert any(row["category"] == "dot_leader_like" for row in match_rows)
+    assert all("context_excerpt" in row for row in match_rows)
+    summary_data = json.loads(summary.read_text(encoding="utf-8"))
+    assert summary_data["page_count"] == 1
+    assert summary_data["category_page_counts"]["glyph_font_like"] == 1
+    assert summary_data["category_match_counts"]["glyph_font_like"] >= 1
 
 
 def test_clean_ocr_numeric_debug_flags_ascending_sequences(tmp_path: Path) -> None:
@@ -1683,6 +1784,93 @@ def test_review_manifest_materialize_creates_labeled_copies(tmp_path: Path) -> N
     assert "REVIEW_LABEL: fits_semantically" in fit_text
     assert "=== REVIEW_SOURCE_CONTENT ===" in fit_text
     assert "alpha body" in fit_text
+
+
+def test_build_token_category_review_bundle_materializes_cases(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    debug_dir = run_dir / "debug_pages"
+    debug_dir.mkdir()
+
+    debug_page = debug_dir / "sample__token_debug_synthetic_00001.md"
+    debug_page.write_text(
+        "Header\n<match category=\"glyph_font_like\" pattern_family=\"fresh_glossapi_only_glyph_font_like\">GLYPH<c=1></match>\n",
+        encoding="utf-8",
+    )
+
+    match_row = {
+        "match_id": "sample:synthetic_header:1:match:1",
+        "source_path": "/tmp/source/sample.md",
+        "source_stem": "sample",
+        "base_stem": "sample",
+        "debug_output_path": str(debug_page),
+        "page_kind": "synthetic_header",
+        "page_number": 1,
+        "page_index_in_file": 1,
+        "page_char_count": 120,
+        "match_index_in_page": 1,
+        "start_char": 7,
+        "end_char": 18,
+        "start_byte": 7,
+        "end_byte": 18,
+        "match_length_chars": 11,
+        "match_length_bytes": 11,
+        "start_line": 2,
+        "end_line": 2,
+        "categories": ["glyph_font_like"],
+        "category": "glyph_font_like",
+        "pattern_families": ["fresh_glossapi_only_glyph_font_like"],
+        "pattern_family": "fresh_glossapi_only_glyph_font_like",
+        "matched_text": "GLYPH<c=1>",
+        "raw_texts": ["GLYPH<c=1>"],
+        "context_before": "Header\n",
+        "context_after": "\n",
+        "context_excerpt": "Header\nGLYPH<c=1>\n",
+    }
+    (run_dir / "match_index.jsonl").write_text(json.dumps(match_row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    page_metric_row = {
+        "source_path": "/tmp/source/sample.md",
+        "source_stem": "sample",
+        "base_stem": "sample",
+        "debug_output_path": str(debug_page),
+        "page_kind": "synthetic_header",
+        "page_number": 1,
+        "page_index_in_file": 1,
+        "page_char_count": 120,
+        "match_count": 1,
+        "match_density_per_1k_chars": 8.3333,
+        "match_categories": "glyph_font_like",
+        "match_pattern_families": "fresh_glossapi_only_glyph_font_like",
+        "category_match_counts": {"glyph_font_like": 1},
+        "pattern_family_match_counts": {"fresh_glossapi_only_glyph_font_like": 1},
+    }
+    (run_dir / "page_metrics.jsonl").write_text(json.dumps(page_metric_row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    output_dir = tmp_path / "review_bundle"
+    summary = build_token_category_review_bundle(
+        run_dir=run_dir,
+        output_dir=output_dir,
+        sample_size_per_category=300,
+    )
+
+    assert summary["sampled_case_count"] == 1
+    assert "glyph_font_like" in summary["category_summaries"]
+
+    manifest_rows = [
+        json.loads(line)
+        for line in (output_dir / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(manifest_rows) == 1
+    case_path = Path(manifest_rows[0]["case_path"])
+    assert case_path.exists()
+    case_text = case_path.read_text(encoding="utf-8")
+    assert "REVIEW_MODE: cleaning" in case_text
+    assert "CATEGORY: glyph_font_like" in case_text
+    assert "RAW_TEXTS: [\"GLYPH<c=1>\"]" in case_text
+    assert f"DEBUG_OUTPUT_PATH: {debug_page}" in case_text
+    assert "=== DEBUG_PAGE_WITH_MATCH_TAGS ===" not in case_text
 
 
 def test_table_markdown_audit_preserves_semantic_inline_html() -> None:

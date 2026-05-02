@@ -69,15 +69,20 @@ Positions in detailed tuple (suggested append):
 
 Note: after adding these fields, bump the Python bindings accordingly and propagate polytonic_ratio (already computed here) into downstream parquet (already wired in Corpus.clean()).
 */
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use glossapi_rs_common::{is_combining_mark, is_greek, scan_script_metrics, ScriptScanner};
+use once_cell::sync::Lazy;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
+use regex::{Regex, RegexBuilder};
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use unicode_normalization::UnicodeNormalization;
 use walkdir::WalkDir;
 // Avoid heavy regex for table detection; use lightweight checks instead
@@ -103,6 +108,10 @@ const NUMERIC_PAGE_COLLAPSE_MIN_ATOMS: u64 = 64;
 const NUMERIC_BLOCK_SEED_MIN_ATOMS: usize = 8;
 // Baseline for short words per 1000 Greek characters (empirically ~26 on clean texts)
 const SHORT_BASELINE_PER_1000: f64 = 26.0;
+
+static TOKEN_CATEGORY_SPEC_CACHE: Lazy<
+    Mutex<std::collections::HashMap<PathBuf, Arc<Vec<CompiledTokenCategorySpec>>>>,
+> = Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
 
 #[inline]
 fn to_lower_fast(cp: u32) -> u32 {
@@ -134,6 +143,13 @@ static ALLOWED_DOUBLE: [u32; 9] = [
 
 fn allowed_double(cp: u32) -> bool {
     ALLOWED_DOUBLE.contains(&cp)
+}
+
+#[inline(always)]
+fn commit_bad_double_run(cp: u32, run_len: u64, bad_double: &mut u64) {
+    if cp != 0 && run_len == 2 && !allowed_double(cp) {
+        *bad_double += 1;
+    }
 }
 
 #[inline]
@@ -221,6 +237,107 @@ struct OcrDebugPageCandidate {
     base_stem: String,
     page_number: u64,
     page_index_in_file: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct TokenCategorySpec {
+    category: String,
+    #[serde(default)]
+    pattern: Option<String>,
+    #[serde(default)]
+    pattern_family: Option<String>,
+    #[serde(default)]
+    match_kind: Option<String>,
+    #[serde(default)]
+    case_insensitive: bool,
+    #[serde(default)]
+    literals: Option<Vec<String>>,
+    #[serde(default)]
+    literals_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum TokenCategoryLiteralPayload {
+    List(Vec<String>),
+    Map(std::collections::BTreeMap<String, String>),
+}
+
+#[derive(Debug, Clone)]
+enum TokenCategoryMatcher {
+    Regex(Regex),
+    LiteralSet(AhoCorasick),
+}
+
+#[derive(Debug, Clone)]
+struct CompiledTokenCategorySpec {
+    category: String,
+    pattern_family: String,
+    matcher: TokenCategoryMatcher,
+}
+
+#[derive(Debug, Clone)]
+struct TokenCategoryRawSpan {
+    start: usize,
+    end: usize,
+    category: String,
+    pattern_family: String,
+    matched_text: String,
+}
+
+#[derive(Debug, Clone)]
+struct TokenCategoryMergedSpan {
+    start: usize,
+    end: usize,
+    categories: Vec<String>,
+    pattern_families: Vec<String>,
+    raw_texts: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct TokenCategoryDebugPageCandidate {
+    source_path: String,
+    source_stem: String,
+    base_stem: String,
+    page_kind: String,
+    page_number: u64,
+    page_index_in_file: u64,
+    page_char_count: u64,
+    page_text: String,
+    merged_spans: Vec<TokenCategoryMergedSpan>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TokenCategoryExportMatchRow {
+    match_index_in_page: u64,
+    start: usize,
+    end: usize,
+    categories: Vec<String>,
+    pattern_families: Vec<String>,
+    matched_text: String,
+    raw_texts: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenCategoryDebugPageRow {
+    pub source_path: String,
+    pub output_path: String,
+    pub source_stem: String,
+    pub base_stem: String,
+    pub page_kind: String,
+    pub page_number: u64,
+    pub page_index_in_file: u64,
+    pub page_char_count: u64,
+    pub match_categories: String,
+    pub match_pattern_families: String,
+    pub match_count: u64,
+    pub page_text: String,
+    pub matches_json: String,
+    /// Per-category match counts (summed across all matches on the page).
+    /// Precomputed in Rust so the Python driver doesn't re-parse
+    /// matches_json just to tally counters. 2026-04-23 speedup.
+    pub per_category_match_count: std::collections::BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1334,6 +1451,551 @@ fn split_pages(text: &str) -> Vec<String> {
     pages
 }
 
+#[derive(Debug, Clone)]
+struct SyntheticPage {
+    kind: String,
+    text: String,
+}
+
+fn load_token_category_specs(specs_path: &Path) -> anyhow::Result<Vec<CompiledTokenCategorySpec>> {
+    let raw = fs::read_to_string(specs_path)?;
+    let specs: Vec<TokenCategorySpec> = serde_json::from_str(&raw)?;
+    let mut compiled = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let match_kind = spec.match_kind.as_deref().unwrap_or("regex");
+        let matcher = match match_kind {
+            "regex" => {
+                let pattern = spec.pattern.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("Missing regex pattern for category {}", spec.category)
+                })?;
+                let mut builder = RegexBuilder::new(pattern);
+                builder.case_insensitive(spec.case_insensitive);
+                builder.multi_line(true);
+                TokenCategoryMatcher::Regex(builder.build()?)
+            }
+            "literal_set" => {
+                if spec.case_insensitive {
+                    anyhow::bail!(
+                        "literal_set does not currently support case_insensitive for category {}",
+                        spec.category
+                    );
+                }
+                let mut literals = spec.literals.unwrap_or_default();
+                if let Some(raw_path) = spec.literals_path.as_deref() {
+                    let path = if Path::new(raw_path).is_absolute() {
+                        PathBuf::from(raw_path)
+                    } else {
+                        specs_path
+                            .parent()
+                            .unwrap_or_else(|| Path::new("."))
+                            .join(raw_path)
+                    };
+                    let payload_raw = fs::read_to_string(&path).map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to read literal_set payload for category {} from {}: {}",
+                            spec.category,
+                            path.display(),
+                            err
+                        )
+                    })?;
+                    let payload: TokenCategoryLiteralPayload = serde_json::from_str(&payload_raw)?;
+                    match payload {
+                        TokenCategoryLiteralPayload::List(values) => literals.extend(values),
+                        TokenCategoryLiteralPayload::Map(values) => {
+                            literals.extend(values.into_values())
+                        }
+                    }
+                }
+                literals.retain(|value| !value.is_empty());
+                literals.sort();
+                literals.dedup();
+                if literals.is_empty() {
+                    anyhow::bail!(
+                        "literal_set category {} must provide non-empty literals",
+                        spec.category
+                    );
+                }
+                let automaton = AhoCorasickBuilder::new()
+                    .match_kind(MatchKind::LeftmostLongest)
+                    .build(literals)
+                    .map_err(|err| {
+                        anyhow::anyhow!(
+                            "Failed to build literal_set automaton for category {}: {}",
+                            spec.category,
+                            err
+                        )
+                    })?;
+                TokenCategoryMatcher::LiteralSet(automaton)
+            }
+            _ => {
+                anyhow::bail!(
+                    "Unsupported match_kind for category {}: {:?}",
+                    spec.category,
+                    spec.match_kind
+                );
+            }
+        };
+        compiled.push(CompiledTokenCategorySpec {
+            category: spec.category.clone(),
+            pattern_family: spec.pattern_family.unwrap_or_else(|| spec.category.clone()),
+            matcher,
+        });
+    }
+    Ok(compiled)
+}
+
+fn load_token_category_specs_cached(
+    specs_path: &Path,
+) -> anyhow::Result<Arc<Vec<CompiledTokenCategorySpec>>> {
+    let canonical = specs_path
+        .canonicalize()
+        .unwrap_or_else(|_| specs_path.to_path_buf());
+    if let Some(cached) = TOKEN_CATEGORY_SPEC_CACHE
+        .lock()
+        .expect("token category spec cache lock")
+        .get(&canonical)
+        .cloned()
+    {
+        return Ok(cached);
+    }
+    let compiled = Arc::new(load_token_category_specs(&canonical)?);
+    TOKEN_CATEGORY_SPEC_CACHE
+        .lock()
+        .expect("token category spec cache lock")
+        .insert(canonical, compiled.clone());
+    Ok(compiled)
+}
+
+fn split_long_block_by_paragraphs(
+    block: &str,
+    target_chars: usize,
+    hard_max_chars: usize,
+) -> Vec<SyntheticPage> {
+    let mut pages = Vec::new();
+    let mut current = String::new();
+    let mut paragraph_buffer = String::new();
+
+    let flush_current = |pages: &mut Vec<SyntheticPage>, current: &mut String| {
+        if !current.trim().is_empty() {
+            pages.push(SyntheticPage {
+                kind: "synthetic_paragraph".to_string(),
+                text: std::mem::take(current),
+            });
+        }
+    };
+
+    for segment in block.split_inclusive('\n') {
+        paragraph_buffer.push_str(segment);
+        if segment.trim().is_empty() {
+            let para = std::mem::take(&mut paragraph_buffer);
+            if current.len() + para.len() > hard_max_chars && !current.trim().is_empty() {
+                flush_current(&mut pages, &mut current);
+            }
+            if current.len() + para.len() > target_chars && !current.trim().is_empty() {
+                flush_current(&mut pages, &mut current);
+            }
+            if para.len() > hard_max_chars {
+                let mut start = 0usize;
+                let chars: Vec<char> = para.chars().collect();
+                while start < chars.len() {
+                    let end = (start + hard_max_chars).min(chars.len());
+                    let chunk: String = chars[start..end].iter().collect();
+                    pages.push(SyntheticPage {
+                        kind: "synthetic_fallback".to_string(),
+                        text: chunk,
+                    });
+                    start = end;
+                }
+            } else {
+                current.push_str(&para);
+            }
+        }
+    }
+
+    if !paragraph_buffer.is_empty() {
+        let para = std::mem::take(&mut paragraph_buffer);
+        if current.len() + para.len() > hard_max_chars && !current.trim().is_empty() {
+            flush_current(&mut pages, &mut current);
+        }
+        if current.len() + para.len() > target_chars && !current.trim().is_empty() {
+            flush_current(&mut pages, &mut current);
+        }
+        if para.len() > hard_max_chars {
+            let mut start = 0usize;
+            let chars: Vec<char> = para.chars().collect();
+            while start < chars.len() {
+                let end = (start + hard_max_chars).min(chars.len());
+                let chunk: String = chars[start..end].iter().collect();
+                pages.push(SyntheticPage {
+                    kind: "synthetic_fallback".to_string(),
+                    text: chunk,
+                });
+                start = end;
+            }
+        } else {
+            current.push_str(&para);
+        }
+    }
+
+    if !current.trim().is_empty() {
+        pages.push(SyntheticPage {
+            kind: "synthetic_paragraph".to_string(),
+            text: current,
+        });
+    }
+
+    pages
+}
+
+fn split_synthetic_pages(
+    text: &str,
+    target_chars: usize,
+    min_header_chars: usize,
+    hard_max_chars: usize,
+) -> Vec<SyntheticPage> {
+    if text.contains(PAGE_SPLIT_MARKER) {
+        return split_pages(text)
+            .into_iter()
+            .map(|page| SyntheticPage {
+                kind: "real_page".to_string(),
+                text: page,
+            })
+            .collect();
+    }
+
+    let mut header_blocks: Vec<String> = Vec::new();
+    let mut current_block = String::new();
+    for segment in text.split_inclusive('\n') {
+        let trimmed = segment.trim_start();
+        let hash_prefix_len = trimmed.chars().take_while(|ch| *ch == '#').count();
+        let is_header = trimmed.starts_with('#')
+            && (1..=6).contains(&hash_prefix_len)
+            && trimmed
+                .chars()
+                .nth(hash_prefix_len)
+                .map(|ch| ch.is_whitespace())
+                .unwrap_or(false);
+        if is_header && current_block.len() >= min_header_chars {
+            header_blocks.push(std::mem::take(&mut current_block));
+        }
+        current_block.push_str(segment);
+    }
+    if !current_block.is_empty() {
+        header_blocks.push(current_block);
+    }
+
+    let mut pages = Vec::new();
+    for block in header_blocks {
+        if block.len() <= hard_max_chars {
+            pages.push(SyntheticPage {
+                kind: "synthetic_header".to_string(),
+                text: block,
+            });
+        } else {
+            pages.extend(split_long_block_by_paragraphs(
+                &block,
+                target_chars,
+                hard_max_chars,
+            ));
+        }
+    }
+    pages
+}
+
+fn collect_token_category_raw_spans(
+    page_text: &str,
+    specs: &[CompiledTokenCategorySpec],
+) -> Vec<TokenCategoryRawSpan> {
+    let mut spans = Vec::new();
+    for spec in specs {
+        match &spec.matcher {
+            TokenCategoryMatcher::Regex(regex) => {
+                for item in regex.find_iter(page_text) {
+                    spans.push(TokenCategoryRawSpan {
+                        start: item.start(),
+                        end: item.end(),
+                        category: spec.category.clone(),
+                        pattern_family: spec.pattern_family.clone(),
+                        matched_text: page_text[item.start()..item.end()].to_string(),
+                    });
+                }
+            }
+            TokenCategoryMatcher::LiteralSet(automaton) => {
+                for item in automaton.find_iter(page_text) {
+                    spans.push(TokenCategoryRawSpan {
+                        start: item.start(),
+                        end: item.end(),
+                        category: spec.category.clone(),
+                        pattern_family: spec.pattern_family.clone(),
+                        matched_text: page_text[item.start()..item.end()].to_string(),
+                    });
+                }
+            }
+        }
+    }
+    spans.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+    spans
+}
+
+fn merge_token_category_spans(
+    raw_spans: Vec<TokenCategoryRawSpan>,
+) -> Vec<TokenCategoryMergedSpan> {
+    if raw_spans.is_empty() {
+        return Vec::new();
+    }
+    let mut merged: Vec<TokenCategoryMergedSpan> = Vec::new();
+    for span in raw_spans {
+        if let Some(last) = merged.last_mut() {
+            if span.start <= last.end {
+                last.end = last.end.max(span.end);
+                if !last.categories.iter().any(|value| value == &span.category) {
+                    last.categories.push(span.category.clone());
+                }
+                if !last
+                    .pattern_families
+                    .iter()
+                    .any(|value| value == &span.pattern_family)
+                {
+                    last.pattern_families.push(span.pattern_family.clone());
+                }
+                last.raw_texts.push(span.matched_text.clone());
+                continue;
+            }
+        }
+        merged.push(TokenCategoryMergedSpan {
+            start: span.start,
+            end: span.end,
+            categories: vec![span.category],
+            pattern_families: vec![span.pattern_family],
+            raw_texts: vec![span.matched_text],
+        });
+    }
+    merged
+}
+
+fn render_token_category_debug_page(page_text: &str, spans: &[TokenCategoryMergedSpan]) -> String {
+    if spans.is_empty() {
+        return page_text.to_string();
+    }
+    let mut rendered = String::with_capacity(page_text.len() + spans.len() * 64);
+    let mut cursor = 0usize;
+    for span in spans {
+        if span.start > cursor {
+            rendered.push_str(&page_text[cursor..span.start]);
+        }
+        rendered.push_str("<match category=\"");
+        rendered.push_str(&span.categories.join(","));
+        rendered.push_str("\" pattern_family=\"");
+        rendered.push_str(&span.pattern_families.join(","));
+        rendered.push_str("\">");
+        rendered.push_str(&page_text[span.start..span.end]);
+        rendered.push_str("</match>");
+        cursor = span.end;
+    }
+    if cursor < page_text.len() {
+        rendered.push_str(&page_text[cursor..]);
+    }
+    rendered
+}
+
+fn collect_token_category_debug_candidates_for_text(
+    path: &Path,
+    source_stem: &str,
+    base_stem: &str,
+    start_page: u64,
+    text: &str,
+    specs: &[CompiledTokenCategorySpec],
+    target_chars: usize,
+    min_header_chars: usize,
+    hard_max_chars: usize,
+) -> Vec<TokenCategoryDebugPageCandidate> {
+    let pages = split_synthetic_pages(text, target_chars, min_header_chars, hard_max_chars);
+    let mut candidates = Vec::new();
+    for (idx, page) in pages.into_iter().enumerate() {
+        let raw_spans = collect_token_category_raw_spans(&page.text, specs);
+        let merged_spans = merge_token_category_spans(raw_spans);
+        if merged_spans.is_empty() {
+            continue;
+        }
+        let page_index_in_file = (idx + 1) as u64;
+        let page_number = if page.kind == "real_page" {
+            start_page + idx as u64
+        } else {
+            page_index_in_file
+        };
+        candidates.push(TokenCategoryDebugPageCandidate {
+            source_path: path.to_string_lossy().into_owned(),
+            source_stem: source_stem.to_string(),
+            base_stem: base_stem.to_string(),
+            page_kind: page.kind,
+            page_number,
+            page_index_in_file,
+            page_char_count: page.text.chars().count() as u64,
+            page_text: page.text,
+            merged_spans,
+        });
+    }
+    candidates
+}
+
+fn render_token_category_debug_candidate(
+    candidate: &TokenCategoryDebugPageCandidate,
+    output_dir: &Path,
+    write_file: bool,
+) -> anyhow::Result<TokenCategoryDebugPageRow> {
+    let rendered = render_token_category_debug_page(&candidate.page_text, &candidate.merged_spans);
+    let categories = candidate
+        .merged_spans
+        .iter()
+        .flat_map(|span| span.categories.iter().cloned())
+        .collect::<std::collections::BTreeSet<String>>();
+    let pattern_families = candidate
+        .merged_spans
+        .iter()
+        .flat_map(|span| span.pattern_families.iter().cloned())
+        .collect::<std::collections::BTreeSet<String>>();
+    let output_name = format!(
+        "{}__token_debug_{}_{:05}.md",
+        candidate.source_stem, candidate.page_kind, candidate.page_number
+    );
+    let output_path = output_dir.join(output_name);
+    // Bug 1 fix (CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 10):
+    // emit CHARACTER offsets in the JSON, not BYTE offsets. Python
+    // consumers slice `page_text[start:end]` which is char-indexed in
+    // Python; byte offsets shift any non-ASCII prefix and silently
+    // drop rows whose end exceeds char-length. We keep span.start /
+    // span.end as bytes for internal Rust slicing
+    // (`candidate.page_text[span.start..span.end]`), and convert to
+    // chars only at the export boundary.
+    let export_matches: Vec<TokenCategoryExportMatchRow> = candidate
+        .merged_spans
+        .iter()
+        .enumerate()
+        .map(|(idx, span)| {
+            let start_char = candidate.page_text[..span.start].chars().count();
+            let end_char = start_char
+                + candidate.page_text[span.start..span.end].chars().count();
+            TokenCategoryExportMatchRow {
+                match_index_in_page: (idx + 1) as u64,
+                start: start_char,
+                end: end_char,
+                categories: span.categories.clone(),
+                pattern_families: span.pattern_families.clone(),
+                matched_text: candidate.page_text[span.start..span.end].to_string(),
+                raw_texts: span.raw_texts.clone(),
+            }
+        })
+        .collect();
+    let matches_json = serde_json::to_string(&export_matches)?;
+    let mut content = String::new();
+    content.push_str("<!-- source_path=");
+    content.push_str(&candidate.source_path);
+    content.push_str(" -->\n");
+    content.push_str("<!-- base_stem=");
+    content.push_str(&candidate.base_stem);
+    content.push_str(" source_stem=");
+    content.push_str(&candidate.source_stem);
+    content.push_str(" page_kind=");
+    content.push_str(&candidate.page_kind);
+    content.push_str(" page_number=");
+    content.push_str(&candidate.page_number.to_string());
+    content.push_str(" page_index_in_file=");
+    content.push_str(&candidate.page_index_in_file.to_string());
+    content.push_str(" page_char_count=");
+    content.push_str(&candidate.page_char_count.to_string());
+    content.push_str(" match_categories=");
+    content.push_str(&categories.iter().cloned().collect::<Vec<_>>().join(","));
+    content.push_str(" match_pattern_families=");
+    content.push_str(
+        &pattern_families
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    content.push_str(" match_count=");
+    content.push_str(&candidate.merged_spans.len().to_string());
+    content.push_str(" -->\n\n");
+    content.push_str(&rendered);
+    if write_file {
+        fs::write(&output_path, content)?;
+    }
+
+    // Per-category match-count tally (Python driver no longer has to
+    // json.loads the matches_json string to compute doc counters).
+    let mut per_category_match_count: std::collections::BTreeMap<String, u64>
+        = std::collections::BTreeMap::new();
+    for span in &candidate.merged_spans {
+        for cat in &span.categories {
+            *per_category_match_count.entry(cat.clone()).or_insert(0) += 1;
+        }
+    }
+
+    Ok(TokenCategoryDebugPageRow {
+        source_path: candidate.source_path.clone(),
+        output_path: output_path.to_string_lossy().into_owned(),
+        source_stem: candidate.source_stem.clone(),
+        base_stem: candidate.base_stem.clone(),
+        page_kind: candidate.page_kind.clone(),
+        page_number: candidate.page_number,
+        page_index_in_file: candidate.page_index_in_file,
+        page_char_count: candidate.page_char_count,
+        match_categories: categories.into_iter().collect::<Vec<_>>().join(","),
+        match_pattern_families: pattern_families.into_iter().collect::<Vec<_>>().join(","),
+        match_count: candidate.merged_spans.len() as u64,
+        page_text: candidate.page_text.clone(),
+        matches_json,
+        per_category_match_count,
+    })
+}
+
+// Dead code post-Point-7 — kept until a follow-up extraction.
+#[allow(dead_code)]
+pub fn match_token_category_debug_text_internal(
+    output_dir: &Path,
+    category_specs_path: &Path,
+    source_path: &str,
+    source_stem: &str,
+    base_stem: &str,
+    start_page: u64,
+    text: &str,
+    synthetic_page_target_chars: usize,
+    synthetic_page_min_header_chars: usize,
+    synthetic_page_hard_max_chars: usize,
+    write_files: bool,
+) -> anyhow::Result<Vec<TokenCategoryDebugPageRow>> {
+    if write_files {
+        fs::create_dir_all(output_dir)?;
+    }
+    let specs = load_token_category_specs_cached(category_specs_path)?;
+    let source_path_buf = PathBuf::from(source_path);
+    let candidates = collect_token_category_debug_candidates_for_text(
+        &source_path_buf,
+        source_stem,
+        base_stem,
+        start_page,
+        text,
+        &specs,
+        synthetic_page_target_chars,
+        synthetic_page_min_header_chars,
+        synthetic_page_hard_max_chars,
+    );
+    let mut rows = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        rows.push(render_token_category_debug_candidate(
+            &candidate,
+            output_dir,
+            write_files,
+        )?);
+    }
+    rows.sort_by(|a, b| {
+        a.output_path
+            .cmp(&b.output_path)
+            .then(a.page_number.cmp(&b.page_number))
+    });
+    Ok(rows)
+}
+
 fn parse_source_stem(stem: &str) -> (String, u64) {
     if let Some((base, suffix)) = stem.rsplit_once("__p") {
         if let Some((start, _end)) = suffix.split_once('-') {
@@ -1539,7 +2201,11 @@ fn hybrid_classify_numeric_field(token: &str) -> Option<(HybridFieldKind, Vec<u3
     }
 
     let parts: Vec<&str> = stripped.split('.').collect();
-    if parts.is_empty() || parts.iter().any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit())) {
+    if parts.is_empty()
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()))
+    {
         return None;
     }
 
@@ -1688,31 +2354,29 @@ fn hybrid_parse_prefix_at(text: &str, start: usize) -> Option<usize> {
     let (delimiter, mut end_idx) = hybrid_next_char(text, idx)?;
     match delimiter {
         ')' => {}
-        '.' => {
-            loop {
-                let mut cursor = end_idx;
-                let mut saw_digit = false;
-                while cursor < text.len() {
-                    let (ch, next_cursor) = hybrid_next_char(text, cursor)?;
-                    if !ch.is_ascii_digit() {
-                        break;
-                    }
-                    saw_digit = true;
-                    cursor = next_cursor;
+        '.' => loop {
+            let mut cursor = end_idx;
+            let mut saw_digit = false;
+            while cursor < text.len() {
+                let (ch, next_cursor) = hybrid_next_char(text, cursor)?;
+                if !ch.is_ascii_digit() {
+                    break;
                 }
-                if saw_digit {
-                    if cursor < text.len() {
-                        let (ch, next_cursor) = hybrid_next_char(text, cursor)?;
-                        if ch == '.' {
-                            end_idx = next_cursor;
-                            continue;
-                        }
-                    }
-                    end_idx = cursor;
-                }
-                break;
+                saw_digit = true;
+                cursor = next_cursor;
             }
-        }
+            if saw_digit {
+                if cursor < text.len() {
+                    let (ch, next_cursor) = hybrid_next_char(text, cursor)?;
+                    if ch == '.' {
+                        end_idx = next_cursor;
+                        continue;
+                    }
+                }
+                end_idx = cursor;
+            }
+            break;
+        },
         _ => return None,
     }
 
@@ -1894,7 +2558,10 @@ fn hybrid_extract_inline_items(analysis_text: &str) -> Vec<HybridInlineItem> {
                         numeric_positions.push(tokens.len());
                         tokens.push(HybridToken {
                             kind: HybridTokenKind::Numeric,
-                            start: hybrid_byte_to_char_idx(&boundaries, working_offset + token_byte),
+                            start: hybrid_byte_to_char_idx(
+                                &boundaries,
+                                working_offset + token_byte,
+                            ),
                             end: hybrid_byte_to_char_idx(&boundaries, working_offset + end),
                             token_key: None,
                             numeric_value: Some(parsed_value),
@@ -1995,7 +2662,10 @@ fn hybrid_extract_inline_items(analysis_text: &str) -> Vec<HybridInlineItem> {
 }
 
 fn hybrid_partial_body_matches(candidate_body_key: &str, target_body_key: &str) -> bool {
-    if candidate_body_key.is_empty() || target_body_key.is_empty() || candidate_body_key == target_body_key {
+    if candidate_body_key.is_empty()
+        || target_body_key.is_empty()
+        || candidate_body_key == target_body_key
+    {
         return false;
     }
     if !target_body_key.starts_with(candidate_body_key) {
@@ -2013,8 +2683,10 @@ fn hybrid_header_progresses(previous: &HybridNumberedItem, current: &HybridNumbe
         && current.field_kind == HybridFieldKind::HeaderCounter
         && !previous.numbers.is_empty()
         && previous.numbers.len() == current.numbers.len()
-        && previous.numbers[..previous.numbers.len() - 1] == current.numbers[..current.numbers.len() - 1]
-        && current.numbers.last().copied() == previous.numbers.last().copied().map(|value| value + 1)
+        && previous.numbers[..previous.numbers.len() - 1]
+            == current.numbers[..current.numbers.len() - 1]
+        && current.numbers.last().copied()
+            == previous.numbers.last().copied().map(|value| value + 1)
 }
 
 fn hybrid_header_is_parent(previous: &HybridNumberedItem, current: &HybridNumberedItem) -> bool {
@@ -2308,7 +2980,8 @@ pub fn find_labeled_shared_repeat_spans_internal(
 ) -> Vec<LabeledSharedRepeatSpan> {
     let (normalized_text, raw_map) = normalize_alnum_with_map_skip_tags_internal(text);
     let normalized_chars: Vec<char> = normalized_text.chars().collect();
-    let spans = find_word_repeat_spans_internal(&normalized_text, rep_threshold, min_period, window);
+    let spans =
+        find_word_repeat_spans_internal(&normalized_text, rep_threshold, min_period, window);
     let mut labeled: Vec<LabeledSharedRepeatSpan> = Vec::new();
 
     for span in spans {
@@ -2378,9 +3051,10 @@ pub fn find_word_repeat_spans_internal(
     let mut pref = vec![0u64; n_chars + 1];
     let mut pw = vec![1u64; n_chars + 1];
     for (idx, code) in codes.iter().enumerate() {
-        pref[idx + 1] =
-            (pref[idx].wrapping_mul(WORD_REPEAT_HASH_BASE).wrapping_add(*code as u64))
-                & WORD_REPEAT_HASH_MASK;
+        pref[idx + 1] = (pref[idx]
+            .wrapping_mul(WORD_REPEAT_HASH_BASE)
+            .wrapping_add(*code as u64))
+            & WORD_REPEAT_HASH_MASK;
         pw[idx + 1] = pw[idx].wrapping_mul(WORD_REPEAT_HASH_BASE) & WORD_REPEAT_HASH_MASK;
     }
 
@@ -2395,8 +3069,14 @@ pub fn find_word_repeat_spans_internal(
         while idx + rep_threshold * period <= n_chars {
             let mut is_repeat = true;
             for multiple in 1..rep_threshold {
-                if !word_repeat_blocks_equal(&codes, &pref, &pw, idx, idx + multiple * period, period)
-                {
+                if !word_repeat_blocks_equal(
+                    &codes,
+                    &pref,
+                    &pw,
+                    idx,
+                    idx + multiple * period,
+                    period,
+                ) {
                     is_repeat = false;
                     break;
                 }
@@ -2732,6 +3412,7 @@ fn analyse_bytes(buf: &[u8]) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u6
     let mut idx = 0;
     let mut prev_cp = 0u32;
     let mut run_len = 0u64;
+    let mut same_cp_run_len = 0u64;
     let mut run_is_vowel = false;
     let mut word_len = 0u64;
 
@@ -2742,10 +3423,12 @@ fn analyse_bytes(buf: &[u8]) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u6
             continue;
         }
         if cp == 0 || !is_greek(cp) {
+            commit_bad_double_run(prev_cp, same_cp_run_len, &mut bad_double);
             if run_len > max_run {
                 max_run = run_len;
             }
             run_len = 0;
+            same_cp_run_len = 0;
             if word_len > 0 {
                 total_word_count += 1;
                 if word_len < SHORT_WORD_LIMIT {
@@ -2801,11 +3484,17 @@ fn analyse_bytes(buf: &[u8]) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u6
                 invalid_bigram += 1;
             }
         }
-        if prev_cp == cp && !allowed_double(cp) {
-            bad_double += 1;
+        if prev_cp == 0 {
+            same_cp_run_len = 1;
+        } else if prev_cp == cp {
+            same_cp_run_len += 1;
+        } else {
+            commit_bad_double_run(prev_cp, same_cp_run_len, &mut bad_double);
+            same_cp_run_len = 1;
         }
         prev_cp = cp;
     }
+    commit_bad_double_run(prev_cp, same_cp_run_len, &mut bad_double);
     if run_len >= 4 {
         let pen = run_len - 3;
         if run_is_vowel {
@@ -2879,15 +3568,7 @@ fn decode_utf8(slice: &[u8]) -> (u32, usize) {
     (0, 1)
 }
 
-/// Core computation with details: returns a wide tuple with all components used by scoring
-/// (score, latin_pct, table_line_ratio, polytonic_word_ratio,
-///  len_greek, total_word_count,
-///  v_pen, c_pen, bad_double, misplaced_sigma, invalid_bigram, long_word_count, longest_word, short_word_count, max_run,
-///  v_rate, c_rate, d_rate, sigma_end_rate, bigram_rate, long_word_rate, short_ratio, short_pen,
-///  flags)
-fn compute_score_and_details(
-    buf: &[u8],
-) -> (
+pub type DetailedScore = (
     f64,
     f64,
     f64,
@@ -2912,7 +3593,15 @@ fn compute_score_and_details(
     f64,
     f64,
     String,
-) {
+);
+
+/// Core computation with details: returns a wide tuple with all components used by scoring
+/// (score, latin_pct, table_line_ratio, polytonic_word_ratio,
+///  len_greek, total_word_count,
+///  v_pen, c_pen, bad_double, misplaced_sigma, invalid_bigram, long_word_count, longest_word, short_word_count, max_run,
+///  v_rate, c_rate, d_rate, sigma_end_rate, bigram_rate, long_word_rate, short_ratio, short_pen,
+///  flags)
+fn compute_score_and_details(buf: &[u8]) -> DetailedScore {
     let latin_pct = compute_latin_pct(buf);
 
     // Build text and filter out table-like lines
@@ -3075,6 +3764,22 @@ pub fn score_markdown_file_internal(path: &Path) -> anyhow::Result<f64> {
     file.read_to_end(&mut buf)?;
     let (score, _latin_pct) = compute_score(&buf);
     Ok(score)
+}
+
+pub fn score_text_detailed_internal(text: &str) -> DetailedScore {
+    compute_score_and_details(text.as_bytes())
+}
+
+pub fn score_texts_detailed_internal(
+    texts: Vec<String>,
+    n_threads: Option<usize>,
+) -> anyhow::Result<Vec<DetailedScore>> {
+    run_in_thread_pool(n_threads, move || {
+        texts
+            .into_par_iter()
+            .map(|text| compute_score_and_details(text.as_bytes()))
+            .collect()
+    })
 }
 
 pub fn score_markdown_directory_internal(
@@ -3581,4 +4286,344 @@ pub fn export_numeric_match_debug_pages_internal(
             .then(a.page_number.cmp(&b.page_number))
     });
     Ok(flat)
+}
+
+// Dead code post-Point-7 — kept until a follow-up extraction.
+#[allow(dead_code)]
+pub fn export_token_category_debug_pages_internal(
+    root: &Path,
+    output_dir: &Path,
+    category_specs_path: &Path,
+    n_threads: Option<usize>,
+    max_pages: Option<usize>,
+    sample_seed: u64,
+    synthetic_page_target_chars: usize,
+    synthetic_page_min_header_chars: usize,
+    synthetic_page_hard_max_chars: usize,
+) -> anyhow::Result<Vec<TokenCategoryDebugPageRow>> {
+    fs::create_dir_all(output_dir)?;
+    let specs = load_token_category_specs_cached(category_specs_path)?;
+
+    if let Some(limit) = max_pages {
+        let specs = specs.clone();
+        let mut candidates: Vec<TokenCategoryDebugPageCandidate> =
+            run_in_thread_pool(n_threads, || {
+                WalkDir::new(root)
+                    .into_iter()
+                    .par_bridge()
+                    .filter_map(Result::ok)
+                    .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+                    .map(|e| {
+                        let path = e.path();
+                        let source_stem = path
+                            .file_stem()
+                            .map(|stem| stem.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let (base_stem, start_page) = parse_source_stem(&source_stem);
+                        let buf = fs::read(path).expect("read");
+                        let text = String::from_utf8_lossy(&buf);
+                        collect_token_category_debug_candidates_for_text(
+                            path,
+                            &source_stem,
+                            &base_stem,
+                            start_page,
+                            &text,
+                            &specs,
+                            synthetic_page_target_chars,
+                            synthetic_page_min_header_chars,
+                            synthetic_page_hard_max_chars,
+                        )
+                    })
+                    .reduce(Vec::new, |mut acc, mut item| {
+                        acc.append(&mut item);
+                        acc
+                    })
+            })?;
+
+        if candidates.len() > limit {
+            let mut rng = StdRng::seed_from_u64(sample_seed);
+            candidates.shuffle(&mut rng);
+            candidates.truncate(limit);
+        }
+        candidates.sort_by(|a, b| {
+            a.source_path
+                .cmp(&b.source_path)
+                .then(a.page_number.cmp(&b.page_number))
+        });
+
+        let output_dir = output_dir.to_path_buf();
+        let mut rows: Vec<TokenCategoryDebugPageRow> = run_in_thread_pool(n_threads, move || {
+            candidates
+                .into_par_iter()
+                .map(|candidate| render_token_category_debug_candidate(&candidate, &output_dir, true))
+                .collect::<anyhow::Result<Vec<_>>>()
+        })??;
+        rows.sort_by(|a, b| {
+            a.output_path
+                .cmp(&b.output_path)
+                .then(a.page_number.cmp(&b.page_number))
+        });
+        return Ok(rows);
+    }
+
+    let specs = specs.clone();
+    let rows: Vec<Vec<TokenCategoryDebugPageRow>> = run_in_thread_pool(n_threads, || {
+        WalkDir::new(root)
+            .into_iter()
+            .par_bridge()
+            .filter_map(Result::ok)
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .map(|e| {
+                let path = e.path();
+                let source_stem = path
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let (base_stem, start_page) = parse_source_stem(&source_stem);
+                let buf = fs::read(path).expect("read");
+                let text = String::from_utf8_lossy(&buf);
+                let candidates = collect_token_category_debug_candidates_for_text(
+                    path,
+                    &source_stem,
+                    &base_stem,
+                    start_page,
+                    &text,
+                    &specs,
+                    synthetic_page_target_chars,
+                    synthetic_page_min_header_chars,
+                    synthetic_page_hard_max_chars,
+                );
+                let mut page_rows = Vec::with_capacity(candidates.len());
+                for candidate in candidates {
+                    page_rows.push(
+                        render_token_category_debug_candidate(&candidate, output_dir, true)
+                            .expect("write token debug page"),
+                    );
+                }
+                page_rows
+            })
+            .collect()
+    })?;
+
+    let mut flat = Vec::new();
+    for mut group in rows {
+        flat.append(&mut group);
+    }
+    flat.sort_by(|a, b| {
+        a.output_path
+            .cmp(&b.output_path)
+            .then(a.page_number.cmp(&b.page_number))
+    });
+    Ok(flat)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_bad_double(text: &str) -> u64 {
+        let (_, _, _, bad_double, _, _, _, _, _, _, _, _) = analyse_bytes(text.as_bytes());
+        bad_double
+    }
+
+    fn compiled_spec(category: &str, family: &str, pattern: &str) -> CompiledTokenCategorySpec {
+        CompiledTokenCategorySpec {
+            category: category.to_string(),
+            pattern_family: family.to_string(),
+            matcher: TokenCategoryMatcher::Regex(
+                RegexBuilder::new(pattern)
+                    .multi_line(true)
+                    .build()
+                    .expect("compile test regex"),
+            ),
+        }
+    }
+
+    fn compiled_literal_spec(
+        category: &str,
+        family: &str,
+        literals: &[&str],
+    ) -> CompiledTokenCategorySpec {
+        CompiledTokenCategorySpec {
+            category: category.to_string(),
+            pattern_family: family.to_string(),
+            matcher: TokenCategoryMatcher::LiteralSet(
+                AhoCorasickBuilder::new()
+                    .match_kind(MatchKind::LeftmostLongest)
+                    .build(literals)
+                    .expect("compile literal matcher"),
+            ),
+        }
+    }
+
+    #[test]
+    fn synthetic_pages_prefer_headers_before_fallback() {
+        let text = "# One\n\nalpha\n\n# Two\n\nbeta\nGLYPH<1>\n";
+        let pages = split_synthetic_pages(text, 80, 10, 200);
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].kind, "synthetic_header");
+        assert!(pages[1].text.contains("GLYPH<1>"));
+    }
+
+    #[test]
+    fn token_category_matching_merges_overlaps_and_keeps_categories() {
+        let specs = vec![
+            compiled_spec("glyph_font_like", "glyph_marker", r"GLYPH<\d+>"),
+            compiled_spec("dot_leader_like", "dot_run", r"\.{4,}"),
+        ];
+        let spans = collect_token_category_raw_spans(
+            "Intro ................ 12\nGLYPH<1> GLYPH<2>\n",
+            &specs,
+        );
+        let merged = merge_token_category_spans(spans);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].categories, vec!["dot_leader_like".to_string()]);
+        assert_eq!(merged[1].categories, vec!["glyph_font_like".to_string()]);
+        assert_eq!(merged[2].categories, vec!["glyph_font_like".to_string()]);
+    }
+
+    #[test]
+    fn token_category_literal_set_matches_leftmost_longest() {
+        let specs = vec![compiled_literal_spec(
+            "dot_leader_like",
+            "dot_run",
+            &["....", ".....", ".........."],
+        )];
+        let spans = collect_token_category_raw_spans("Intro .......... 15", &specs);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].end - spans[0].start, 10);
+    }
+
+    #[test]
+    fn token_category_candidates_preserve_real_page_numbers_from_stem() {
+        let specs = vec![compiled_spec(
+            "glyph_font_like",
+            "glyph_marker",
+            r"GLYPH<\d+>",
+        )];
+        let candidates = collect_token_category_debug_candidates_for_text(
+            Path::new("/tmp/doc__p0005-0006.md"),
+            "doc__p0005-0006",
+            "doc",
+            5,
+            "Alpha\n<--- Page Split --->\nGLYPH<7>\n",
+            &specs,
+            4000,
+            1200,
+            6000,
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].page_kind, "real_page");
+        assert_eq!(candidates[0].page_number, 6);
+        assert_eq!(candidates[0].page_index_in_file, 2);
+    }
+
+    #[test]
+    fn bad_double_counts_only_exact_illegal_doubles() {
+        assert_eq!(test_bad_double("αα"), 1);
+        assert_eq!(test_bad_double("ααββ"), 2);
+    }
+
+    #[test]
+    fn bad_double_ignores_allowed_greek_doubles() {
+        assert_eq!(test_bad_double("λλ"), 0);
+        assert_eq!(test_bad_double("γγ"), 0);
+    }
+
+    #[test]
+    fn bad_double_ignores_long_expressive_runs() {
+        assert_eq!(test_bad_double("ααα"), 0);
+        assert_eq!(test_bad_double("αααα"), 0);
+        assert_eq!(test_bad_double("ββββ!"), 0);
+    }
+
+    #[test]
+    fn render_candidate_per_category_match_count_tallies_by_category() {
+        // Two glyph hits + two dot-leader hits → tallies must reflect that.
+        let specs = vec![
+            compiled_spec("glyph_font_like", "glyph_marker", r"GLYPH<\d+>"),
+            compiled_spec("dot_leader_like", "dot_run", r"\.{4,}"),
+        ];
+        let candidates = collect_token_category_debug_candidates_for_text(
+            Path::new("/tmp/doc.md"),
+            "doc",
+            "doc",
+            1,
+            "GLYPH<1> ........ GLYPH<2> ........",
+            &specs,
+            4000,
+            1200,
+            6000,
+        );
+        assert_eq!(candidates.len(), 1);
+        let row = render_token_category_debug_candidate(
+            &candidates[0],
+            Path::new("/tmp"),
+            false, // write_files=false: no disk I/O during this test
+        )
+        .expect("render");
+        assert_eq!(row.per_category_match_count.get("glyph_font_like").copied(), Some(2));
+        assert_eq!(row.per_category_match_count.get("dot_leader_like").copied(), Some(2));
+    }
+
+    #[test]
+    fn render_candidate_write_files_false_skips_disk_but_returns_row() {
+        // Confirm write_files=false still produces a populated row (so the
+        // Python driver gets the same data without paying disk-I/O cost).
+        let specs = vec![compiled_spec(
+            "glyph_font_like",
+            "glyph_marker",
+            r"GLYPH<\d+>",
+        )];
+        let candidates = collect_token_category_debug_candidates_for_text(
+            Path::new("/tmp/doc.md"),
+            "doc",
+            "doc",
+            1,
+            "GLYPH<1>",
+            &specs,
+            4000,
+            1200,
+            6000,
+        );
+        // Use a path that does NOT exist — proves write_files=false skips fs::write.
+        let nonexistent = Path::new("/tmp/this-dir-must-not-exist-for-test-XYZ");
+        let row = render_token_category_debug_candidate(
+            &candidates[0],
+            nonexistent,
+            false,
+        )
+        .expect("render with write_files=false must succeed even when output_dir is missing");
+        assert_eq!(row.match_count, 1);
+        assert_eq!(row.per_category_match_count.get("glyph_font_like").copied(), Some(1));
+    }
+
+    #[test]
+    fn match_internal_write_files_false_skips_mkdir_and_returns_rows() {
+        // End-to-end variant via match_token_category_debug_text_internal.
+        let nonexistent = Path::new("/tmp/this-dir-must-not-exist-for-test-ZZZ");
+        let specs_path = std::env::temp_dir().join("glossapi_rs_noise_test_specs.json");
+        std::fs::write(
+            &specs_path,
+            r#"[{"category":"glyph_font_like","pattern_family":"glyph_marker","match_kind":"regex","pattern":"GLYPH<\\d+>"}]"#,
+        ).expect("write specs");
+        let rows = match_token_category_debug_text_internal(
+            nonexistent,
+            &specs_path,
+            "/tmp/doc.md",
+            "doc",
+            "doc",
+            1,
+            "GLYPH<1> some text GLYPH<2>",
+            4000,
+            1200,
+            6000,
+            false,
+        )
+        .expect("match internal must not fail with write_files=false");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].match_count, 2);
+        assert_eq!(rows[0].per_category_match_count.get("glyph_font_like").copied(), Some(2));
+        assert!(!nonexistent.exists(), "write_files=false must not create the output dir");
+    }
 }
