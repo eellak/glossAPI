@@ -174,3 +174,4 @@ These pressure points are documented separately in:
 - [Artifact Layout and Stage Handoffs](artifact_layout_and_stage_handoffs.md)
 - [OCR Cleaning Runtime](ocr_cleaning_runtime.md)
 - [Resumability, Recovery, and Retention](resumability_recovery_and_retention.md)
+- [Markdown Library Survey](markdown_library_survey.md) — design rationale for the parser-backed Phase A (Pilot B).
