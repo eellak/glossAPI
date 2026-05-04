@@ -66,10 +66,10 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
 - Main outputs:
   - cleaned markdown in `clean_markdown/`
   - updated parquet metadata with quality and OCR-related flags
-- Runtime/debug artifacts:
-  - `.processing_state.pkl` keeps track of progress so interrupted runs can resume
-  - `problematic_files/` keeps files that could not be cleaned successfully
-  - `timeout_files/` keeps files that exceeded the cleaning time limit
+- Runtime/debug artifacts (stored per-stage under the markdown folders):
+  - `markdown/.processing_state.pkl` and `clean_markdown/.processing_state.pkl` track progress so interrupted runs can resume.
+  - `markdown/problematic_files/` and `clean_markdown/problematic_files/` keep files that could not be processed successfully.
+  - `markdown/timeout_files/` and `clean_markdown/timeout_files/` keep files that exceeded the stage time limit.
 
 ### 4. OCR Retry and Phase‑2 Enrichment
 
@@ -114,9 +114,15 @@ OUT/
 │   └── problematic_math/                       (debug)
 ├── download_results/                           (canonical)
 ├── markdown/                                   (canonical)
-│   └── <stem>.md
+│   ├── <stem>.md
+│   ├── .processing_state.pkl                   (runtime)
+│   ├── problematic_files/                      (debug)
+│   └── timeout_files/                          (debug)
 ├── clean_markdown/                             (canonical)
-│   └── <stem>.md
+│   ├── <stem>.md
+│   ├── .processing_state.pkl                   (runtime)
+│   ├── problematic_files/                      (debug)
+│   └── timeout_files/                          (debug)
 ├── json/                                       (canonical)
 │   ├── <stem>.docling.json(.zst)
 │   ├── <stem>.formula_index.jsonl
@@ -128,10 +134,7 @@ OUT/
 ├── sections/                                   (canonical)
 │   └── sections_for_annotation.parquet
 ├── classified_sections.parquet                 (canonical)
-├── fully_annotated_sections.parquet            (canonical)
-├── .processing_state.pkl                       (runtime)
-├── problematic_files/                          (debug)
-└── timeout_files/                              (debug)
+└── fully_annotated_sections.parquet            (canonical)
 
 Notes:
 - Enriched Markdown replaces the plain Markdown (single canonical location).
