@@ -158,3 +158,16 @@ def test_preserves_short_repeated_markdown_header_row_but_not_long_runaway():
 
     assert replace_complex_repetitions(header) == header
     assert replace_complex_repetitions(runaway) != runaway
+
+
+def test_preserves_short_closure_of_open_quote_at_rotated_repeat_boundary():
+    cycle = "Ζουράρις;». Όταν πρέπει πάραυτα να λέμε τελικά να πει ο Κ. "
+    text = "Τα πρώτα λόγια είναι «Ότι πρέπει πάραυτα να λέμε τελικά να πει ο Κ. " + cycle * 5
+    metrics = {}
+
+    cleaned = replace_complex_repetitions(text, metrics=metrics)
+
+    assert cleaned.startswith("Τα πρώτα λόγια είναι «Ότι πρέπει πάραυτα να λέμε τελικά να πει ο Κ. Ζουράρις;». ")
+    assert cleaned.rstrip().endswith(TEXT_REMOVED_COMMENT)
+    span = metrics["complex_repetition_replacement_details"][0]["spans"][0]
+    assert span["findings"][0]["boundary_prefix_preserved_char_count"] > 0

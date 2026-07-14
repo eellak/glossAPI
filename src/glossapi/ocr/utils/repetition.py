@@ -635,6 +635,20 @@ def _merged_replacement_spans(text: str, details: Sequence[Mapping[str, object]]
     for detail in sorted(details, key=lambda item: (int(item["cut_index"]), str(item["rule"]))):
         start = int(detail["cut_index"])
         end = int(detail.get("removal_end_index", detail["evidence_end_index"]))
+        # A token-period rotation can begin at the last words needed to close
+        # an already-open guillemet quotation.  Keep that short closure so the
+        # retained boundary is not left as an incomplete sentence.
+        paragraph_prefix = text[:start].rsplit("\n\n", 1)[-1]
+        if paragraph_prefix.count("«") > paragraph_prefix.count("»"):
+            closing_quote = text.find("»", start, min(end, start + 400))
+            if closing_quote >= 0:
+                adjusted_start = closing_quote + 1
+                while adjusted_start < end and text[adjusted_start] in ".!?… \t":
+                    adjusted_start += 1
+                if adjusted_start < end:
+                    detail = dict(detail)
+                    detail["boundary_prefix_preserved_char_count"] = adjusted_start - start
+                    start = adjusted_start
         if start < 0 or end <= start or end > len(text):
             raise RuntimeError(f"invalid complex-repetition span: {start}:{end}")
         if spans and (start <= int(spans[-1]["end_index"]) or not text[int(spans[-1]["end_index"]) : start].strip()):
