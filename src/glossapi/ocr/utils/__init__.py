@@ -9,6 +9,7 @@ __all__ = [
     "cleaning",
     "json_io",
     "page",
+    "repetition",
     "triage",
 ]
 
