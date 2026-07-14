@@ -21,7 +21,7 @@ from typing import Deque, Dict, List, Mapping, Optional, Sequence, Tuple
 
 RULE_REPEATED_TOKEN_BLOCK = "repeated_token_block"
 RULE_REGULAR_NUMERIC_SEQUENCE = "regular_numeric_sequence"
-TEXT_REMOVED_COMMENT = "<!-- text-removed -->"
+TEXT_REMOVED_COMMENT = "<!-- repeating-text-removed -->"
 
 TOKEN_PATTERN = re.compile(
     r"</?[A-Za-z][A-Za-z0-9:_-]*(?:\s[^<>]*?)?/?>"
