@@ -4,10 +4,15 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-import torch
 
 pytest.importorskip("docling")
 pytest.importorskip("glossapi_rs_cleaner")
+torch = pytest.importorskip("torch")
+if not torch.cuda.is_available():
+    pytest.skip(
+        "CUDA GPU unavailable; skipping the CUDA-backed pipeline smoke module",
+        allow_module_level=True,
+    )
 
 from glossapi import Corpus
 from glossapi.corpus import _resolve_skiplist_path
