@@ -85,6 +85,15 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
   - refreshed `markdown/<stem>.md`
   - `json/<stem>.latex_map.jsonl` when math/code enrichment runs
 
+#### Math-placeholder ordering contract
+
+When Phase A paragraph reflow is enabled in the cleaner, it may change the
+line number of an inline HTML comment emitted as a math placeholder. The
+comment payload is preserved byte-for-byte, so math enrichment must locate
+placeholders by their comment text or stable ID rather than by the original
+line number. Keep math-placeholder replacement before any future position-
+based Phase A integration, or regenerate positions after reflow.
+
 ### 5. Section and Annotate
 
 - Main code: `Corpus.section()`, `GlossSection.to_parquet()`, `Corpus.annotate()`, `GlossSectionClassifier.*`
