@@ -15,12 +15,25 @@ from fpdf import FPDF
 from PIL import Image, ImageDraw, ImageFont
 
 
-_FONT_PATH = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+_FONT_CANDIDATES = (
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+    Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "arial.ttf",
+)
+
+
+def _find_font_path() -> Path | None:
+    for path in _FONT_CANDIDATES:
+        if path.exists():
+            return path
+    return None
+
+
+_FONT_PATH = _find_font_path()
 
 
 def _render_formula_image(text: str, dest: Path) -> None:
     font_size = 28
-    if _FONT_PATH.exists():
+    if _FONT_PATH is not None:
         font = ImageFont.truetype(str(_FONT_PATH), font_size)
     else:
         font = ImageFont.load_default()
@@ -41,9 +54,9 @@ def _write_pdf(path: Path, payload: str | None | dict) -> None:
 
     pdf = FPDF()
     pdf.add_page()
-    if _FONT_PATH.exists():
-        pdf.add_font("DejaVuSans", "", str(_FONT_PATH), uni=True)
-        pdf.set_font("DejaVuSans", "", 16)
+    if _FONT_PATH is not None:
+        pdf.add_font("UnicodeFont", fname=str(_FONT_PATH))
+        pdf.set_font("UnicodeFont", size=16)
     else:
         pdf.set_font("Helvetica", "", 16)
 
