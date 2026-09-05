@@ -1040,6 +1040,27 @@ mod tests {
     }
 
     #[test]
+    fn sg_inline_math_placeholder_bytes_survive_reflow() {
+        // Phase A may reflow the paragraph containing a math-enhance
+        // placeholder, so its source line can change. The placeholder
+        // itself is the stable lookup anchor and must remain byte-exact.
+        let input = concat!(
+            "Αυτό είναι ένα\n",
+            "παράδειγμα <!-- equation:001 -->\n",
+            "με συνέχεια.\n",
+        );
+        let out = format_surgical(input);
+        let marker = "<!-- equation:001 -->";
+
+        assert_eq!(input.matches(marker).count(), 1);
+        assert_eq!(out.matches(marker).count(), 1);
+        assert!(out.contains("Αυτό είναι ένα παράδειγμα <!-- equation:001 -->"));
+        assert!(out.contains("<!-- equation:001 --> με συνέχεια."));
+        assert_eq!(out.lines().position(|line| line.contains(marker)), Some(0));
+        assert_surgical_preserves_preview(input);
+    }
+
+    #[test]
     #[ignore = "current Pilot B only rewrites top-level paragraphs; recursive container rewrites are future work"]
     fn red_until_surgical_reflows_softbreaks_inside_list_item() {
         let input = "- This item is\n  soft wrapped.\n- Next item.\n";
