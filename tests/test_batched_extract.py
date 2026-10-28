@@ -2,6 +2,7 @@
 import importlib
 import importlib.abc
 import functools
+import gc
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ from pathlib import Path
 import sys
 import threading
 import time
+import tracemalloc
 from types import SimpleNamespace
 from types import ModuleType
 
@@ -271,13 +273,17 @@ class ResourceStallAdapter(FakeAdapter):
         self.samples.append(live_resources())
 
 
-def test_twelve_serialization_stalls_have_constant_resources(tmp_path, exporter, record_property):
+def serialization_stall_resources(tmp_path, exporter, count):
+    """Exercise the scheduler and return only scalar resource/artifact receipts."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    gc.collect()
+    before = export_resource_baseline()
     children = {p.pid for p in core.mp.active_children()}
     adapter = ResourceStallAdapter(exporter)
     adapter.timeout = lambda path: 2 if path.stem.startswith('held') else 15
     runner = core.BatchedExtractor(adapter, workers=1, layout_batch=1,
         queue_max_size=1, export_queue_size=1, max_active_documents=1)
-    names = [f'held{i:02}' for i in range(12)]
+    names = [f'held{i:03}' for i in range(count)]
     ok, bad = runner.extract(inputs(tmp_path, [*names, 'healthy']),
                              tmp_path / 'out/markdown', max_pages=1)
     assert ok == ['healthy.pdf'] and bad == [f'{name}.pdf' for name in names], runner.errors
@@ -286,21 +292,67 @@ def test_twelve_serialization_stalls_have_constant_resources(tmp_path, exporter,
     for pid in pids:
         with pytest.raises(ProcessLookupError):
             os.kill(pid, 0)
-    receipt = dict(baseline=adapter.baseline, samples=adapter.samples,
-                   after=live_resources(), high_water=runner.high_water)
-    record_property('resource_counts', json.dumps(receipt))
-    (tmp_path / 'resource-receipt.json').write_text(json.dumps(receipt, indent=2))
-    print('RESOURCE COUNTS:', json.dumps(receipt))
-    assert len(adapter.samples) == 12
+    assert len(adapter.samples) == count
     assert all(s['threads'] == adapter.baseline['threads'] for s in adapter.samples)
     assert all(s['descriptors'] == adapter.baseline['descriptors'] for s in adapter.samples)
-    assert max(s['rss_bytes'] for s in adapter.samples) - adapter.baseline['rss_bytes'] < 24 * 1024 * 1024
     for name in names:
         assert not (tmp_path / f'out/markdown/{name}.md').exists()
         failure = json.loads((tmp_path / f'out/sidecars/extract/{name}.json').read_text())
         assert failure['failure_mode'] == 'timeout' and failure['no_partial_output']
     assert all(value == 1 for value in runner.high_water.values())
     assert {p.pid for p in core.mp.active_children()} == children
+    gc.collect()
+    after = live_resources()
+    assert after['threads'] == before['threads']
+    assert after['descriptors'] == before['descriptors']
+    return dict(before=before, baseline=adapter.baseline, samples=adapter.samples,
+                after=after, children_before=sorted(children),
+                children_after=sorted(p.pid for p in core.mp.active_children()),
+                high_water=runner.high_water)
+
+
+@pytest.mark.linux_dev_node
+@pytest.mark.skipif(sys.platform != 'linux', reason='absolute RSS contract runs on the Linux dev node')
+def test_twelve_serialization_stalls_have_constant_resources(tmp_path, exporter, record_property):
+    # Preserve the original absolute gate on the deployment allocator. macOS
+    # keeps reusable malloc pages resident; the portable gate below measures
+    # warmed growth and live retention instead. See CP0 reply / rss_slope.json.
+    receipt = serialization_stall_resources(tmp_path, exporter, 12)
+    record_property('resource_counts', json.dumps(receipt))
+    (tmp_path / 'resource-receipt.json').write_text(json.dumps(receipt, indent=2))
+    assert max(s['rss_bytes'] for s in receipt['samples']) - receipt['baseline']['rss_bytes'] < 24 * 1024 * 1024
+
+
+def test_warmed_serialization_stalls_have_bounded_retention(tmp_path, exporter, record_property):
+    # CP0's three fresh-process 12/24/48/96 probes show late allocator steps
+    # through 96 stalls on macOS, then a common high-water ceiling. Warm that
+    # exact workload before comparing independent short/long runs. Every warm-up
+    # stall also checks reaping, no partial output, and bounded scheduler queues.
+    warmup = serialization_stall_resources(tmp_path / 'warmup', exporter, 96)
+    gc.collect()
+    owns_tracing = not tracemalloc.is_tracing()
+    if owns_tracing:
+        tracemalloc.start()
+    try:
+        baseline_current = tracemalloc.get_traced_memory()[0]
+        short = serialization_stall_resources(tmp_path / 'n12', exporter, 12)
+        long = serialization_stall_resources(tmp_path / 'n48', exporter, 48)
+        gc.collect()
+        current, peak = tracemalloc.get_traced_memory()
+        receipt = dict(warmup=warmup, n12=short, n48=long,
+                       traced_baseline_bytes=baseline_current,
+                       traced_current_bytes=current, traced_peak_bytes=peak,
+                       rss_growth_bytes=long['after']['rss_bytes'] - short['after']['rss_bytes'])
+        record_property('resource_counts', json.dumps(receipt))
+        (tmp_path / 'resource-receipt.json').write_text(json.dumps(receipt, indent=2))
+        # One retained 4 MiB payload must fail even when the OS reuses RSS pages.
+        assert current - baseline_current < 1024 * 1024
+        # 8 MiB bounds allocator noise (CP0 observed <=6.13 MiB from 12 to 48),
+        # while refusing growth proportional to the number of stalled payloads.
+        assert receipt['rss_growth_bytes'] < 8 * 1024 * 1024
+    finally:
+        if owns_tracing:
+            tracemalloc.stop()
 
 
 class SlowPicklingPayload:

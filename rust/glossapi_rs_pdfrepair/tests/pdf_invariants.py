@@ -126,4 +126,3 @@ def object_invariants(src, dst, repaired_ids):
     if {n for n, _ in new} != pointers:
         return f'new object IDs {sorted(new)} differ from ToUnicode IDs {sorted(pointers)}'
     return None
-

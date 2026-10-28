@@ -90,6 +90,7 @@ glossapi = ["models/**/*"]
 
 [tool.pytest.ini_options]
 markers = [
+    "linux_dev_node: Linux-only deployment resource gate; run on the dev node",
     "slow: explicit local CPU cohort integration run",
     "deepseek: exercises the DeepSeek OCR pipeline",
 ]

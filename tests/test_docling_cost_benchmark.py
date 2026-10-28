@@ -327,4 +327,3 @@ def test_e3_failed_baseline_cannot_approve_variant(tmp_path):
     result = benchmark.summarize(rows, {'baseline': {'status': 'error'}, 'table_fast': {'status': 'ok'}}, False)
     assert result['variants']['table_fast']['accepted'] is False, (
         'E3 accepted=True although baseline worker status=error')
-
