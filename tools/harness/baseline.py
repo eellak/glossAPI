@@ -36,14 +36,14 @@ def execute(command, root, name, timeout=None):
 
 def audit_page_timings(left, right, output):
     """Generate pair-bound declarations only after auditing every changed JSON leaf."""
-    from .compare import compare, timing_field
+    from .compare import compare
     strict = compare(left, right)
     write_json(output/'docling-pages-strict.json', strict)
     declarations = []
     for row in strict['results']:
         for diff in row['differences']:
             fields = diff.get('json_fields', [])
-            if fields and all(timing_field(f) for f in fields):
+            if fields and fields == diff.get('timing_fields'):
                 declarations.append(dict(document=row['document'], stage=row['stage'],
                     path=diff['path'], a_sha256=diff['a_sha256'], b_sha256=diff['b_sha256'],
                     fields=fields, reason='Audited numeric runtime timing leaves only'))

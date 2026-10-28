@@ -8,6 +8,7 @@ if __package__ in (None, ''):
 import argparse
 import difflib
 import json
+import math
 from pathlib import Path
 import re
 from .common import STAGES, sha256, write_json
@@ -51,6 +52,31 @@ def timing_field(path):
         r'/timings/[^/]+/(?:avg_sec|p50_sec|p90_sec|total_sec|times_sec/\d+)'
         r'|/pages/\d+/(?:parse_sec|table_sec|layout_sec)'
         r'|/totals/doc_enrich_total_sec', path))
+
+
+def timing_changes(a, b, fields):
+    """Classify only same-type, finite numeric changes at existing timing leaves."""
+    def resolve(value, path):
+        for token in path.split('/')[1:]:
+            key = token.replace('~1', '/').replace('~0', '~')
+            value = value[int(key)] if isinstance(value, list) else value[key]
+        return value
+
+    def finite_number(value):
+        # bool is an int subclass; arbitrarily large JSON integers are finite.
+        return type(value) is int or (type(value) is float and math.isfinite(value))
+
+    eligible = []
+    for field in fields:
+        if not timing_field(field):
+            continue
+        try:
+            left, right = resolve(a, field), resolve(b, field)
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if type(left) is type(right) and finite_number(left) and finite_number(right):
+            eligible.append(field)
+    return sorted(eligible)
 
 
 def validate_snapshots(run, root):
@@ -140,7 +166,9 @@ def compare(a, b, declarations=()):
                 key = (doc, stage, path, ah, bh)
                 declaration = accepted.get(key)
                 reason = None
-                if declaration and detail and set(detail.get('json_fields', [])) == set(declaration['fields']):
+                if (declaration and detail
+                        and set(detail.get('json_fields', [])) == set(declaration['fields'])
+                        and set(detail.get('timing_fields', [])) == set(declaration['fields'])):
                     reason = declaration['reason']
                     used.add(key)
                 differences.append({'path': path, 'a_sha256': ah, 'b_sha256': bh, 'accepted_reason': reason, **(detail or {})})
@@ -166,9 +194,10 @@ def compare(a, b, declarations=()):
                         detail['markdown'] = markdown_diff((a.parent / x['stored_path']).read_text(), (b.parent / y['stored_path']).read_text())
                     if path.endswith('.metrics.json') and x and y:
                         try:
-                            detail['json_fields'] = sorted(json_changes(
-                                json.loads((a.parent / x['stored_path']).read_text()),
-                                json.loads((b.parent / y['stored_path']).read_text())))
+                            metrics_a = json.loads((a.parent / x['stored_path']).read_text())
+                            metrics_b = json.loads((b.parent / y['stored_path']).read_text())
+                            detail['json_fields'] = sorted(json_changes(metrics_a, metrics_b))
+                            detail['timing_fields'] = timing_changes(metrics_a, metrics_b, detail['json_fields'])
                         except (ValueError, UnicodeError):
                             pass
                     difference(path, x['sha256'] if x else None, y['sha256'] if y else None, detail)

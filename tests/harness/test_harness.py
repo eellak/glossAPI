@@ -148,6 +148,53 @@ def metric_pair(tmp_path):
     return a,b,declaration
 
 
+@pytest.mark.parametrize('mode', ['automatic-audit', 'explicit-declaration'])
+@pytest.mark.parametrize('before,after', [
+    (1.0, {'review_injected_product': 'lost-content'}),
+    (1.0, '2.0'),
+    (1.0, None),
+    (1.0, float('nan')),
+    ({'kept': 1}, {'kept': 1, 'added': 2}),
+    ({'kept': 1, 'removed': 2}, {'kept': 1}),
+    (1.0, True),
+    (1.0, float('inf')),
+    (1.0, -float('inf')),
+    (1.0, [2.0]),
+    (1.0, 2),
+    (float('inf'), 2.0),
+    (float('nan'), 2.0),
+], ids=['number-object', 'number-string', 'number-null', 'number-nan',
+        'key-added', 'key-removed', 'number-bool', 'number-inf',
+        'number-negative-inf', 'number-array', 'float-int', 'inf-number', 'nan-number'])
+def test_timing_declarations_reject_non_numeric_or_schema_changes(tmp_path, mode, before, after):
+    from tools.harness.baseline import audit_page_timings
+    a, b, declaration = metric_pair(tmp_path)
+    # The same path and fresh hash pairs still permit ordinary numeric timing drift.
+    assert compare(a, b, [declaration])['passes']
+    for root, value in ((a, before), (b, after)):
+        f = root/'sample.metrics.json'
+        metric = json.loads(f.read_text())
+        metric['timings']['layout']['total_sec'] = value
+        write_json(f, metric)
+        run = json.loads((root/'run.json').read_text())
+        product = run['documents'][0]['stages']['extract']['files'][0]
+        product.update(sha256=sha256(f), bytes=f.stat().st_size)
+        write_json(root/'run.json', run)
+        declaration['a_sha256' if root == a else 'b_sha256'] = product['sha256']
+    if mode == 'automatic-audit':
+        declarations = json.loads(audit_page_timings(a, b, tmp_path).read_text())
+    else:
+        declarations = [declaration]
+    result = compare(a, b, declarations)
+    assert not result['passes']
+    assert result['undeclared_differences'] == 1
+    assert not result.get('integrity_errors')  # rejection must survive refreshed receipts
+    if mode == 'automatic-audit':
+        assert declarations == []
+    else:
+        assert result['unused_declarations']
+
+
 @pytest.mark.parametrize('rehash', [False, True])
 def test_product_mutation_under_existing_timing_declaration_fails(tmp_path,rehash):
     a,b,d=metric_pair(tmp_path)
