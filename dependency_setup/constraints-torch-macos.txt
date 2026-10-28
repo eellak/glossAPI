@@ -1,0 +1,3 @@
+# Preserve the selected torch build during the PyPI layout install.
+torch==2.14.1
+torchvision==0.29.1

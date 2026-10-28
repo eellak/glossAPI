@@ -1,0 +1,6 @@
+# Build/test tools only; never part of the runtime requirements.
+setuptools==84.2.1
+wheel==0.48.0
+maturin==1.15.0
+pytest==9.2.0
+uv==0.13.6
