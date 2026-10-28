@@ -12,7 +12,7 @@ def _mk_corpus(tmp_path: Path):
     return Corpus(input_dir=root, output_dir=root)
 
 
-def test_deepseek_ocr_then_math_only_smoke(tmp_path, monkeypatch):
+def test_plugin_ocr_then_math_only_smoke(tmp_path, monkeypatch):
     corpus = _mk_corpus(tmp_path)
 
     # Two PDFs: one needs OCR, one does not (for math-only later)
@@ -29,8 +29,8 @@ def test_deepseek_ocr_then_math_only_smoke(tmp_path, monkeypatch):
     parquet_path = dl_dir / "download_results.parquet"
     df.to_parquet(parquet_path, index=False)
 
-    # DeepSeek runner is stubbed here only to avoid the heavy model during unit tests.
-    from glossapi.ocr.deepseek import runner
+    # External plugin runner is stubbed here only to avoid the heavy model during unit tests.
+    from glossapi.corpus.ocr import dispatch as runner
 
     def fake_run_for_files(self_ref, files, **kwargs):
         for f in files:
@@ -41,10 +41,10 @@ def test_deepseek_ocr_then_math_only_smoke(tmp_path, monkeypatch):
             (corpus.output_dir / "json" / "metrics" / f"{stem}.metrics.json").write_text("{\n \"page_count\": 1\n}\n", encoding="utf-8")
         return {"needs": {"page_count": 1}}
 
-    monkeypatch.setattr(runner, "run_for_files", fake_run_for_files)
+    monkeypatch.setattr(runner, "run_plugin_ocr", fake_run_for_files)
 
-    # Run DeepSeek OCR for bad files
-    corpus.ocr(backend="deepseek", fix_bad=True, math_enhance=True, mode="ocr_bad_then_math")
+    # Run plugin OCR for bad files
+    corpus.ocr(backend="docling", fix_bad=True, math_enhance=True, mode="ocr_bad_then_math")
 
     # Math-only pass: ensure JSON for clean.pdf and run math
     json_dir = corpus.output_dir / "json"
@@ -59,7 +59,7 @@ def test_deepseek_ocr_then_math_only_smoke(tmp_path, monkeypatch):
 
     monkeypatch.setattr(corpus, "formula_enrich_from_json", fake_enrich)
 
-    corpus.ocr(backend="deepseek", fix_bad=False, math_enhance=True, mode="math_only")
+    corpus.ocr(backend="docling", fix_bad=False, math_enhance=True, mode="math_only")
 
     # Verify
     updated = pd.read_parquet(parquet_path).set_index("filename")
@@ -75,7 +75,7 @@ def test_deepseek_ocr_then_math_only_smoke(tmp_path, monkeypatch):
     assert captured.get("files") == ["clean"], "Math-only should run for non-OCR stem only"
 
 
-def test_deepseek_ocr_normalizes_chunk_rows_to_real_source_pdf(tmp_path, monkeypatch):
+def test_plugin_ocr_normalizes_chunk_rows_to_real_source_pdf(tmp_path, monkeypatch):
     corpus = _mk_corpus(tmp_path)
 
     (corpus.input_dir / "needs.pdf").write_bytes(b"%PDF-1.4\n%stub\n")
@@ -90,7 +90,7 @@ def test_deepseek_ocr_normalizes_chunk_rows_to_real_source_pdf(tmp_path, monkeyp
         ]
     ).to_parquet(parquet_path, index=False)
 
-    from glossapi.ocr.deepseek import runner
+    from glossapi.corpus.ocr import dispatch as runner
 
     captured = {}
 
@@ -104,9 +104,9 @@ def test_deepseek_ocr_normalizes_chunk_rows_to_real_source_pdf(tmp_path, monkeyp
         (metrics_dir / "needs.metrics.json").write_text("{\n \"page_count\": 1\n}\n", encoding="utf-8")
         return {"needs": {"page_count": 1}}
 
-    monkeypatch.setattr(runner, "run_for_files", fake_run_for_files)
+    monkeypatch.setattr(runner, "run_plugin_ocr", fake_run_for_files)
 
-    corpus.ocr(backend="deepseek", fix_bad=True, math_enhance=False, mode="ocr_bad")
+    corpus.ocr(backend="docling", fix_bad=True, math_enhance=False, mode="ocr_bad")
 
     assert captured["files"] == ["needs.pdf"]
     updated = pd.read_parquet(parquet_path).set_index("filename")

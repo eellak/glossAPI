@@ -22,17 +22,6 @@ import pandas as pd
 from .._naming import canonical_stem
 from ..gloss_downloader import GlossDownloader
 from ..gloss_section import GlossSection
-from ..ocr.deepseek.defaults import (
-    DEFAULT_ATTN_BACKEND,
-    DEFAULT_GPU_MEMORY_UTILIZATION,
-    DEFAULT_MAX_NEW_TOKENS,
-    DEFAULT_OCR_PROFILE,
-    DEFAULT_RENDER_DPI,
-    DEFAULT_REPAIR_MODE,
-    DEFAULT_RUNTIME_BACKEND,
-    DEFAULT_TARGET_BATCH_PAGES,
-    DEFAULT_WORKERS_PER_GPU,
-)
 # Avoid importing classifier here; OCR/math phase does not require it at import time.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
@@ -43,107 +32,11 @@ from .ocr.pipeline import run_ocr_phase
 from .ocr.targets import build_ocr_selection
 
 
-def _build_ocr_stage_artifact_update(
-    *,
-    markdown_dir: Path,
-    metrics_dir: Path,
-    stem: str,
-) -> Optional[Dict[str, object]]:
-    """Return direct OCR-owned artifact fields for one canonical OCR document.
-
-    The OCR stage should hand off the same row identity that upstream stages
-    produced, with corrected text embedded back into parquet. Markdown and
-    metrics remain sidecars, but detached markdown alone is not the full stage
-    contract.
-    """
-
-    markdown_path = Path(markdown_dir) / f"{stem}.md"
-    if not markdown_path.exists():
-        return None
-    text_payload = markdown_path.read_text(encoding="utf-8")
-    metrics_path = Path(metrics_dir) / f"{stem}.metrics.json"
-    return {
-        "text": text_payload,
-        "ocr_markdown_relpath": str(Path("markdown") / markdown_path.name),
-        "ocr_metrics_relpath": (
-            str(Path("json") / "metrics" / metrics_path.name) if metrics_path.exists() else None
-        ),
-        "ocr_text_sha256": hashlib.sha256(text_payload.encode("utf-8")).hexdigest(),
-    }
-
-
-def _apply_ocr_success_updates(
-    df_meta: pd.DataFrame,
-    *,
-    filenames: List[str],
-    markdown_dir: Path,
-    metrics_dir: Path,
-    backend_norm: str,
-) -> pd.DataFrame:
-    """Apply only direct, obvious OCR-owned metadata updates to the parquet rows."""
-
-    if "filename" not in df_meta.columns:
-        return df_meta
-
-    if "filter" not in df_meta.columns:
-        df_meta["filter"] = "ok"
-    if "needs_ocr" not in df_meta.columns:
-        df_meta["needs_ocr"] = False
-    if "ocr_success" not in df_meta.columns:
-        df_meta["ocr_success"] = False
-    if "extraction_mode" not in df_meta.columns:
-        df_meta["extraction_mode"] = None
-
-    direct_columns = ("text", "ocr_markdown_relpath", "ocr_metrics_relpath", "ocr_text_sha256")
-    for column in direct_columns:
-        if column not in df_meta.columns:
-            df_meta[column] = None
-
-    filename_series = df_meta["filename"].astype(str)
-    stem_series = filename_series.map(canonical_stem)
-
-    for fname in filenames:
-        stem = canonical_stem(fname)
-        mask = stem_series == stem
-        if not bool(mask.any()):
-            continue
-        artifact_update = _build_ocr_stage_artifact_update(
-            markdown_dir=markdown_dir,
-            metrics_dir=metrics_dir,
-            stem=stem,
-        )
-        df_meta.loc[mask, "filter"] = "ok"
-        df_meta.loc[mask, "needs_ocr"] = False
-        df_meta.loc[mask, "ocr_success"] = True
-        if backend_norm == "deepseek":
-            df_meta.loc[mask, "extraction_mode"] = "deepseek"
-        if artifact_update is None:
-            continue
-        for column, value in artifact_update.items():
-            df_meta.loc[mask, column] = value
-
-    return df_meta
-
-
-def _normalize_ocr_target_filenames(*, filenames: List[str], input_dir: Path) -> List[str]:
-    """Collapse chunk-like metadata rows back to real OCR source files when possible."""
-
-    source_by_stem: Dict[str, str] = {}
-    try:
-        for path in sorted(Path(input_dir).glob("*.pdf")):
-            source_by_stem.setdefault(canonical_stem(path.name), path.name)
-    except Exception:
-        source_by_stem = {}
-
-    normalized: List[str] = []
-    seen: Set[str] = set()
-    for fname in filenames:
-        resolved = source_by_stem.get(canonical_stem(fname), str(fname))
-        if resolved in seen:
-            continue
-        normalized.append(resolved)
-        seen.add(resolved)
-    return normalized
+from .ocr.artifacts import (
+    build_ocr_stage_artifact_update as _build_ocr_stage_artifact_update,
+    apply_ocr_success_updates as _apply_ocr_success_updates,
+)
+from .ocr.targets import normalize_ocr_target_filenames as _normalize_ocr_target_filenames
 
 
 class OcrMathPhaseMixin:
@@ -182,36 +75,12 @@ class OcrMathPhaseMixin:
         fix_bad: bool = True,
         page_routing: str = "flagged",
         mode: Optional[str] = None,
-        backend: str = "deepseek",
+        backend: str = "docling",
+        ocr_options=None,
         device: Optional[str] = None,
-        model_dir: Optional[Union[str, Path]] = None,
         max_pages: Optional[int] = None,
-        persist_engine: bool = True,
         limit: Optional[int] = None,
         dpi: Optional[int] = None,
-        precision: Optional[str] = None,
-        workers_per_gpu: int = DEFAULT_WORKERS_PER_GPU,
-        runtime_backend: str = DEFAULT_RUNTIME_BACKEND,
-        ocr_profile: str = DEFAULT_OCR_PROFILE,
-        prompt_override: Optional[str] = None,
-        attn_backend: str = DEFAULT_ATTN_BACKEND,
-        base_size: Optional[int] = None,
-        image_size: Optional[int] = None,
-        crop_mode: Optional[bool] = None,
-        render_dpi: Optional[int] = DEFAULT_RENDER_DPI,
-        max_new_tokens: Optional[int] = DEFAULT_MAX_NEW_TOKENS,
-        repetition_penalty: Optional[float] = None,
-        no_repeat_ngram_size: Optional[int] = None,
-        vllm_batch_size: Optional[int] = None,
-        gpu_memory_utilization: Optional[float] = DEFAULT_GPU_MEMORY_UTILIZATION,
-        disable_fp8_kv: bool = False,
-        repair_mode: str = DEFAULT_REPAIR_MODE,
-        repair_exec_batch_target_pages: Optional[int] = None,
-        repair_exec_batch_target_items: Optional[int] = None,
-        scheduler: str = "auto",
-        target_batch_pages: int = DEFAULT_TARGET_BATCH_PAGES,
-        shard_pages: int = 0,
-        shard_threshold_pages: int = 0,
         math_enhance: bool = True,
         math_targets: Optional[Dict[str, List[Tuple[int, int]]]] = None,
         math_batch_size: int = 8,
@@ -235,33 +104,9 @@ class OcrMathPhaseMixin:
             page_routing=page_routing,
             mode=mode,
             backend=backend,
+            ocr_options=ocr_options,
             device=device,
-            model_dir=model_dir,
             max_pages=max_pages,
-            persist_engine=persist_engine,
-            precision=precision,
-            workers_per_gpu=workers_per_gpu,
-            runtime_backend=runtime_backend,
-            ocr_profile=ocr_profile,
-            prompt_override=prompt_override,
-            attn_backend=attn_backend,
-            base_size=base_size,
-            image_size=image_size,
-            crop_mode=crop_mode,
-            render_dpi=render_dpi,
-            max_new_tokens=max_new_tokens,
-            repetition_penalty=repetition_penalty,
-            no_repeat_ngram_size=no_repeat_ngram_size,
-            vllm_batch_size=vllm_batch_size,
-            gpu_memory_utilization=gpu_memory_utilization,
-            disable_fp8_kv=disable_fp8_kv,
-            repair_mode=repair_mode,
-            repair_exec_batch_target_pages=repair_exec_batch_target_pages,
-            repair_exec_batch_target_items=repair_exec_batch_target_items,
-            scheduler=scheduler,
-            target_batch_pages=target_batch_pages,
-            shard_pages=shard_pages,
-            shard_threshold_pages=shard_threshold_pages,
             math_enhance=math_enhance,
             math_targets=math_targets,
             math_batch_size=math_batch_size,
@@ -281,16 +126,19 @@ class OcrMathPhaseMixin:
         if request.mode == "math_only":
             self._run_math_only_request(request)
             return
-        run_ocr_phase(self, request)
+        ocr_files = run_ocr_phase(self, request)
+        if request.mode == "ocr_bad_then_math":
+            self._run_math_only_request(request, excluded_stems={canonical_stem(name) for name in ocr_files})
 
-    def _run_math_only_request(self, request: OcrRequest) -> None:
+    def _run_math_only_request(self, request: OcrRequest, *, excluded_stems: Set[str] | None = None) -> None:
         selection = build_ocr_selection(
             self,
             mode=request.mode,
             page_routing=request.page_routing,
             reprocess_completed=request.reprocess_completed,
         )
-        stems = discover_docling_json_stems(self.output_dir)
+        stems = [stem for stem in discover_docling_json_stems(self.output_dir)
+                 if stem not in (excluded_stems or set())]
         stems = filter_math_only_stems(
             stems=stems,
             bad_files=selection.bad_files,
@@ -922,12 +770,6 @@ def _gpu_math_worker(
             except Exception:
                 _torch_name = "unknown"
             try:
-                import onnxruntime as _ort  # type: ignore
-
-                _ort_prov = _ort.get_available_providers()
-            except Exception:
-                _ort_prov = []
-            try:
                 import subprocess as _sp
 
                 _nvsmi = _sp.run(
@@ -946,7 +788,7 @@ def _gpu_math_worker(
             try:
                 print(
                     f"[MATH GPU{device_id}] bound: CUDA_VISIBLE_DEVICES={_os.environ.get('CUDA_VISIBLE_DEVICES','')} "
-                    f"pid={_os.getpid()} torch={_torch_name} ORT={_ort_prov}"
+                    f"pid={_os.getpid()} torch={_torch_name}"
                 )
                 if _phys:
                     print(f"[MATH GPU{device_id}] physical: {_phys}")

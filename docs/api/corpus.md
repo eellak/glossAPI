@@ -54,7 +54,7 @@ extract(
   - or explicit `file_paths`
 - Important parameters:
   - `phase1_backend='safe'|'docling'|'auto'`: PyPDFium for stability vs Docling for native layout extraction
-  - `force_ocr`: deprecated no-op kept for compatibility; OCR remediation now lives in `Corpus.ocr(backend='deepseek')`
+  - `force_ocr`: deprecated no-op kept for compatibility; OCR remediation now lives in `Corpus.ocr(ocr_options=plugin_options)`
   - `use_gpus='multi'`: use all visible GPUs through a shared work queue
   - `workers_per_device`: fan out more than one extraction worker onto a single visible GPU when measuring throughput
   - `GLOSSAPI_DOCLING_MAX_BATCH_FILES`: optional environment override for how many PDFs one Docling worker processes per extractor batch; GlossAPI keeps the default at `1` until a benchmark proves a larger batch is safe on the target node
@@ -101,12 +101,12 @@ ocr(
   fix_bad: bool = True,
   mode: str | None = None,
   device: str | None = None,
-  model_dir: str | Path | None = None,
+  backend: str = "docling",
+  ocr_options = None,
+  page_routing: str = "flagged",
   max_pages: int | None = None,
-  persist_engine: bool = True,
   limit: int | None = None,
   dpi: int | None = None,
-  precision: str | None = None,
   math_enhance: bool = True,
   math_targets: dict[str, list[tuple[int,int]]] | None = None,
   math_batch_size: int = 8,
@@ -121,7 +121,7 @@ ocr(
 - Mode selection:
   - `ocr_bad`: rerun OCR only for cleaner-flagged docs
   - `math_only`: run enrichment from existing Docling JSON
-  - `ocr_bad_then_math`: OCR flagged docs, then enrich them
+  - `ocr_bad_then_math`: OCR flagged docs, then enrich non-OCR documents with existing Docling JSON
 - Important parameters:
   - `mode`, `fix_bad`, `math_enhance`
   - `use_gpus`, `devices`

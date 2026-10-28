@@ -3,8 +3,6 @@
 ## OCR runs on CPU
 
 - Verify Torch CUDA: `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"`.
-- Make sure the DeepSeek runtime is the one configured in `GLOSSAPI_DEEPSEEK_PYTHON`.
-- Run `python -m glossapi.ocr.deepseek.preflight` in the DeepSeek env before large OCR jobs.
 
 ## Torch doesn’t see the GPU
 

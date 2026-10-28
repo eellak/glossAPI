@@ -65,8 +65,8 @@ def test_actual_stall_killed_and_next_file_continues(tmp_path,monkeypatch):
     assert {p.pid for p in mp.active_children()}==previous
 
 def test_partial_ocr_preserves_existing_unselected_markdown(tmp_path):
-    from glossapi.ocr.deepseek import runner
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _write_outputs
+    from glossapi.ocr import page_artifacts as runner
+    from glossapi.ocr.page_artifacts import _write_outputs
     source=tmp_path/'source.pdf';make_pdf(source)
     out=tmp_path/'out'
     original='# Native heading\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nOld scanned appendix'
@@ -79,8 +79,8 @@ def test_partial_ocr_preserves_existing_unselected_markdown(tmp_path):
     assert '| A | B |' in actual and '# Native heading' in actual, 'Partial OCR erased the kept page heading/table markdown'
 
 def test_partial_reassembly_rejects_overlapping_stale_shards(tmp_path):
-    from glossapi.ocr.deepseek import runner
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _write_outputs, _join_page_outputs, _split_page_outputs
+    from glossapi.ocr import page_artifacts as runner
+    from glossapi.ocr.page_artifacts import _write_outputs, _join_page_outputs, _split_page_outputs
     source=tmp_path/'source.pdf';make_pdf(source,3)
     out=tmp_path/'out'
     _write_outputs(output_dir=out,stem='source',markdown=_join_page_outputs(['kept','old 2','old 3']),page_count=3)
@@ -99,56 +99,10 @@ def test_partial_reassembly_rejects_overlapping_stale_shards(tmp_path):
     assert (out/'markdown/source.md').read_text() == original
 
 
-@pytest.mark.parametrize('multi', [False, True])
-@pytest.mark.parametrize('runtime', ['transformers', 'vllm'])
-def test_current_run_clears_stale_shards_before_dispatch(tmp_path, monkeypatch, multi, runtime):
-    from types import SimpleNamespace
-    import sys
-    from glossapi.ocr.deepseek import runner
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _write_outputs, _join_page_outputs, _split_page_outputs
-
-    source = tmp_path / 'source.pdf'
-    make_pdf(source, 3)
-    out = tmp_path / 'out'
-    _write_outputs(output_dir=out, stem='source', markdown=_join_page_outputs(['kept', 'old 2', 'old 3']), page_count=3)
-    _write_outputs(output_dir=out, stem='source__p00002-00003',
-                   markdown=_join_page_outputs(['STALE PAGE 2', 'STALE PAGE 3']), page_count=2,
-                   extra_metrics={'source_start_page': 2, 'source_end_page': 3})
-    # Preserve another document's live outputs and previously archived evidence.
-    _write_outputs(output_dir=out, stem='source__part__p00002-00003', markdown='other', page_count=2)
-    orphan = out / 'markdown/source__p00001-00001.md'
-    orphan.write_text('orphan')
-    archived = out / 'sidecars/ocr_shards/markdown/source__p00002-00003.md'
-    archived.parent.mkdir(parents=True)
-    archived.write_text('archived')
-    model = tmp_path / 'model'
-    model.mkdir()
-    monkeypatch.setattr(runner, 'resolve_deepseek_python', lambda **kwargs: Path(sys.executable))
-    monkeypatch.setattr(runner, '_resolve_lane_devices', lambda **kwargs: [0])
-
-    def fake_cli(**kwargs):
-        assert not (out / 'markdown/source__p00002-00003.md').exists()
-        assert not (out / 'json/metrics/source__p00002-00003.metrics.json').exists()
-        assert not orphan.exists()
-        assert _split_page_outputs((out / 'markdown/source.md').read_text()) == ['kept', 'old 2', 'old 3']
-        for page in (2, 3):
-            _write_outputs(output_dir=out, stem=f'source__p{page:05d}-{page:05d}',
-                           markdown=f'FRESH PAGE {page}', page_count=1,
-                           extra_metrics={'source_start_page': page, 'source_end_page': page})
-
-    monkeypatch.setattr(runner, '_run_multi_cli' if multi else '_run_cli', fake_cli)
-    runner.run_for_files(SimpleNamespace(input_dir=tmp_path, output_dir=out), ['source.pdf'],
-                         model_dir=model, runtime_backend=runtime, use_gpus='multi' if multi else 'single',
-                         page_ranges=['source.pdf:2:3'])
-    assert _split_page_outputs((out / 'markdown/source.md').read_text()) == ['kept', 'FRESH PAGE 2', 'FRESH PAGE 3']
-    assert (out / 'markdown/source__part__p00002-00003.md').read_text().strip() == 'other'
-    assert archived.read_text() == 'archived'
-
-
 @pytest.mark.parametrize('json_mode', ['missing', 'plain', 'zstd', 'unmatchable', 'extra_text', 'extra_cell', 'crossing_page', 'corrupt_zstd'])
 def test_docling_heading_table_and_pages_2_3_survive(tmp_path, json_mode):
-    from glossapi.ocr.deepseek import runner
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _write_outputs, _join_page_outputs, _split_page_outputs
+    from glossapi.ocr import page_artifacts as runner
+    from glossapi.ocr.page_artifacts import _write_outputs, _join_page_outputs, _split_page_outputs
     import zstandard
 
     make_pdf(tmp_path / 'source.pdf', 3)
@@ -199,40 +153,9 @@ def test_docling_heading_table_and_pages_2_3_survive(tmp_path, json_mode):
         assert '<!-- ocr-pages: 2-3 -->' in actual
 
 
-@pytest.mark.parametrize('empty_route', ['', None])
-def test_flagged_zero_page_selection_dispatches_whole_document(tmp_path, monkeypatch, empty_route):
-    from glossapi import Corpus
-    from glossapi.ocr.deepseek import runner
-    import pandas as pd
-
-    make_pdf(tmp_path / 'source.pdf', 3)
-    corpus = Corpus(input_dir=tmp_path, output_dir=tmp_path)
-    monkeypatch.setattr(corpus, 'clean', lambda **kwargs: None)
-    parquet = tmp_path / 'download_results/download_results.parquet'
-    parquet.parent.mkdir()
-    pd.DataFrame([{'filename': 'source.pdf', 'needs_ocr': True,
-                   'ocr_pages': empty_route, 'ocr_pages_count': 0}]).to_parquet(parquet, index=False)
-    model = tmp_path / 'model'
-    model.mkdir()
-    import sys
-    monkeypatch.setattr(runner, 'resolve_deepseek_python', lambda **kwargs: Path(sys.executable))
-    calls = []
-
-    def fake_cli(**kwargs):
-        from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _write_outputs
-        calls.append(kwargs)
-        _write_outputs(output_dir=tmp_path, stem='source', markdown='WHOLE DOCUMENT OCR', page_count=3)
-
-    monkeypatch.setattr(runner, '_run_cli', fake_cli)
-    corpus.ocr(backend='deepseek', mode='ocr_bad', math_enhance=False, model_dir=str(model), use_gpus='single')
-    assert calls[0]['files'] == ['source.pdf']
-    assert not calls[0]['page_ranges']
-    assert (tmp_path / 'markdown/source.md').read_text().strip() == 'WHOLE DOCUMENT OCR'
-
-
 def test_comment_only_page_boundaries_keep_heading_and_table(tmp_path):
-    from glossapi.ocr.deepseek import runner
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _write_outputs, _split_page_outputs
+    from glossapi.ocr import page_artifacts as runner
+    from glossapi.ocr.page_artifacts import _write_outputs, _split_page_outputs
 
     make_pdf(tmp_path / 'source.pdf', 3)
     _write_outputs(output_dir=tmp_path, stem='source', page_count=3,

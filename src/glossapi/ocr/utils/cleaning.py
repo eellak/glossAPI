@@ -315,7 +315,7 @@ def _is_symbol_garbage_char(ch: str) -> bool:
 def _detect_symbol_garbage_cut(text: str, *, threshold: int = 16) -> Optional[int]:
     """Cut on long runs of isolated bullet/dingbat/private-use symbols.
 
-    This targets the common DeepSeek garbage mode where the model emits long
+    This targets a common OCR garbage mode where the model emits long
     whitespace-separated runs of bullets or private-use glyphs instead of text.
     """
     if threshold <= 1:

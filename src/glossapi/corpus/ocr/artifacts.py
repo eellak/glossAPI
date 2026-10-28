@@ -78,8 +78,7 @@ def apply_ocr_success_updates(
         df_meta.loc[mask, "filter"] = "ok"
         df_meta.loc[mask, "needs_ocr"] = False
         df_meta.loc[mask, "ocr_success"] = True
-        if backend_norm == "deepseek":
-            df_meta.loc[mask, "extraction_mode"] = "deepseek"
+        df_meta.loc[mask, "extraction_mode"] = backend_norm
         if artifact_update is None:
             continue
         for column, value in artifact_update.items():

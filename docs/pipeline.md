@@ -47,7 +47,7 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
   - `workers_per_device` to fan out more than one extraction worker onto each GPU
   - `export_doc_json` and `emit_formula_index` for later Phase‑2 work
 - Operational note:
-  - `force_ocr` is deprecated and ignored in Phase‑1; use `Corpus.ocr(backend='deepseek')` after `clean()` for OCR remediation
+  - `force_ocr` is deprecated and ignored in Phase‑1; use `Corpus.ocr(ocr_options=plugin_options)` after `clean()` for OCR remediation
 - Main outputs:
   - canonical markdown in `markdown/<stem>.md`
   - repaired copies in `repaired_pdfs/<stem>.pdf`; originals in `downloads/` are preserved

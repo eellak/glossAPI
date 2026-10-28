@@ -468,11 +468,6 @@ def gpu_extract_worker_queue(
             except Exception:
                 _torch_name = "unknown"
             try:
-                import onnxruntime as _ort  # type: ignore
-                _ort_prov = _ort.get_available_providers()
-            except Exception:
-                _ort_prov = []
-            try:
                 import subprocess as _sp
                 _nvsmi = _sp.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=2)
                 _phys = _nvsmi.stdout.splitlines()[0].strip() if _nvsmi.returncode == 0 and _nvsmi.stdout else ""
@@ -482,7 +477,7 @@ def gpu_extract_worker_queue(
                 print(
                     f"[GPU{device_id}/W{worker_slot}] bound: "
                     f"CUDA_VISIBLE_DEVICES={_os.environ.get('CUDA_VISIBLE_DEVICES','')} "
-                    f"pid={_os.getpid()} torch={_torch_name} ORT={_ort_prov}"
+                    f"pid={_os.getpid()} torch={_torch_name}"
                 )
                 if _phys:
                     print(f"[GPU{device_id}/W{worker_slot}] physical: {_phys}")

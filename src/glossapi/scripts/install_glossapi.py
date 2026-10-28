@@ -6,7 +6,6 @@ import argparse
 import os
 import shlex
 import subprocess
-import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +16,7 @@ PHASE_TO_EXTRAS: Dict[str, Set[str]] = {
     "download": set(),
     "browser_download": {"browser"},
     "extract": {"docling"},
-    "ocr": set(),
+    "ocr": {"docling"},
     "docs": {"docs"},
 }
 
@@ -28,7 +27,6 @@ class InstallPlan:
     extras: tuple[str, ...]
     editable: bool
     include_cuda: bool
-    needs_deepseek_runtime: bool
 
 
 def _supports_color() -> bool:
@@ -86,7 +84,6 @@ def build_install_plan(
         extras=tuple(sorted(extras)),
         editable=bool(editable),
         include_cuda=bool(include_cuda),
-        needs_deepseek_runtime=("ocr" in selected),
     )
 
 
@@ -101,16 +98,6 @@ def build_pip_command(plan: InstallPlan, repo_root: Path) -> List[str]:
     return cmd
 
 
-def build_deepseek_command(repo_root: Path) -> Optional[List[str]]:
-    script = repo_root / "dependency_setup" / "setup_deepseek_uv.sh"
-    if not script.exists():
-        return None
-    shell = shutil.which("bash") or shutil.which("sh")
-    if not shell:
-        return None
-    return [shell, str(script)]
-
-
 def _interactive_plan(default_editable: bool) -> InstallPlan:
     print(_style("GlossAPI Installer", "1;36"))
     print("Select only the phases you plan to use so optional dependencies stay minimal.\n")
@@ -122,7 +109,7 @@ def _interactive_plan(default_editable: bool) -> InstallPlan:
         selected.append("browser_download")
     if _prompt_yes_no("Add extraction support (Docling)?", default=False):
         selected.append("extract")
-    if _prompt_yes_no("Add OCR support (DeepSeek backend)?", default=False):
+    if _prompt_yes_no("Add Docling support for an external OCR plugin?", default=False):
         selected.append("ocr")
     if _prompt_yes_no("Add docs tooling?", default=False):
         selected.append("docs")
@@ -141,7 +128,7 @@ def _plan_summary(plan: InstallPlan, command: Sequence[str]) -> str:
             f"  extras: {extras}",
             f"  editable: {'yes' if plan.editable else 'no'}",
             f"  command: {shlex.join(command)}",
-            f"  deepseek runtime: {'separate setup required' if plan.needs_deepseek_runtime else 'not requested'}",
+            "  OCR: install the toolkit greekocr plugin separately and configure ocr_options",
         ]
     )
 
@@ -206,10 +193,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     command = build_pip_command(plan, repo_root)
     print(_plan_summary(plan, command))
-    deepseek_command = build_deepseek_command(repo_root) if plan.needs_deepseek_runtime else None
-    if deepseek_command:
-        print(f"  deepseek command: {shlex.join(deepseek_command)}")
-
     if args.dry_run:
         return 0
     if not args.yes and not args.phases.strip():
@@ -220,9 +203,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     completed = subprocess.run(command, cwd=repo_root)
     if completed.returncode != 0:
         return int(completed.returncode)
-    if plan.needs_deepseek_runtime and deepseek_command:
-        print(_style("Provisioning dedicated DeepSeek runtime…", "1;33"))
-        completed = subprocess.run(deepseek_command, cwd=repo_root)
     return int(completed.returncode)
 
 

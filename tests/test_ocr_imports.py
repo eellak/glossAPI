@@ -7,14 +7,7 @@ def test_import_ocr_package_is_lightweight():
     # Import should not require heavy stacks
     import glossapi.ocr as ocr
 
-    assert hasattr(ocr, "deepseek")
-
-    # New subpackages remain importable lazily
-    import glossapi.ocr.deepseek.runner as deepseek_runner
-
-    assert ocr.deepseek.runner is deepseek_runner
-    assert ocr.deepseek_runner is deepseek_runner
-    assert hasattr(deepseek_runner, "run_for_files")
+    assert hasattr(ocr, "page_artifacts")
 
     # Utilities module always available (pure Python)
     from glossapi.ocr.utils import json_io as utils_json

@@ -7,7 +7,6 @@ from glossapi import Corpus
 from glossapi.corpus.ocr.artifacts import apply_ocr_success_updates
 from glossapi.corpus.ocr.config import normalize_ocr_request
 from glossapi.corpus.ocr.targets import build_ocr_selection
-from glossapi.ocr.deepseek.defaults import DEFAULT_GPU_MEMORY_UTILIZATION, DEFAULT_RENDER_DPI
 
 
 def _mk_corpus(tmp_path: Path) -> Corpus:
@@ -16,31 +15,15 @@ def _mk_corpus(tmp_path: Path) -> Corpus:
     return Corpus(input_dir=root, output_dir=root)
 
 
-def test_normalize_ocr_request_uses_shared_vllm_defaults(tmp_path):
+def test_normalize_ocr_request_preserves_plugin_configuration(tmp_path):
     corpus = _mk_corpus(tmp_path)
-
+    options = object()
     request = normalize_ocr_request(
-        logger=corpus.logger,
-        fix_bad=True,
-        mode="ocr_bad",
-        backend="deepseek",
-        device=None,
-        model_dir=None,
-        max_pages=None,
-        persist_engine=True,
-        precision=None,
-        runtime_backend="vllm",
-        render_dpi=None,
-        gpu_memory_utilization=None,
-        math_enhance=False,
-        force=None,
-        reprocess_completed=None,
-        skip_existing=None,
+        logger=corpus.logger, fix_bad=True, mode="ocr_bad", backend="docling",
+        ocr_options=options, device="cpu", max_pages=None, math_enhance=False,
     )
-
-    assert request is not None
-    assert request.render_dpi == DEFAULT_RENDER_DPI
-    assert request.gpu_memory_utilization == DEFAULT_GPU_MEMORY_UTILIZATION
+    assert request.ocr_options is options
+    assert request.mode == "ocr_bad"
 
 
 def test_build_ocr_selection_collapses_chunk_rows_and_skips_completed(tmp_path):
@@ -91,7 +74,7 @@ def test_apply_ocr_success_updates_maps_canonical_artifacts_by_stem(tmp_path):
         filenames=["needs.pdf"],
         markdown_dir=markdown_dir,
         metrics_dir=metrics_dir,
-        backend_norm="deepseek",
+        backend_norm="docling",
     ).set_index("filename")
 
     assert bool(updated.loc["needs.pdf", "ocr_success"]) is True
@@ -100,7 +83,7 @@ def test_apply_ocr_success_updates_maps_canonical_artifacts_by_stem(tmp_path):
     assert updated.loc["needs__p0001-0002.pdf", "text"] == "fixed markdown\n"
     assert updated.loc["needs.pdf", "ocr_markdown_relpath"] == "markdown/needs.md"
     assert updated.loc["needs__p0001-0002.pdf", "ocr_metrics_relpath"] == "json/metrics/needs.metrics.json"
-    assert updated.loc["needs.pdf", "extraction_mode"] == "deepseek"
+    assert updated.loc["needs.pdf", "extraction_mode"] == "docling"
 
 
 def test_ocr_pipeline_exports_cleaned_and_raw_text_side_by_side(tmp_path, monkeypatch):
@@ -128,7 +111,7 @@ def test_ocr_pipeline_exports_cleaned_and_raw_text_side_by_side(tmp_path, monkey
         "1.1\n1.1\n1.1\n1.1\n1.1\n1.1\n"
     )
 
-    from glossapi.ocr.deepseek import runner
+    from glossapi.corpus.ocr import dispatch as runner
 
     def fake_run_for_files(self_ref, files, **kwargs):
         markdown_dir = self_ref.output_dir / "markdown"
@@ -153,7 +136,7 @@ def test_ocr_pipeline_exports_cleaned_and_raw_text_side_by_side(tmp_path, monkey
             )
         return {"doc": {"page_count": 2}}
 
-    monkeypatch.setattr(runner, "run_for_files", fake_run_for_files)
+    monkeypatch.setattr(runner, "run_plugin_ocr", fake_run_for_files)
 
     calls = []
     original_clean_ocr = corpus.clean_ocr
@@ -184,7 +167,7 @@ def test_ocr_pipeline_exports_cleaned_and_raw_text_side_by_side(tmp_path, monkey
     monkeypatch.setattr(corpus, "clean_ocr", record_clean_ocr)
     monkeypatch.setattr(corpus, "clean", record_clean)
 
-    corpus.ocr(backend="deepseek", fix_bad=True, math_enhance=False)
+    corpus.ocr(backend="docling", fix_bad=True, math_enhance=False)
 
     assert calls[0] == ("clean_ocr", original_markdown_dir, True)
     assert calls[1] == ("clean", original_cleaned_markdown_dir, False)
@@ -207,7 +190,7 @@ def test_ocr_pipeline_exports_cleaned_and_raw_text_side_by_side(tmp_path, monkey
     assert record["filename"] == "doc"
     assert record["url"] == "https://example.com/doc.pdf"
     assert record["ocr_success"] is True
-    assert record["extraction_mode"] == "deepseek"
+    assert record["extraction_mode"] == "docling"
     assert record["page_count"] == 2
 
 

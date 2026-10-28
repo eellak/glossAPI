@@ -44,7 +44,7 @@ without losing progress (no extra checkpoint files required).
 from glossapi import Corpus
 c = Corpus('IN', 'OUT')
 c.clean()
-c.ocr(backend='deepseek', fix_bad=True, math_enhance=False)
+c.ocr(ocr_options=plugin_options, fix_bad=True, math_enhance=False)  # configure in external plugin
 ```
 
 ## Phase‑2 Math Enrichment (from JSON)
@@ -70,29 +70,15 @@ c = Corpus('IN', 'OUT')
 c.download(url_column='url')         # optional, if you have URLs parquet
 c.extract(input_format='pdf')        # Phase‑1 (no OCR by default)
 c.clean()                            # compute quality; filter badness
-c.ocr()                              # re‑extract bad ones and enrich math/code
+c.ocr(ocr_options=plugin_options)    # configured by the external OCR package
 c.section()                          # to parquet
 c.annotate()                         # classify/annotate sections
 ```
 
 See `ocr_and_math_enhancement.md` for OCR runtime details, batch sizes, and artifact locations.
 
-### DeepSeek OCR
+### External OCR
 
-DeepSeek can be used as an OCR backend; equations are included inline in the OCR output, so Phase‑2 math is not required and any math flags are ignored.
-
-```python
-from glossapi import Corpus
-c = Corpus('IN','OUT')
-c.ocr(backend='deepseek', fix_bad=True, math_enhance=True, mode='ocr_bad_then_math')
-# → OCR only for bad files; math is included inline in the Markdown
-```
-
-To avoid stub output, set `GLOSSAPI_DEEPSEEK_ALLOW_CLI=1` and `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`, and ensure the runtime is reachable:
-
-```bash
-export GLOSSAPI_DEEPSEEK_PYTHON=/path/to/deepseek-venv/bin/python
-export GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT=/path/to/glossAPI/src/glossapi/ocr/deepseek/run_pdf_ocr_transformers.py
-export GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr-2-model/DeepSeek-OCR-2
-python -m glossapi.ocr.deepseek.preflight  # optional: validates env without running OCR
-```
+Install the toolkit's `greekocr` plugin and configure its options before calling
+`c.ocr(mode="ocr_bad", ocr_options=plugin_options)`.
+See [OCR plugin migration](ocr_plugin_migration.md).

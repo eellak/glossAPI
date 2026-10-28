@@ -32,36 +32,11 @@ These optional knobs map directly to current Docling `PdfPipelineOptions` fields
 - `GLOSSAPI_DOCLING_DOCUMENT_TIMEOUT`: override Docling `document_timeout`.
 - `GLOSSAPI_DOCLING_BATCH_POLL_INTERVAL`: override Docling `batch_polling_interval_seconds`.
 
-### DeepSeek optional dependencies
+### External OCR engines
 
-Install DeepSeek backend extras to enable the DeepSeek OCR path. The recommended path is the dedicated `uv` environment:
-
-```bash
-./dependency_setup/setup_deepseek_uv.sh --venv dependency_setup/.venvs/deepseek
-```
-
-When using `backend='deepseek'`, equations are included inline in the OCR output; Phase‑2 math flags are accepted but skipped.
-The dedicated uv profile is OCR-only and does not install the Docling extraction stack.
-
-### DeepSeek runtime controls
-
-- `GLOSSAPI_DEEPSEEK_ALLOW_STUB`: must remain `0`; stub execution is rejected.
-- `GLOSSAPI_DEEPSEEK_ALLOW_CLI`: keep at `1` to require the real runtime.
-- `GLOSSAPI_DEEPSEEK_PYTHON`: absolute path to the Python interpreter that runs the DeepSeek OCR runner. When this is unset, GlossAPI now prefers a repo-local version-pinned DeepSeek runtime under `dependency_setup/.venvs/deepseek*` before falling back to the generic `deepseek` alias and finally the current process interpreter.
-- `GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT`: override path to the OCR runner script (defaults to `src/glossapi/ocr/deepseek/run_pdf_ocr_transformers.py`).
-- `GLOSSAPI_DEEPSEEK_MODEL_DIR`: path to the downloaded `DeepSeek-OCR-2` snapshot.
-- `GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH`: prepend extra library search paths when launching the OCR runner.
-
-Standard OCR defaults:
-
-- `runtime_backend='vllm'`
-- `ocr_profile='markdown_grounded'`
-- `max_new_tokens=2048`
-- `repair_mode='auto'`
-- `scheduler='auto'`
-- `target_batch_pages=160`
-
-The DeepSeek runners now default to `max_new_tokens=2048`. Do not leave the token cap implicit in one environment and explicit in another when comparing benchmarks.
+Install and configure the toolkit's `greekocr` package separately. Pass its
+configured `ocr_options` to `Corpus.ocr()` or sequential `Corpus.extract()`.
+See [OCR plugin migration](ocr_plugin_migration.md).
 
 ## Math Enrichment (Phase‑2)
 

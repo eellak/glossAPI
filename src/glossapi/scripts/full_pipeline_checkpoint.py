@@ -51,17 +51,6 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--docling-ocr-batch-size", type=int, default=None)
     p.add_argument("--docling-page-batch-size", type=int, default=None)
 
-    p.add_argument("--ocr-backend", default="deepseek")
-    p.add_argument("--ocr-runtime-backend", default="vllm")
-    p.add_argument("--ocr-use-gpus", default="single", choices=["single", "multi"])
-    p.add_argument("--ocr-devices", nargs="*", type=int, default=None)
-    p.add_argument("--ocr-workers-per-gpu", type=int, default=1)
-    p.add_argument("--ocr-vllm-batch-size", type=int, default=None)
-    p.add_argument("--ocr-repair-exec-batch-target-pages", type=int, default=None)
-    p.add_argument("--ocr-repair-exec-batch-target-items", type=int, default=None)
-    p.add_argument("--ocr-target-batch-pages", type=int, default=160)
-    p.add_argument("--ocr-render-dpi", type=int, default=None)
-    p.add_argument("--ocr-scheduler", default="auto")
     p.add_argument("--ocr-math-enhance", action="store_true")
 
     p.add_argument("--text-key", default="text")
@@ -192,17 +181,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         ocr_start = time.perf_counter()
         corpus.ocr(
-            backend=str(args.ocr_backend),
-            runtime_backend=str(args.ocr_runtime_backend),
-            use_gpus=str(args.ocr_use_gpus),
-            devices=_parse_int_list(args.ocr_devices),
-            workers_per_gpu=int(args.ocr_workers_per_gpu),
-            vllm_batch_size=args.ocr_vllm_batch_size,
-            repair_exec_batch_target_pages=args.ocr_repair_exec_batch_target_pages,
-            repair_exec_batch_target_items=args.ocr_repair_exec_batch_target_items,
-            target_batch_pages=int(args.ocr_target_batch_pages),
-            render_dpi=args.ocr_render_dpi,
-            scheduler=str(args.ocr_scheduler),
             math_enhance=bool(args.ocr_math_enhance),
         )
         ocr_elapsed = float(time.perf_counter() - ocr_start)

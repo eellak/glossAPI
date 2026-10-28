@@ -1,6 +1,6 @@
 # Compatibility And Regression Matrix
 
-This document defines the release-validation matrix for the DeepSeek-only migration and subsequent Docling upgrades.
+This document defines the release-validation matrix for the external OCR plugin migration and subsequent Docling upgrades.
 
 It is not a generic unit-test list. It is a contract-based validation plan tied to the documented pipeline behavior.
 
@@ -8,7 +8,7 @@ It is not a generic unit-test list. It is a contract-based validation plan tied 
 
 This matrix applies to changes in:
 
-- DeepSeek-only OCR migration
+- external OCR integration
 - no-stub enforcement
 - installation simplification
 - Docling dependency upgrades
@@ -20,9 +20,8 @@ Release validation for this migration must use:
 
 - real PDFs
 - real Docling
-- real DeepSeek
+- real external OCR engine
 - real GPUs where the code path requires them
-- `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`
 
 Developer-only tests may still use mocks or lightweight stubs for fast iteration, but those do not satisfy release gates for this migration.
 
@@ -98,12 +97,9 @@ The following must remain true unless a change explicitly revises the contract a
 | ID | Level | Contract | Input | Run | Pass criteria | Negative assertions |
 | --- | --- | --- | --- | --- | --- | --- |
 | `ENV-001` | L0 | Python and packaging | Fresh environment | install supported profile(s) | install completes on supported Python floor | no reference to removed legacy OCR install modes |
-| `ENV-002` | L0 | Dependency simplification | Fresh environment | import `glossapi`, `glossapi.ocr.deepseek`, extract-path modules | imports succeed | no dead imports from removed OCR integrations |
 | `EXT-001` | L1 | Safe Phase-1 extraction | lightweight corpus | `Corpus.extract(input_format="pdf")` | canonical Markdown produced | extraction must not depend on OCR extras |
 | `EXT-002` | L2 | Docling Phase-1 extraction | real PDFs | `Corpus.extract(..., phase1_backend="docling", export_doc_json=True)` | Markdown, Docling JSON, metrics written to documented locations | artifact layout must not drift |
 | `CLN-001` | L1/L2 | Cleaner metadata contract | extracted docs | `clean(drop_bad=False)` | metadata parquet updated with routing-relevant fields | no collapse of `needs_ocr` behavior |
-| `OCR-001` | L2 | DeepSeek-only remediation | docs with `needs_ocr=True` | `ocr(backend="deepseek", fix_bad=True)` | recovered docs updated, metadata marks `ocr_success=True` | no stub output, no silent success |
-| `OCR-002` | L2 | No-stub enforcement | broken/missing DeepSeek runtime | run OCR with `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0` | run fails explicitly | failure must not produce placeholder success artifacts |
 | `MTH-001` | L2 | Formula/code enrichment compatibility | math-heavy real PDF | Docling extract plus Phase-2 enrichment | enriched outputs and metadata remain coherent | no schema drift breaking enrichment |
 | `SEC-001` | L2 | Sectioning contract | usable real docs | `section()` | `sections/sections_for_annotation.parquet` produced | no empty-output regression caused by upstream changes |
 | `ANN-001` | L2 | Annotation contract | section parquet | `annotate()` | classified outputs produced | model integration must not break on changed upstream text/layout |
@@ -111,7 +107,7 @@ The following must remain true unless a change explicitly revises the contract a
 | `RES-001` | L3 | Resumability | interrupted or partial run | rerun with defaults | completed items skipped correctly | no duplicate reprocessing by default |
 | `RES-002` | L3 | Force/reprocess semantics | prior successful run | rerun with force/reprocess flag | selected items are reprocessed | no stale completion flags blocking intended rerun |
 | `SKP-001` | L3 | Skiplist semantics | run with known problematic items | extract/OCR rerun | skiplist excludes intended stems only | no hidden filtering of healthy items |
-| `GPU-001` | L3 | Multi-GPU OCR | real PDF slice on 2 GPUs | DeepSeek OCR in parallel | work is distributed and completes per GPU | no worker success masking failures |
+| `GPU-001` | L3 | Multi-GPU OCR | real PDF slice on 2 GPUs | external plugin OCR in parallel | work is distributed and completes per GPU | no worker success masking failures |
 | `CMP-001` | L4 | Baseline quality comparison | Pergamos sample slice | compare pre/post change outputs | no material regression in artifact completeness and downstream usability | runtime improvement alone does not justify quality loss |
 | `CMP-002` | L4 | Whole-text vs page-level experiment | long PDFs | compare baseline branch vs page-level branch | quality/runtime tradeoff explicitly measured | experimental branch does not replace baseline without evidence |
 
@@ -160,24 +156,23 @@ Fields to check in metadata parquet:
 - `filter`
 - Greek-quality and badness-related fields currently emitted by the cleaner
 
-## DeepSeek OCR contract
+## external plugin OCR contract
 
 What to prove:
 
-- DeepSeek is the only OCR remediation backend
+- OCR remediation uses a configured external Docling engine
 - no-stub enforcement is real
 - recovered documents update metadata correctly
 
 Required environment behavior:
 
-- `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`
 - real model weights present
 - real CLI/runtime path present
 
 Negative checks:
 
 - no markdown contains placeholder stub markers
-- no OCR pass succeeds after a DeepSeek CLI failure unless real output exists
+- no OCR pass succeeds after an engine failure
 - no removed OCR backend is referenced during final validation
 
 ## Formula and code enrichment
@@ -254,9 +249,9 @@ This keeps low-level compatibility failures from being confused with downstream 
 
 ### Stage 1 exit criteria
 
-- DeepSeek-only OCR path works on real PDFs
+- external OCR path works on real PDFs
 - no-stub enforcement verified
-- no supported GlossAPI OCR backend remains besides DeepSeek
+- OCR engines are supplied through Docling plugins
 
 ### Stage 2 exit criteria
 

@@ -641,7 +641,7 @@ class GlossExtract:
             try:
                 self._log.warning(
                     "Docling Phase-1 OCR is no longer supported. "
-                    "Ignoring enable_ocr/force_full_page_ocr; use Corpus.ocr(backend='deepseek') instead."
+                    "Ignoring enable_ocr/force_full_page_ocr; use Corpus.ocr(ocr_options=...) instead."
                 )
             except Exception:
                 pass

@@ -140,7 +140,7 @@ def test_pipeline_smoke_and_artifacts(tmp_path, monkeypatch):
     assert bool(needs.get("blank.pdf")), "Blank PDF should be flagged for OCR"
     assert not bool(needs.get("text.pdf"))
 
-    from glossapi.ocr.deepseek import runner as deepseek_runner
+    from glossapi.corpus.ocr import dispatch as plugin_dispatch
 
     def fake_run_for_files(self_ref, files, **kwargs):
         markdown_dir = self_ref.output_dir / "markdown"
@@ -153,7 +153,7 @@ def test_pipeline_smoke_and_artifacts(tmp_path, monkeypatch):
             (metrics_dir / f"{stem}.metrics.json").write_text("{\n  \"page_count\": 1\n}\n", encoding="utf-8")
         return {Path(name).stem: {"page_count": 1} for name in files}
 
-    monkeypatch.setattr(deepseek_runner, "run_for_files", fake_run_for_files)
+    monkeypatch.setattr(plugin_dispatch, "run_plugin_ocr", fake_run_for_files)
 
     corpus.ocr(
         mode="ocr_bad",
@@ -257,7 +257,7 @@ def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
     assert bool(greek_row["needs_ocr"]), "Greek consonant doc should require OCR rerun"
     assert "non_greek_text" in str(greek_row.get("filter", "")), "Filter should record non-Greek text"
 
-    from glossapi.ocr.deepseek import runner as deepseek_runner
+    from glossapi.corpus.ocr import dispatch as plugin_dispatch
 
     def fake_run_for_files(self_ref, files, **kwargs):
         markdown_dir = self_ref.output_dir / "markdown"
@@ -274,7 +274,7 @@ def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
             (metrics_dir / f"{stem}.metrics.json").write_text("{\n  \"page_count\": 1\n}\n", encoding="utf-8")
         return {Path(name).stem: {"page_count": 1} for name in files}
 
-    monkeypatch.setattr(deepseek_runner, "run_for_files", fake_run_for_files)
+    monkeypatch.setattr(plugin_dispatch, "run_plugin_ocr", fake_run_for_files)
 
     corpus.ocr(
         fix_bad=True,
@@ -289,7 +289,7 @@ def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
     assert bool(greek_after.get("ocr_success", False)), "OCR rerun should mark greek consonant doc as success"
 
     corpus.ocr(
-        backend="deepseek",
+        backend="docling",
         fix_bad=False,
         math_enhance=True,
         mode="math_only",
@@ -397,101 +397,3 @@ def test_clean_skips_files_with_successful_ocr(tmp_path, monkeypatch):
     df_after = pd.read_parquet(parquet_path).set_index("filename")
     assert not bool(df_after.loc["consonants.pdf", "needs_ocr"])
     assert "non_greek_text" in str(df_after.loc["consonants.pdf", "filter"])
-
-
-@pytest.mark.deepseek
-def test_deepseek_cli_pipeline_with_synthetic_pdfs(tmp_path, monkeypatch):
-    """Optional DeepSeek integration smoke test that exercises the real CLI."""
-    if os.getenv("GLOSSAPI_RUN_DEEPSEEK_CLI") != "1":
-        pytest.skip("Set GLOSSAPI_RUN_DEEPSEEK_CLI=1 to enable DeepSeek CLI smoke test")
-
-    assert torch.cuda.is_available(), "CUDA GPU expected for DeepSeek pipeline test"
-
-    script = Path(
-        os.environ.get(
-            "GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT",
-            Path.cwd() / "src" / "glossapi" / "ocr" / "deepseek" / "run_pdf_ocr_transformers.py",
-        )
-    )
-    if not script.exists():
-        pytest.skip(f"DeepSeek CLI script missing: {script}")
-
-    python_bin = Path(
-        os.environ.get(
-            "GLOSSAPI_DEEPSEEK_PYTHON",
-            os.environ.get("GLOSSAPI_DEEPSEEK_TEST_PYTHON", sys.executable),
-        )
-    )
-    if not python_bin.exists():
-        pytest.skip(f"DeepSeek Python interpreter missing: {python_bin}")
-
-    model_dir_env = os.environ.get("GLOSSAPI_DEEPSEEK_TEST_MODEL_DIR") or os.environ.get(
-        "GLOSSAPI_DEEPSEEK_MODEL_DIR"
-    )
-    if not model_dir_env:
-        pytest.skip("Set GLOSSAPI_DEEPSEEK_TEST_MODEL_DIR (or GLOSSAPI_DEEPSEEK_MODEL_DIR) to run DeepSeek CLI test")
-    model_dir = Path(model_dir_env)
-    if not model_dir.exists():
-        pytest.skip(f"DeepSeek model directory missing: {model_dir}")
-
-    device_idx = 0
-    if torch.cuda.device_count() > 1:
-        device_idx = torch.cuda.current_device()
-
-    # Force the real runner path and point to the desired interpreter/script.
-    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_ALLOW_CLI", "1")
-    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_ALLOW_STUB", "0")
-    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_PYTHON", str(python_bin))
-    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT", str(script))
-    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_MODEL_DIR", str(model_dir))
-    existing_py_path = os.environ.get("PYTHONPATH", "")
-    src_path = str(Path.cwd() / "src")
-    if existing_py_path:
-        monkeypatch.setenv("PYTHONPATH", f"{src_path}{os.pathsep}{existing_py_path}")
-    else:
-        monkeypatch.setenv("PYTHONPATH", src_path)
-
-    corpus_dir = tmp_path / "corpus"
-    corpus_dir.mkdir()
-
-    text_pdf = corpus_dir / "text.pdf"
-    blank_pdf = corpus_dir / "blank.pdf"
-    _write_pdf(text_pdf, "A short synthetic document for DeepSeek CLI testing")
-    _write_pdf(blank_pdf, None)
-
-    corpus = Corpus(input_dir=corpus_dir, output_dir=corpus_dir)
-    corpus.extract(
-        input_format="pdf",
-        accel_type="CUDA",
-        num_threads=1,
-        emit_formula_index=True,
-        phase1_backend="docling",
-        use_gpus="single",
-        devices=[device_idx],
-    )
-    corpus.clean()
-
-    parquet_path = corpus_dir / "download_results" / "download_results.parquet"
-    df_before = pd.read_parquet(parquet_path).set_index("filename")
-    assert bool(df_before.loc["blank.pdf", "needs_ocr"]), "Expect blank.pdf to be flagged for OCR"
-
-    corpus.ocr(
-        mode="ocr_bad",
-        backend="deepseek",
-        math_enhance=False,
-        use_gpus="single",
-        devices=[device_idx],
-        model_dir=model_dir,
-    )
-
-    markdown_dir = corpus_dir / "markdown"
-    blank_md = markdown_dir / "blank.md"
-    assert blank_md.exists(), "DeepSeek CLI should produce markdown for blank.pdf"
-    assert blank_md.read_text(encoding="utf-8").strip(), "DeepSeek output markdown should not be empty"
-
-    df_after = pd.read_parquet(parquet_path).set_index("filename")
-    blank_row = df_after.loc["blank.pdf"]
-    assert bool(blank_row.get("ocr_success", False)), "DeepSeek CLI should set ocr_success=True"
-    assert not bool(blank_row.get("needs_ocr", True)), "DeepSeek CLI should clear needs_ocr flag"
-    assert blank_row.get("extraction_mode") == "deepseek", "DeepSeek CLI should set extraction_mode='deepseek'"

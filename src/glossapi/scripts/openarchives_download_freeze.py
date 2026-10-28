@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from glossapi import Corpus
-from glossapi.scripts.openarchives_ocr_run_node import (
+from glossapi.scripts.openarchives_manifest import (
     DEFAULT_DOWNLOAD_CONCURRENCY,
     DEFAULT_DOWNLOAD_TIMEOUT,
     _load_frame,

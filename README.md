@@ -4,7 +4,7 @@ GlossAPI is a GPU-ready document processing pipeline from [GFOSS](https://gfoss.
 
 ## Why GlossAPI
 - Handles download → extraction → cleaning → sectioning in one pipeline.
-- Ships safe PyPDFium extraction plus Docling for structured extraction and DeepSeek-OCR-2 for OCR remediation.
+- Ships safe PyPDFium extraction plus Docling for structured extraction and external Docling OCR engines for OCR remediation.
 - Rust-powered cleaner/noise metrics keep Markdown quality predictable.
 - Greek-first metadata and section classification tuned for academic corpora.
 - Modular Corpus API lets you resume from any stage or plug into existing flows.
@@ -42,30 +42,10 @@ PY
 
 ## Automated Environment Profiles
 
-Use `dependency_setup/setup_glossapi.sh` for the Docling environment, or `dependency_setup/setup_deepseek_uv.sh` for the dedicated DeepSeek OCR runtime:
-
-```bash
-# Docling / main GlossAPI environment
-./dependency_setup/setup_glossapi.sh --mode docling --venv dependency_setup/.venvs/docling --run-tests
-
-# DeepSeek OCR runtime (uv-managed)
-./dependency_setup/setup_deepseek_uv.sh \
-  --venv dependency_setup/.venvs/deepseek \
-  --model-root /path/to/deepseek-ocr-2-model \
-  --download-model \
-  --run-tests --smoke-test
-```
-
-`setup_glossapi.sh --mode deepseek` now delegates to the same uv-based installer. `setup_deepseek_uv.sh` uses `uv venv` + `uv sync`, installs the Rust extensions in editable mode, and can download `deepseek-ai/DeepSeek-OCR-2` with `huggingface_hub`.
-The uv-managed DeepSeek runtime is OCR-only on purpose: it installs `glossapi[deepseek]` and does not carry the Docling layout stack.
-
-If you want a guided install that asks which phases you plan to use, run:
-
-```bash
-python install_glossapi.py
-```
-
-That wizard keeps browser-gated download support (`playwright`) and the dedicated DeepSeek OCR runtime out of the main environment unless you explicitly select them.
+Use `dependency_setup/setup_glossapi.sh --mode docling` for layout and math enrichment.
+For selective OCR, install the toolkit's `greekocr` package separately and pass
+its configured `ocr_options` to `Corpus.ocr()`. See [OCR plugin migration](docs/ocr_plugin_migration.md).
+The phase installer (`python install_glossapi.py`) can install the Docling dependency group.
 
 ## Browser-Gated Download Mode
 
@@ -118,24 +98,12 @@ The checked-in browser download tests use mocked browser/session flows and fake 
 
 For manual smoke checks against live browser-gated sources, build an ad hoc parquet locally and run it outside the committed test suite.
 
-**DeepSeek runtime checklist**
-- Run `python -m glossapi.ocr.deepseek.preflight` from the DeepSeek venv to fail fast before OCR.
-- Export these to force the real runtime and avoid silent stub output:
-  - `GLOSSAPI_DEEPSEEK_ALLOW_CLI=1`
-  - `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`
-  - `GLOSSAPI_DEEPSEEK_PYTHON=/path/to/deepseek/venv/bin/python`
-  - `GLOSSAPI_DEEPSEEK_RUNNER_SCRIPT=/path/to/glossAPI/src/glossapi/ocr/deepseek/run_pdf_ocr_transformers.py`
-  - `GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr-2-model/DeepSeek-OCR-2`
-- The default fallback locations already point at the in-repo Transformers runner and `${REPO_ROOT}/deepseek-ocr-2-model/DeepSeek-OCR-2`.
-- `flash-attn` is optional. The runner uses `flash_attention_2` when available and falls back to `eager` otherwise.
-
 ## Choose Your Install Path
 
 | Scenario | Commands | Notes |
 | --- | --- | --- |
 | Pip users | `pip install glossapi` | Fast vanilla evaluation with minimal dependencies. |
 | Docling environment | `./dependency_setup/setup_glossapi.sh --mode docling` | Creates the main GlossAPI venv for extraction, cleaning, sectioning, and enrichment. |
-| DeepSeek environment | `./dependency_setup/setup_deepseek_uv.sh` | Creates a separate uv-managed OCR runtime pinned to the tested Transformers/Torch stack. |
 | Manual editable install | `pip install -e .` after cloning | Keep this if you prefer to manage dependencies by hand. |
 | Conda-based stacks | `scripts/setup_conda.sh` | Provisions Python 3.10 env + Rust + editable install for Amazon Linux/SageMaker. |
 

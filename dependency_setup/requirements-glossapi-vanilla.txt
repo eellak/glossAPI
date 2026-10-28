@@ -43,5 +43,4 @@ pytest>=8.0
 pytest-mock>=3.14
 psutil>=5.9
 rich>=14.0
-safetensors>=0.4
 huggingface-hub>=0.22

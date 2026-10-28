@@ -30,9 +30,8 @@ without reading the entire repo.
 | --- | --- |
 | `src/glossapi/ocr/docling/pipeline.py` | Canonical builder for the layout-only Docling Phase-1 pipeline, including runtime tuning knobs for the current Docling API. |
 | `src/glossapi/ocr/docling_pipeline.py` | Compatibility re-export for the canonical Docling pipeline builder. |
-| `src/glossapi/ocr/deepseek/runner.py` | Launches the DeepSeek OCR remediation path from `Corpus.ocr()`. |
 | `src/glossapi/ocr/utils/json_io.py` | Writes and reads compressed Docling JSON artifacts. |
-| `src/glossapi/corpus/phase_ocr_math.py` | Runs DeepSeek OCR remediation, math/code enrichment, and parquet status updates. |
+| `src/glossapi/corpus/phase_ocr_math.py` | Runs external Docling plugin OCR remediation, math/code enrichment, and parquet status updates. |
 | `src/glossapi/pdf_repair/tounicode.py`, `src/glossapi/scripts/pdf_font_repair.py` | Analyze embedded font Unicode maps, append conservative ToUnicode repairs, and report bounded CPU batches. |
 | `src/glossapi/pdf_repair/extract.py` | Worker-local, bounded ToUnicode extract pre-pass; reuses repaired PDF sidecars and records font-repair provenance. |
 | `src/glossapi/metrics.py` | Computes per-page parse/OCR/formula metrics from Docling conversions. |
@@ -52,7 +51,7 @@ without reading the entire repo.
 | `tests/test_pipeline_smoke.py` | Best high-level example of the intended artifact flow through extract -> clean -> OCR -> section. |
 | `tests/test_corpus_guards.py` | Shows the contract around backend selection and GPU preflight. |
 | `tests/test_jsonl_export.py` | Shows how final JSONL export merges cleaned markdown, parquet metadata, and math metrics. |
-| `tests/test_ocr_dispatch_backends.py` | Covers the DeepSeek-only OCR dispatch contract and backend validation. |
+| `tests/test_ocr_plugin_dispatch.py` | Covers the external OCR dispatch contract and backend validation. |
 
 ## If You Need To Change...
 

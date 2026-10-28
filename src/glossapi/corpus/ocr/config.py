@@ -3,55 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
-from ...ocr.deepseek.defaults import (
-    DEFAULT_ATTN_BACKEND,
-    DEFAULT_GPU_MEMORY_UTILIZATION,
-    DEFAULT_MAX_NEW_TOKENS,
-    DEFAULT_OCR_PROFILE,
-    DEFAULT_RENDER_DPI,
-    DEFAULT_REPAIR_MODE,
-    DEFAULT_RUNTIME_BACKEND,
-    DEFAULT_TARGET_BATCH_PAGES,
-    DEFAULT_WORKERS_PER_GPU,
-    resolve_gpu_memory_utilization,
-    resolve_render_dpi,
-)
 
 
 @dataclass(slots=True)
 class OcrRequest:
     mode: str
     backend: str
+    ocr_options: object | None
     device: Optional[str]
-    model_dir: Optional[Path]
     max_pages: Optional[int]
-    persist_engine: bool
-    precision: Optional[str]
-    workers_per_gpu: int
-    runtime_backend: str
-    ocr_profile: str
-    prompt_override: Optional[str]
-    attn_backend: str
-    base_size: Optional[int]
-    image_size: Optional[int]
-    crop_mode: Optional[bool]
-    render_dpi: int
-    max_new_tokens: int
-    repetition_penalty: Optional[float]
-    no_repeat_ngram_size: Optional[int]
-    vllm_batch_size: Optional[int]
-    gpu_memory_utilization: float
-    disable_fp8_kv: bool
-    repair_mode: str
-    repair_exec_batch_target_pages: Optional[int]
-    repair_exec_batch_target_items: Optional[int]
-    scheduler: str
-    target_batch_pages: int
-    shard_pages: int
-    shard_threshold_pages: int
     math_enhance: bool
     math_targets: Optional[Dict[str, List[Tuple[int, int]]]]
     math_batch_size: int
@@ -93,34 +54,10 @@ def normalize_ocr_request(
     fix_bad: bool,
     mode: Optional[str],
     backend: str,
+    ocr_options=None,
     device: Optional[str],
-    model_dir: Optional[str | Path],
     max_pages: Optional[int],
-    persist_engine: bool,
-    precision: Optional[str],
     page_routing: str = "flagged",
-    workers_per_gpu: int = DEFAULT_WORKERS_PER_GPU,
-    runtime_backend: str = DEFAULT_RUNTIME_BACKEND,
-    ocr_profile: str = DEFAULT_OCR_PROFILE,
-    prompt_override: Optional[str] = None,
-    attn_backend: str = DEFAULT_ATTN_BACKEND,
-    base_size: Optional[int] = None,
-    image_size: Optional[int] = None,
-    crop_mode: Optional[bool] = None,
-    render_dpi: Optional[int] = DEFAULT_RENDER_DPI,
-    max_new_tokens: Optional[int] = DEFAULT_MAX_NEW_TOKENS,
-    repetition_penalty: Optional[float] = None,
-    no_repeat_ngram_size: Optional[int] = None,
-    vllm_batch_size: Optional[int] = None,
-    gpu_memory_utilization: Optional[float] = DEFAULT_GPU_MEMORY_UTILIZATION,
-    disable_fp8_kv: bool = False,
-    repair_mode: str = DEFAULT_REPAIR_MODE,
-    repair_exec_batch_target_pages: Optional[int] = None,
-    repair_exec_batch_target_items: Optional[int] = None,
-    scheduler: str = "auto",
-    target_batch_pages: int = DEFAULT_TARGET_BATCH_PAGES,
-    shard_pages: int = 0,
-    shard_threshold_pages: int = 0,
     math_enhance: bool = True,
     math_targets: Optional[Dict[str, List[Tuple[int, int]]]] = None,
     math_batch_size: int = 8,
@@ -137,9 +74,9 @@ def normalize_ocr_request(
 ) -> Optional[OcrRequest]:
     if page_routing not in {"flagged", "all"}:
         raise ValueError("page_routing must be 'flagged' or 'all'")
-    backend_norm = str(backend or "deepseek").strip().lower()
-    if backend_norm != "deepseek":
-        raise ValueError("backend must be 'deepseek'")
+    backend_norm = str(backend or "docling").strip().lower()
+    if backend_norm != "docling":
+        raise ValueError("backend must be 'docling'; configure an external OCR plugin with ocr_options")
 
     if CONTENT_DEBUG is not None:
         content_debug = bool(CONTENT_DEBUG)
@@ -165,16 +102,6 @@ def normalize_ocr_request(
         )
         return None
 
-    if backend_norm == "deepseek" and mode_norm in {"ocr_bad", "ocr_bad_then_math"}:
-        logger.info(
-            "DeepSeek backend: Phase-2 math is not required; equations are included inline via OCR."
-        )
-        if mode_norm == "ocr_bad_then_math":
-            logger.info(
-                "DeepSeek OCR does not run Phase-2 math; treating mode='ocr_bad_then_math' as 'ocr_bad'."
-            )
-            mode_norm = "ocr_bad"
-
     reprocess_explicit = reprocess_completed is not None
     reprocess_flag = bool(reprocess_completed) if reprocess_explicit else False
     if skip_existing is not None:
@@ -196,33 +123,9 @@ def normalize_ocr_request(
         mode=mode_norm,
         page_routing=page_routing,
         backend=backend_norm,
+        ocr_options=ocr_options,
         device=device,
-        model_dir=Path(model_dir) if model_dir else None,
         max_pages=max_pages,
-        persist_engine=bool(persist_engine),
-        precision=precision,
-        workers_per_gpu=int(max(1, workers_per_gpu)),
-        runtime_backend=str(runtime_backend or DEFAULT_RUNTIME_BACKEND),
-        ocr_profile=str(ocr_profile or DEFAULT_OCR_PROFILE),
-        prompt_override=prompt_override,
-        attn_backend=str(attn_backend or DEFAULT_ATTN_BACKEND),
-        base_size=base_size,
-        image_size=image_size,
-        crop_mode=crop_mode,
-        render_dpi=resolve_render_dpi(render_dpi),
-        max_new_tokens=int(DEFAULT_MAX_NEW_TOKENS if max_new_tokens is None else max_new_tokens),
-        repetition_penalty=repetition_penalty,
-        no_repeat_ngram_size=no_repeat_ngram_size,
-        vllm_batch_size=vllm_batch_size,
-        gpu_memory_utilization=resolve_gpu_memory_utilization(gpu_memory_utilization),
-        disable_fp8_kv=bool(disable_fp8_kv),
-        repair_mode=str(repair_mode or DEFAULT_REPAIR_MODE),
-        repair_exec_batch_target_pages=repair_exec_batch_target_pages,
-        repair_exec_batch_target_items=repair_exec_batch_target_items,
-        scheduler=str(scheduler or "auto"),
-        target_batch_pages=int(max(1, target_batch_pages)),
-        shard_pages=int(max(0, shard_pages)),
-        shard_threshold_pages=int(max(0, shard_threshold_pages)),
         math_enhance=bool(math_enhance),
         math_targets=math_targets,
         math_batch_size=int(math_batch_size),

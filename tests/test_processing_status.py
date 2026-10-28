@@ -32,8 +32,8 @@ def test_ocr_skip_completed(tmp_path, monkeypatch):
             stem = Path(str(fname)).stem
             (self.markdown_dir / f"{stem}.md").write_text("md", encoding="utf-8")
 
-    from glossapi.ocr.deepseek import runner as deepseek_runner
-    monkeypatch.setattr(deepseek_runner, "run_for_files", fake_ocr)
+    from glossapi.corpus.ocr import dispatch as plugin_dispatch
+    monkeypatch.setattr(plugin_dispatch, "run_plugin_ocr", fake_ocr)
     monkeypatch.setattr(Corpus, "clean", lambda self, *a, **k: None, raising=False)
 
     corpus.ocr(fix_bad=True, math_enhance=False, reprocess_completed=False)

@@ -69,29 +69,6 @@ def _resolve_docling_max_batch_files(default: int = 1) -> int:
         return fallback
 
 
-def _plugin_options(*, ocr_engine=None, ocr_checkpoint=None, ocr_codec=None,
-                    ocr_routing_sidecar=None, ocr_mode="textlayer", ocr_crop_scale=3.0,
-                    ocr_device="cpu", ocr_replace_policy="routed_pages",
-                    ocr_checkpoint_sha256=None, ocr_call_log=None):
-    if ocr_engine is None:
-        return None
-    if ocr_engine != "glossapi":
-        raise ValueError(f"Unknown Docling OCR engine {ocr_engine!r}; expected 'glossapi'")
-    if ocr_checkpoint is None:
-        raise ValueError("ocr_engine='glossapi' requires ocr_checkpoint")
-    from ..ocr.plugin.options import GlossapiOcrOptions
-
-    return GlossapiOcrOptions(
-        checkpoint=Path(ocr_checkpoint).expanduser(),
-        codec=Path(ocr_codec).expanduser() if ocr_codec is not None else
-              Path(__file__).parents[1] / "ocr/plugin/recognizer/v1.json",
-        routing_sidecar=Path(ocr_routing_sidecar).expanduser() if ocr_routing_sidecar is not None else None,
-        mode=ocr_mode, crop_scale=ocr_crop_scale, device=ocr_device,
-        replace_policy=ocr_replace_policy, checkpoint_sha256=ocr_checkpoint_sha256,
-        call_log=Path(ocr_call_log) if ocr_call_log is not None else None,
-    )
-
-
 def _resolve_docling_batch_target_pages(default: int = 256) -> int:
     """Resolve the target page budget per queued Docling extraction work item."""
 
@@ -231,28 +208,13 @@ class ExtractPhaseMixin:
         emit_formula_index: bool = False,
         phase1_backend: str = "auto",
         repair_fonts: bool = True,
-        ocr_engine: str | None = None,
-        ocr_checkpoint: str | Path | None = None,
-        ocr_codec: str | Path | None = None,
-        ocr_routing_sidecar: str | Path | None = None,
-        ocr_mode: str = "textlayer",
-        ocr_crop_scale: float = 3.0,
-        ocr_device: str = "cpu",
-        ocr_replace_policy: str = "routed_pages",
-        ocr_checkpoint_sha256: str | None = None,
-        ocr_call_log: str | Path | None = None,
+        ocr_options=None,
     ) -> None:
         """Prepare and initialize the underlying extractor once per configuration.
 
         Builds the Docling converter only if the effective configuration changed.
         """
-        plugin_options = _plugin_options(
-            ocr_engine=ocr_engine, ocr_checkpoint=ocr_checkpoint, ocr_codec=ocr_codec,
-            ocr_routing_sidecar=ocr_routing_sidecar, ocr_mode=ocr_mode,
-            ocr_crop_scale=ocr_crop_scale, ocr_device=ocr_device,
-            ocr_replace_policy=ocr_replace_policy, ocr_checkpoint_sha256=ocr_checkpoint_sha256,
-            ocr_call_log=ocr_call_log,
-        )
+        plugin_options = ocr_options
         if plugin_options is not None and phase1_backend == "safe":
             raise ValueError("OCR engine requires phase1_backend='docling' or 'auto'")
         # Lazy import + instantiate GlossExtract
@@ -300,7 +262,7 @@ class ExtractPhaseMixin:
         if force_ocr:
             self.logger.warning(
                 "Corpus.extract(force_ocr=True) is deprecated and no longer executes OCR. "
-                "Use Corpus.ocr(backend='deepseek') for OCR remediation."
+                "Use Corpus.ocr(ocr_options=...) for OCR remediation."
             )
 
         # Hard GPU preflight before we attempt to build OCR/enrichment pipelines
@@ -441,16 +403,7 @@ class ExtractPhaseMixin:
         batched: bool | None = None,
         _stability_benchmark: dict | None = None,
         page_range: tuple[int, int] | None = None,
-        ocr_engine: str | None = None,
-        ocr_checkpoint: str | Path | None = None,
-        ocr_codec: str | Path | None = None,
-        ocr_routing_sidecar: str | Path | None = None,
-        ocr_mode: str = "textlayer",
-        ocr_crop_scale: float = 3.0,
-        ocr_device: str = "cpu",
-        ocr_replace_policy: str = "routed_pages",
-        ocr_checkpoint_sha256: str | None = None,
-        ocr_call_log: str | Path | None = None,
+        ocr_options=None,
     ) -> None:
         """
         Extract input files to markdown format.
@@ -469,10 +422,8 @@ class ExtractPhaseMixin:
                 Docling only. Source PDF is passed intact to Docling.
             repair_fonts: Repair eligible PDF ToUnicode maps in repaired_pdfs/ before extraction (default: True).
             workers_per_device: Number of extraction workers to bind to each visible GPU when ``use_gpus='multi'``.
-            ocr_engine: Optional 'glossapi' Docling engine. Requires a checkpoint and
-                routing sidecar (unless ocr_replace_policy='all'). Mode A replaces
-                routed native textline cells before layout. Ordinary single-device
-                execution only; cross-document batching is not supported.
+            ocr_options: Configured options from an external Docling OCR engine.
+                Sequential single-device extraction only; batching is unsupported.
             batched: None (default) uses cross-document layout batching for single-device,
                 layout-only Docling on CUDA; CPU/MPS and the safe backend stay sequential.
                 Auto-CUDA uses layout_batch=8 and 8 rasteriser workers. Explicit True/False
@@ -489,33 +440,26 @@ class ExtractPhaseMixin:
             batched = False
         arguments = locals().copy()
         arguments.pop("self")
-        if ocr_engine is not None:
+        if ocr_options is not None:
             if batched:
                 raise ValueError("OCR engine with batched=True is unsupported; use batched=False (B-track)")
             if str(use_gpus).lower() == "multi":
-                raise ValueError("C1 OCR engine supports single-device extraction only")
+                raise ValueError("OCR plugin supports single-device extraction only")
             if _prepared:
                 raise ValueError("OCR engine must be configured by extract(); _prepared=True is unsupported")
-            _plugin_options(
-                ocr_engine=ocr_engine, ocr_checkpoint=ocr_checkpoint, ocr_codec=ocr_codec,
-                ocr_routing_sidecar=ocr_routing_sidecar, ocr_mode=ocr_mode,
-                ocr_crop_scale=ocr_crop_scale, ocr_device=ocr_device,
-                ocr_replace_policy=ocr_replace_policy,
-                ocr_checkpoint_sha256=ocr_checkpoint_sha256, ocr_call_log=ocr_call_log,
-            )
             if phase1_backend == "safe":
                 raise ValueError("OCR engine requires phase1_backend='docling' or 'auto'")
         backend_choice = self._resolve_phase1_backend(
             phase1_backend, force_ocr=force_ocr, formula_enrichment=formula_enrichment,
             code_enrichment=code_enrichment)
         device = accel_type
-        if ocr_engine is not None:
+        if ocr_options is not None:
             backend_choice = "docling"
         if _prepared and self.extractor is not None:
             options = getattr(self.extractor, "pipeline_options", None)
             accelerator = getattr(options, "accelerator_options", None)
             device = getattr(accelerator, "device", accel_type)
-        if ocr_engine is None and str(use_gpus).lower() != "multi" and _resolve_batched_docling(
+        if ocr_options is None and str(use_gpus).lower() != "multi" and _resolve_batched_docling(
                 batched, accel_type=device, resolved_backend=backend_choice,
                 use_gpus=use_gpus, formula_enrichment=formula_enrichment,
                 code_enrichment=code_enrichment):
@@ -1134,12 +1078,7 @@ class ExtractPhaseMixin:
                 emit_formula_index=bool(emit_formula_index),
                 phase1_backend=backend_choice,
                 repair_fonts=bool(repair_fonts),
-                **(dict(ocr_engine=ocr_engine, ocr_checkpoint=ocr_checkpoint, ocr_codec=ocr_codec,
-                        ocr_routing_sidecar=ocr_routing_sidecar, ocr_mode=ocr_mode,
-                        ocr_crop_scale=ocr_crop_scale, ocr_device=ocr_device,
-                        ocr_replace_policy=ocr_replace_policy,
-                        ocr_checkpoint_sha256=ocr_checkpoint_sha256, ocr_call_log=ocr_call_log)
-                   if ocr_engine is not None else {}),
+                **({"ocr_options": ocr_options} if ocr_options is not None else {}),
             )
         # Propagate benchmark mode to extractor to trim auxiliary I/O
         try:

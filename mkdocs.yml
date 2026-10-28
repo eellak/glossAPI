@@ -1,5 +1,5 @@
 site_name: GlossAPI
-site_description: Academic document processing pipeline (Docling + DeepSeek + Rust)
+site_description: Academic document processing pipeline (Docling + external OCR plugins + Rust)
 repo_url: https://github.com/eellak/glossAPI
 theme:
   name: material
@@ -36,11 +36,9 @@ nav:
           - Annotate: stages/annotate.md
           - Export: stages/export.md
   - Configuration & Ops:
+      - OCR Plugin Migration: ocr_plugin_migration.md
       - Configuration: configuration.md
       - AWS Job Distribution: aws_job_distribution.md
-      - DeepSeek GCP A100 Setup: operations/deepseek_gcp_a100_setup.md
-      - OCR Changes 2026-04-01 to 2026-04-03: operations/ocr_changes_2026-04-01_to_2026-04-03.md
-      - OpenArchives OCR Rollout Plan: operations/openarchives_ocr_rollout_plan.md
       - Troubleshooting: troubleshooting.md
       - Compatibility And Regression Matrix: testing/compatibility_matrix.md
   - Reference:

@@ -13,7 +13,7 @@ import pytest
 
 def outputs(tmp_path, original=None):
     fitz = pytest.importorskip("fitz", reason="PDF fixture generation requires optional PyMuPDF")
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _write_outputs
+    from glossapi.ocr.page_artifacts import _write_outputs
     source = tmp_path / 'case.pdf'
     with fitz.open() as doc:
         for index in range(3):
@@ -29,14 +29,14 @@ def outputs(tmp_path, original=None):
                        extra_metrics={'source_start_page': first, 'source_end_page': last})
 
     def assemble(ranges):
-        from glossapi.ocr.deepseek import runner
+        from glossapi.ocr import page_artifacts as runner
         return runner._reassemble_canonical_output_for_source(
             out_root=out, pdf_path=source, source_name='case.pdf', selected_ranges=ranges)
     return out, shard, assemble
 
 
 def test_repeated_partial_ocr_replaces_obsolete_supplement(tmp_path):
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _join_page_outputs
+    from glossapi.ocr.page_artifacts import _join_page_outputs
     original = '# Kept heading\n\n| Field | Value |\n|---|---|\n| x | y |\n\nOld appendix'
     out, shard, assemble = outputs(tmp_path, original)
     native = (out / 'markdown/case.md').read_bytes()
@@ -90,28 +90,8 @@ def test_scan_with_text_overlay_must_not_lose_raster_body(tmp_path):
     assert report.ocr_page_list == '1-2'
 
 
-@pytest.mark.parametrize('runtime', ['transformers', 'vllm'])
-@pytest.mark.parametrize('multi', [False, True])
-def test_partial_dispatch_requires_retained_native_content(tmp_path, monkeypatch, runtime, multi):
-    from glossapi.ocr.deepseek import runner
-    out, _, _ = outputs(tmp_path)
-    model = tmp_path / 'model'
-    model.mkdir()
-    monkeypatch.setattr(runner, 'resolve_deepseek_python', lambda **kwargs: Path(sys.executable))
-    monkeypatch.setattr(runner, '_resolve_lane_devices', lambda **kwargs: [0])
-    calls = []
-    monkeypatch.setattr(runner, '_run_cli', lambda **kwargs: calls.append(kwargs))
-    monkeypatch.setattr(runner, '_run_multi_cli', lambda **kwargs: calls.append(kwargs))
-    with pytest.raises(FileNotFoundError, match='retained native Markdown'):
-        runner.run_for_files(SimpleNamespace(input_dir=tmp_path, output_dir=out), ['case.pdf'],
-                             model_dir=model, runtime_backend=runtime,
-                             use_gpus='multi' if multi else 'single', page_ranges=['case.pdf:3:3'])
-    assert calls == [], 'Refuse partial dispatch before running any OCR'
-    assert not (out / 'markdown/case.md').exists()
-
-
 def test_changed_selections_keep_only_current_ocr_per_page(tmp_path):
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _join_page_outputs
+    from glossapi.ocr.page_artifacts import _join_page_outputs
     out, shard, assemble = outputs(tmp_path, '# Native heading\n\n| a | b |\n|---|---|\n| c | d |')
     native = (out / 'markdown/case.md').read_bytes()
     shard(2, 3, _join_page_outputs(['KEEP CURRENT TWO', 'OBSOLETE THREE']))
@@ -128,7 +108,7 @@ def test_changed_selections_keep_only_current_ocr_per_page(tmp_path):
 
 
 def test_marked_page_reruns_rebuild_from_native_and_keep_other_ocr(tmp_path):
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _join_page_outputs, _split_page_outputs
+    from glossapi.ocr.page_artifacts import _join_page_outputs, _split_page_outputs
     out, shard, assemble = outputs(tmp_path, _join_page_outputs(['Native one', 'Native two', 'Native three']))
     native = (out / 'markdown/case.md').read_bytes()
     shard(2, 2, 'CURRENT TWO')
@@ -152,7 +132,7 @@ def test_partial_ocr_refuses_unusable_native_baseline(tmp_path, original):
 
 
 def test_all_page_selection_needs_no_native_markdown(tmp_path):
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _join_page_outputs, _split_page_outputs
+    from glossapi.ocr.page_artifacts import _join_page_outputs, _split_page_outputs
     out, shard, assemble = outputs(tmp_path)
     shard(1, 3, _join_page_outputs(['OCR ONE', 'OCR TWO', 'OCR THREE']))
     assert assemble([(1, 3)])

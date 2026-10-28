@@ -5,11 +5,11 @@ from __future__ import annotations
 from .artifacts import persist_ocr_success, refresh_cleaner_after_ocr
 from .config import OcrRequest
 from .context import CorpusOcrContext
-from .dispatch import run_deepseek_ocr
+from . import dispatch
 from .targets import build_ocr_selection
 
 
-def run_ocr_phase(context: CorpusOcrContext, request: OcrRequest) -> None:
+def run_ocr_phase(context: CorpusOcrContext, request: OcrRequest) -> list[str]:
     """Run the OCR-remediation path while preserving the current runtime engine."""
 
     if request.mode == "math_only":
@@ -24,12 +24,12 @@ def run_ocr_phase(context: CorpusOcrContext, request: OcrRequest) -> None:
 
     if not selection.bad_files:
         context.logger.info("OCR: no bad documents flagged by cleaner; skipping OCR fix")
-        return
+        return []
 
-    run_deepseek_ocr(
+    dispatch.run_plugin_ocr(
         context,
+        selection.bad_files,
         request=request,
-        filenames=selection.bad_files,
         **({"page_ranges": selection.page_ranges} if selection.page_ranges else {}),
     )
 
@@ -46,3 +46,5 @@ def run_ocr_phase(context: CorpusOcrContext, request: OcrRequest) -> None:
         refresh_cleaner_after_ocr(context)
     except Exception as exc:
         context.logger.warning("Cleaner refresh after OCR failed: %s", exc)
+
+    return selection.bad_files

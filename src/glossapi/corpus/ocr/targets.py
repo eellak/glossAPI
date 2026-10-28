@@ -29,13 +29,16 @@ class OcrSelection:
     page_ranges: List[str] = field(default_factory=list)
 
 
-def normalize_ocr_target_filenames(*, filenames: List[str], input_dir: Path) -> List[str]:
+def normalize_ocr_target_filenames(*, filenames: List[str], input_dir: Path,
+                                   downloads_dir: Path | None = None) -> List[str]:
     """Collapse chunk-like metadata rows back to real OCR source files when possible."""
 
     source_by_stem = {}
     try:
-        for path in sorted(Path(input_dir).glob("*.pdf")):
-            source_by_stem.setdefault(canonical_stem(path.name), path.name)
+        for directory in (downloads_dir, Path(input_dir) / "downloads", Path(input_dir)):
+            if directory is not None:
+                for path in sorted(directory.glob("*.pdf")):
+                    source_by_stem.setdefault(canonical_stem(path.name), path.name)
     except Exception:
         source_by_stem = {}
 
@@ -135,6 +138,7 @@ def build_ocr_selection(
     normalized_bad_files = normalize_ocr_target_filenames(
         filenames=bad_files,
         input_dir=Path(context.input_dir),
+        downloads_dir=Path(context.output_dir) / "downloads",
     )
     if len(normalized_bad_files) != len(bad_files):
         context.logger.info(

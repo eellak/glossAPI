@@ -168,7 +168,7 @@ def test_clean_sidecar_routes_keep_document_flag(quality_pdf, tmp_path, caplog):
 
 def test_corpus_forwards_parquet_ranges(tmp_path, monkeypatch):
     from glossapi import Corpus
-    from glossapi.ocr.deepseek import runner
+    from glossapi.corpus.ocr import dispatch as runner
     corpus = Corpus(input_dir=tmp_path, output_dir=tmp_path)
     monkeypatch.setattr(corpus, 'clean', lambda **kwargs: None)
     for name in ['routed.pdf', 'whole.pdf', 'kept.pdf']:
@@ -181,67 +181,10 @@ def test_corpus_forwards_parquet_ranges(tmp_path, monkeypatch):
         {'filename': 'kept.pdf', 'needs_ocr': False, 'ocr_pages': '1'},
     ]).to_parquet(parquet, index=False)
     calls = []
-    monkeypatch.setattr(runner, 'run_for_files', lambda self_ref, files, **kw: calls.append((files, kw)))
-    corpus.ocr(backend='deepseek', mode='ocr_bad', math_enhance=False)
+    monkeypatch.setattr(runner, 'run_plugin_ocr', lambda self_ref, files, **kw: calls.append((files, kw)))
+    corpus.ocr(backend='docling', mode='ocr_bad', math_enhance=False)
     assert calls[0][0] == ['routed.pdf', 'whole.pdf']
     assert calls[0][1]['page_ranges'] == ['routed.pdf:3:9', 'routed.pdf:14:14', 'routed.pdf:20:22']
-
-
-@pytest.mark.parametrize('runtime', ['transformers', 'vllm'])
-@pytest.mark.parametrize('multi', [False, True])
-def test_runner_forwards_ranges_and_retains_existing_pages(quality_pdf, tmp_path, monkeypatch, runtime, multi):
-    from types import SimpleNamespace
-    from glossapi.ocr.deepseek import runner
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _write_outputs, _join_page_outputs, _split_page_outputs
-    output = tmp_path / 'ocr-output'
-    (output / 'markdown').mkdir(parents=True)
-    # Existing canonical output must not mask new selected-range outputs.
-    (output / 'markdown/quality.md').write_text(_join_page_outputs([
-        '# Kept Greek heading\n' + ' '.join(sorted(COMMON_GREEK)),
-        'stale text', 'stale text', '| kept | table |',
-    ]))
-    (output / 'json/metrics').mkdir(parents=True)
-    (output / 'json/metrics/quality.metrics.json').write_text('{}')
-    model = tmp_path / 'model'
-    model.mkdir()
-    monkeypatch.setattr(runner, 'resolve_deepseek_python', lambda **kw: Path(sys.executable))
-    monkeypatch.setattr(runner, '_resolve_lane_devices', lambda **kw: [0])
-    captured = {}
-
-    def fake_cli(**kwargs):
-        captured.update(kwargs)
-        if multi:
-            assert kwargs['file_list'] == ['quality.pdf']
-        else:
-            assert kwargs['files'] == []
-        _write_outputs(output_dir=output, stem='quality__p00002-00003',
-                       markdown=_join_page_outputs(['OCR image', 'OCR corrupted']), page_count=2,
-                       extra_metrics={'source_start_page': 2, 'source_end_page': 3})
-
-    monkeypatch.setattr(runner, '_run_multi_cli' if multi else '_run_cli', fake_cli)
-    result = runner.run_for_files(SimpleNamespace(input_dir=quality_pdf.parent, output_dir=output),
-                                 ['quality.pdf'], model_dir=model, runtime_backend=runtime,
-                                 use_gpus='multi' if multi else 'single', page_ranges=['quality.pdf:2:3'])
-    assert captured['page_ranges'] == ['quality.pdf:2:3']
-    text = (output / 'markdown/quality.md').read_text()
-    assert 'OCR image' in text and 'stale text' not in text
-    assert all(word in text for word in COMMON_GREEK)
-    assert _split_page_outputs(text)[1:3] == ['OCR image', 'OCR corrupted']
-    assert result['quality']['page_count'] == 4
-
-
-@pytest.mark.parametrize('planner', ['_plan_work_batches', '_plan_lane_batches'])
-@pytest.mark.parametrize('scheduler', ['whole_doc', 'fixed_shard', 'exact_fill'])
-def test_scheduling_intersects_selected_ranges(quality_pdf, planner, scheduler):
-    from glossapi.ocr.deepseek import runner
-    plans = getattr(runner, planner)(file_list=['quality.pdf'], input_root=quality_pdf.parent,
-        max_pages=None, runtime_backend='vllm', scheduler=scheduler, lane_devices=[0, 1],
-        workers_per_gpu=1, target_batch_pages=2, shard_pages=2, shard_threshold_pages=0,
-        page_ranges=['quality.pdf:2:3'])
-    batches = plans if planner == '_plan_work_batches' else [b for lane in plans for b in lane['batches']]
-    items = [item for b in batches for item in b['items']]
-    assert sum(item['pages'] for item in items) == 2
-    assert {p for item in items for p in range(item['start_page'], item['end_page'] + 1)} == {2, 3}
 
 
 def test_parquet_schema_defaults(tmp_path):
@@ -256,8 +199,8 @@ def test_parquet_schema_defaults(tmp_path):
 
 
 def test_reassembly_rejects_missing_selected_pages(quality_pdf, tmp_path):
-    from glossapi.ocr.deepseek import runner
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _write_outputs
+    from glossapi.ocr import page_artifacts as runner
+    from glossapi.ocr.page_artifacts import _write_outputs
     _write_outputs(output_dir=tmp_path, stem='quality__p00002-00002', markdown='OCR image',
                    page_count=1, extra_metrics={'source_start_page': 2, 'source_end_page': 2})
     with pytest.raises(RuntimeError, match='Incomplete selected OCR pages'):
@@ -267,8 +210,8 @@ def test_reassembly_rejects_missing_selected_pages(quality_pdf, tmp_path):
 
 
 def test_all_pages_selection_can_write_canonical_directly(quality_pdf, tmp_path):
-    from glossapi.ocr.deepseek import runner
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _write_outputs
+    from glossapi.ocr import page_artifacts as runner
+    from glossapi.ocr.page_artifacts import _write_outputs
     _write_outputs(output_dir=tmp_path, stem='quality', markdown='All pages OCR', page_count=4)
     runner._ensure_canonical_outputs(out_root=tmp_path, pdf_root=quality_pdf.parent,
                                      file_list=['quality.pdf'], page_ranges=['quality.pdf:1:4'])
@@ -276,8 +219,8 @@ def test_all_pages_selection_can_write_canonical_directly(quality_pdf, tmp_path)
 
 
 def test_reassembly_keeps_existing_page_markdown(quality_pdf, tmp_path):
-    from glossapi.ocr.deepseek import runner
-    from glossapi.ocr.deepseek.run_pdf_ocr_transformers import _write_outputs, _join_page_outputs, _split_page_outputs
+    from glossapi.ocr import page_artifacts as runner
+    from glossapi.ocr.page_artifacts import _write_outputs, _join_page_outputs, _split_page_outputs
     original = ['# Existing heading', 'old scan', 'old garbage', '| kept | table |']
     _write_outputs(output_dir=tmp_path, stem='quality', markdown=_join_page_outputs(original), page_count=4)
     _write_outputs(output_dir=tmp_path, stem='quality__p00002-00003',

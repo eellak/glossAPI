@@ -53,21 +53,6 @@ cuda = [
     "torch==2.5.1",
     "torchvision==0.20.1",
 ]
-# DeepSeek OCR backend extras (Torch should be installed from the PyTorch index).
-# vLLM is the supported runtime backend. transformers is pulled transitively by
-# vllm; we no longer pin it here because the DeepSeek-OCR-2 bundled modeling
-# code requires the pre-4.46 attention API and the only working path is via
-# vllm's own model loader.
-deepseek = [
-    "vllm==0.18.0",
-    "accelerate>=1.2.1,<2",
-    "pymupdf==1.24.10",
-    "Pillow==12.1.1",
-    "img2pdf>=0.5.1",
-    "einops",
-    "easydict",
-    "addict",
-]
 docs = [
     "mkdocs>=1.5",
     "mkdocs-material>=9.5",
@@ -77,20 +62,15 @@ docs = [
 package-dir = {"" = "src"}
 include-package-data = true
 
-[project.entry-points."docling"]
-glossapi = "glossapi.ocr.plugin.docling_plugin"
-
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["glossapi", "glossapi.*"]
 
 [tool.setuptools.package-data]
 glossapi = ["models/**/*"]
-"glossapi.ocr.plugin.recognizer" = ["v1.json", "VENDORED_FROM.json"]
 
 [tool.pytest.ini_options]
 markers = [
     "linux_dev_node: Linux-only deployment resource gate; run on the dev node",
     "slow: explicit local CPU cohort integration run",
-    "deepseek: exercises the DeepSeek OCR pipeline",
 ]

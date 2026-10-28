@@ -132,7 +132,7 @@ def test_docling_export_page_count_reaches_parquet(tmp_path):
 @pytest.mark.parametrize('mode,expected', [('flagged', ['bad.pdf', 'whole.pdf']),
                                           ('all', ['bad.pdf', 'whole.pdf', 'kept.pdf'])])
 def test_ocr_routing_modes_and_unflagged_count(tmp_path, monkeypatch, mode, expected):
-    from glossapi.ocr.deepseek import runner
+    from glossapi.corpus.ocr import dispatch as runner
     corpus = Corpus(tmp_path, tmp_path)
     monkeypatch.setattr(corpus, 'clean', lambda **kw: None)
     rows = [dict(filename='bad.pdf', needs_ocr=True, ocr_pages='2-3'),
@@ -143,7 +143,7 @@ def test_ocr_routing_modes_and_unflagged_count(tmp_path, monkeypatch, mode, expe
     for row in rows:
         make_pdf(tmp_path / row['filename'], 3)
     calls = []
-    monkeypatch.setattr(runner, 'run_for_files', lambda self, files, **kw: calls.append((files, kw)))
+    monkeypatch.setattr(runner, 'run_plugin_ocr', lambda self, files, **kw: calls.append((files, kw)))
     corpus.ocr(mode='ocr_bad', math_enhance=False, page_routing=mode)
     assert calls[0][0] == expected
     ranges = ['bad.pdf:2:3'] + (['kept.pdf:1:1', 'kept.pdf:3:3'] if mode == 'all' else [])
@@ -209,13 +209,13 @@ def test_report_dedupes_membership_counts_pdf_pages_and_failures(tmp_path):
 
 @pytest.mark.parametrize('mode,expected_ranges', [('flagged', []), ('all', ['done.pdf:2:2'])])
 def test_completed_unflagged_rerun_keeps_default_whole_document_policy(tmp_path, monkeypatch, mode, expected_ranges):
-    from glossapi.ocr.deepseek import runner
+    from glossapi.corpus.ocr import dispatch as runner
     corpus = Corpus(tmp_path, tmp_path)
     make_pdf(tmp_path / 'done.pdf', 3)
     seed(tmp_path, [dict(filename='done.pdf', needs_ocr=False, ocr_success=True, ocr_pages='2')])
     monkeypatch.setattr(corpus, 'clean', lambda **kw: None)
     calls = []
-    monkeypatch.setattr(runner, 'run_for_files', lambda self, files, **kw: calls.append((files, kw)))
+    monkeypatch.setattr(runner, 'run_plugin_ocr', lambda self, files, **kw: calls.append((files, kw)))
     corpus.ocr(mode='ocr_bad', math_enhance=False, reprocess_completed=True, page_routing=mode)
     assert calls[0][0] == ['done.pdf']
     assert calls[0][1].get('page_ranges', []) == expected_ranges

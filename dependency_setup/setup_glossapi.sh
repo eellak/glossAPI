@@ -7,10 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MODE="docling"
 PYTHON_BIN="${PYTHON:-python3}"
 VENV_PATH="${GLOSSAPI_VENV:-}"
-DOWNLOAD_DEEPSEEK=0
-DEEPSEEK_ROOT="${DEEPSEEK_ROOT:-${REPO_ROOT}/deepseek-ocr-2-model}"
 RUN_TESTS=0
-RUN_SMOKE=0
 
 info()  { printf "\033[1;32m==>\033[0m %s\n" "$*"; }
 warn()  { printf "\033[1;33m[warn]\033[0m %s\n" "$*"; }
@@ -21,13 +18,10 @@ usage() {
 Usage: setup_glossapi.sh [options]
 
 Options:
-  --mode MODE            Environment profile: docling or deepseek (default: docling)
+  --mode MODE            Environment profile: docling (default: docling)
   --venv PATH            Target virtual environment path
   --python PATH          Python executable to use when creating the venv
-  --download-deepseek    Fetch DeepSeek-OCR-2 weights (DeepSeek mode only)
-  --weights-dir PATH     Destination directory root for DeepSeek weights (default: $REPO_ROOT/deepseek-ocr-2-model)
   --run-tests            Run pytest -q after installation
-  --smoke-test           Run dependency_setup/deepseek_gpu_smoke.py (deepseek mode only)
   --help                 Show this help message
 EOF
 }
@@ -78,18 +72,8 @@ while (( "$#" )); do
       shift || { echo "--python requires a path" >&2; exit 1; }
       PYTHON_BIN="${1:-}"
       ;;
-    --download-deepseek)
-      DOWNLOAD_DEEPSEEK=1
-      ;;
-    --weights-dir)
-      shift || { echo "--weights-dir requires a path" >&2; exit 1; }
-      DEEPSEEK_ROOT="${1:-}"
-      ;;
     --run-tests)
       RUN_TESTS=1
-      ;;
-    --smoke-test)
-      RUN_SMOKE=1
       ;;
     --help|-h)
       usage
@@ -115,22 +99,12 @@ case "${MODE}" in
     warn "Mode 'vanilla' is deprecated; using 'docling' instead."
     MODE="docling"
     ;;
-  docling|deepseek) ;;
+  docling) ;;
   *)
-    echo "Invalid mode '${MODE}'. Expected docling or deepseek." >&2
+    echo "Invalid mode '${MODE}'. Expected docling." >&2
     exit 1
     ;;
 esac
-
-if [[ "${MODE}" == "deepseek" ]]; then
-  exec "${SCRIPT_DIR}/setup_deepseek_uv.sh" \
-    --python "${PYTHON_BIN}" \
-    --venv "${VENV_PATH:-${REPO_ROOT}/dependency_setup/.venvs/deepseek}" \
-    --model-root "${DEEPSEEK_ROOT}" \
-    $([[ "${DOWNLOAD_DEEPSEEK}" -eq 1 ]] && printf '%s' "--download-model") \
-    $([[ "${RUN_TESTS}" -eq 1 ]] && printf '%s' "--run-tests") \
-    $([[ "${RUN_SMOKE}" -eq 1 ]] && printf '%s' "--smoke-test")
-fi
 
 if [[ -z "${VENV_PATH}" ]]; then
   VENV_PATH="${REPO_ROOT}/.venv_glossapi_${MODE}"
@@ -175,12 +149,6 @@ pip_run install -e "${REPO_ROOT}/rust/glossapi_rs_noise"
 
 if [[ "${RUN_TESTS}" -eq 1 ]]; then
   pytest_args=("-q")
-  case "${MODE}" in
-    docling)
-      pytest_args+=("-m" "not deepseek")
-      ;;
-  esac
-
   info "Running pytest ${pytest_args[*]} tests"
   python_run -m pytest "${pytest_args[@]}" tests
 fi
