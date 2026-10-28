@@ -11,7 +11,7 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
 | Stage | Main code | Typical inputs | Important parameters | Main outputs |
 | --- | --- | --- | --- | --- |
 | Download | `Corpus.download()`, `GlossDownloader.download_files()` | metadata parquet with a URL column | `input_parquet`, `links_column`, `parallelize_by`, downloader kwargs | `downloads/`, `download_results/*.parquet` |
-| Extract (Phase‑1) | `Corpus.prime_extractor()`, `Corpus.extract()`, `GlossExtract.extract_path()` | files in `downloads/` or explicit paths | `input_format`, `phase1_backend`, `use_gpus`, `devices`, `workers_per_device`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json` |
+| Extract (Phase‑1) | `Corpus.prime_extractor()`, `Corpus.extract()`, `GlossExtract.extract_path()` | files in `downloads/` or explicit paths | `input_format`, `phase1_backend`, `repair_fonts=True`, `use_gpus`, `devices`, `workers_per_device`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `repaired_pdfs/<stem>.pdf`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json`; parquet columns `font_repair_status`, `font_repair_fonts`, `font_repair_valid_rate_before`, `font_repair_valid_rate_after` |
 | Clean | `Corpus.clean()` | `markdown/*.md` | `threshold`, `drop_bad`, `empty_char_threshold`, `empty_min_pages` | `clean_markdown/<stem>.md`, cleaner report parquet, parquet flags such as `filter` and `needs_ocr` |
 | OCR retry | `Corpus.ocr(mode='ocr_bad'...)` | parquet rows flagged by cleaner | `mode`, `fix_bad`, `use_gpus`, `devices` | refreshed `markdown/<stem>.md`, refreshed cleaner/parquet metadata |
 | Phase‑2 enrich | `Corpus.ocr(mode='math_only'...)`, `Corpus.formula_enrich_from_json()` | `json/<stem>.docling.json(.zst)` and optional formula index | `math_enhance`, `math_batch_size`, `math_dpi_base`, `targets_by_stem` | updated `markdown/<stem>.md`, `json/<stem>.latex_map.jsonl` |
@@ -42,6 +42,7 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
   - or explicit `file_paths`
 - Important parameters:
   - `phase1_backend='safe'|'docling'|'auto'`
+  - `repair_fonts=True` (default): worker-local CPU ToUnicode repair before safe or Docling extraction; `False` uses the original text layer
   - `use_gpus='single'|'multi'`
   - `workers_per_device` to fan out more than one extraction worker onto each GPU
   - `export_doc_json` and `emit_formula_index` for later Phase‑2 work
@@ -49,6 +50,9 @@ The `Corpus` class is the stable surface of the project. New functionality shoul
   - `force_ocr` is deprecated and ignored in Phase‑1; use `Corpus.ocr(backend='deepseek')` after `clean()` for OCR remediation
 - Main outputs:
   - canonical markdown in `markdown/<stem>.md`
+  - repaired copies in `repaired_pdfs/<stem>.pdf`; originals in `downloads/` are preserved
+  - parquet `font_repair_status`, `font_repair_fonts`, `font_repair_valid_rate_before` and `font_repair_valid_rate_after` (rates use first 20 pages when `GLOSSAPI_GREEK_WORDLIST` is configured; otherwise null)
+  - fresh repaired copies are reused without font analysis; pre-pass errors/timeouts fall back to the original, using the shared file budget (see [Extract stage](stages/extract.md))
   - optional Docling JSON and index artifacts in `json/`
   - per-document and per-page metrics in `json/metrics/`
 
@@ -112,6 +116,8 @@ play in the pipeline:
 OUT/
 ├── downloads/                                  (canonical)
 │   └── problematic_math/                       (debug)
+├── repaired_pdfs/                              (sidecars: repaired extraction inputs)
+│   └── <stem>.pdf
 ├── download_results/                           (canonical)
 ├── markdown/                                   (canonical)
 │   └── <stem>.md

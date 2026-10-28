@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Tuple
+from typing import Callable, Tuple
 
 from docling.datamodel.pipeline_options import (
     AcceleratorDevice,
@@ -55,6 +55,7 @@ def _apply_common_pdf_options(
     images_scale: float,
     formula_enrichment: bool,
     code_enrichment: bool,
+    ocr_options=None,
 ) -> PdfPipelineOptions:
     def _supports_kwarg(model_cls, field_name: str) -> bool:
         fields = getattr(model_cls, "model_fields", None) or getattr(model_cls, "__fields__", None)
@@ -72,7 +73,7 @@ def _apply_common_pdf_options(
 
     option_kwargs = {
         "accelerator_options": acc,
-        "do_ocr": False,
+        "do_ocr": ocr_options is not None,
         "do_table_structure": True,
         "do_formula_enrichment": bool(formula_enrichment),
         "do_code_enrichment": bool(code_enrichment),
@@ -80,6 +81,8 @@ def _apply_common_pdf_options(
         "generate_parsed_pages": False,
         "allow_external_plugins": True,
     }
+    if ocr_options is not None:
+        option_kwargs["ocr_options"] = ocr_options
     if LayoutOptions is not None and _supports_kwarg(options_cls, "layout_options"):
         option_kwargs["layout_options"] = LayoutOptions()
     if _supports_kwarg(options_cls, "table_structure_options"):
@@ -167,6 +170,8 @@ def build_layout_pipeline(
     images_scale: float = 1.25,
     formula_enrichment: bool = False,
     code_enrichment: bool = False,
+    options_hook: Callable[[PdfPipelineOptions], None] | None = None,
+    ocr_options=None,
 ) -> Tuple[object, PdfPipelineOptions]:
     """Create a Docling layout-only PDF pipeline."""
 
@@ -176,7 +181,12 @@ def build_layout_pipeline(
         images_scale=float(images_scale),
         formula_enrichment=formula_enrichment,
         code_enrichment=code_enrichment,
+        ocr_options=ocr_options,
     )
+    # Opt-in benchmarks may adjust options before models are initialized.
+    # With no hook, the production options and construction order are unchanged.
+    if options_hook is not None:
+        options_hook(opts)
 
     try:
         from docling.pipelines.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore

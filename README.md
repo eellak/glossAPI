@@ -38,6 +38,8 @@ PY
 ### Corpus usage contract
 `Corpus` is the organizing surface: keep contributions wired through the phase methods (`download()`, `extract()`, `clean()`, `ocr()`, `section()`, `annotate()`, `export/jsonl*()`). The intended use is a short script chaining those calls; avoid bespoke monkeypatches or side channels so resumability and artifact layout stay consistent.
 
+`Corpus.extract(batched=None)` defaults to layout batch 8 with 8 rasteriser workers for single-device, layout-only Docling on CUDA; safe PyPDFium and multi-GPU runs stay sequential by default.
+
 ## Automated Environment Profiles
 
 Use `dependency_setup/setup_glossapi.sh` for the Docling environment, or `dependency_setup/setup_deepseek_uv.sh` for the dedicated DeepSeek OCR runtime:

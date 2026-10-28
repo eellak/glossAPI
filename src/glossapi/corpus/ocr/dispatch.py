@@ -12,6 +12,7 @@ def run_deepseek_ocr(
     *,
     request: OcrRequest,
     filenames: list[str],
+    page_ranges: list[str] | None = None,
 ) -> None:
     _deepseek_runner.run_for_files(
         context,
@@ -46,4 +47,5 @@ def run_deepseek_ocr(
         shard_pages=request.shard_pages,
         shard_threshold_pages=request.shard_threshold_pages,
         content_debug=request.content_debug,
+        **({"page_ranges": page_ranges} if page_ranges else {}),
     )

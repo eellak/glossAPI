@@ -209,3 +209,25 @@ def test_ocr_pipeline_exports_cleaned_and_raw_text_side_by_side(tmp_path, monkey
     assert record["ocr_success"] is True
     assert record["extraction_mode"] == "deepseek"
     assert record["page_count"] == 2
+
+
+def test_math_only_forwards_page_routing_to_upstream_selection(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from glossapi.corpus import phase_ocr_math
+
+    corpus = _mk_corpus(tmp_path)
+    calls = []
+
+    def select(context, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            bad_files=[], math_done_stems=set(), skip_mgr=None,
+            skiplist_path=tmp_path / "skiplist.txt",
+        )
+
+    monkeypatch.setattr(phase_ocr_math, "build_ocr_selection", select)
+    monkeypatch.setattr(phase_ocr_math, "discover_docling_json_stems", lambda root: [])
+    monkeypatch.setattr(corpus, "_run_math_targets", lambda **kwargs: None)
+    corpus.ocr(mode="math_only", page_routing="all", fix_bad=False)
+
+    assert calls == [dict(mode="math_only", page_routing="all", reprocess_completed=False)]

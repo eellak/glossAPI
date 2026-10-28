@@ -14,11 +14,14 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from glossapi.ocr.deepseek.scheduling import (
     SourceDocument,
+    BatchPlan,
+    WorkSlice,
     assign_batches_to_lanes,
     build_exact_fill_batches,
     build_fixed_shard_slices,
@@ -66,6 +69,10 @@ REASSEMBLED_CONFIG_KEYS = (
     "gpu_memory_utilization",
     "disable_fp8_kv",
     "repair_mode",
+    "enable_approx_repeat_early_stop",
+    "approx_repeat_max_period",
+    "approx_repeat_max_frac",
+    "approx_repeat_min_k",
 )
 
 
@@ -105,6 +112,10 @@ def _build_cli_command(
     gpu_memory_utilization: Optional[float],
     disable_fp8_kv: bool,
     repair_mode: Optional[str],
+    enable_approx_repeat_early_stop: bool = False,
+    approx_repeat_max_period: Optional[int] = None,
+    approx_repeat_max_frac: Optional[float] = None,
+    approx_repeat_min_k: Optional[int] = None,
     repair_exec_batch_target_pages: Optional[int] = None,
     repair_exec_batch_target_items: Optional[int] = None,
     work_db: Optional[Path] = None,
@@ -179,6 +190,14 @@ def _build_cli_command(
             cmd.append("--disable-fp8-kv")
         if repair_mode:
             cmd += ["--repair-mode", str(repair_mode)]
+        if enable_approx_repeat_early_stop:
+            cmd.append("--enable-approx-repeat-early-stop")
+            if approx_repeat_max_period is not None:
+                cmd += ["--approx-repeat-max-period", str(int(approx_repeat_max_period))]
+            if approx_repeat_max_frac is not None:
+                cmd += ["--approx-repeat-max-frac", str(float(approx_repeat_max_frac))]
+            if approx_repeat_min_k is not None:
+                cmd += ["--approx-repeat-min-k", str(int(approx_repeat_min_k))]
         if repair_exec_batch_target_pages is not None:
             cmd += ["--repair-exec-batch-target-pages", str(int(repair_exec_batch_target_pages))]
         if repair_exec_batch_target_items is not None:
@@ -275,15 +294,20 @@ def _run_cli(
     gpu_memory_utilization: Optional[float],
     disable_fp8_kv: bool,
     repair_mode: Optional[str],
+    enable_approx_repeat_early_stop: bool = False,
+    approx_repeat_max_period: Optional[int] = None,
+    approx_repeat_max_frac: Optional[float] = None,
+    approx_repeat_min_k: Optional[int] = None,
     repair_exec_batch_target_pages: Optional[int],
     repair_exec_batch_target_items: Optional[int],
     visible_device: Optional[int] = None,
+    page_ranges: Optional[List[str]] = None,
 ) -> None:
     cmd = _build_cli_command(
         input_dir=input_dir,
         output_dir=output_dir,
         files=files,
-        page_ranges=None,
+        page_ranges=page_ranges,
         model_dir=model_dir,
         python_bin=python_bin,
         script=script,
@@ -305,6 +329,10 @@ def _run_cli(
         gpu_memory_utilization=gpu_memory_utilization,
         disable_fp8_kv=disable_fp8_kv,
         repair_mode=repair_mode,
+        enable_approx_repeat_early_stop=enable_approx_repeat_early_stop,
+        approx_repeat_max_period=approx_repeat_max_period,
+        approx_repeat_max_frac=approx_repeat_max_frac,
+        approx_repeat_min_k=approx_repeat_min_k,
         repair_exec_batch_target_pages=repair_exec_batch_target_pages,
         repair_exec_batch_target_items=repair_exec_batch_target_items,
     )
@@ -472,6 +500,44 @@ def _resolve_scheduler(
     return "whole_doc"
 
 
+def _restrict_batches_to_page_ranges(
+    batches: List[BatchPlan], page_ranges: Optional[List[str]],
+) -> List[BatchPlan]:
+    """Intersect planned slices with explicit source ranges, never adding pages."""
+    if not page_ranges:
+        return batches
+    selected: Dict[str, List[tuple[int, int]]] = {}
+    for spec in page_ranges:
+        name, first, last = spec.rsplit(":", 2)
+        start, end = int(first), int(last)
+        if start < 1 or end < start:
+            raise ValueError(f"Invalid page range: {spec}")
+        selected.setdefault(name, []).append((start, end))
+    names = {item.source_name for batch in batches for item in batch.items}
+    if set(selected) - names:
+        raise ValueError("Page ranges refer to files outside the OCR targets")
+    for intervals in selected.values():
+        intervals.sort()
+        if any(b[0] <= a[1] for a, b in zip(intervals, intervals[1:])):
+            raise ValueError("OCR page ranges must not overlap")
+    result: List[BatchPlan] = []
+    for batch in batches:
+        items: List[WorkSlice] = []
+        for item in batch.items:
+            if item.source_name not in selected:
+                items.append(item)
+                continue
+            for start, end in selected[item.source_name]:
+                if end > item.source_pages:
+                    raise ValueError("OCR page range exceeds source page count/max_pages")
+                first, last = max(start, item.start_page), min(end, item.end_page)
+                if first <= last:
+                    items.append(WorkSlice(item.source_name, item.source_pages, first, last))
+        if items:
+            result.append(BatchPlan(batch.batch_id, items))
+    return result
+
+
 def _plan_lane_batches(
     *,
     file_list: List[str],
@@ -484,6 +550,7 @@ def _plan_lane_batches(
     target_batch_pages: int,
     shard_pages: int,
     shard_threshold_pages: int,
+    page_ranges: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     documents = _source_documents(
         file_list=file_list,
@@ -514,6 +581,7 @@ def _plan_lane_batches(
             slices,
             target_batch_pages=max(1, int(target_batch_pages)),
         )
+    batches = _restrict_batches_to_page_ranges(batches, page_ranges)
     lanes = assign_batches_to_lanes(
         batches,
         devices=lane_devices,
@@ -534,6 +602,7 @@ def _plan_work_batches(
     target_batch_pages: int,
     shard_pages: int,
     shard_threshold_pages: int,
+    page_ranges: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     documents = _source_documents(
         file_list=file_list,
@@ -564,6 +633,7 @@ def _plan_work_batches(
             slices,
             target_batch_pages=max(1, int(target_batch_pages)),
         )
+    batches = _restrict_batches_to_page_ranges(batches, page_ranges)
     return [batch.to_dict() for batch in batches if int(batch.pages) > 0]
 
 
@@ -902,18 +972,197 @@ def _archive_shard_artifact(*, out_root: Path, source_path: Path, relative_path:
     source_path.replace(archive_path)
 
 
+def _clear_previous_page_shards(*, out_root: Path, file_list: List[str]) -> None:
+    """Remove only target stems' live shards before dispatch; keep canonical files."""
+    stems = {Path(name).stem for name in file_list}
+    for directory, suffix in ((out_root / "markdown", ".md"),
+                              (out_root / "json" / "metrics", ".metrics.json")):
+        for path in directory.glob(f"*__p*{suffix}"):
+            meta = _parse_shard_stem(path.name.removesuffix(suffix))
+            if meta is not None and meta["source_stem"] in stems:
+                path.unlink()
+
+
+def _docling_item_markdown_span(
+    item: Dict[str, Any], markdown: str, cursor: int,
+) -> tuple[int, int]:
+    """Locate an item's existing Markdown without re-exporting its formatting."""
+    if "data" in item and "table_cells" in item["data"]:
+        cells = [str(cell.get("text", "")).strip() for cell in item["data"]["table_cells"]]
+        # A table is one indivisible block, including its Markdown header rule.
+        for match in re.finditer(r"(?m)^[ \t]*\|[^\n]*\|[ \t]*(?:\n[ \t]*\|[^\n]*\|[ \t]*)*", markdown):
+            if match.start() < cursor:
+                continue
+            rendered_cells = []
+            for line in match.group().splitlines():
+                row = [cell.strip() for cell in line.strip().strip("|").split("|")]
+                if all(re.fullmatch(r":?-+:?", cell) for cell in row):
+                    continue
+                rendered_cells.extend(row)
+            if any(cells) and rendered_cells == cells:
+                return match.start(), match.end()
+        raise ValueError("Docling table cannot be matched to existing Markdown")
+    text = str(item.get("text", ""))
+    if not text:
+        raise ValueError("Docling item has no matchable Markdown text")
+    offset = markdown.find(text, cursor)
+    if offset < 0:
+        raise ValueError("Docling text cannot be matched to existing Markdown")
+    # Retain the whole line, including heading/list/emphasis syntax.
+    start = markdown.rfind("\n", 0, offset) + 1
+    end = markdown.find("\n", offset + len(text))
+    end = len(markdown) if end < 0 else end
+    prefix, suffix = markdown[start:offset], markdown[offset + len(text):end]
+    if (not re.fullmatch(r"[ \t]*(?:(?:#{1,6}|[-+*]|\d+[.)])[ \t]+)?[*_`]*", prefix)
+            or not re.fullmatch(r"[*_` \t]*", suffix)):
+        raise ValueError("Unmapped content on a Docling text item's Markdown line")
+    return start, end
+
+
+def _docling_markdown_pages(
+    *, out_root: Path, source_stem: str, markdown: str, page_count: int,
+) -> Optional[List[str]]:
+    """Split existing Markdown only when ordered JSON provenance maps all content.
+
+    Ambiguous, crossing-page or unmatched items return None so the caller retains
+    the original whole. No Docling dependency or Markdown re-export is required.
+    """
+    for suffix in (".docling.json", ".docling.json.zst"):
+        path = out_root / "json" / f"{source_stem}{suffix}"
+        if not path.exists():
+            continue
+        try:
+            data = path.read_bytes()
+            if suffix.endswith(".zst"):
+                import zstandard
+
+                with zstandard.ZstdDecompressor().stream_reader(data) as reader:
+                    data = reader.read()
+            document = json.loads(data)
+            items: List[Dict[str, Any]] = []
+            visited: set[str] = set()
+
+            def visit(node: Dict[str, Any]) -> None:
+                if "$ref" in node:
+                    ref = str(node["$ref"])
+                    if ref in visited:
+                        raise ValueError("Repeated Docling item reference")
+                    visited.add(ref)
+                    resolved = document
+                    for part in ref.removeprefix("#/").split("/"):
+                        resolved = resolved[int(part)] if isinstance(resolved, list) else resolved[part]
+                    node = resolved
+                if node.get("text") or "data" in node or node.get("label") == "picture":
+                    items.append(node)
+                for child in node.get("children", []):
+                    visit(child)
+
+            visit(document["body"])
+            starts: Dict[int, int] = {}
+            cursor = 0
+            previous_page = 0
+            for item in items:
+                pages = {int(prov["page_no"]) for prov in item.get("prov", [])}
+                if len(pages) != 1:
+                    raise ValueError("Missing or crossing-page Docling provenance")
+                page = pages.pop()
+                if not previous_page <= page <= page_count or page < 1:
+                    raise ValueError("Docling provenance is not in page order")
+                start, end = _docling_item_markdown_span(item, markdown, cursor)
+                if start < cursor or markdown[cursor:start].strip():
+                    raise ValueError("Unmapped Markdown between Docling items")
+                starts.setdefault(page, cursor)
+                cursor, previous_page = end, page
+            if not starts or markdown[cursor:].strip():
+                raise ValueError("Unmapped Markdown after Docling items")
+            result = [""] * page_count
+            ordered = list(starts.items())
+            for index, (page, start) in enumerate(ordered):
+                end = ordered[index + 1][1] if index + 1 < len(ordered) else len(markdown)
+                result[page - 1] = markdown[start:end]
+            return result
+        except Exception as exc:
+            LOGGER.warning("Cannot derive Markdown page boundaries from %s: %s", path, exc)
+    return None
+
+
+def _existing_markdown_pages(markdown: str, page_count: int) -> Optional[List[str]]:
+    """Accept complete ordered page markers, never an appended OCR supplement."""
+    if "<!-- ocr-pages:" in markdown:
+        return None
+    markers = list(re.finditer(r"(?m)^[ \t]*<!-- page:(\d+) -->[ \t]*\n(?:<--- Page Split --->\n)?", markdown))
+    if markers:
+        numbers = [int(marker.group(1)) for marker in markers]
+        if numbers == list(range(2, page_count + 1)):
+            pages = [markdown[:markers[0].start()].rstrip("\n")]
+        elif numbers == list(range(1, page_count + 1)) and not markdown[:markers[0].start()].strip():
+            pages = []
+        else:
+            return None
+        for index, marker in enumerate(markers):
+            end = markers[index + 1].start() if index + 1 < len(markers) else len(markdown)
+            pages.append(markdown[marker.end():end].rstrip("\n"))
+        return pages
+    pages = _split_page_outputs(markdown)
+    return pages if len(pages) == page_count else None
+
+
+def _retained_native_markdown(*, out_root: Path, source_stem: str) -> str:
+    """Save pre-OCR Markdown once; generated canonical text is never the baseline.
+
+    An older supplement without its native snapshot cannot safely establish a
+    pre-OCR baseline. Refuse it rather than retaining obsolete generated text.
+    Independent OCR runs must not share an output directory.
+    """
+    native_path = out_root / "sidecars" / "ocr_native" / f"{source_stem}.md"
+    canonical_path = out_root / "markdown" / f"{source_stem}.md"
+    if native_path.exists():
+        original = native_path.read_text(encoding="utf-8")
+    else:
+        if not canonical_path.exists():
+            raise FileNotFoundError(f"Partial OCR requires retained native Markdown for {source_stem}")
+        payload = canonical_path.read_bytes()
+        original = payload.decode("utf-8")
+        if "<!-- ocr-pages:" in original:
+            raise FileNotFoundError(f"Partial OCR requires retained native Markdown for {source_stem}; "
+                                    "canonical Markdown already contains an OCR supplement")
+        if original.strip():
+            native_path.parent.mkdir(parents=True, exist_ok=True)
+            with native_path.open("xb") as handle:
+                handle.write(payload)
+    if not original.strip():
+        raise FileNotFoundError(f"Partial OCR requires nonempty retained native Markdown for {source_stem}")
+    return original
+
+
+def _previous_ocr_pages(*, state_path: Path, page_count: int) -> Dict[int, Dict[str, str]]:
+    """Keep generated page replacements separate from immutable native Markdown."""
+    if not state_path.exists():
+        return {}
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if state["page_count"] != page_count:
+        raise RuntimeError(f"OCR page-state count mismatch: {state_path}")
+    pages = {int(page): entry for page, entry in state["pages"].items()}
+    if any(not 1 <= page <= page_count or not isinstance(entry.get("text"), str)
+           or not re.fullmatch(r"[0-9a-f]{32}", entry.get("run_id", ""))
+           for page, entry in pages.items()):
+        raise RuntimeError(f"Invalid OCR page state: {state_path}")
+    return pages
+
+
 def _reassemble_canonical_output_for_source(
     *,
     out_root: Path,
     pdf_path: Path,
     source_name: str,
+    selected_ranges: Optional[List[tuple[int, int]]] = None,
 ) -> bool:
     md_dir = out_root / "markdown"
     metrics_dir = out_root / "json" / "metrics"
     source_stem = Path(source_name).stem
     canonical_md = md_dir / f"{source_stem}.md"
     canonical_metrics = metrics_dir / f"{source_stem}.metrics.json"
-    if canonical_md.exists() and canonical_metrics.exists():
+    if not selected_ranges and canonical_md.exists() and canonical_metrics.exists():
         return True
 
     shard_records: List[Dict[str, Any]] = []
@@ -923,11 +1172,13 @@ def _reassemble_canonical_output_for_source(
         if not shard_md.exists():
             continue
         shard_meta = _parse_shard_stem(shard_stem)
-        if shard_meta is None:
+        if shard_meta is None or shard_meta["source_stem"] != source_stem:
             continue
         metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
         start_page = int(metrics.get("source_start_page", shard_meta["start_page"]))
         end_page = int(metrics.get("source_end_page", shard_meta["end_page"]))
+        if selected_ranges and not any(first <= start_page <= end_page <= last for first, last in selected_ranges):
+            continue
         shard_records.append(
             {
                 "stem": shard_stem,
@@ -940,11 +1191,52 @@ def _reassemble_canonical_output_for_source(
         )
 
     if not shard_records:
+        # Multi-worker planning represents an all-pages selection as a full
+        # document, which writes canonical artifacts directly instead of shards.
+        if (selected_ranges == [(1, int(_page_count(pdf_path)))]
+                and canonical_md.exists() and canonical_metrics.exists()):
+            return True
         return False
+
+    produced: set[int] = set()
+    for shard in shard_records:
+        pages = set(range(int(shard["start_page"]), int(shard["end_page"]) + 1))
+        if produced & pages:
+            raise RuntimeError(f"Overlapping OCR shards for {source_name}")
+        produced.update(pages)
+    if selected_ranges:
+        expected = {p for first, last in selected_ranges for p in range(first, last + 1)}
+        if produced != expected:
+            raise RuntimeError(f"Incomplete selected OCR pages for {source_name}")
 
     shard_records.sort(key=lambda item: (int(item["start_page"]), int(item["end_page"]), str(item["stem"])))
     page_count = max(int(_page_count(pdf_path)), max(int(item["end_page"]) for item in shard_records))
     merged_pages = [""] * int(page_count)
+    retained_whole: Optional[str] = None
+    kept_markdown_source = "all_pages_ocr"
+    partial = bool(selected_ranges) and produced != set(range(1, page_count + 1))
+    state_path = out_root / "sidecars" / "ocr_pages" / f"{source_stem}.json"
+    previous_pages: Dict[int, Dict[str, str]] = {}
+    run_id = uuid.uuid4().hex
+    if partial:
+        original = _retained_native_markdown(out_root=out_root, source_stem=source_stem)
+        previous_pages = _previous_ocr_pages(state_path=state_path, page_count=page_count)
+        original_pages = _existing_markdown_pages(original, page_count)
+        if original_pages is not None:
+            merged_pages = original_pages
+            kept_markdown_source = "page_markers"
+        else:
+            docling_pages = _docling_markdown_pages(
+                out_root=out_root, source_stem=source_stem, markdown=original, page_count=page_count,
+            )
+            if docling_pages is not None:
+                merged_pages = docling_pages
+                kept_markdown_source = "docling_json_provenance"
+            else:
+                retained_whole = original
+                kept_markdown_source = "existing_markdown_whole_plus_ocr"
+        for page, entry in previous_pages.items():
+            merged_pages[page - 1] = entry["text"]
     merged_page_metrics: List[Optional[Dict[str, Any]]] = [None] * int(page_count)
     merged_extra_metrics: Dict[str, Any] = {}
     repair_totals: Dict[str, int] = {}
@@ -995,6 +1287,7 @@ def _reassemble_canonical_output_for_source(
             "reassembled_from_shards": True,
             "reassembled_shard_count": len(shard_records),
             "reassembled_source_ranges": reassembled_ranges,
+            "kept_markdown_source": kept_markdown_source,
             "render_sec": float(render_sec_total),
             "infer_sec_total": float(infer_sec_total),
             "wall_time_sec": float(wall_time_sec_total),
@@ -1008,7 +1301,25 @@ def _reassemble_canonical_output_for_source(
             **{key: int(value) for key, value in repair_totals.items()},
         }
 
+    if partial:
+        previous_pages.update({page: {"text": merged_pages[page - 1], "run_id": run_id}
+                               for page in produced})
+        merged_extra_metrics["ocr_run_id"] = run_id
+        merged_extra_metrics["native_markdown_path"] = str(
+            Path("sidecars") / "ocr_native" / f"{source_stem}.md")
     merged_markdown = _join_page_outputs(merged_pages) if merged_pages else "[[Blank page]]"
+    if retained_whole is not None:
+        from glossapi.page_quality import compress_page_ranges
+
+        # Rebuild one supplement in page order from current replacements. The
+        # marker identifies this assembly; page state retains each producing run.
+        page_set = compress_page_ranges(previous_pages)
+        sections = [f"<!-- page:{page} -->\n{previous_pages[page]['text']}" for page in sorted(previous_pages)]
+        marker = f"pages={page_set} run_id={run_id}"
+        merged_markdown = (retained_whole + f"\n\n<!-- ocr-pages: {page_set} -->\n"
+                           + f"<!-- ocr-supplement-begin: {marker} -->\n"
+                           + "\n\n".join(sections)
+                           + f"\n<!-- ocr-supplement-end: {marker} -->\n<!-- /ocr-pages -->\n")
     _write_outputs(
         output_dir=out_root,
         stem=source_stem,
@@ -1016,6 +1327,14 @@ def _reassemble_canonical_output_for_source(
         page_count=int(page_count),
         extra_metrics=merged_extra_metrics,
     )
+    if partial:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = state_path.with_suffix(f".{run_id}.tmp")
+        try:
+            temporary.write_text(json.dumps({"page_count": page_count, "pages": previous_pages}), encoding="utf-8")
+            temporary.replace(state_path)
+        finally:
+            temporary.unlink(missing_ok=True)
     for shard in shard_records:
         _archive_shard_artifact(
             out_root=out_root,
@@ -1030,16 +1349,21 @@ def _reassemble_canonical_output_for_source(
     return True
 
 
-def _ensure_canonical_outputs(*, out_root: Path, pdf_root: Path, file_list: List[str]) -> None:
+def _ensure_canonical_outputs(*, out_root: Path, pdf_root: Path, file_list: List[str],
+                              page_ranges: Optional[List[str]] = None) -> None:
+    """Reassemble nonoverlapping current shards while retaining kept Markdown."""
+    selected: Dict[str, List[tuple[int, int]]] = {}
+    for spec in page_ranges or []:
+        name, first, last = spec.rsplit(":", 2)
+        selected.setdefault(name, []).append((int(first), int(last)))
     for name in file_list:
         pdf_path = (pdf_root / name).resolve()
-        if _reassemble_canonical_output_for_source(
-            out_root=out_root,
-            pdf_path=pdf_path,
-            source_name=name,
-        ):
-            continue
-
+        assembled = _reassemble_canonical_output_for_source(
+            out_root=out_root, pdf_path=pdf_path, source_name=name,
+            selected_ranges=selected.get(name),
+        )
+        if name in selected and not assembled:
+            raise FileNotFoundError(f"No selected OCR shards produced for {name}")
 
 
 def _run_multi_cli(
@@ -1070,12 +1394,17 @@ def _run_multi_cli(
     gpu_memory_utilization: Optional[float],
     disable_fp8_kv: bool,
     repair_mode: Optional[str],
+    enable_approx_repeat_early_stop: bool,
+    approx_repeat_max_period: Optional[int],
+    approx_repeat_max_frac: Optional[float],
+    approx_repeat_min_k: Optional[int],
     repair_exec_batch_target_pages: Optional[int],
     repair_exec_batch_target_items: Optional[int],
     scheduler: Optional[str],
     target_batch_pages: int,
     shard_pages: int,
     shard_threshold_pages: int,
+    page_ranges: Optional[List[str]] = None,
 ) -> None:
     if str(runtime_backend or "").strip().lower() == "vllm":
         batches = _plan_work_batches(
@@ -1089,6 +1418,7 @@ def _run_multi_cli(
             target_batch_pages=target_batch_pages,
             shard_pages=shard_pages,
             shard_threshold_pages=shard_threshold_pages,
+            page_ranges=page_ranges,
         )
         if not batches:
             return
@@ -1161,6 +1491,10 @@ def _run_multi_cli(
                 gpu_memory_utilization=gpu_memory_utilization,
                 disable_fp8_kv=disable_fp8_kv,
                 repair_mode=repair_mode,
+                enable_approx_repeat_early_stop=enable_approx_repeat_early_stop,
+                approx_repeat_max_period=approx_repeat_max_period,
+                approx_repeat_max_frac=approx_repeat_max_frac,
+                approx_repeat_min_k=approx_repeat_min_k,
                 repair_exec_batch_target_pages=repair_exec_batch_target_pages,
                 repair_exec_batch_target_items=repair_exec_batch_target_items,
                 work_db=work_db,
@@ -1264,6 +1598,7 @@ def _run_multi_cli(
         target_batch_pages=target_batch_pages,
         shard_pages=shard_pages,
         shard_threshold_pages=shard_threshold_pages,
+        page_ranges=page_ranges,
     )
     if not lanes:
         return
@@ -1318,6 +1653,10 @@ def _run_multi_cli(
                 gpu_memory_utilization=gpu_memory_utilization,
                 disable_fp8_kv=disable_fp8_kv,
                 repair_mode=repair_mode,
+                enable_approx_repeat_early_stop=enable_approx_repeat_early_stop,
+                approx_repeat_max_period=approx_repeat_max_period,
+                approx_repeat_max_frac=approx_repeat_max_frac,
+                approx_repeat_min_k=approx_repeat_min_k,
                 repair_exec_batch_target_pages=repair_exec_batch_target_pages,
                 repair_exec_batch_target_items=repair_exec_batch_target_items,
             )
@@ -1379,15 +1718,20 @@ def run_for_files(
     disable_fp8_kv: bool = False,
     vllm_batch_size: Optional[int] = None,
     repair_mode: str = "auto",
+    enable_approx_repeat_early_stop: bool = False,
+    approx_repeat_max_period: Optional[int] = None,
+    approx_repeat_max_frac: Optional[float] = None,
+    approx_repeat_min_k: Optional[int] = None,
     repair_exec_batch_target_pages: Optional[int] = None,
     repair_exec_batch_target_items: Optional[int] = None,
     scheduler: str = "auto",
     target_batch_pages: int = AUTO_VLLM_BATCH_PAGE_CAP,
     shard_pages: int = 0,
     shard_threshold_pages: int = 0,
+    page_ranges: Optional[List[str]] = None,
     **_: Any,
 ) -> Dict[str, Any]:
-    """Run DeepSeek OCR for the provided files."""
+    """Run DeepSeek OCR; an empty page_ranges list dispatches whole documents."""
 
     requested_stub = bool(allow_stub)
     del allow_stub, allow_cli, persist_engine, precision
@@ -1404,6 +1748,9 @@ def run_for_files(
         raise ValueError("runtime_backend must be 'transformers' or 'vllm'")
 
     file_list = [str(f) for f in files or []]
+    range_files = {spec.rsplit(":", 2)[0] for spec in page_ranges or []}
+    if range_files - set(file_list):
+        raise ValueError("Page ranges refer to files outside the OCR targets")
     if not file_list:
         return {}
 
@@ -1414,6 +1761,16 @@ def run_for_files(
     metrics_dir = out_root / "json" / "metrics"
     md_dir.mkdir(parents=True, exist_ok=True)
     metrics_dir.mkdir(parents=True, exist_ok=True)
+
+    # Require retained content before any partial dispatch or shard cleanup.
+    # Full-document selections have no unselected pages to preserve.
+    selected: Dict[str, set[int]] = {}
+    for spec in page_ranges or []:
+        name, first, last = spec.rsplit(":", 2)
+        selected.setdefault(name, set()).update(range(int(first), int(last) + 1))
+    for name, pages in selected.items():
+        if pages != set(range(1, int(_page_count(pdf_root / name)) + 1)):
+            _retained_native_markdown(out_root=out_root, source_stem=Path(name).stem)
 
     model_root = Path(
         model_dir
@@ -1445,6 +1802,10 @@ def run_for_files(
         device=device,
     )
     multi_requested = str(use_gpus or "single").strip().lower() == "multi" or int(max(1, workers_per_gpu)) > 1
+    # Clear both Markdown and metrics, including interrupted/metrics-less shards.
+    # Only outputs written after this point may participate in reassembly.
+    if page_ranges:
+        _clear_previous_page_shards(out_root=out_root, file_list=file_list)
     if multi_requested and lane_devices:
         _run_multi_cli(
             input_root=pdf_root,
@@ -1473,12 +1834,17 @@ def run_for_files(
             gpu_memory_utilization=gpu_memory_utilization,
             disable_fp8_kv=disable_fp8_kv,
             repair_mode=repair_mode,
+            enable_approx_repeat_early_stop=enable_approx_repeat_early_stop,
+            approx_repeat_max_period=approx_repeat_max_period,
+            approx_repeat_max_frac=approx_repeat_max_frac,
+            approx_repeat_min_k=approx_repeat_min_k,
             repair_exec_batch_target_pages=repair_exec_batch_target_pages,
             repair_exec_batch_target_items=repair_exec_batch_target_items,
             scheduler=scheduler,
             target_batch_pages=int(max(1, target_batch_pages)),
             shard_pages=int(max(0, shard_pages)),
             shard_threshold_pages=int(max(0, shard_threshold_pages)),
+            page_ranges=page_ranges,
         )
     else:
         resolved_vllm_batch_size = (
@@ -1494,8 +1860,8 @@ def run_for_files(
         _run_cli(
             input_dir=pdf_root,
             output_dir=out_root,
-            files=file_list,
-            page_ranges=None,
+            files=[name for name in file_list if name not in range_files],
+            page_ranges=page_ranges,
             model_dir=model_root,
             python_bin=python_exe,
             script=script_path,
@@ -1517,11 +1883,15 @@ def run_for_files(
             gpu_memory_utilization=gpu_memory_utilization,
             disable_fp8_kv=disable_fp8_kv,
             repair_mode=repair_mode,
+            enable_approx_repeat_early_stop=enable_approx_repeat_early_stop,
+            approx_repeat_max_period=approx_repeat_max_period,
+            approx_repeat_max_frac=approx_repeat_max_frac,
+            approx_repeat_min_k=approx_repeat_min_k,
             repair_exec_batch_target_pages=repair_exec_batch_target_pages,
             repair_exec_batch_target_items=repair_exec_batch_target_items,
         )
 
-    _ensure_canonical_outputs(out_root=out_root, pdf_root=pdf_root, file_list=file_list)
+    _ensure_canonical_outputs(out_root=out_root, pdf_root=pdf_root, file_list=file_list, page_ranges=page_ranges)
 
     results: Dict[str, Any] = {}
     for name in file_list:

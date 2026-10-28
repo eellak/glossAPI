@@ -1,0 +1,45 @@
+{
+  "source_repository": "/Users/foivoskarounos-zamparloukos/Projects/greek-page-ocr",
+  "git_head": "78eba19ab0696bd00a0f4e99665bee0530a44665",
+  "files": {
+    "train/model.py": {
+      "sha256": "f6a98d5f9a236a3fbbeae30b6a3f1c5691388fcc9a54a89800d785fcd745fabf",
+      "destination": "model.py"
+    },
+    "train/ckpt_io.py": {
+      "sha256": "c32fe83bab4f7a5440ff54c041aa98243ab4c8d2ecd6539c6ced7081c3f5f101",
+      "destination": "ckpt_io.py"
+    },
+    "train/cer.py": {
+      "sha256": "4ac0bc16fa7380360eb30995184f00753b4394e436a2b3db3ec8fbbdafd5b331",
+      "destination": "codec.py"
+    },
+    "pipeline/strips.py": {
+      "sha256": "e9986428ed7d52319da6ffafa190fe5dd35bd6d5acb5806a57c2ff40ae58f898",
+      "destination": "strips.py"
+    },
+    "pipeline/recognize.py": {
+      "sha256": "17f79b55ccbc1b2324cfe8f78e0c00c17d57eb00511527dbc2e223b6a0f46e2d",
+      "destination": "inference.py"
+    },
+    "codec/v1.json": {
+      "sha256": "d1b7e2d40565e89e699f748692265e06e2d7028409b78d02d6df6f89b2e82a86",
+      "destination": "v1.json"
+    }
+  },
+  "adaptations": [
+    "Package-relative imports; removed non-compact registry entries and CLI selftests.",
+    "Removed unsafe checkpoint conversion; weights-only loading allowlists NumPy resume-state constructors.",
+    "No sys.path mutation; NFC greedy CTC and own-background padding retained.",
+    "CP-C1 L1: document restricted resume .pt loading and replace removed-converter recovery instructions with trusted safetensors export guidance; loader policy unchanged."
+  ],
+  "vendored_sha256": {
+    "__init__.py": "06ce64f68d9fc069b064b4538b4fe6a54afa86037c48bdfb1ecfb2c8c6dab08c",
+    "ckpt_io.py": "3f44d8149d07052f0826c275eef838fb1b3f0dadcc413330c143efb5fa6c1e5b",
+    "codec.py": "e6e15ad7e3d78cff8d348fdb84a06a52cfc5d39c55d1567f292e0ecb37b5399c",
+    "inference.py": "32029d9142dbf0da37f7fb47d43e7b2a0e6dbaeaee1a941844497e7f6896bc45",
+    "model.py": "90bcb3f9c1f1d593062145a5d23582eea862c4e98ab783bd0fd6cedf6adfb8ae",
+    "strips.py": "e9986428ed7d52319da6ffafa190fe5dd35bd6d5acb5806a57c2ff40ae58f898",
+    "v1.json": "d1b7e2d40565e89e699f748692265e06e2d7028409b78d02d6df6f89b2e82a86"
+  }
+}

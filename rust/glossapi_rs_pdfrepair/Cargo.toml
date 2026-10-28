@@ -1,0 +1,29 @@
+[package]
+name = "glossapi_rs_pdfrepair"
+version = "0.1.0"
+edition = "2021"
+license = "EUPL-1.2"
+description = "Decision-equivalent embedded-font ToUnicode repair"
+[lib]
+crate-type = ["cdylib", "rlib"]
+[[bin]]
+name = "pdfrepair"
+path = "src/main.rs"
+required-features = ["cli"]
+[features]
+default = ["python"]
+python = ["dep:pyo3", "pyo3/extension-module"]
+cli = []
+[dependencies]
+anyhow = "=1.0.98"
+flate2 = "=1.1.2"
+regex = "=1.11.1"
+once_cell = "=1.21.3"
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.141"
+pyo3 = { version = "0.19.2", features = ["abi3-py38"], optional = true }
+[profile.release]
+lto = true
+opt-level = 3
+[build-dependencies]
+pyo3-build-config = "=0.19.2"

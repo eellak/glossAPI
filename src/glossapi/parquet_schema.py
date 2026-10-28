@@ -264,6 +264,18 @@ class ParquetSchema:
                 ("badness_score", pa.float64()),
                 ("percentage_greek", pa.float64()),
                 ("percentage_latin", pa.float64()),
+                ("ocr_pages", pa.string()),
+                ("ocr_pages_count", pa.int64()),
+                ("ocr_pages_unflagged_count", pa.int64()),
+                ("extract_status", pa.string()),
+                ("page_count", pa.int64()),
+                ("pua_char_count", pa.int64()),
+                ("control_char_count", pa.int64()),
+                ("font_repair_status", pa.string()),
+                ("font_repair_backend", pa.string()),
+                ("font_repair_fonts", pa.int64()),
+                ("font_repair_valid_rate_before", pa.float64()),
+                ("font_repair_valid_rate_after", pa.float64()),
             ]
         )
     else:  # pragma: no cover - pyarrow not installed
@@ -414,10 +426,20 @@ class ParquetSchema:
                 
                 # Add missing columns with default values
                 for col in missing_columns:
-                    if col in ['id', 'filename', 'title', 'section', 'predicted_section', 'download_error', 'file_ext']:
-                        df[col] = ''
-                    elif col in ['row_id', 'download_retry_count', 'source_row', 'url_index']:
+                    if col == "font_repair_backend":
+                        df[col] = "unknown"
+                    elif col == "font_repair_status":
+                        df[col] = "skipped"
+                    elif col == "font_repair_fonts":
                         df[col] = 0
+                    elif col in ("font_repair_valid_rate_before", "font_repair_valid_rate_after"):
+                        df[col] = float("nan")
+                    elif col in ['id', 'filename', 'title', 'section', 'predicted_section', 'download_error', 'file_ext', 'ocr_pages', 'extract_status']:
+                        df[col] = ''
+                    elif col in ['row_id', 'download_retry_count', 'source_row', 'url_index', 'ocr_pages_count', 'ocr_pages_unflagged_count']:
+                        df[col] = 0
+                    elif col in ['page_count', 'pua_char_count', 'control_char_count']:
+                        df[col] = pd.NA
                     elif col == 'download_success':
                         df[col] = False
                     elif col == 'is_duplicate':
@@ -591,7 +613,17 @@ class ParquetSchema:
             "filter": "ok",
             "extract_status": "",
             "extract_error": "",
+            "font_repair_status": "skipped",
+            "font_repair_backend": "unknown",
+            "font_repair_fonts": 0,
+            "font_repair_valid_rate_before": None,
+            "font_repair_valid_rate_after": None,
             "needs_ocr": False,
+            "ocr_pages": "",
+            "ocr_pages_count": 0,
+            "ocr_pages_unflagged_count": 0,
+            "pua_char_count": pd.NA,
+            "control_char_count": pd.NA,
             "ocr_success": False,
             "processing_stage": "",
             "mojibake_badness_score": pd.NA,
@@ -786,6 +818,23 @@ class ParquetSchema:
                 row["math_enriched"] = True
                 _append_stage(row, "math")
 
+        # Extraction worker sidecars also exist for failed/no-Markdown documents.
+        extraction_columns = ("extract_status", "page_count")
+        extract_dir = base_dir / "sidecars" / "extract"
+        for sidecar in sorted(extract_dir.glob("*.json")):
+            try:
+                payload = json.loads(sidecar.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    continue
+            except (OSError, ValueError):
+                continue
+            row = _row_for(sidecar.stem)
+            status = payload.get("extract_status") or payload.get("failure_mode")
+            if status:
+                row["extract_status"] = str(status)
+            if payload.get("page_count") is not None:
+                row["page_count"] = payload["page_count"]
+
         df_records = pd.DataFrame(list(records.values())) if records else pd.DataFrame()
         # Ensure column order is stable for readability
         ordered_columns = list(defaults.keys())
@@ -806,6 +855,11 @@ class ParquetSchema:
                 existing_idx = existing_df.set_index("filename", drop=False)
                 base_idx = base_idx.combine_first(existing_idx)
                 base_idx.update(existing_idx)
+                # Fresh extraction evidence wins over older parquet state.
+                evidence = df_records.set_index("filename")
+                for column in extraction_columns:
+                    known = evidence[column].notna() & (evidence[column] != "")
+                    base_idx.loc[evidence.index[known], column] = evidence.loc[known, column]
                 combined = base_idx.reset_index(drop=True)
             elif combined.empty:
                 combined = existing_df.copy()
@@ -1027,10 +1081,20 @@ class ParquetSchema:
                 
                 # Add missing columns with default values
                 for col in missing_columns:
-                    if col in ['id', 'filename', 'title', 'section', 'predicted_section', 'download_error', 'file_ext']:
-                        df_copy[col] = ''
-                    elif col in ['row_id', 'download_retry_count', 'source_row', 'url_index']:
+                    if col == "font_repair_backend":
+                        df_copy[col] = "unknown"
+                    elif col == "font_repair_status":
+                        df_copy[col] = "skipped"
+                    elif col == "font_repair_fonts":
                         df_copy[col] = 0
+                    elif col in ("font_repair_valid_rate_before", "font_repair_valid_rate_after"):
+                        df_copy[col] = float("nan")
+                    elif col in ['id', 'filename', 'title', 'section', 'predicted_section', 'download_error', 'file_ext', 'ocr_pages', 'extract_status']:
+                        df_copy[col] = ''
+                    elif col in ['row_id', 'download_retry_count', 'source_row', 'url_index', 'ocr_pages_count', 'ocr_pages_unflagged_count']:
+                        df_copy[col] = 0
+                    elif col in ['page_count', 'pua_char_count', 'control_char_count']:
+                        df_copy[col] = pd.NA
                     elif col == 'download_success':
                         df_copy[col] = False
                     elif col == 'is_duplicate':

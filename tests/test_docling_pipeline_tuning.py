@@ -1,7 +1,19 @@
-from glossapi.ocr.docling import pipeline as docling_pipeline
+import importlib
+
+import pytest
+
+from glossapi.scripts.docling_cost_benchmark import fake_docling
 
 
-def test_apply_common_pdf_options_prefers_threaded_pipeline_options_when_available():
+@pytest.fixture
+def docling_pipeline():
+    # These tests exercise option wiring; use the existing offline fake rather
+    # than requiring the optional model stack just to collect the suite.
+    with fake_docling("baseline", {}):
+        yield importlib.import_module("glossapi.ocr.docling.pipeline")
+
+
+def test_apply_common_pdf_options_prefers_threaded_pipeline_options_when_available(docling_pipeline):
     acc, _ = docling_pipeline._resolve_accelerator("cuda:0")
     opts = docling_pipeline._apply_common_pdf_options(
         acc=acc,
@@ -14,7 +26,7 @@ def test_apply_common_pdf_options_prefers_threaded_pipeline_options_when_availab
     assert isinstance(opts, expected_cls)
 
 
-def test_apply_runtime_overrides_updates_docling_page_batch_size(monkeypatch):
+def test_apply_runtime_overrides_updates_docling_page_batch_size(monkeypatch, docling_pipeline):
     class Perf:
         page_batch_size = 4
 

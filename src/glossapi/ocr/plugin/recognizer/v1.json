@@ -1,0 +1,1742 @@
+{
+  "version": "v1",
+  "blank_id": 0,
+  "policy": {
+    "mark_order": "NFD canonical ordering; equal-ccc keeps source order (D-4a strict)",
+    "normalization": "NFD",
+    "note_decompositions": "U+037E -> ';', U+0387 -> U+00B7, ё/й/ї/ΐ/ΰ etc. -> base+mark",
+    "unknown_codepoint": "reject line at ingest (accounted)",
+    "whitespace": "runs collapse to U+0020"
+  },
+  "atoms": [
+    {
+      "id": 1,
+      "cp": "U+0020",
+      "ch": " ",
+      "kind": "space",
+      "script": "zyyy"
+    },
+    {
+      "id": 2,
+      "cp": "U+0041",
+      "ch": "A",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 3,
+      "cp": "U+0042",
+      "ch": "B",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 4,
+      "cp": "U+0043",
+      "ch": "C",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 5,
+      "cp": "U+0044",
+      "ch": "D",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 6,
+      "cp": "U+0045",
+      "ch": "E",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 7,
+      "cp": "U+0046",
+      "ch": "F",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 8,
+      "cp": "U+0047",
+      "ch": "G",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 9,
+      "cp": "U+0048",
+      "ch": "H",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 10,
+      "cp": "U+0049",
+      "ch": "I",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 11,
+      "cp": "U+004A",
+      "ch": "J",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 12,
+      "cp": "U+004B",
+      "ch": "K",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 13,
+      "cp": "U+004C",
+      "ch": "L",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 14,
+      "cp": "U+004D",
+      "ch": "M",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 15,
+      "cp": "U+004E",
+      "ch": "N",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 16,
+      "cp": "U+004F",
+      "ch": "O",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 17,
+      "cp": "U+0050",
+      "ch": "P",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 18,
+      "cp": "U+0051",
+      "ch": "Q",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 19,
+      "cp": "U+0052",
+      "ch": "R",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 20,
+      "cp": "U+0053",
+      "ch": "S",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 21,
+      "cp": "U+0054",
+      "ch": "T",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 22,
+      "cp": "U+0055",
+      "ch": "U",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 23,
+      "cp": "U+0056",
+      "ch": "V",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 24,
+      "cp": "U+0057",
+      "ch": "W",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 25,
+      "cp": "U+0058",
+      "ch": "X",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 26,
+      "cp": "U+0059",
+      "ch": "Y",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 27,
+      "cp": "U+005A",
+      "ch": "Z",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 28,
+      "cp": "U+0061",
+      "ch": "a",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 29,
+      "cp": "U+0062",
+      "ch": "b",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 30,
+      "cp": "U+0063",
+      "ch": "c",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 31,
+      "cp": "U+0064",
+      "ch": "d",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 32,
+      "cp": "U+0065",
+      "ch": "e",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 33,
+      "cp": "U+0066",
+      "ch": "f",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 34,
+      "cp": "U+0067",
+      "ch": "g",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 35,
+      "cp": "U+0068",
+      "ch": "h",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 36,
+      "cp": "U+0069",
+      "ch": "i",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 37,
+      "cp": "U+006A",
+      "ch": "j",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 38,
+      "cp": "U+006B",
+      "ch": "k",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 39,
+      "cp": "U+006C",
+      "ch": "l",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 40,
+      "cp": "U+006D",
+      "ch": "m",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 41,
+      "cp": "U+006E",
+      "ch": "n",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 42,
+      "cp": "U+006F",
+      "ch": "o",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 43,
+      "cp": "U+0070",
+      "ch": "p",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 44,
+      "cp": "U+0071",
+      "ch": "q",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 45,
+      "cp": "U+0072",
+      "ch": "r",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 46,
+      "cp": "U+0073",
+      "ch": "s",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 47,
+      "cp": "U+0074",
+      "ch": "t",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 48,
+      "cp": "U+0075",
+      "ch": "u",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 49,
+      "cp": "U+0076",
+      "ch": "v",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 50,
+      "cp": "U+0077",
+      "ch": "w",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 51,
+      "cp": "U+0078",
+      "ch": "x",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 52,
+      "cp": "U+0079",
+      "ch": "y",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 53,
+      "cp": "U+007A",
+      "ch": "z",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 54,
+      "cp": "U+00C6",
+      "ch": "Æ",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 55,
+      "cp": "U+00DF",
+      "ch": "ß",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 56,
+      "cp": "U+00E6",
+      "ch": "æ",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 57,
+      "cp": "U+0152",
+      "ch": "Œ",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 58,
+      "cp": "U+0153",
+      "ch": "œ",
+      "kind": "base",
+      "script": "latn"
+    },
+    {
+      "id": 59,
+      "cp": "U+0391",
+      "ch": "Α",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 60,
+      "cp": "U+0392",
+      "ch": "Β",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 61,
+      "cp": "U+0393",
+      "ch": "Γ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 62,
+      "cp": "U+0394",
+      "ch": "Δ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 63,
+      "cp": "U+0395",
+      "ch": "Ε",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 64,
+      "cp": "U+0396",
+      "ch": "Ζ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 65,
+      "cp": "U+0397",
+      "ch": "Η",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 66,
+      "cp": "U+0398",
+      "ch": "Θ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 67,
+      "cp": "U+0399",
+      "ch": "Ι",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 68,
+      "cp": "U+039A",
+      "ch": "Κ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 69,
+      "cp": "U+039B",
+      "ch": "Λ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 70,
+      "cp": "U+039C",
+      "ch": "Μ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 71,
+      "cp": "U+039D",
+      "ch": "Ν",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 72,
+      "cp": "U+039E",
+      "ch": "Ξ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 73,
+      "cp": "U+039F",
+      "ch": "Ο",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 74,
+      "cp": "U+03A0",
+      "ch": "Π",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 75,
+      "cp": "U+03A1",
+      "ch": "Ρ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 76,
+      "cp": "U+03A3",
+      "ch": "Σ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 77,
+      "cp": "U+03A4",
+      "ch": "Τ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 78,
+      "cp": "U+03A5",
+      "ch": "Υ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 79,
+      "cp": "U+03A6",
+      "ch": "Φ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 80,
+      "cp": "U+03A7",
+      "ch": "Χ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 81,
+      "cp": "U+03A8",
+      "ch": "Ψ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 82,
+      "cp": "U+03A9",
+      "ch": "Ω",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 83,
+      "cp": "U+03B1",
+      "ch": "α",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 84,
+      "cp": "U+03B2",
+      "ch": "β",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 85,
+      "cp": "U+03B3",
+      "ch": "γ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 86,
+      "cp": "U+03B4",
+      "ch": "δ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 87,
+      "cp": "U+03B5",
+      "ch": "ε",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 88,
+      "cp": "U+03B6",
+      "ch": "ζ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 89,
+      "cp": "U+03B7",
+      "ch": "η",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 90,
+      "cp": "U+03B8",
+      "ch": "θ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 91,
+      "cp": "U+03B9",
+      "ch": "ι",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 92,
+      "cp": "U+03BA",
+      "ch": "κ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 93,
+      "cp": "U+03BB",
+      "ch": "λ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 94,
+      "cp": "U+03BC",
+      "ch": "μ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 95,
+      "cp": "U+03BD",
+      "ch": "ν",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 96,
+      "cp": "U+03BE",
+      "ch": "ξ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 97,
+      "cp": "U+03BF",
+      "ch": "ο",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 98,
+      "cp": "U+03C0",
+      "ch": "π",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 99,
+      "cp": "U+03C1",
+      "ch": "ρ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 100,
+      "cp": "U+03C2",
+      "ch": "ς",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 101,
+      "cp": "U+03C3",
+      "ch": "σ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 102,
+      "cp": "U+03C4",
+      "ch": "τ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 103,
+      "cp": "U+03C5",
+      "ch": "υ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 104,
+      "cp": "U+03C6",
+      "ch": "φ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 105,
+      "cp": "U+03C7",
+      "ch": "χ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 106,
+      "cp": "U+03C8",
+      "ch": "ψ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 107,
+      "cp": "U+03C9",
+      "ch": "ω",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 108,
+      "cp": "U+03D8",
+      "ch": "Ϙ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 109,
+      "cp": "U+03D9",
+      "ch": "ϙ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 110,
+      "cp": "U+03DA",
+      "ch": "Ϛ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 111,
+      "cp": "U+03DB",
+      "ch": "ϛ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 112,
+      "cp": "U+03DC",
+      "ch": "Ϝ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 113,
+      "cp": "U+03DD",
+      "ch": "ϝ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 114,
+      "cp": "U+03E0",
+      "ch": "Ϡ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 115,
+      "cp": "U+03E1",
+      "ch": "ϡ",
+      "kind": "base",
+      "script": "grek"
+    },
+    {
+      "id": 116,
+      "cp": "U+0404",
+      "ch": "Є",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 117,
+      "cp": "U+0406",
+      "ch": "І",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 118,
+      "cp": "U+0407",
+      "ch": "Ї",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 119,
+      "cp": "U+0410",
+      "ch": "А",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 120,
+      "cp": "U+0411",
+      "ch": "Б",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 121,
+      "cp": "U+0412",
+      "ch": "В",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 122,
+      "cp": "U+0413",
+      "ch": "Г",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 123,
+      "cp": "U+0414",
+      "ch": "Д",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 124,
+      "cp": "U+0415",
+      "ch": "Е",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 125,
+      "cp": "U+0416",
+      "ch": "Ж",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 126,
+      "cp": "U+0417",
+      "ch": "З",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 127,
+      "cp": "U+0418",
+      "ch": "И",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 128,
+      "cp": "U+041A",
+      "ch": "К",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 129,
+      "cp": "U+041B",
+      "ch": "Л",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 130,
+      "cp": "U+041C",
+      "ch": "М",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 131,
+      "cp": "U+041D",
+      "ch": "Н",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 132,
+      "cp": "U+041E",
+      "ch": "О",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 133,
+      "cp": "U+041F",
+      "ch": "П",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 134,
+      "cp": "U+0420",
+      "ch": "Р",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 135,
+      "cp": "U+0421",
+      "ch": "С",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 136,
+      "cp": "U+0422",
+      "ch": "Т",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 137,
+      "cp": "U+0423",
+      "ch": "У",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 138,
+      "cp": "U+0424",
+      "ch": "Ф",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 139,
+      "cp": "U+0425",
+      "ch": "Х",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 140,
+      "cp": "U+0426",
+      "ch": "Ц",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 141,
+      "cp": "U+0427",
+      "ch": "Ч",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 142,
+      "cp": "U+0428",
+      "ch": "Ш",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 143,
+      "cp": "U+0429",
+      "ch": "Щ",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 144,
+      "cp": "U+042A",
+      "ch": "Ъ",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 145,
+      "cp": "U+042B",
+      "ch": "Ы",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 146,
+      "cp": "U+042C",
+      "ch": "Ь",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 147,
+      "cp": "U+042D",
+      "ch": "Э",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 148,
+      "cp": "U+042E",
+      "ch": "Ю",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 149,
+      "cp": "U+042F",
+      "ch": "Я",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 150,
+      "cp": "U+0430",
+      "ch": "а",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 151,
+      "cp": "U+0431",
+      "ch": "б",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 152,
+      "cp": "U+0432",
+      "ch": "в",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 153,
+      "cp": "U+0433",
+      "ch": "г",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 154,
+      "cp": "U+0434",
+      "ch": "д",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 155,
+      "cp": "U+0435",
+      "ch": "е",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 156,
+      "cp": "U+0436",
+      "ch": "ж",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 157,
+      "cp": "U+0437",
+      "ch": "з",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 158,
+      "cp": "U+0438",
+      "ch": "и",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 159,
+      "cp": "U+043A",
+      "ch": "к",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 160,
+      "cp": "U+043B",
+      "ch": "л",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 161,
+      "cp": "U+043C",
+      "ch": "м",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 162,
+      "cp": "U+043D",
+      "ch": "н",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 163,
+      "cp": "U+043E",
+      "ch": "о",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 164,
+      "cp": "U+043F",
+      "ch": "п",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 165,
+      "cp": "U+0440",
+      "ch": "р",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 166,
+      "cp": "U+0441",
+      "ch": "с",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 167,
+      "cp": "U+0442",
+      "ch": "т",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 168,
+      "cp": "U+0443",
+      "ch": "у",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 169,
+      "cp": "U+0444",
+      "ch": "ф",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 170,
+      "cp": "U+0445",
+      "ch": "х",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 171,
+      "cp": "U+0446",
+      "ch": "ц",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 172,
+      "cp": "U+0447",
+      "ch": "ч",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 173,
+      "cp": "U+0448",
+      "ch": "ш",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 174,
+      "cp": "U+0449",
+      "ch": "щ",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 175,
+      "cp": "U+044A",
+      "ch": "ъ",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 176,
+      "cp": "U+044B",
+      "ch": "ы",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 177,
+      "cp": "U+044C",
+      "ch": "ь",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 178,
+      "cp": "U+044D",
+      "ch": "э",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 179,
+      "cp": "U+044E",
+      "ch": "ю",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 180,
+      "cp": "U+044F",
+      "ch": "я",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 181,
+      "cp": "U+0454",
+      "ch": "є",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 182,
+      "cp": "U+0456",
+      "ch": "і",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 183,
+      "cp": "U+0490",
+      "ch": "Ґ",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 184,
+      "cp": "U+0491",
+      "ch": "ґ",
+      "kind": "base",
+      "script": "cyrl"
+    },
+    {
+      "id": 185,
+      "cp": "U+0300",
+      "ch": "̀",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 186,
+      "cp": "U+0301",
+      "ch": "́",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 187,
+      "cp": "U+0302",
+      "ch": "̂",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 188,
+      "cp": "U+0303",
+      "ch": "̃",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 189,
+      "cp": "U+0304",
+      "ch": "̄",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 190,
+      "cp": "U+0306",
+      "ch": "̆",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 191,
+      "cp": "U+0308",
+      "ch": "̈",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 192,
+      "cp": "U+030A",
+      "ch": "̊",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 193,
+      "cp": "U+030C",
+      "ch": "̌",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 194,
+      "cp": "U+0313",
+      "ch": "̓",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 195,
+      "cp": "U+0314",
+      "ch": "̔",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 196,
+      "cp": "U+0327",
+      "ch": "̧",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 197,
+      "cp": "U+0342",
+      "ch": "͂",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 198,
+      "cp": "U+0345",
+      "ch": "ͅ",
+      "kind": "mark",
+      "script": "zinh"
+    },
+    {
+      "id": 199,
+      "cp": "U+0030",
+      "ch": "0",
+      "kind": "digit",
+      "script": "zyyy"
+    },
+    {
+      "id": 200,
+      "cp": "U+0031",
+      "ch": "1",
+      "kind": "digit",
+      "script": "zyyy"
+    },
+    {
+      "id": 201,
+      "cp": "U+0032",
+      "ch": "2",
+      "kind": "digit",
+      "script": "zyyy"
+    },
+    {
+      "id": 202,
+      "cp": "U+0033",
+      "ch": "3",
+      "kind": "digit",
+      "script": "zyyy"
+    },
+    {
+      "id": 203,
+      "cp": "U+0034",
+      "ch": "4",
+      "kind": "digit",
+      "script": "zyyy"
+    },
+    {
+      "id": 204,
+      "cp": "U+0035",
+      "ch": "5",
+      "kind": "digit",
+      "script": "zyyy"
+    },
+    {
+      "id": 205,
+      "cp": "U+0036",
+      "ch": "6",
+      "kind": "digit",
+      "script": "zyyy"
+    },
+    {
+      "id": 206,
+      "cp": "U+0037",
+      "ch": "7",
+      "kind": "digit",
+      "script": "zyyy"
+    },
+    {
+      "id": 207,
+      "cp": "U+0038",
+      "ch": "8",
+      "kind": "digit",
+      "script": "zyyy"
+    },
+    {
+      "id": 208,
+      "cp": "U+0039",
+      "ch": "9",
+      "kind": "digit",
+      "script": "zyyy"
+    },
+    {
+      "id": 209,
+      "cp": "U+0021",
+      "ch": "!",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 210,
+      "cp": "U+0022",
+      "ch": "\"",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 211,
+      "cp": "U+0027",
+      "ch": "'",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 212,
+      "cp": "U+0028",
+      "ch": "(",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 213,
+      "cp": "U+0029",
+      "ch": ")",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 214,
+      "cp": "U+002C",
+      "ch": ",",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 215,
+      "cp": "U+002D",
+      "ch": "-",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 216,
+      "cp": "U+002E",
+      "ch": ".",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 217,
+      "cp": "U+003A",
+      "ch": ":",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 218,
+      "cp": "U+003B",
+      "ch": ";",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 219,
+      "cp": "U+003F",
+      "ch": "?",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 220,
+      "cp": "U+005B",
+      "ch": "[",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 221,
+      "cp": "U+005D",
+      "ch": "]",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 222,
+      "cp": "U+00A1",
+      "ch": "¡",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 223,
+      "cp": "U+00AB",
+      "ch": "«",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 224,
+      "cp": "U+00B7",
+      "ch": "·",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 225,
+      "cp": "U+00BB",
+      "ch": "»",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 226,
+      "cp": "U+00BF",
+      "ch": "¿",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 227,
+      "cp": "U+02B9",
+      "ch": "ʹ",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 228,
+      "cp": "U+0375",
+      "ch": "͵",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 229,
+      "cp": "U+2013",
+      "ch": "–",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 230,
+      "cp": "U+2014",
+      "ch": "—",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 231,
+      "cp": "U+2018",
+      "ch": "‘",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 232,
+      "cp": "U+2019",
+      "ch": "’",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 233,
+      "cp": "U+201C",
+      "ch": "“",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 234,
+      "cp": "U+201D",
+      "ch": "”",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 235,
+      "cp": "U+2026",
+      "ch": "…",
+      "kind": "punct",
+      "script": "zyyy"
+    },
+    {
+      "id": 236,
+      "cp": "U+0025",
+      "ch": "%",
+      "kind": "sym",
+      "script": "zyyy"
+    },
+    {
+      "id": 237,
+      "cp": "U+0026",
+      "ch": "&",
+      "kind": "sym",
+      "script": "zyyy"
+    },
+    {
+      "id": 238,
+      "cp": "U+002A",
+      "ch": "*",
+      "kind": "sym",
+      "script": "zyyy"
+    },
+    {
+      "id": 239,
+      "cp": "U+002B",
+      "ch": "+",
+      "kind": "sym",
+      "script": "zyyy"
+    },
+    {
+      "id": 240,
+      "cp": "U+002F",
+      "ch": "/",
+      "kind": "sym",
+      "script": "zyyy"
+    },
+    {
+      "id": 241,
+      "cp": "U+003D",
+      "ch": "=",
+      "kind": "sym",
+      "script": "zyyy"
+    },
+    {
+      "id": 242,
+      "cp": "U+00A3",
+      "ch": "£",
+      "kind": "sym",
+      "script": "zyyy"
+    },
+    {
+      "id": 243,
+      "cp": "U+00A7",
+      "ch": "§",
+      "kind": "sym",
+      "script": "zyyy"
+    },
+    {
+      "id": 244,
+      "cp": "U+00B0",
+      "ch": "°",
+      "kind": "sym",
+      "script": "zyyy"
+    },
+    {
+      "id": 245,
+      "cp": "U+2020",
+      "ch": "†",
+      "kind": "sym",
+      "script": "zyyy"
+    },
+    {
+      "id": 246,
+      "cp": "U+2021",
+      "ch": "‡",
+      "kind": "sym",
+      "script": "zyyy"
+    },
+    {
+      "id": 247,
+      "cp": "U+20AC",
+      "ch": "€",
+      "kind": "sym",
+      "script": "zyyy"
+    }
+  ]
+}

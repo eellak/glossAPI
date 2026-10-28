@@ -108,3 +108,38 @@ Changes here affect OCR routing and post-run quality analysis. Treat score and f
 For content-cleaning changes, the exact-output benchmark in
 `tests/test_ocr_golden_pages.py` is the main regression lock. Speed work is only
 acceptable if those outputs remain stable.
+
+## Extraction failures and page routing
+
+Every metadata row retains `extract_status` from `sidecars/extract/<stem>.json`.
+Legacy sidecars without a status use `failure_mode`, then the existing parquet
+status; absent provenance is explicitly `unknown`. Extraction workers publish
+status and source `page_count` for PDFium and Docling, and the controller merges
+these into parquet. Safe PDFium extraction stays on PDFium above 600 pages.
+
+For PDFs, a `problematic`, `timeout`, `failed`, `failure`, or `error` extraction,
+or missing input Markdown, adds the `extract_failed` filter reason and sets
+`needs_ocr=True`, even if quality metrics are unknown or an old `ocr_success`
+flag is present. These rows retain an empty `ocr_pages` route and a zero
+`ocr_pages_count`: OCR uses the whole-document fallback. An empty Markdown file
+that exists instead goes through the existing `is_empty` gate.
+
+Valid page-quality sidecars attach `ocr_pages` and `ocr_pages_count` to both
+flagged and unflagged PDFs without promoting the document-level `needs_ocr`
+flag. `ocr_pages_unflagged_count` records selected pages inside unflagged
+documents in both routing modes. `Corpus.ocr(page_routing="flagged")` is the
+default and dispatches only flagged documents; `page_routing="all"` additionally
+dispatches the non-empty routes of unflagged documents. Flagged empty routes
+still fall back to whole-document OCR. Existing completion and skip-list gates
+continue to apply. Explicit reruns of completed, unflagged documents retain
+whole-document behavior in `flagged` mode; only `all` applies their retained
+page routes. These counts describe selection, not successful execution.
+
+`pua_char_count` counts BMP private-use characters U+E000–U+F8FF in the input
+Markdown. `control_char_count` counts C0/C1 controls U+0000–U+001F and
+U+007F–U+009F, excluding normal Markdown whitespace TAB, LF and CR. Both metrics
+are nullable when Markdown is absent. Page-quality rows expose the same inputs;
+PUA/control dominance above the symbol-garbage threshold routes sparse corrupt
+text before the blank-page gate. Counts alone do not establish that every PUA
+character is erroneous, and the cleaner does not flag an entire document merely
+because it contains PUA characters.

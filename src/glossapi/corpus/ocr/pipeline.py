@@ -18,6 +18,7 @@ def run_ocr_phase(context: CorpusOcrContext, request: OcrRequest) -> None:
     selection = build_ocr_selection(
         context,
         mode=request.mode,
+        page_routing=request.page_routing,
         reprocess_completed=request.reprocess_completed,
     )
 
@@ -29,6 +30,7 @@ def run_ocr_phase(context: CorpusOcrContext, request: OcrRequest) -> None:
         context,
         request=request,
         filenames=selection.bad_files,
+        **({"page_ranges": selection.page_ranges} if selection.page_ranges else {}),
     )
 
     try:

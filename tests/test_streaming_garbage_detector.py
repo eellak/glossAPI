@@ -2,7 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from glossapi.ocr.utils.cleaning import StreamingGarbageDetector
+from glossapi.ocr.utils.cleaning import (
+    StreamingGarbageDetector,
+    detect_approx_token_triplet_repeat,
+)
 
 
 DOWNLOAD_EXPORT = (
@@ -81,3 +84,48 @@ def test_streaming_detector_real_empty_page_generation_from_downloads(chunk_size
     triggered, reason = _stream_detect(text, chunk_size=chunk_size)
     assert triggered is True
     assert reason == "numeric_list_garbage"
+
+
+def test_detect_approx_token_triplet_repeat_catches_exact_triplets():
+    detail = detect_approx_token_triplet_repeat(
+        [91, 42, 13, 91, 42, 13, 91, 42, 13],
+        max_period=3,
+        max_frac=0.0,
+        min_k=0,
+    )
+
+    assert detail is not None
+    assert detail["rule"] == "approx_token_triplet_repeat"
+    assert detail["period"] == 3
+    assert detail["first_second_hamming"] == 0
+    assert detail["second_third_hamming"] == 0
+
+
+def test_detect_approx_token_triplet_repeat_avoids_false_positive_on_small_period_noise():
+    detail = detect_approx_token_triplet_repeat(
+        [1, 2, 3, 4, 5, 6],
+        max_period=2,
+        max_frac=0.1,
+        min_k=0,
+    )
+
+    assert detail is None
+
+
+def test_detect_approx_token_triplet_repeat_clamps_single_token_period_to_exact_match():
+    assert detect_approx_token_triplet_repeat(
+        [1, 2, 3],
+        max_period=1,
+        max_frac=1.0,
+        min_k=1,
+    ) is None
+
+    detail = detect_approx_token_triplet_repeat(
+        [7, 7, 7],
+        max_period=1,
+        max_frac=1.0,
+        min_k=1,
+    )
+
+    assert detail is not None
+    assert detail["period"] == 1

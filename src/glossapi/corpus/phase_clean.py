@@ -2659,6 +2659,153 @@ def _summarize_metric(values: List[float]) -> Dict[str, float]:
     }
 
 
+_EXTRACT_FAILURE_STATUSES = {"problematic", "timeout", "failed", "failure", "error", "partial", "pending"}
+
+
+def _latin_word_shape_rate(text: str) -> float | None:
+    """Cheap raw-text sanity check, not dictionary validity or language ID.
+
+    The Rust outputs expose Greek word shapes, but no Latin validity measure.
+    Check ASCII words of >=3 letters for plausible length and vowel balance;
+    raw text avoids the cleaner masking broken font mappings by deleting them.
+    """
+    ascii_words = re.findall(r"[A-Za-z]+", text)
+    words = [word for word in ascii_words if len(word) >= 3]
+    raw_chars = sum(not char.isspace() for char in text)
+    # Do not let a small readable island hide mostly short tokens or raw
+    # fragments that the cleaner would delete before measuring Latin share.
+    if (len(words) < 20 or len(words) <= len(ascii_words) / 2 or
+            sum(map(len, words)) <= raw_chars / 2):
+        return None
+    plausible = sum(len(word) <= 24 and
+                    .2 <= sum(c in "aeiouy" for c in word.lower()) / len(word) <= .8
+                    for word in words)
+    return plausible / len(words)
+
+
+def _readable_non_greek_mask(df: pd.DataFrame) -> pd.Series:
+    """Conservative Latin exemption; unknown metrics never establish readability.
+
+    Require >=75% Latin among cleaned non-whitespace characters, >=95% Latin
+    among Greek+Latin letters, >=200 characters, mojibake <=0.1, and >=95%
+    plausible raw Latin words. Other OCR reasons remain independent.
+    """
+    def numeric(column):
+        return pd.to_numeric(df.get(column, pd.Series(float("nan"), index=df.index)),
+                             errors="coerce")
+    latin, greek = numeric("latin_percentage"), numeric("percentage_greek")
+    return ((numeric("greek_badness_score") > 60) &
+            (numeric("mojibake_badness_score") <= .1) & (latin >= 75) &
+            (latin / (latin + greek) >= .95) &
+            (numeric("char_count_no_comments") >= 200) &
+            (numeric("latin_word_shape_rate") >= .95)).fillna(False)
+
+
+def _enrich_extraction_metrics(df: pd.DataFrame, output_dir: Path, markdown_dir: Path) -> pd.DataFrame:
+    """Read extraction provenance and raw-text contamination; never accept missing output.
+
+    Legacy sidecars have no status: retain the parquet status, using failure_mode
+    if present. Unknown provenance stays explicit rather than implying success.
+    Missing contamination counts remain nullable, not zero.
+    """
+    from glossapi.page_quality import text_contamination_counts
+
+    result = df.copy()
+    for column, default in (("extract_status", "unknown"), ("page_count", pd.NA),
+                            ("pua_char_count", pd.NA), ("control_char_count", pd.NA),
+                            ("latin_word_shape_rate", pd.NA)):
+        if column not in result.columns:
+            result[column] = default
+    for index, row in result.iterrows():
+        stem = canonical_stem(str(row["filename"]))
+        sidecar = output_dir / "sidecars" / "extract" / f"{stem}.json"
+        payload = {}
+        if sidecar.exists():
+            try:
+                payload = json.loads(sidecar.read_text(encoding="utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("Extraction sidecar must be an object")
+            except (OSError, ValueError) as exc:
+                logging.getLogger(__name__).warning("Ignoring extraction sidecar %s: %s", sidecar, exc)
+                payload = {}
+        old_status = row.get("extract_status")
+        status = payload.get("extract_status") or payload.get("failure_mode")
+        if not status:
+            status = str(old_status) if pd.notna(old_status) and str(old_status).strip() else "unknown"
+        result.at[index, "extract_status"] = status
+        if payload.get("page_count") is not None:
+            try:
+                result.at[index, "page_count"] = int(payload["page_count"])
+            except (ValueError, TypeError):
+                pass
+        markdown = markdown_dir / f"{stem}.md"
+        has_markdown = markdown.is_file()
+        result.at[index, "pua_char_count"] = pd.NA
+        result.at[index, "control_char_count"] = pd.NA
+        result.at[index, "latin_word_shape_rate"] = pd.NA
+        if has_markdown:
+            text = markdown.read_text(encoding="utf-8")
+            result.at[index, "latin_word_shape_rate"] = _latin_word_shape_rate(text)
+            for key, value in text_contamination_counts(text).items():
+                result.at[index, key] = value
+        failed = (str(status).strip().lower() in _EXTRACT_FAILURE_STATUSES
+                  or bool(payload.get("no_partial_output")) or not has_markdown)
+        if Path(str(row["filename"])).suffix.lower() == ".pdf" and failed:
+            current = row.get("filter")
+            reasons = [] if pd.isna(current) or current == "ok" else str(current).split(";")
+            if "extract_failed" not in reasons:
+                reasons.append("extract_failed")
+            result.at[index, "filter"] = ";".join(filter(None, reasons))
+            result.at[index, "needs_ocr"] = True
+    for column in ("page_count", "pua_char_count", "control_char_count"):
+        result[column] = pd.to_numeric(result[column], errors="coerce").astype("Int64")
+    return result
+
+
+def _attach_page_quality_routes(df: pd.DataFrame, metrics_dir: Path) -> pd.DataFrame:
+    """Attach valid sidecar ranges to all PDFs without changing needs_ocr.
+
+    Absent or malformed sidecars retain document-level routing. Clear stale
+    page routes on every clean pass so a removed sidecar cannot restrict OCR.
+    """
+    from glossapi.page_quality import parse_page_ranges
+
+    result = df.copy()
+    result["ocr_pages"] = ""
+    result["ocr_pages_count"] = pd.Series(0, index=result.index, dtype="int64")
+    result["ocr_pages_unflagged_count"] = pd.Series(0, index=result.index, dtype="int64")
+    result["page_rule_profile"] = pd.Series(pd.NA, index=result.index, dtype="string")
+    result["page_fold_validity"] = pd.Series(pd.NA, index=result.index, dtype="boolean")
+    for index, row in result.iterrows():
+        filename = str(row.get("filename", ""))
+        if Path(filename).suffix.lower() != ".pdf" or "extract_failed" in str(row.get("filter", "")).split(";"):
+            continue
+        path = metrics_dir / f"{canonical_stem(filename)}.page_quality.json"
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            ranges = payload["ocr_page_list"]
+            count = sum(end - start + 1 for start, end in parse_page_ranges(ranges))
+            if count != payload["pages_needing_ocr"] or any(end > payload["pages_total"] for _, end in parse_page_ranges(ranges)):
+                raise ValueError("Page-quality summary counts/ranges disagree")
+            if payload.get("filename") != Path(filename).name:
+                raise ValueError("Page-quality filename differs from metadata")
+            profile = payload.get("rule_profile", "v2")
+            folded = payload.get("fold_validity", False)
+            if profile not in ("v2", "v3") or not isinstance(folded, bool):
+                raise ValueError("Invalid page-quality rule profile or validity mode")
+            result.at[index, "ocr_pages"] = ranges
+            result.at[index, "ocr_pages_count"] = count
+            result.at[index, "page_rule_profile"] = profile
+            result.at[index, "page_fold_validity"] = folded
+            if not bool(row.get("needs_ocr", False)):
+                result.at[index, "ocr_pages_unflagged_count"] = count
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            logging.getLogger(__name__).warning("Ignoring page-quality sidecar %s: %s", path, exc)
+    return result
+
+
 class CleanPhaseMixin:
     @staticmethod
     def _project_root() -> Path:
@@ -3395,6 +3542,8 @@ class CleanPhaseMixin:
                         needs_targets = needs_targets & ~success_mask
                     df_final.loc[needs_targets, "needs_ocr"] = True
 
+            df_final = _enrich_extraction_metrics(df_final, self.output_dir, input_dir)
+
             try:
                 empty_threshold_int = int(empty_char_threshold) if empty_char_threshold is not None else 0
             except Exception:
@@ -3426,7 +3575,11 @@ class CleanPhaseMixin:
             if greek_series.notna().any():
                 # Greek script gate: keep threshold (>60) as-is.
                 # Use canonical token expected by tests and downstream tools.
-                _append_reason(greek_series > 60, "non_greek_text", requires_ocr=True)
+                readable = _readable_non_greek_mask(df_final)
+                _append_reason(greek_series > 60, "non_greek_text", requires_ocr=False)
+                _append_reason(readable, "non_greek_readable", requires_ocr=False)
+                _append_reason((greek_series > 60) & ~readable,
+                               "non_greek_text", requires_ocr=True)
 
             if "char_count_no_comments" in df_final.columns:
                 # Preserve NaN to avoid treating unknown counts as zero
@@ -3465,6 +3618,7 @@ class CleanPhaseMixin:
                     )
 
             df_final["needs_ocr"] = df_final["needs_ocr"].fillna(False).astype(bool)
+            df_final = _attach_page_quality_routes(df_final, self.output_dir / "json" / "metrics")
 
             # persist cleaned parquet
             parquet_schema.write_metadata_parquet(df_final, parquet_path)

@@ -60,6 +60,7 @@ class OcrRequest:
     devices: Optional[List[int]]
     reprocess_completed: bool
     content_debug: bool
+    page_routing: str = "flagged"
 
 
 def _resolve_mode(
@@ -97,6 +98,7 @@ def normalize_ocr_request(
     max_pages: Optional[int],
     persist_engine: bool,
     precision: Optional[str],
+    page_routing: str = "flagged",
     workers_per_gpu: int = DEFAULT_WORKERS_PER_GPU,
     runtime_backend: str = DEFAULT_RUNTIME_BACKEND,
     ocr_profile: str = DEFAULT_OCR_PROFILE,
@@ -133,6 +135,8 @@ def normalize_ocr_request(
     internal_debug: bool = False,
     INTERNAL_DEBUG: Optional[bool] = None,
 ) -> Optional[OcrRequest]:
+    if page_routing not in {"flagged", "all"}:
+        raise ValueError("page_routing must be 'flagged' or 'all'")
     backend_norm = str(backend or "deepseek").strip().lower()
     if backend_norm != "deepseek":
         raise ValueError("backend must be 'deepseek'")
@@ -190,6 +194,7 @@ def normalize_ocr_request(
 
     return OcrRequest(
         mode=mode_norm,
+        page_routing=page_routing,
         backend=backend_norm,
         device=device,
         model_dir=Path(model_dir) if model_dir else None,

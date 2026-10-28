@@ -180,6 +180,7 @@ class OcrMathPhaseMixin:
         self,
         *,
         fix_bad: bool = True,
+        page_routing: str = "flagged",
         mode: Optional[str] = None,
         backend: str = "deepseek",
         device: Optional[str] = None,
@@ -225,12 +226,13 @@ class OcrMathPhaseMixin:
         internal_debug: bool = False,
         INTERNAL_DEBUG: Optional[bool] = None,
     ) -> None:
-        """OCR and/or math enrichment with explicit mode control."""
+        """OCR/math remediation; page_routing selects flagged documents or all page routes."""
 
         del limit, dpi
         request = normalize_ocr_request(
             logger=self.logger,
             fix_bad=fix_bad,
+            page_routing=page_routing,
             mode=mode,
             backend=backend,
             device=device,
@@ -285,6 +287,7 @@ class OcrMathPhaseMixin:
         selection = build_ocr_selection(
             self,
             mode=request.mode,
+            page_routing=request.page_routing,
             reprocess_completed=request.reprocess_completed,
         )
         stems = discover_docling_json_stems(self.output_dir)

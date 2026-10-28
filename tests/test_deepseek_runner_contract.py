@@ -228,12 +228,20 @@ def test_build_cli_command_includes_vllm_flags(tmp_path):
         gpu_memory_utilization=0.92,
         disable_fp8_kv=True,
         repair_mode="auto",
+        enable_approx_repeat_early_stop=True,
+        approx_repeat_max_period=32,
+        approx_repeat_max_frac=0.15,
+        approx_repeat_min_k=0,
     )
 
     assert "--batch-size" in cmd and "16" in cmd
     assert "--gpu-memory-utilization" in cmd and "0.92" in cmd
     assert "--disable-fp8-kv" in cmd
     assert "--repair-mode" in cmd and "auto" in cmd
+    assert "--enable-approx-repeat-early-stop" in cmd
+    assert "--approx-repeat-max-period" in cmd and "32" in cmd
+    assert "--approx-repeat-max-frac" in cmd and "0.15" in cmd
+    assert "--approx-repeat-min-k" in cmd and "0" in cmd
 
 
 def test_build_env_prepends_script_src_to_pythonpath(tmp_path, monkeypatch):
@@ -391,7 +399,8 @@ def test_repair_batch_updates_persisted_outputs_with_repeat_cutoff_drop(tmp_path
     monkeypatch.setattr(
         "glossapi.ocr.deepseek.run_pdf_ocr_vllm._generate_batch_outputs",
         lambda llm, *, jobs, prompt, batch_size, sampling_params: [
-            {"item": jobs[0], "raw_text": "still broken", "infer_sec": 0.25}
+            {"item": jobs[0], "raw_text": "still broken", "infer_sec": 0.25,
+             "prompt_tokens": 0, "output_tokens": 0}
         ],
     )
     monkeypatch.setattr(
@@ -400,7 +409,8 @@ def test_repair_batch_updates_persisted_outputs_with_repeat_cutoff_drop(tmp_path
     )
 
     result = _run_repair_batch_to_outputs(
-        SimpleNamespace(render_dpi=144, batch_size=8, content_debug=False, repair_mode="auto"),
+        SimpleNamespace(render_dpi=144, batch_size=8, content_debug=False, repair_mode="auto",
+                        enable_approx_repeat_early_stop=False),
         batch={
             "stem": "doc",
             "pdf_path": str(tmp_path / "doc.pdf"),
@@ -501,7 +511,8 @@ def test_repair_batch_pack_updates_multiple_stems(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "glossapi.ocr.deepseek.run_pdf_ocr_vllm._generate_batch_outputs",
         lambda llm, *, jobs, prompt, batch_size, sampling_params: [
-            {"item": job, "raw_text": f"fixed-{job['stem']}-{job['page_number']}", "infer_sec": 0.25}
+            {"item": job, "raw_text": f"fixed-{job['stem']}-{job['page_number']}", "infer_sec": 0.25,
+             "prompt_tokens": 0, "output_tokens": 0}
             for job in jobs
         ],
     )
@@ -511,7 +522,8 @@ def test_repair_batch_pack_updates_multiple_stems(tmp_path, monkeypatch):
     )
 
     result = _run_repair_batches_to_outputs(
-        SimpleNamespace(render_dpi=144, batch_size=8, content_debug=False, repair_mode="auto"),
+        SimpleNamespace(render_dpi=144, batch_size=8, content_debug=False, repair_mode="auto",
+                        enable_approx_repeat_early_stop=False),
         batches=[
             {
                 "batch_id": 10,
@@ -584,6 +596,21 @@ def test_early_stop_detects_symbol_and_numeric_list_garbage():
     assert "Κανονικό κείμενο" in symbol_garbage[:symbol_cut]
     assert numeric_cut is not None
     assert "Πρόλογος" in numeric_list_garbage[:numeric_cut]
+
+
+def test_apply_early_stop_records_rule_details():
+    from glossapi.ocr.utils.cleaning import apply_early_stop
+
+    metrics = {}
+    text = "Πρόλογος\n" + " ".join(f"{idx}." for idx in range(1, 20))
+
+    cleaned = apply_early_stop(text, content_debug=True, metrics=metrics)
+
+    assert metrics["early_stops"] == 1
+    assert metrics["early_stop_primary_rule"] == "numeric_list_garbage"
+    assert "numeric_list_garbage" in metrics["early_stop_rules"]
+    assert metrics["early_stop_rule_details"][0]["rule"] == "numeric_list_garbage"
+    assert cleaned.endswith("[[Early stop: numeric_list_garbage]]")
 
 
 def test_runner_selects_vllm_script_when_requested(tmp_path, monkeypatch):

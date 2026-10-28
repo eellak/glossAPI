@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
 
 pytest.importorskip("docling")
 pytest.importorskip("glossapi_rs_cleaner")

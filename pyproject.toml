@@ -26,7 +26,9 @@ dependencies = [
     "tqdm>=4.67.0",
     "pyyaml>=6.0",
     # Math/JSON enrichment helpers
-    "pypdfium2>=4.0.0",
+    "pypdfium2>=4.30,<5",
+    "pypdf>=6.0.0",
+    "fonttools>=4.0.0",
     "zstandard>=0.22.0",
 ]
 license = "EUPL-1.2"
@@ -44,6 +46,7 @@ browser = [
 # Docling extraction/layout stack
 docling = [
     "docling==2.81.0",
+    "pypdfium2>=4.30,<5",
 ]
 # Optional CUDA layout acceleration (Docling)
 cuda = [
@@ -74,14 +77,19 @@ docs = [
 package-dir = {"" = "src"}
 include-package-data = true
 
+[project.entry-points."docling"]
+glossapi = "glossapi.ocr.plugin.docling_plugin"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["glossapi", "glossapi.*"]
 
 [tool.setuptools.package-data]
 glossapi = ["models/**/*"]
+"glossapi.ocr.plugin.recognizer" = ["v1.json", "VENDORED_FROM.json"]
 
 [tool.pytest.ini_options]
 markers = [
+    "slow: explicit local CPU cohort integration run",
     "deepseek: exercises the DeepSeek OCR pipeline",
 ]

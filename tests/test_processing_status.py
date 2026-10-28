@@ -25,14 +25,15 @@ def test_ocr_skip_completed(tmp_path, monkeypatch):
 
     processed = []
 
-    def fake_extract(self, *args, **kwargs):
-        filenames = list(kwargs.get("filenames", []) or [])
+    def fake_ocr(self, files, **kwargs):
+        filenames = list(files)
         processed.append(filenames)
         for fname in filenames:
             stem = Path(str(fname)).stem
             (self.markdown_dir / f"{stem}.md").write_text("md", encoding="utf-8")
 
-    monkeypatch.setattr(Corpus, "extract", fake_extract, raising=False)
+    from glossapi.ocr.deepseek import runner as deepseek_runner
+    monkeypatch.setattr(deepseek_runner, "run_for_files", fake_ocr)
     monkeypatch.setattr(Corpus, "clean", lambda self, *a, **k: None, raising=False)
 
     corpus.ocr(fix_bad=True, math_enhance=False, reprocess_completed=False)

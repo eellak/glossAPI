@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Set
 
@@ -26,6 +26,7 @@ class OcrSelection:
     math_done_stems: Set[str]
     skip_mgr: _SkiplistManager
     skiplist_path: Path
+    page_ranges: List[str] = field(default_factory=list)
 
 
 def normalize_ocr_target_filenames(*, filenames: List[str], input_dir: Path) -> List[str]:
@@ -54,7 +55,12 @@ def build_ocr_selection(
     *,
     mode: str,
     reprocess_completed: bool,
+    page_routing: str = "flagged",
 ) -> OcrSelection:
+    if page_routing not in {"flagged", "all"}:
+        raise ValueError("page_routing must be 'flagged' or 'all'")
+    from ...page_quality import parse_page_ranges
+
     bad_files: List[str] = []
     skipped_completed = 0
     skipped_skiplist = 0
@@ -68,7 +74,22 @@ def build_ocr_selection(
     if parquet_path and parquet_path.exists():
         df = pd.read_parquet(parquet_path)
         if "filename" in df.columns and "needs_ocr" in df.columns:
-            bad_files = df.loc[df["needs_ocr"] == True, "filename"].dropna().astype(str).tolist()
+            flagged = df["needs_ocr"].fillna(False).astype(bool)
+
+            def route_count(value: object) -> int:
+                if not isinstance(value, str):
+                    return 0
+                try:
+                    return sum(end - start + 1 for start, end in parse_page_ranges(value))
+                except ValueError:
+                    context.logger.warning("Ignoring invalid OCR page route: %r", value)
+                    return 0
+
+            routed_counts = df.get("ocr_pages", pd.Series("", index=df.index)).map(route_count)
+            df["ocr_pages_unflagged_count"] = routed_counts.where(~flagged, 0).astype("int64")
+            parquet_schema.write_metadata_parquet(df, parquet_path)
+            selected = flagged | ((routed_counts > 0) & (page_routing == "all"))
+            bad_files = df.loc[selected, "filename"].dropna().astype(str).tolist()
         if "ocr_success" in df.columns:
             ocr_done_files = df.loc[df["ocr_success"].fillna(False), "filename"].dropna().astype(str).tolist()
             ocr_done_stems = {canonical_stem(name) for name in ocr_done_files}
@@ -130,7 +151,22 @@ def build_ocr_selection(
         skipped_skiplist,
     )
 
+    page_ranges: List[str] = []
+    if parquet_meta is not None and "ocr_pages" in parquet_meta.columns:
+        routes = {
+            canonical_stem(str(row["filename"])): row["ocr_pages"]
+            for _, row in parquet_meta.iterrows()
+            if isinstance(row.get("ocr_pages"), str) and row["ocr_pages"].strip()
+            and (page_routing == "all" or pd.notna(row.get("needs_ocr"))
+                 and bool(row.get("needs_ocr")))
+        }
+        for filename in bad_files:
+            route = routes.get(canonical_stem(filename))
+            if route:
+                page_ranges.extend(f"{filename}:{start}:{end}" for start, end in parse_page_ranges(route))
+
     return OcrSelection(
+        page_ranges=page_ranges,
         bad_files=bad_files,
         ocr_candidates_initial=ocr_candidates_initial,
         skipped_completed=skipped_completed,

@@ -369,6 +369,8 @@ def gpu_extract_worker_queue(
     result_q=None,
     status_map=None,
     marker_dir: Optional[str] = None,
+    repair_fonts: bool = True,
+    batched: bool | None = False,
 ) -> None:
     import os as _os
     import sys as _sys
@@ -529,6 +531,7 @@ def gpu_extract_worker_queue(
             export_doc_json=bool(export_json),
             emit_formula_index=bool(emit_index),
             phase1_backend=backend,
+            repair_fonts=repair_fonts,
         )
     except Exception as _e:
         msg = f"[{_worker_label}] Prime failed: {_e}"
@@ -603,7 +606,9 @@ def gpu_extract_worker_queue(
                 export_doc_json=bool(export_json),
                 emit_formula_index=bool(emit_index),
                 phase1_backend=backend,
+                repair_fonts=repair_fonts,
                 _prepared=True,
+                batched=False if batched is None else batched,
             )
             processed += len(batch_items)
             _clear_current()

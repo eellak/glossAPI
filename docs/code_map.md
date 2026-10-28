@@ -33,6 +33,8 @@ without reading the entire repo.
 | `src/glossapi/ocr/deepseek/runner.py` | Launches the DeepSeek OCR remediation path from `Corpus.ocr()`. |
 | `src/glossapi/ocr/utils/json_io.py` | Writes and reads compressed Docling JSON artifacts. |
 | `src/glossapi/corpus/phase_ocr_math.py` | Runs DeepSeek OCR remediation, math/code enrichment, and parquet status updates. |
+| `src/glossapi/pdf_repair/tounicode.py`, `src/glossapi/scripts/pdf_font_repair.py` | Analyze embedded font Unicode maps, append conservative ToUnicode repairs, and report bounded CPU batches. |
+| `src/glossapi/pdf_repair/extract.py` | Worker-local, bounded ToUnicode extract pre-pass; reuses repaired PDF sidecars and records font-repair provenance. |
 | `src/glossapi/metrics.py` | Computes per-page parse/OCR/formula metrics from Docling conversions. |
 
 ## Rust Extensions
@@ -41,6 +43,7 @@ without reading the entire repo.
 | --- | --- | --- |
 | Cleaner | `rust/glossapi_rs_cleaner` | Markdown cleaning, script/noise filtering, and report generation used by `Corpus.clean()`. |
 | Noise metrics | `rust/glossapi_rs_noise` | Fast quality metrics used by the broader pipeline and package build configuration. |
+| Bibliography | `rust/glossapi_rs_bib` | Greek bibliography line classifier behind `glossapi.BibliographyCleaner`; decision-equivalent port of the reference Python pipeline. Also builds a `bib_line_detect` CLI for corpus-scale runs. |
 
 ## Tests To Read First
 

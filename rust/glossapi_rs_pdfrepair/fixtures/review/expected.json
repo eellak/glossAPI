@@ -1,0 +1,88 @@
+{
+  "lowercase_agl": {
+    "glyphs": {},
+    "names": {
+      ".notdef": 0,
+      "uni03b1": 1
+    },
+    "mapping": {
+      "65": "B"
+    },
+    "repair_possible": false,
+    "category": "unsupported"
+  },
+  "lowercase_u_agl": {
+    "glyphs": {},
+    "names": {
+      ".notdef": 0,
+      "u03b1": 1
+    },
+    "mapping": {
+      "65": "B"
+    },
+    "repair_possible": false,
+    "category": "unsupported"
+  },
+  "duplicate_post_names": {
+    "glyphs": {
+      "1": "β",
+      "2": "γ"
+    },
+    "names": {
+      ".notdef": 0,
+      "alpha": 1,
+      "alpha.1": 2
+    },
+    "mapping": {
+      "65": "β"
+    },
+    "repair_possible": true,
+    "category": "repairable"
+  },
+  "format3_duplicate_synth_names": {
+    "glyphs": {
+      "1": "σ",
+      "2": "σ"
+    },
+    "names": {
+      ".notdef": 0,
+      "sigma": 1,
+      "sigma.alt1": 2
+    },
+    "mapping": {
+      "65": "σ"
+    },
+    "repair_possible": true,
+    "category": "repairable"
+  },
+  "format3_collision_wrong_gid": {
+    "glyphs": {
+      "1": "α",
+      "2": "β"
+    },
+    "names": {
+      ".notdef": 0,
+      "A": 1,
+      "A.alt1": 2
+    },
+    "mapping": {
+      "65": "α"
+    },
+    "repair_possible": true,
+    "category": "repairable"
+  },
+  "encoded_pdf_name": {
+    "glyphs": {
+      "1": "α"
+    },
+    "names": {
+      ".notdef": 0,
+      "alpha": 1
+    },
+    "mapping": {
+      "65": "α"
+    },
+    "repair_possible": true,
+    "category": "repairable"
+  }
+}

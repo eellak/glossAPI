@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 # Common patterns and utilities for OCR text post-processing.
 
@@ -192,6 +192,12 @@ def canonicalize_markdown(text: str) -> str:
 
 
 # --- Early termination guards (lightweight O(n) scans) ---
+
+EARLY_STOP_RULE_REPEATED_CHAR = "repeated_char_run"
+EARLY_STOP_RULE_REPEATED_LINE = "repeated_line_run"
+EARLY_STOP_RULE_SYMBOL_GARBAGE = "symbol_garbage"
+EARLY_STOP_RULE_NUMERIC_LIST_GARBAGE = "numeric_list_garbage"
+EARLY_STOP_RULE_APPROX_TOKEN_TRIPLET_REPEAT = "approx_token_triplet_repeat"
 
 def _detect_repeated_char_cut(text: str, *, threshold: int = 200) -> Optional[int]:
     """Return the index at which to cut if any single character repeats >= threshold.
@@ -454,6 +460,57 @@ class StreamingGarbageDetector:
         return False
 
 
+def _dedupe_rule_names(names: Iterable[str]) -> List[str]:
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for name in names:
+        value = str(name or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def detect_early_stop_rule_details(
+    text: str,
+    *,
+    line_repeat_threshold: int = 10,
+    char_repeat_threshold: int = 200,
+    symbol_garbage_threshold: int = 16,
+    numeric_list_threshold: int = 12,
+) -> List[dict]:
+    details: List[dict] = []
+    detectors = (
+        (
+            EARLY_STOP_RULE_REPEATED_CHAR,
+            _detect_repeated_char_cut(text, threshold=char_repeat_threshold),
+        ),
+        (
+            EARLY_STOP_RULE_REPEATED_LINE,
+            _detect_repeated_lines_cut(text, threshold=line_repeat_threshold),
+        ),
+        (
+            EARLY_STOP_RULE_SYMBOL_GARBAGE,
+            _detect_symbol_garbage_cut(text, threshold=symbol_garbage_threshold),
+        ),
+        (
+            EARLY_STOP_RULE_NUMERIC_LIST_GARBAGE,
+            _detect_numeric_list_garbage_cut(text, threshold=numeric_list_threshold),
+        ),
+    )
+    for rule, cut_index in detectors:
+        if cut_index is None:
+            continue
+        details.append(
+            {
+                "rule": str(rule),
+                "cut_index": int(cut_index),
+            }
+        )
+    return details
+
+
 def detect_early_stop_index(
     text: str,
     *,
@@ -467,14 +524,65 @@ def detect_early_stop_index(
     Returns the smallest index where content should be cut to avoid degenerate
     loops. If no condition triggers, returns ``None``.
     """
-    idx_char = _detect_repeated_char_cut(text, threshold=char_repeat_threshold)
-    idx_line = _detect_repeated_lines_cut(text, threshold=line_repeat_threshold)
-    idx_symbol = _detect_symbol_garbage_cut(text, threshold=symbol_garbage_threshold)
-    idx_numeric = _detect_numeric_list_garbage_cut(text, threshold=numeric_list_threshold)
-    candidates = [idx for idx in (idx_char, idx_line, idx_symbol, idx_numeric) if idx is not None]
-    if not candidates:
+    details = detect_early_stop_rule_details(
+        text,
+        line_repeat_threshold=line_repeat_threshold,
+        char_repeat_threshold=char_repeat_threshold,
+        symbol_garbage_threshold=symbol_garbage_threshold,
+        numeric_list_threshold=numeric_list_threshold,
+    )
+    if not details:
         return None
-    return min(candidates)
+    return min(int(detail["cut_index"]) for detail in details)
+
+
+def detect_approx_token_triplet_repeat(
+    token_ids: Sequence[int],
+    *,
+    max_period: int = 32,
+    max_frac: float = 0.1,
+    min_k: int = 0,
+) -> Optional[dict]:
+    ids = [int(token_id) for token_id in token_ids]
+    period_cap = max(0, int(max_period))
+    if period_cap <= 0 or len(ids) < 3:
+        return None
+
+    window = ids[-(3 * period_cap) :]
+    window_size = len(window)
+    max_candidate_period = min(period_cap, window_size // 3)
+    if max_candidate_period <= 0:
+        return None
+
+    max_frac_value = max(0.0, float(max_frac))
+    min_k_value = max(0, int(min_k))
+    window_start = len(ids) - window_size
+
+    for period in range(1, max_candidate_period + 1):
+        mismatch_cap = min(
+            max(0, period - 1),
+            max(min_k_value, int(max_frac_value * period)),
+        )
+        mismatches = [1 if window[idx] != window[idx + period] else 0 for idx in range(0, window_size - period)]
+        prefix_sums = [0]
+        for mismatch in mismatches:
+            prefix_sums.append(prefix_sums[-1] + mismatch)
+
+        for start in range(0, window_size - (3 * period) + 1):
+            d12 = prefix_sums[start + period] - prefix_sums[start]
+            d23 = prefix_sums[start + (2 * period)] - prefix_sums[start + period]
+            if d12 <= mismatch_cap and d23 <= mismatch_cap:
+                return {
+                    "rule": EARLY_STOP_RULE_APPROX_TOKEN_TRIPLET_REPEAT,
+                    "window_start_token_index": int(window_start),
+                    "start_token_index": int(window_start + start),
+                    "window_token_count": int(window_size),
+                    "period": int(period),
+                    "mismatch_limit": int(mismatch_cap),
+                    "first_second_hamming": int(d12),
+                    "second_third_hamming": int(d23),
+                }
+    return None
 
 
 def apply_early_stop(
@@ -494,19 +602,26 @@ def apply_early_stop(
     - Appends a debug marker only when ``content_debug`` is True.
     Complexity: O(n).
     """
-    cut = detect_early_stop_index(
+    details = detect_early_stop_rule_details(
         text,
         line_repeat_threshold=line_repeat_threshold,
         char_repeat_threshold=char_repeat_threshold,
         symbol_garbage_threshold=symbol_garbage_threshold,
         numeric_list_threshold=numeric_list_threshold,
     )
-    if cut is None:
+    if not details:
         return text
+    cut = min(int(detail["cut_index"]) for detail in details)
+    primary_detail = min(details, key=lambda detail: (int(detail["cut_index"]), str(detail["rule"])))
+    rules = _dedupe_rule_names(detail["rule"] for detail in details)
     if metrics is not None:
         metrics["early_stops"] = metrics.get("early_stops", 0) + 1
+        metrics["early_stop_cut_index"] = int(cut)
+        metrics["early_stop_rules"] = rules
+        metrics["early_stop_primary_rule"] = str(primary_detail["rule"])
+        metrics["early_stop_rule_details"] = details
     truncated = text[:cut].rstrip()
     if content_debug:
-        notice = "[[Early stop: repetition detected]]"
+        notice = f"[[Early stop: {primary_detail['rule']}]]"
         return f"{truncated}\n\n{notice}" if truncated else notice
     return truncated

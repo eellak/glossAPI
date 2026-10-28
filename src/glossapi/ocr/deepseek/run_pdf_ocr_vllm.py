@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import logging
 import queue
@@ -42,9 +43,11 @@ from glossapi.ocr.deepseek.work_queue import (
     mark_batch_failed,
     work_queue_counts,
 )
-from glossapi.ocr.utils.cleaning import StreamingGarbageDetector
+from glossapi.ocr.utils.cleaning import StreamingGarbageDetector, detect_approx_token_triplet_repeat
 
 LOGGER = logging.getLogger(__name__)
+# Installed vLLM 0.18.0 deepseek_ocr2.py overrides kwargs with these constants.
+VLLM_OCR2_PROCESSOR_DEFAULTS = {"base_size": 1024, "image_size": 768, "crop_mode": True}
 REPAIR_DARK_THRESHOLD = 235
 EMPTY_PAGE_OVERALL_DARK_MAX = 0.0015
 EMPTY_PAGE_BAND_DARK_MAX = 0.0025
@@ -52,6 +55,9 @@ GARBAGE_EARLY_STOP_MIN_OUTPUT_TOKENS = 48
 GARBAGE_EARLY_STOP_WINDOW_TOKENS = 160
 DEFAULT_REPAIR_EXEC_BATCH_TARGET_PAGES = 48
 DEFAULT_REPAIR_EXEC_BATCH_TARGET_ITEMS = 32
+DEFAULT_APPROX_REPEAT_MAX_PERIOD = 32
+DEFAULT_APPROX_REPEAT_MAX_FRAC = 0.1
+DEFAULT_APPROX_REPEAT_MIN_K = 0
 
 
 def _parse_args() -> argparse.Namespace:
@@ -80,6 +86,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--disable-fp8-kv", action="store_true")
     parser.add_argument("--repair-mode", default="auto", choices=["auto", "off"])
     parser.add_argument("--content-debug", action="store_true")
+    parser.add_argument("--enable-approx-repeat-early-stop", action="store_true")
+    parser.add_argument("--approx-repeat-max-period", type=int, default=DEFAULT_APPROX_REPEAT_MAX_PERIOD)
+    parser.add_argument("--approx-repeat-max-frac", type=float, default=DEFAULT_APPROX_REPEAT_MAX_FRAC)
+    parser.add_argument("--approx-repeat-min-k", type=int, default=DEFAULT_APPROX_REPEAT_MIN_K)
     parser.add_argument("--work-db", default=None)
     parser.add_argument("--worker-id", default=None)
     parser.add_argument("--worker-runtime-file", default=None)
@@ -88,10 +98,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--work-max-attempts", type=int, default=2)
     parser.add_argument("--repair-exec-batch-target-pages", type=int, default=DEFAULT_REPAIR_EXEC_BATCH_TARGET_PAGES)
     parser.add_argument("--repair-exec-batch-target-items", type=int, default=DEFAULT_REPAIR_EXEC_BATCH_TARGET_ITEMS)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.crop_mode is False:
+        parser.error("--no-crop-mode is unsupported by the vLLM DeepSeek-OCR-2 backend: "
+                     "vLLM 0.18.0 crashes with an image prompt-placeholder mismatch; use crop mode")
+    return args
 
 
-def _load_vllm(model_dir: Path, gpu_memory_utilization: float, disable_fp8_kv: bool):
+def _load_vllm(
+    model_dir: Path,
+    gpu_memory_utilization: float,
+    disable_fp8_kv: bool,
+    *,
+    mm_processor_kwargs: dict,
+    enable_approx_repeat_early_stop: bool,
+    approx_repeat_max_period: int,
+    approx_repeat_max_frac: float,
+    approx_repeat_min_k: int,
+):
     from vllm import LLM
 
     logits_processors = []
@@ -115,13 +139,22 @@ def _load_vllm(model_dir: Path, gpu_memory_utilization: float, disable_fp8_kv: b
                 *,
                 min_output_tokens: int,
                 window_tokens: int,
+                enable_approx_repeat_early_stop: bool,
+                approx_repeat_max_period: int,
+                approx_repeat_max_frac: float,
+                approx_repeat_min_k: int,
             ) -> None:
                 self.tokenizer = tokenizer
                 self.eos_token_id = eos_token_id
                 self.min_output_tokens = int(min_output_tokens)
                 self.window_tokens = int(window_tokens)
+                self.enable_approx_repeat_early_stop = bool(enable_approx_repeat_early_stop)
+                self.approx_repeat_max_period = int(approx_repeat_max_period)
+                self.approx_repeat_max_frac = float(approx_repeat_max_frac)
+                self.approx_repeat_min_k = int(approx_repeat_min_k)
                 self.detector = StreamingGarbageDetector()
                 self.seen_output_tokens = 0
+                self.triggered_reason: Optional[str] = None
 
             def __call__(self, prompt_ids: list[int], output_ids: list[int], logits):
                 del prompt_ids
@@ -137,7 +170,20 @@ def _load_vllm(model_dir: Path, gpu_memory_utilization: float, disable_fp8_kv: b
                 new_text = self.tokenizer.decode(new_ids, skip_special_tokens=False)
                 if new_text:
                     self.detector.feed(new_text)
-                if current_len < self.min_output_tokens or self.detector.triggered_reason is None:
+                if self.detector.triggered_reason is not None:
+                    self.triggered_reason = self.detector.triggered_reason
+                if current_len < self.min_output_tokens:
+                    return logits
+                if self.triggered_reason is None and self.enable_approx_repeat_early_stop:
+                    approx_repeat = detect_approx_token_triplet_repeat(
+                        output_ids,
+                        max_period=self.approx_repeat_max_period,
+                        max_frac=self.approx_repeat_max_frac,
+                        min_k=self.approx_repeat_min_k,
+                    )
+                    if approx_repeat is not None:
+                        self.triggered_reason = str(approx_repeat["rule"])
+                if self.triggered_reason is None:
                     return logits
                 eos_token_id = int(self.eos_token_id)
                 eos_value = logits[eos_token_id].clone()
@@ -160,6 +206,15 @@ def _load_vllm(model_dir: Path, gpu_memory_utilization: float, disable_fp8_kv: b
                 window_tokens = extra.get("garbage_window_tokens")
                 if window_tokens is not None and int(window_tokens) <= 0:
                     raise ValueError("garbage_window_tokens must be > 0")
+                approx_repeat_max_period = extra.get("approx_repeat_max_period")
+                if approx_repeat_max_period is not None and int(approx_repeat_max_period) <= 0:
+                    raise ValueError("approx_repeat_max_period must be > 0")
+                approx_repeat_max_frac = extra.get("approx_repeat_max_frac")
+                if approx_repeat_max_frac is not None and float(approx_repeat_max_frac) < 0.0:
+                    raise ValueError("approx_repeat_max_frac must be >= 0")
+                approx_repeat_min_k = extra.get("approx_repeat_min_k")
+                if approx_repeat_min_k is not None and int(approx_repeat_min_k) < 0:
+                    raise ValueError("approx_repeat_min_k must be >= 0")
 
             def __init__(self, vllm_config, device, is_pin_memory):
                 super().__init__(vllm_config, device, is_pin_memory)
@@ -182,6 +237,14 @@ def _load_vllm(model_dir: Path, gpu_memory_utilization: float, disable_fp8_kv: b
                     window_tokens=int(
                         extra.get("garbage_window_tokens", GARBAGE_EARLY_STOP_WINDOW_TOKENS)
                     ),
+                    enable_approx_repeat_early_stop=bool(extra.get("enable_approx_repeat_early_stop", False)),
+                    approx_repeat_max_period=int(
+                        extra.get("approx_repeat_max_period", DEFAULT_APPROX_REPEAT_MAX_PERIOD)
+                    ),
+                    approx_repeat_max_frac=float(
+                        extra.get("approx_repeat_max_frac", DEFAULT_APPROX_REPEAT_MAX_FRAC)
+                    ),
+                    approx_repeat_min_k=int(extra.get("approx_repeat_min_k", DEFAULT_APPROX_REPEAT_MIN_K)),
                 )
 
         logits_processors.append(GarbageEarlyStopLogitsProcessor)
@@ -197,15 +260,38 @@ def _load_vllm(model_dir: Path, gpu_memory_utilization: float, disable_fp8_kv: b
         "mm_processor_cache_gb": 0,
         "gpu_memory_utilization": float(gpu_memory_utilization),
         "tensor_parallel_size": 1,
+        # vLLM MultiModalProcessor merges engine/request mm_processor_kwargs
+        # into HF processor calls (vllm.multimodal.processing). Keep the exact
+        # DeepSeek-OCR HF names, including explicitly resolved profile defaults.
+        # vLLM 0.18.0 deepseek_ocr2.get_hf_processor overrides these with module
+        # constants ({**kwargs, **v2_processor_config}); retain intent explicitly.
+        "mm_processor_kwargs": dict(mm_processor_kwargs),
     }
     if disable_fp8_kv:
         engine_kwargs["kv_cache_dtype"] = "auto"
     if logits_processors:
         engine_kwargs["logits_processors"] = logits_processors
-    return LLM(**engine_kwargs)
+    llm = LLM(**engine_kwargs)
+    llm._glossapi_mm_processor_kwargs = dict(mm_processor_kwargs)
+    try:
+        from vllm.inputs import TextPrompt
+
+        supports_request_kwargs = "mm_processor_kwargs" in TextPrompt.__annotations__
+    except (ImportError, AttributeError):  # Older schema: pass intent at engine level only.
+        supports_request_kwargs = False
+    llm._glossapi_request_mm_processor_kwargs = supports_request_kwargs
+    return llm
 
 
-def _sampling_params(max_new_tokens: int | None, *, enable_garbage_early_stop: bool):
+def _sampling_params(
+    max_new_tokens: int | None,
+    *,
+    enable_garbage_early_stop: bool,
+    enable_approx_repeat_early_stop: bool,
+    approx_repeat_max_period: int,
+    approx_repeat_max_frac: float,
+    approx_repeat_min_k: int,
+):
     from vllm import SamplingParams
 
     return SamplingParams(
@@ -219,8 +305,56 @@ def _sampling_params(max_new_tokens: int | None, *, enable_garbage_early_stop: b
             "garbage_early_stop": bool(enable_garbage_early_stop),
             "garbage_min_output_tokens": int(GARBAGE_EARLY_STOP_MIN_OUTPUT_TOKENS),
             "garbage_window_tokens": int(GARBAGE_EARLY_STOP_WINDOW_TOKENS),
+            "enable_approx_repeat_early_stop": bool(enable_approx_repeat_early_stop),
+            "approx_repeat_max_period": int(approx_repeat_max_period),
+            "approx_repeat_max_frac": float(approx_repeat_max_frac),
+            "approx_repeat_min_k": int(approx_repeat_min_k),
         },
     )
+
+
+def _dedupe_strings(values: List[str]) -> List[str]:
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return ordered
+
+
+def _detect_token_repeat_early_stop(args: argparse.Namespace, output_token_ids: List[int]) -> Optional[dict]:
+    if not bool(args.enable_approx_repeat_early_stop):
+        return None
+    if not output_token_ids:
+        return None
+    return detect_approx_token_triplet_repeat(
+        output_token_ids,
+        max_period=int(args.approx_repeat_max_period),
+        max_frac=float(args.approx_repeat_max_frac),
+        min_k=int(args.approx_repeat_min_k),
+    )
+
+
+def _merge_early_stop_metrics(postprocess_metrics: dict, *, token_repeat_detail: Optional[dict]) -> dict:
+    merged = dict(postprocess_metrics or {})
+    details = [dict(detail) for detail in list(merged.get("early_stop_rule_details") or []) if detail]
+    if token_repeat_detail is not None:
+        details.append(dict(token_repeat_detail))
+    if details:
+        merged["early_stops"] = max(1, int(merged.get("early_stops", 0)))
+        merged["early_stop_rule_details"] = details
+        merged["early_stop_rules"] = _dedupe_strings(
+            [str(detail.get("rule")) for detail in details if detail.get("rule")]
+        )
+        if not merged.get("early_stop_primary_rule"):
+            merged["early_stop_primary_rule"] = str(details[0]["rule"])
+    merged["token_repeat_early_stop_applied"] = bool(token_repeat_detail is not None)
+    if token_repeat_detail is not None:
+        merged["token_repeat_early_stop_detail"] = dict(token_repeat_detail)
+    return merged
 
 
 def _batched(items: List[dict], batch_size: int) -> List[List[dict]]:
@@ -320,6 +454,8 @@ def _empty_page_metric(*, page_number: int, image_stats: dict) -> dict:
     return {
         "page_number": int(page_number),
         "infer_sec": 0.0,
+        "prompt_tokens": 0,
+        "output_tokens": 0,
         "raw_chars": 0,
         "final_chars": 0,
         "first_pass_quality_score": 0.0,
@@ -562,6 +698,8 @@ def _run_vllm_batch(
                 "multi_modal_data": {"image": image},
             }
         )
+        if getattr(llm, "_glossapi_request_mm_processor_kwargs", False):
+            prompt_batch[-1]["mm_processor_kwargs"] = dict(llm._glossapi_mm_processor_kwargs)
 
     try:
         infer_start = time.perf_counter()
@@ -575,13 +713,23 @@ def _run_vllm_batch(
     results: List[dict] = []
     for item, key, output in zip(batch, keys, batch_outputs):
         raw_text = ""
+        output_token_ids: List[int] = []
+        output_tokens = None
         if getattr(output, "outputs", None):
-            raw_text = str(output.outputs[0].text)
+            first_output = output.outputs[0]
+            raw_text = str(getattr(first_output, "text", ""))
+            output_token_ids = [int(token_id) for token_id in list(getattr(first_output, "token_ids", []) or [])]
+            if getattr(first_output, "token_ids", None) is not None:
+                output_tokens = len(output_token_ids)
         results.append(
             {
                 "key": key,
                 "item": item,
                 "raw_text": raw_text,
+                "output_token_ids": output_token_ids,
+                "output_tokens": output_tokens,
+                "prompt_tokens": (len(output.prompt_token_ids)
+                                  if getattr(output, "prompt_token_ids", None) is not None else None),
                 "infer_sec": float(per_item_sec),
             }
         )
@@ -607,6 +755,9 @@ def _generate_batch_outputs(
             outputs_by_key[result["key"]] = {
                 "item": result["item"],
                 "raw_text": result["raw_text"],
+                "output_token_ids": list(result.get("output_token_ids") or []),
+                "prompt_tokens": result["prompt_tokens"],
+                "output_tokens": result["output_tokens"],
                 "infer_sec": result["infer_sec"],
             }
     return [outputs_by_key[(str(item["stem"]), int(item["page_number"]))] for item in jobs]
@@ -758,27 +909,40 @@ def _run_jobs_to_outputs(
                     prompt=prompt,
                     content_debug=bool(args.content_debug),
                 )
+                token_repeat_detail = _detect_token_repeat_early_stop(
+                    args,
+                    list(result.get("output_token_ids") or []),
+                )
+                effective_postprocess_metrics = _merge_early_stop_metrics(
+                    postprocess_metrics,
+                    token_repeat_detail=token_repeat_detail,
+                )
                 if args.content_debug:
                     page_text = f"<!-- page:{item['page_number']} -->\n{page_text}".strip()
                 quality = _text_quality_metrics(page_text)
                 metric = {
                     "page_number": int(item["page_number"]),
                     "infer_sec": float(result["infer_sec"]),
+                    "prompt_tokens": result["prompt_tokens"],
+                    "output_tokens": result["output_tokens"],
                     "raw_chars": int(len(raw_text.strip())),
                     "final_chars": int(len(page_text.strip())),
                     "first_pass_quality_score": float(quality["quality_score"]),
                     "first_pass_letters": int(quality["letters"]),
                     "first_pass_digits": int(quality["digits"]),
                     "first_pass_pua_chars": int(quality["pua_chars"]),
-                    "repair_strategy": "plain" if bool(postprocess_metrics.get("early_stops", 0)) else "none",
-                    "repair_reason": "early_stop_markdown_garbage" if bool(postprocess_metrics.get("early_stops", 0)) else None,
+                    "repair_strategy": "plain" if bool(effective_postprocess_metrics.get("early_stops", 0)) else "none",
+                    "repair_reason": "early_stop_markdown_garbage"
+                    if bool(effective_postprocess_metrics.get("early_stops", 0))
+                    else None,
+                    "repair_reason_detail": effective_postprocess_metrics.get("early_stop_primary_rule"),
                     "repair_attempted": False,
                     "repair_applied": False,
                     "page_dropped_after_repair": False,
                     "empty_page_skipped": False,
-                    "garbage_early_stop_applied": bool(postprocess_metrics.get("early_stops", 0)),
+                    "garbage_early_stop_applied": bool(effective_postprocess_metrics.get("early_stops", 0)),
                     **image_stats,
-                    **postprocess_metrics,
+                    **effective_postprocess_metrics,
                 }
                 with state_lock:
                     state["page_outputs"][item["page_number"] - 1] = page_text
@@ -786,7 +950,7 @@ def _run_jobs_to_outputs(
                     state["completed_pages"] = int(state["completed_pages"]) + 1
                     _emit_progress(output_dir, item["stem"], state)
 
-                if bool(postprocess_metrics.get("early_stops", 0)) and str(args.repair_mode or "off").strip().lower() == "auto":
+                if bool(effective_postprocess_metrics.get("early_stops", 0)) and str(args.repair_mode or "off").strip().lower() == "auto":
                     if shared_repair_queue:
                         retry_pages_by_stem.setdefault(str(item["stem"]), []).append(int(item["page_number"]))
                         _close_job_image(item)
@@ -822,25 +986,35 @@ def _run_jobs_to_outputs(
                     prompt=plain_prompt,
                     content_debug=bool(args.content_debug),
                 )
+                repair_token_repeat_detail = _detect_token_repeat_early_stop(
+                    args,
+                    list(result.get("output_token_ids") or []),
+                )
+                effective_repair_postprocess = _merge_early_stop_metrics(
+                    repair_postprocess,
+                    token_repeat_detail=repair_token_repeat_detail,
+                )
                 if args.content_debug:
                     repair_text = f"<!-- page:{item['page_number']} -->\n{repair_text}".strip()
                 metric["repair_attempted"] = True
                 metric["repair_infer_sec"] = float(result["infer_sec"])
+                metric["repair_prompt_tokens"] = result["prompt_tokens"]
+                metric["repair_output_tokens"] = result["output_tokens"]
                 metric["repair_raw_chars"] = int(len(str(result["raw_text"]).strip()))
                 metric["repair_profile"] = "plain_ocr"
                 disposition = _resolve_repair_disposition(
                     repair_text=repair_text,
-                    repair_postprocess=repair_postprocess,
+                    repair_postprocess=effective_repair_postprocess,
                 )
                 repair_effective_text = disposition["final_text"] or ""
                 metric["repair_final_chars"] = int(len(repair_effective_text.strip()))
                 metric["repair_quality_score"] = float(_text_quality_metrics(repair_effective_text)["quality_score"])
-                metric["repair_garbage_early_stop_applied"] = bool(repair_postprocess.get("early_stops", 0))
+                metric["repair_garbage_early_stop_applied"] = bool(effective_repair_postprocess.get("early_stops", 0))
                 metric["repair_applied"] = bool(disposition["repair_applied"])
                 metric["page_dropped_after_repair"] = bool(disposition["page_dropped_after_repair"])
                 if disposition["drop_reason"] is not None:
                     metric["drop_reason"] = str(disposition["drop_reason"])
-                metric.update({f"repair_{key}": value for key, value in repair_postprocess.items()})
+                metric.update({f"repair_{key}": value for key, value in effective_repair_postprocess.items()})
                 metric["infer_sec"] = float(metric["infer_sec"]) + float(result["infer_sec"])
                 with state_lock:
                     if disposition["final_text"] is not None:
@@ -877,12 +1051,20 @@ def _run_jobs_to_outputs(
                     "base_size": base_size,
                     "image_size": image_size,
                     "crop_mode": crop_mode,
+                    "mm_processor_kwargs": dict(getattr(llm, "_glossapi_mm_processor_kwargs", {})),
+                    "mm_processor_kwargs_honoured": getattr(llm, "_glossapi_mm_processor_kwargs_honoured", None),
+                    "request_mm_processor_kwargs_passed": bool(
+                        getattr(llm, "_glossapi_request_mm_processor_kwargs", False)),
                     "render_dpi": int(args.render_dpi),
                     "max_new_tokens": args.max_new_tokens,
                     "batch_size": int(args.batch_size),
                     "gpu_memory_utilization": float(args.gpu_memory_utilization),
                     "disable_fp8_kv": bool(args.disable_fp8_kv),
                     "repair_mode": str(args.repair_mode),
+                    "enable_approx_repeat_early_stop": bool(args.enable_approx_repeat_early_stop),
+                    "approx_repeat_max_period": int(args.approx_repeat_max_period),
+                    "approx_repeat_max_frac": float(args.approx_repeat_max_frac),
+                    "approx_repeat_min_k": int(args.approx_repeat_min_k),
                     "render_sec": float(state["render_sec"]),
                     "infer_sec_total": float(sum(item["infer_sec"] for item in page_metrics)),
                     "wall_time_sec": float(time.perf_counter() - float(state["doc_start"])),
@@ -913,6 +1095,10 @@ def _run_jobs_to_outputs(
         ),
         "first_infer_started_at": _utc_now_iso(first_infer_started_at) if first_infer_started_at is not None else None,
         "last_infer_completed_at": _utc_now_iso(last_infer_completed_at) if last_infer_completed_at is not None else None,
+        # Full precision for the standalone post-load window; worker timestamps
+        # above retain their existing schema. Capture the end after all writes.
+        "first_infer_started_at_unix": first_infer_started_at,
+        "last_write_completed_at_unix": time.time(),
         "repair_batches_enqueued": int(sum(1 for pages in retry_pages_by_stem.values() if pages)),
         "batch_wall_time_sec": float(time.perf_counter() - batch_wall_start),
     }
@@ -1034,25 +1220,35 @@ def _run_repair_batches_to_outputs(
                 prompt=plain_prompt,
                 content_debug=bool(args.content_debug),
             )
+            repair_token_repeat_detail = _detect_token_repeat_early_stop(
+                args,
+                list(result.get("output_token_ids") or []),
+            )
+            effective_repair_postprocess = _merge_early_stop_metrics(
+                repair_postprocess,
+                token_repeat_detail=repair_token_repeat_detail,
+            )
             if args.content_debug:
                 repair_text = f"<!-- page:{page_number} -->\n{repair_text}".strip()
             metric["repair_attempted"] = True
             metric["repair_infer_sec"] = float(result["infer_sec"])
+            metric["repair_prompt_tokens"] = result["prompt_tokens"]
+            metric["repair_output_tokens"] = result["output_tokens"]
             metric["repair_raw_chars"] = int(len(str(result["raw_text"]).strip()))
             metric["repair_profile"] = "plain_ocr"
             disposition = _resolve_repair_disposition(
                 repair_text=repair_text,
-                repair_postprocess=repair_postprocess,
+                repair_postprocess=effective_repair_postprocess,
             )
             repair_effective_text = disposition["final_text"] or ""
             metric["repair_final_chars"] = int(len(repair_effective_text.strip()))
             metric["repair_quality_score"] = float(_text_quality_metrics(repair_effective_text)["quality_score"])
-            metric["repair_garbage_early_stop_applied"] = bool(repair_postprocess.get("early_stops", 0))
+            metric["repair_garbage_early_stop_applied"] = bool(effective_repair_postprocess.get("early_stops", 0))
             metric["repair_applied"] = bool(disposition["repair_applied"])
             metric["page_dropped_after_repair"] = bool(disposition["page_dropped_after_repair"])
             if disposition["drop_reason"] is not None:
                 metric["drop_reason"] = str(disposition["drop_reason"])
-            metric.update({f"repair_{key}": value for key, value in repair_postprocess.items()})
+            metric.update({f"repair_{key}": value for key, value in effective_repair_postprocess.items()})
             metric["infer_sec"] = float(metric.get("infer_sec", 0.0)) + float(result["infer_sec"])
             if disposition["final_text"] is not None:
                 state["page_outputs"][page_number - 1] = repair_effective_text
@@ -1333,15 +1529,36 @@ def main() -> int:
     base_size = int(args.base_size) if args.base_size is not None else int(profile_defaults["base_size"])
     image_size = int(args.image_size) if args.image_size is not None else int(profile_defaults["image_size"])
     crop_mode = bool(args.crop_mode) if args.crop_mode is not None else bool(profile_defaults["crop_mode"])
+    mm_processor_kwargs = {"base_size": base_size, "image_size": image_size, "crop_mode": crop_mode}
+    nondefault_processor = mm_processor_kwargs != VLLM_OCR2_PROCESSOR_DEFAULTS
+    if nondefault_processor:
+        LOGGER.warning("vLLM 0.18.0's DeepSeek-OCR-2 processor ignores non-default "
+                       "mm_processor_kwargs %s and uses %s; resolution changes require a vLLM patch",
+                       mm_processor_kwargs, VLLM_OCR2_PROCESSOR_DEFAULTS)
 
     llm = _load_vllm(
         model_dir,
+        mm_processor_kwargs=mm_processor_kwargs,
         gpu_memory_utilization=float(args.gpu_memory_utilization),
         disable_fp8_kv=bool(args.disable_fp8_kv),
+        enable_approx_repeat_early_stop=bool(args.enable_approx_repeat_early_stop),
+        approx_repeat_max_period=int(args.approx_repeat_max_period),
+        approx_repeat_max_frac=float(args.approx_repeat_max_frac),
+        approx_repeat_min_k=int(args.approx_repeat_min_k),
     )
+    # Only an explicit engine report can override the known ignored-kwargs result.
+    # Default values matching constants do not establish support for overrides.
+    reported_honoured = getattr(llm, "mm_processor_kwargs_honoured", None)
+    llm._glossapi_mm_processor_kwargs_honoured = (
+        reported_honoured if isinstance(reported_honoured, bool)
+        else False if nondefault_processor else None)
     sampling_params = _sampling_params(
         args.max_new_tokens,
         enable_garbage_early_stop=str(args.repair_mode or "off").strip().lower() == "auto",
+        enable_approx_repeat_early_stop=bool(args.enable_approx_repeat_early_stop),
+        approx_repeat_max_period=int(args.approx_repeat_max_period),
+        approx_repeat_max_frac=float(args.approx_repeat_max_frac),
+        approx_repeat_min_k=int(args.approx_repeat_min_k),
     )
 
     if args.work_db:
@@ -1361,7 +1578,7 @@ def main() -> int:
     jobs_to_run = _iter_pdf_jobs(input_dir, args.files, args.page_ranges)
     if not jobs_to_run:
         return 0
-    _run_jobs_to_outputs(
+    result = _run_jobs_to_outputs(
         args,
         jobs_to_run=jobs_to_run,
         output_dir=output_dir,
@@ -1375,6 +1592,18 @@ def main() -> int:
         crop_mode=crop_mode,
         sampling_params=sampling_params,
     )
+    start = result["first_infer_started_at_unix"]
+    end = result["last_write_completed_at_unix"]
+    # Match runner._write_runtime_summary's steady_state keys without importing
+    # the Corpus dispatcher or a work DB. This window includes queue waits,
+    # later rendering, repair, postprocessing and writes, but excludes load and
+    # the initial render before the first inference, as specified for E4.
+    _write_worker_runtime(output_dir / "runtime_summary.json", {"steady_state": {
+        "first_batch_started_at": datetime.fromtimestamp(start, timezone.utc).isoformat() if start is not None else None,
+        "last_batch_finished_at": datetime.fromtimestamp(end, timezone.utc).isoformat(),
+        "last_write_completed_at": datetime.fromtimestamp(end, timezone.utc).isoformat(),
+        "first_batch_to_last_batch_window_sec": end - start if start is not None else None,
+    }})
     return 0
 
 
