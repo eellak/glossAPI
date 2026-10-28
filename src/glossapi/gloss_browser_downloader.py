@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .ledger.journal import observe, observe_store, observe_source_rows, observe_acquisition, observe_http_response
+
 import asyncio
 import io
 import json
@@ -129,6 +131,7 @@ class BrowserGlossDownloader(GlossDownloader):
 
     async def _fetch_bytes(self, session: aiohttp.ClientSession, url: str) -> bytes:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=min(max(self.request_timeout, 60), 180))) as response:
+            observe_http_response(response, url)
             response.raise_for_status()
             return await response.read()
 
@@ -261,6 +264,7 @@ class BrowserGlossDownloader(GlossDownloader):
         timeout = aiohttp.ClientTimeout(total=min(max(self.request_timeout, 30), 180))
         async with aiohttp.ClientSession(connector=connector) as session:
             async with session.get(url, headers=request_headers, timeout=timeout) as response:
+                observe_http_response(response, url)
                 response.raise_for_status()
                 body = await response.read()
                 response_headers = {str(k): str(v) for k, v in (response.headers or {}).items()}
@@ -498,18 +502,21 @@ class BrowserGlossDownloader(GlossDownloader):
                 route_options=route_options,
             )
         except Exception as exc:
+            observe("browser_recovery_failed", path=url, error=exc, status="failed")
             message = f"{html_issue}; browser recovery failed: {exc}"
             self.logger.warning(message)
             return False, "", "html", message, retry_count + 1
 
         file_ext = self.infer_file_extension(meta["candidate_url"], response_headers, body)
         if file_ext == "html":
+            observe("browser_returned_html", path=url, status="failed")
             message = (
                 f"{html_issue}; browser recovery still returned HTML from {meta['candidate_url']}"
             )
             self.logger.warning(message)
             return False, "", file_ext, message, retry_count + 1
         if not self.is_supported_format(file_ext):
+            observe("browser_unsupported_format", path=url, status="failed", inferred_extension=file_ext)
             message = (
                 f"{html_issue}; browser recovery returned unsupported format: {file_ext}"
             )
@@ -522,6 +529,8 @@ class BrowserGlossDownloader(GlossDownloader):
             filename = self.generate_filename(row_index, file_ext)
 
         await self._write_recovered_file(row_index, filename, body)
+        observe_acquisition(url, self.downloads_dir / filename, source_observable=False)
+        observe("browser_download_completed", path=self.downloads_dir / filename, status="ok", requested_url=url, candidate_url=meta.get("candidate_url"), legacy_outer_retry_count=retry_count)
         self.logger.info(
             "Recovered browser-gated download via browser mode: %s -> %s",
             url,

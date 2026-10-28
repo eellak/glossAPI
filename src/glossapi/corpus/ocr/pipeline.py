@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...ledger.journal import observe
+
 from .artifacts import persist_ocr_success, refresh_cleaner_after_ocr
 from .config import OcrRequest
 from .context import CorpusOcrContext
@@ -23,6 +25,7 @@ def run_ocr_phase(context: CorpusOcrContext, request: OcrRequest) -> list[str]:
     )
 
     if not selection.bad_files:
+        observe("ocr_not_routed", status="skipped")
         context.logger.info("OCR: no bad documents flagged by cleaner; skipping OCR fix")
         return []
 
@@ -40,11 +43,13 @@ def run_ocr_phase(context: CorpusOcrContext, request: OcrRequest) -> list[str]:
             backend_norm=request.backend,
         )
     except Exception as exc:
+        observe("ocr_metadata_persist_failed", error=exc, status="failed")
         context.logger.warning("Failed to update OCR success metadata: %s", exc)
 
     try:
         refresh_cleaner_after_ocr(context)
     except Exception as exc:
+        observe("ocr_clean_refresh_failed", error=exc, status="failed")
         context.logger.warning("Cleaner refresh after OCR failed: %s", exc)
 
     return selection.bad_files

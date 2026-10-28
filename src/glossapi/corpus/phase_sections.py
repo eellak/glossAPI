@@ -1,6 +1,8 @@
 """Section extraction helpers split from Corpus."""
 from __future__ import annotations
 
+from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
+
 import json
 import logging
 import math
@@ -27,6 +29,7 @@ from .corpus_utils import _maybe_import_torch
 
 
 class SectionPhaseMixin:
+    @shadow_stage("sections", "sections.wrapper")
     def section(self) -> None:
         """
         Extract sections from markdown files and save to Parquet format.
@@ -86,6 +89,7 @@ class SectionPhaseMixin:
                         except Exception as e:
                             self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
                 except Exception as e:
+                    observe("section_metadata_unavailable", path=parquet_path, error=e)
                     self.logger.warning(f"Error reading parquet file {parquet_path}: {e}")
             else:
                 self.logger.info("No metadata parquet found for section selection; will fall back to all markdown files")
@@ -95,6 +99,7 @@ class SectionPhaseMixin:
             self.logger.info(f"Good filenames: {good_filenames}")
 
         if not good_filenames:
+            observe("section_legacy_all_fallback", selection="all_available_markdown")
             self.logger.warning("No files marked as 'good' – falling back to processing all extracted markdown files.")
             good_filenames = [
                 os.path.splitext(p.name)[0]
@@ -102,6 +107,7 @@ class SectionPhaseMixin:
             ]
             if not good_filenames:
                 error_msg = "No markdown files found to section. Extraction might have failed."
+                observe("section_no_markdown", status="failed", message=error_msg)
                 self.logger.error(error_msg)
                 raise ValueError(error_msg)
 

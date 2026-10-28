@@ -1,6 +1,8 @@
 """OCR remediation through Docling's external OCR engine entry points."""
 from __future__ import annotations
 
+from ...ledger.journal import observe
+
 from glossapi.optional_dependencies import optional_dependencies
 
 from importlib.metadata import entry_points
@@ -82,6 +84,7 @@ def run_plugin_ocr(
             result = converter.convert(source, page_range=(first, last))
             status = getattr(result.status, "value", result.status)
             if status != "success":
+                observe("ocr_plugin_conversion_failed", path=source, status="failed", backend_status=str(status), page_first=first, page_last=last)
                 raise RuntimeError(f"OCR plugin failed for {name}:{first}:{last}: {result.status}")
             # Keep the source PDF intact: engines see original physical page numbers.
             page_artifacts._write_outputs(
@@ -92,6 +95,7 @@ def run_plugin_ocr(
                 extra_metrics={"source_start_page": first, "source_end_page": last,
                                "ocr_engine": request.ocr_options.kind, "device": request.device or "cpu"},
             )
+            observe("ocr_completed", path=source, status="ok", page_first=first, page_last=last, plugin_kind=request.ocr_options.kind, page_drop_reason="unknown_not_reported")
             completed_ranges.append(f"{name}:{first}:{last}")
     page_artifacts._ensure_canonical_outputs(
         out_root=context.output_dir, pdf_root=context.input_dir,

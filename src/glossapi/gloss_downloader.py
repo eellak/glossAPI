@@ -17,6 +17,7 @@ Features:
 - Domain-specific cookie handling
 """
 
+from .ledger.journal import observe, observe_store, observe_source_rows, observe_http_response, observe_acquisition
 from .optional_dependencies import optional_dependencies
 
 with optional_dependencies("download"):
@@ -434,6 +435,7 @@ class GlossDownloader:
         """
         input_parquet = Path(input_parquet)
         df = pd.read_parquet(input_parquet)
+        observe_source_rows(df, input_parquet, url_column=self.url_column)
 
         # Ensure URL column exists
         if self.url_column not in df.columns:
@@ -674,12 +676,14 @@ class GlossDownloader:
             with attempt:
                 if requester == 'get':
                     async with session.get(url, headers=headers, timeout=timeout) as response:
+                        observe_http_response(response, url, retry_index=attempt.retry_state.attempt_number - 1)
                         response.raise_for_status()
                         content = await response.read()
                         resp_headers = dict(response.headers) if response.headers else {}
                         return content, response.status, resp_headers
                 else:  # post
                     async with session.post(url, headers=headers, timeout=timeout) as response:
+                        observe_http_response(response, url, retry_index=attempt.retry_state.attempt_number - 1)
                         response.raise_for_status()
                         content = await response.read()
                         resp_headers = dict(response.headers) if response.headers else {}
@@ -1089,16 +1093,19 @@ class GlossDownloader:
                 )
                 if recovered is not None:
                     return recovered
+                observe("html_interstitial", path=url, status="failed", backend_message=html_issue)
                 self.logger.warning(f"HTML interstitial detected for {url}: {html_issue}")
                 return False, "", file_ext, html_issue, retry_count
         if not self.is_supported_format(file_ext):
             self._cleanup_temp_file(tmp_path)
+            observe("unsupported_download_format", path=url, status="failed", inferred_extension=file_ext)
             self.logger.warning(
                 f"Unsupported file format after inference: {file_ext}. Supported formats: {', '.join(self.supported_formats)}"
             )
             return False, "", file_ext or "", f"Unsupported file format: {file_ext}", retry_count
         if file_ext == 'pdf' and not self._looks_like_pdf_bytes(content):
             self._cleanup_temp_file(tmp_path)
+            observe("invalid_pdf_signature", path=url, status="failed")
             message = "Invalid PDF signature in downloaded content"
             self.logger.warning("%s for %s", message, url)
             return False, "", file_ext, message, retry_count
@@ -1108,6 +1115,9 @@ class GlossDownloader:
             self._move_temp_file_to_final(tmp_path, filename)
         else:
             await self.write_file(filename, content, self.downloads_dir)
+        observe_acquisition(url, self.downloads_dir / filename, source_observable=True)
+        observe_store(self.downloads_dir / filename, kind="download_payload")
+        observe("download_completed", path=self.downloads_dir / filename, status="ok", requested_url=url, assigned_filename=filename, legacy_outer_retry_count=retry_count, source_hash="unknown_not_recorded")
         self.logger.info(f"Successfully downloaded {filename} from {url}")
         return True, filename, file_ext, "", retry_count
 
@@ -1136,6 +1146,7 @@ class GlossDownloader:
         ):
             with attempt:
                 async with session.get(url, headers=headers, timeout=timeout) as response:
+                    observe_http_response(response, url, retry_index=attempt.retry_state.attempt_number - 1)
                     response.raise_for_status()
                     resp_headers = dict(response.headers or {})
                     tmp_path = Path(self.downloads_dir) / f".part_{row_index}"
@@ -1191,6 +1202,7 @@ class GlossDownloader:
         retry_count: int,
     ) -> Tuple[bool, str, str, str, int]:
         status = error.status
+        observe("http_error", path=url, error=error, backend_status="failed", http_status=status, legacy_outer_retry_count=retry_count)
         self.logger.warning(f"Received {status} for {url}")
 
         if self.verbose:
@@ -1308,6 +1320,7 @@ class GlossDownloader:
                             
                         except Exception as e:
                             error_msg = str(e)
+                            observe("download_exception", path=url, error=e, backend_status="failed", legacy_outer_retry_count=retry_count)
                             self.logger.error(f"Failed to download {url}: {error_msg}")
                             
                             # Detailed verbose logging for general errors
@@ -1320,6 +1333,7 @@ class GlossDownloader:
                             return False, "", self._best_effort_url_extension(url), error_msg, retry_count + 1
                             
                     except asyncio.TimeoutError:
+                        observe("download_timeout", path=url, backend_status="failed", legacy_outer_retry_count=retry_count)
                         self.logger.error(f"Overall timeout exceeded for {url}")
                         return False, "", "", "Timeout", retry_count + 1
                     except Exception as e:
@@ -1328,9 +1342,11 @@ class GlossDownloader:
                         
             except aiohttp.ClientError as e:
                 error_msg = str(e)
+                observe("download_client_error", path=url, error=e, backend_status="failed", legacy_outer_retry_count=retry_count)
                 self.logger.error(f"ClientError while downloading {url}: {error_msg}")
                 return False, "", self._best_effort_url_extension(url), error_msg, retry_count + 1
             except asyncio.TimeoutError:
+                observe("download_timeout", path=url, backend_status="failed", legacy_outer_retry_count=retry_count)
                 self.logger.error(f"Timeout while downloading {url}")
                 return False, "", "", "Timeout", retry_count + 1
             except Exception as e:

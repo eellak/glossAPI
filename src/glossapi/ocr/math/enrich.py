@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from ...ledger.journal import observe
+import hashlib
+
 import json
 import time
 from dataclasses import dataclass
@@ -116,6 +119,7 @@ def enrich_from_docling_json(
             continue
         prov = getattr(element, 'prov', []) or []
         if not prov:
+            observe("math_region_without_provenance", label=lab)
             continue
         p = prov[0]
         page_no = int(getattr(p, 'page_no', 0))
@@ -125,10 +129,12 @@ def enrich_from_docling_json(
         per_page_ix[page_no] = per_page_ix.get(page_no, 0) + 1
         cur_ix = per_page_ix[page_no]
         if targets_set and (page_no, cur_ix) not in targets_set:
+            observe("math_region_not_targeted", page=page_no, item=cur_ix)
             continue
         rois.append(RoiEntry(page_no=page_no, bbox=bbox, label=lab, per_page_ix=cur_ix))
 
     if not rois:
+        observe("math_no_regions", path=pdf_path, status="ok", inference_performed=False)
         # Nothing to enrich; still emit the base markdown (and fall back to raw text if empty)
         out_md_path.parent.mkdir(parents=True, exist_ok=True)
         doc.save_as_markdown(out_md_path)
@@ -252,6 +258,7 @@ def enrich_from_docling_json(
                 _engine_ver = ""
             for (page_no, ix, dpi_used), el in zip(binfo, batch):
                 latex = getattr(el.item, "text", "") or ""
+                original_latex_sha256 = hashlib.sha256(latex.encode("utf-8")).hexdigest()
                 do_post = True
                 if policy.post_only_failed:
                     tr = 0
@@ -295,6 +302,11 @@ def enrich_from_docling_json(
                     "engine_version": _engine_ver,
                     "time_ms": int(per_ms),
                 }
+                observe("math_completed" if ok else "math_latex_rejected", page=int(page_no), item=int(ix), original_sha256=original_latex_sha256, sanitized_sha256=hashlib.sha256(latex.encode("utf-8")).hexdigest(), acceptance="heuristic", compile_status="not_run", evidence={key:value for key,value in row.items() if key != "latex"})
+                if row["truncated_by_repeat"]:
+                    observe("math_repeat_truncated", page=int(page_no), item=int(ix))
+                if row["truncated_by_len"]:
+                    observe("math_length_truncated", page=int(page_no), item=int(ix))
                 out_lines.append(json.dumps(row, ensure_ascii=False))
             if out_lines:
                 with out_map_jsonl.open("a", encoding="utf-8") as fp:

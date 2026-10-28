@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...ledger.journal import observe
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Set
@@ -84,7 +86,8 @@ def build_ocr_selection(
                     return 0
                 try:
                     return sum(end - start + 1 for start, end in parse_page_ranges(value))
-                except ValueError:
+                except ValueError as error:
+                    observe("ocr_route_invalid", error=error, route=value, fallback="document_wide")
                     context.logger.warning("Ignoring invalid OCR page route: %r", value)
                     return 0
 
@@ -108,6 +111,7 @@ def build_ocr_selection(
             bad_files = [name for name in bad_files if canonical_stem(name) not in ocr_done_stems]
             skipped_completed = before - len(bad_files)
             if skipped_completed:
+                observe("legacy_ocr_completed", status="skipped", legacy_filenames=ocr_done_files)
                 context.logger.info(
                     "OCR: skipping %d already completed document(s) (reprocess_completed=False).",
                     skipped_completed,
@@ -129,6 +133,7 @@ def build_ocr_selection(
         bad_files = [name for name in bad_files if canonical_stem(name) not in skip_stems]
         skipped_skiplist = before - len(bad_files)
         if skipped_skiplist:
+            observe("fatal_skiplist", status="skipped", legacy_stems=sorted(skip_stems), provenance="unknown_not_recorded")
             context.logger.warning(
                 "Skip-list %s filtered %d document(s) from Phase-3 OCR.",
                 skiplist_path,

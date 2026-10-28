@@ -1,6 +1,8 @@
 """Download phase helpers split from Corpus."""
 from __future__ import annotations
 
+from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
+
 import json
 import logging
 import math
@@ -26,6 +28,7 @@ from .corpus_utils import _maybe_import_torch
 
 
 class DownloadPhaseMixin:
+    @shadow_stage("download", "download.wrapper")
     def download(
         self,
         input_parquet: Optional[Union[str, Path]] = None,

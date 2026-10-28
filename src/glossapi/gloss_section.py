@@ -1,4 +1,6 @@
+from .ledger.journal import observe, observe_store, observe_source_rows
 import re
+from pathlib import Path
 import os
 import json
 from typing import List, Tuple, Dict, Any
@@ -548,6 +550,7 @@ class GlossSection:
                 
                 # Only process files that are in our whitelist
                 if base_name not in filenames_to_process:
+                    observe("section_not_selected", path=Path(input_dir) / filename, status="skipped")
                     skipped_files.append(base_name)
                     print(f"⚠️ SKIPPED: {base_name} - not in the good files list")
                     continue  # Skip this file as it's not in our list of good files
@@ -584,6 +587,7 @@ class GlossSection:
                     row['row_id'] = f'row_{row_counter}'
                     row_counter += 1
                 
+                observe("sections_completed" if doc_rows else "sections_empty", path=input_path, status="ok", row_count=len(doc_rows))
                 if doc_rows:
                     df = pd.DataFrame(doc_rows)
                     table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)

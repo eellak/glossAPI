@@ -1,6 +1,8 @@
 """Phase-1 extraction helpers split from Corpus."""
 from __future__ import annotations
 
+from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows, accept_worker_observations
+
 from glossapi.optional_dependencies import optional_dependencies
 
 import json
@@ -367,6 +369,7 @@ class ExtractPhaseMixin:
             ", ".join(device_names) or "<none>",
         )
 
+    @shadow_stage("extract", "extract.wrapper")
     def extract(
         self,
         input_format: str = "all",
@@ -539,6 +542,7 @@ class ExtractPhaseMixin:
             ext = "xml" if input_format.lower() == "xml_jats" else input_format.lower()
 
             if ext == "doc":
+                observe("unsupported_legacy_doc", status="skipped")
                 self.logger.error(
                     "The .doc format (pre-2007 Word) is not supported by Docling. Please convert to .docx first."
                 )
@@ -548,10 +552,14 @@ class ExtractPhaseMixin:
 
         if filenames and not file_paths:
             names = {str(n) for n in filenames}
+            for excluded in input_files:
+                if excluded.name not in names:
+                    observe("not_selected_by_filename", path=excluded, status="skipped")
             input_files = [p for p in input_files if p.name in names]
             self.logger.info(f"Filtered to {len(input_files)} files from provided filename list")
 
         if not input_files:
+            observe("no_matching_inputs", status="skipped", input_format=input_format)
             self.logger.warning(f"No {input_format} files found in {downloads_dir}")
             return
 
@@ -562,6 +570,9 @@ class ExtractPhaseMixin:
         skipped_stems = set() if _stability_benchmark is not None else skip_mgr.load()
         if skipped_stems:
             before = len(input_files)
+            for excluded in input_files:
+                if canonical_stem(excluded) in skipped_stems:
+                    observe("fatal_skiplist", path=excluded, status="skipped", provenance="unknown_not_recorded")
             input_files = [p for p in input_files if canonical_stem(p) not in skipped_stems]
             removed = before - len(input_files)
             if removed:
@@ -797,6 +808,7 @@ class ExtractPhaseMixin:
                             worker_key = worker_spec["worker_key"] if worker_spec else None
                             if p.exitcode not in (0, None):
                                 any_fail = True
+                                observe("worker_process_crashed", status="failed", worker_pid=p.pid, exitcode=p.exitcode, assigned_items=list(status_map.get(worker_key, []) or []))
                                 self.logger.warning("GPU worker pid=%s exited with code %s", p.pid, p.exitcode)
                                 if _stability_benchmark and p.exitcode < 0:
                                     from ..scripts.batched_stability_benchmark import record_process_crash
@@ -879,12 +891,14 @@ class ExtractPhaseMixin:
                         while True:
                             try:
                                 result = result_q.get_nowait()
+                                accept_worker_observations(result.get("ledger_observations", []))
                             except queue.Empty:
                                 break
                             drained = True
                             last_activity = time.time()
                             event_type = result.get("event")
                             if event_type == "batch":
+                                observe("legacy_observed", store="worker_result_queue", receipt=result)
                                 ok_raw = [str(x) for x in (result.get("processed", []) or [])]
                                 bad_raw = [str(x) for x in (result.get("problematic", []) or [])]
                                 ok_stems = [canonical_stem(x) for x in ok_raw]
@@ -980,6 +994,7 @@ class ExtractPhaseMixin:
                 except queue.Empty:
                     pass
                 if remaining_after_failure:
+                    observe("workers_exhausted_unattempted", status="skipped", items=remaining_after_failure)
                     skip_mgr.add(canonical_stem(x) for x in remaining_after_failure)
                     self.logger.error(
                         "No active extraction workers remain; skipped %d pending item(s)",

@@ -7,6 +7,8 @@ pipeline, ensuring consistency between different pipeline stages.
 
 from __future__ import annotations
 
+from .ledger.journal import observe, observe_store, observe_source_rows
+
 import json
 import os
 import time
@@ -184,6 +186,7 @@ def _write_metadata_parquet(df: pd.DataFrame, parquet_path: Path) -> None:
         try:
             pq_mod.write_table(table, tmp_path)
             os.replace(tmp_path, parquet_path)
+            observe_store(parquet_path, kind="metadata_parquet")
         finally:
             try:
                 if tmp_path.exists():

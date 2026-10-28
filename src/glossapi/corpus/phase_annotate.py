@@ -1,6 +1,8 @@
 """Annotation helpers split from Corpus."""
 from __future__ import annotations
 
+from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
+
 import json
 import logging
 import math
@@ -28,6 +30,7 @@ from .corpus_utils import _maybe_import_torch
 
 
 class AnnotatePhaseMixin:
+    @shadow_stage("annotate", "annotate.wrapper")
     def annotate(self, annotation_type: str = "text", fully_annotate: bool = True) -> None:
         """
         Annotate extracted sections with classification information.
@@ -46,12 +49,14 @@ class AnnotatePhaseMixin:
 
         # Check if input parquet file exists
         if not self.sections_parquet.exists():
+            observe("annotation_sections_missing", path=self.sections_parquet, status="skipped")
             self.logger.error(f"Sections file not found: {self.sections_parquet}. Please run section() first.")
             return
 
         # Check if section classifier model exists
         model_exists = self.section_classifier_model_path.exists()
         if not model_exists:
+            observe("annotation_model_missing", path=self.section_classifier_model_path, status="skipped")
             self.logger.warning(f"Model file not found at {self.section_classifier_model_path}. To train a new model, run GlossSectionClassifier.train_from_csv()")
 
         # If no trained model, skip annotation with a clear message
@@ -75,6 +80,8 @@ class AnnotatePhaseMixin:
             column_name='title'
         )
 
+
+        observe_store(self.classified_parquet, kind="annotation_model_and_index_labels")
 
         # Perform full annotation if requested
         if fully_annotate:
@@ -117,6 +124,7 @@ class AnnotatePhaseMixin:
                     df_updated = pd.concat(updated_groups)
                     df_updated.to_parquet(str(self.fully_annotated_parquet), index=False)
                 else:
+                    observe("annotation_no_groups", status="skipped")
                     self.logger.warning("No valid document groups to process. Output file not created.")
             else:
                 # Use the standard fully_annotate method with the specified annotation type
@@ -145,6 +153,7 @@ class AnnotatePhaseMixin:
                 df.to_parquet(self.fully_annotated_parquet, index=False)
                 self.logger.info("Updated processing_stage to include 'annotate' stage")
             except Exception as e:
+                observe("annotation_metadata_update_failed", error=e, status="failed")
                 self.logger.warning(f"Failed to update processing_stage in fully annotated parquet: {e}")
         else:
             # Add document types to the classified output
@@ -165,6 +174,7 @@ class AnnotatePhaseMixin:
                 df.to_parquet(self.classified_parquet, index=False)
                 self.logger.info("Updated processing_stage to include 'annotate' stage")
             except Exception as e:
+                observe("annotation_metadata_update_failed", error=e, status="failed")
                 self.logger.warning(f"Failed to update processing_stage in classified parquet: {e}")
 
     def _add_document_types(self, parquet_file: Path) -> None:
@@ -203,6 +213,7 @@ class AnnotatePhaseMixin:
                 df.to_parquet(parquet_file, index=False)
                 self.logger.info(f"Added document types to {parquet_file}")
             except Exception as e:
+                observe("annotation_metadata_update_failed", path=parquet_file, error=e, status="failed")
                 self.logger.error(f"Error adding document types: {e}")
         else:
             self.logger.warning(f"File not found: {parquet_file}")

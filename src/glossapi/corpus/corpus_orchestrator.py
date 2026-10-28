@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..ledger.journal import worker_observation_scope
+
 import json
 import logging
 import math
@@ -174,6 +176,7 @@ class Corpus(
         self.filename_to_doctype = {}
         
         self._load_metadata()
+        self._shadow_ledger_enabled = True
 
     def _get_cached_metadata_parquet(self) -> Optional[Path]:
         """Return cached metadata parquet path if it still exists."""
@@ -230,6 +233,7 @@ class Corpus(
             try:
                 self.logger.info(f"Loading metadata from {self.metadata_path}")
                 metadata_df = pd.read_parquet(self.metadata_path)
+                self._shadow_original_source_frame = metadata_df.copy(deep=True)
                 
                 # Debug information
                 self.logger.info(f"Metadata file has {len(metadata_df)} rows and columns: {metadata_df.columns.tolist()}")
@@ -340,6 +344,7 @@ class Corpus(
     
 
 # Top-level worker function for multi-GPU extraction (picklable by multiprocessing)
+@worker_observation_scope
 def gpu_extract_worker_queue(
     device_id: int,
     worker_slot: int,
@@ -365,6 +370,7 @@ def gpu_extract_worker_queue(
     batched: bool | None = False,
     stability_benchmark: dict | None = None,
 ) -> None:
+    from ..ledger.journal import drain_worker_observations
     import os as _os
     import sys as _sys
     import time as _time
@@ -492,6 +498,7 @@ def gpu_extract_worker_queue(
                 try:
                     result_q.put(
                         {
+                            "ledger_observations": drain_worker_observations(),
                             "event": "exit",
                             "worker": _worker_label,
                             "device_id": device_id,
@@ -504,6 +511,8 @@ def gpu_extract_worker_queue(
                 except Exception:
                     pass
             _sys.exit(1)
+    from ..ledger.journal import start_worker_observations, drain_worker_observations
+    start_worker_observations()
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
     # Prime once per worker (persistent converter)
     try:
@@ -532,6 +541,7 @@ def gpu_extract_worker_queue(
             try:
                 result_q.put(
                     {
+                        "ledger_observations": drain_worker_observations(),
                         "event": "exit",
                         "worker": _worker_label,
                         "device_id": device_id,
@@ -554,6 +564,7 @@ def gpu_extract_worker_queue(
                     try:
                         result_q.put(
                             {
+                                "ledger_observations": drain_worker_observations(),
                                 "event": "batch",
                                 "worker": _worker_label,
                                 "device_id": device_id,
@@ -611,6 +622,7 @@ def gpu_extract_worker_queue(
                 try:
                     result_q.put(
                         {
+                            "ledger_observations": drain_worker_observations(),
                             "event": "batch",
                             "worker": _worker_label,
                             "device_id": device_id,
@@ -666,6 +678,7 @@ def gpu_extract_worker_queue(
     if result_q is not None:
         try:
             result_q.put({
+                "ledger_observations": drain_worker_observations(),
                 "event": "exit",
                 "worker": _worker_label,
                 "device_id": device_id,

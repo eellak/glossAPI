@@ -1,8 +1,12 @@
 """Export helpers split from Corpus."""
 from __future__ import annotations
 
+from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
+
 import hashlib
 import json
+import hashlib
+from ..ledger.encoding import snapshot_hash
 import logging
 import math
 import os
@@ -473,11 +477,13 @@ class ExportPhaseMixin:
             base_metadata = metadata_by_stem.get(stem)
             chunk_metadata = metadata_chunks_by_stem.get(stem, [])
             if base_metadata is None and not chunk_metadata:
+                observe("export_metadata_row_missing", path=base_path, status="skipped", legacy_stem=stem)
                 continue
             metadata = _aggregate_metadata(stem, base_metadata, chunk_metadata)
             metadata = {k: _normalize_value(v) for k, v in metadata.items()}
             original_filename_value = metadata.get("filename")
             if base_path is None or not base_path.exists():
+                observe("export_canonical_markdown_missing", path=base_path, status="skipped", legacy_stem=stem)
                 continue
 
             document_text = base_path.read_text(encoding="utf-8")
@@ -585,8 +591,10 @@ class ExportPhaseMixin:
                 record[source_metadata_key] = filtered_source
 
             record["filename"] = filename_base
+            observe("export_included", path=base_path, status="ok", text_sha256=hashlib.sha256(document_text.encode("utf-8")).hexdigest(), record_sha256=snapshot_hash(record), legacy_stem=stem)
             yield record
 
+    @shadow_stage("export", "export.jsonl")
     def jsonl(
         self,
         output_path: Union[str, Path],
@@ -650,8 +658,11 @@ class ExportPhaseMixin:
 
         if records_written == 0:
             output_path.write_text("", encoding="utf-8")
+        observe_store(output_path, kind="document_jsonl")
+        observe("export_completed" if records_written else "export_empty", path=output_path, status="ok", records_written=records_written)
         return output_path
 
+    @shadow_stage("export", "export.jsonl_sharded")
     def jsonl_sharded(
         self,
         output_dir: Union[str, Path],
@@ -723,6 +734,9 @@ class ExportPhaseMixin:
             bytes_written += len(encoded)
 
         _close_writer()
+        for published in shard_paths:
+            observe_store(published, kind="document_jsonl_shard")
+        observe("export_completed" if shard_paths else "export_empty", status="ok", shards=[str(p) for p in shard_paths])
         return shard_paths
 
     def process_all(self, input_format: str = "pdf", fully_annotate: bool = True, annotation_type: str = "auto", download_first: bool = False) -> None:

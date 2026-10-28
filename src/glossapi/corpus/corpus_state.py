@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..ledger.journal import observe, observe_store
+
 import logging
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Set, Tuple
@@ -127,6 +129,7 @@ class _ProcessingStateManager:
         except Exception:
             pass
 
+        observe("legacy_observed", path=parquet_path, store="processing_state", processed=sorted(processed), problematic=sorted(problematic), provenance="unknown_not_recorded")
         return processed, problematic
 
     def save(self, processed: Set[str], problematic: Set[str]) -> None:
@@ -210,5 +213,7 @@ class _ProcessingStateManager:
 
         try:
             self.schema.write_metadata_parquet(df, parquet_path)
+            observe_store(parquet_path, kind="processing_state_metadata")
         except Exception as exc:
+            observe("extract_exception", path=parquet_path, error=exc, warning=True, continuation="legacy_state_unchanged")
             self.logger.warning("Failed to persist processing state to %s: %s", parquet_path, exc)

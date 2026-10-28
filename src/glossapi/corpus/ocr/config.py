@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...ledger.journal import observe
+
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -97,6 +99,7 @@ def normalize_ocr_request(
         math_enhance=bool(math_enhance),
     )
     if mode_norm is None:
+        observe("ocr_not_requested", status="skipped")
         logger.info(
             "OCR: no operation requested (enable fix_bad and/or math_enhance or set mode='ocr_bad'|'math_only'|'ocr_bad_then_math')"
         )

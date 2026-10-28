@@ -1,6 +1,10 @@
 """OCR and math enrichment helpers split from Corpus."""
 from __future__ import annotations
 
+from ..ledger.journal import worker_observation_scope
+
+from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows, accept_worker_observations
+
 import hashlib
 import json
 import logging
@@ -68,6 +72,7 @@ class OcrMathPhaseMixin:
             write_cleaned_files=False,
         )
 
+    @shadow_stage("ocr", "ocr.wrapper")
     def ocr(
         self,
         *,
@@ -366,10 +371,12 @@ class OcrMathPhaseMixin:
                 while True:
                     try:
                         event = result_q.get_nowait()
+                        accept_worker_observations(event.get("ledger_observations", []))
                     except queue.Empty:
                         break
                     if not event:
                         continue
+                    observe("legacy_observed", store="math_worker_result_queue", receipt=event)
                     if event.get("event") == "math_batch":
                         stems_bad = event.get("problematic", [])
                         if stems_bad and skip_mgr is not None:
@@ -438,6 +445,7 @@ class OcrMathPhaseMixin:
             else:
                 os.environ.pop("GLOSSAPI_WORKER_LOG_DIR", None)
 
+    @shadow_stage("math", "math.formula_enrich_from_json")
     def formula_enrich_from_json(
         self,
         files: Optional[List[str]] = None,
@@ -553,6 +561,7 @@ class OcrMathPhaseMixin:
                 elif (json_dir / f"{stem}.docling.json").exists():
                     jp = json_dir / f"{stem}.docling.json"
                 if jp is None:
+                    observe("math_json_missing", status="skipped", legacy_stem=stem)
                     self.logger.warning("JSON not found for %s", stem)
                     continue
                 # Resolve PDF path
@@ -575,6 +584,7 @@ class OcrMathPhaseMixin:
                     except Exception:
                         pass
                 if pdfp is None:
+                    observe("math_pdf_missing", status="skipped", legacy_stem=stem)
                     self.logger.warning("PDF not found for %s; skipping", stem)
                     continue
                 else:
@@ -626,6 +636,7 @@ class OcrMathPhaseMixin:
                 stats = enrich_from_docling_json(
                     jp, pdfp, out_md, out_map, device=device, batch_size=int(batch_size), dpi_base=int(dpi_base), targets=picks
                 )
+                observe("math_completed", status="ok", path=out_md, legacy_stem=stem, metrics=stats, compile_status="not_run")
                 self.logger.info("Phase‑2: %s -> items=%s accepted=%s time=%.2fs", stem, stats.get('items'), stats.get('accepted'), stats.get('time_sec'))
                 # Update parquet with enrichment results
                 try:
@@ -641,8 +652,10 @@ class OcrMathPhaseMixin:
                     self._cache_metadata_parquet(pq_path)
                     update_math_enrich_results(pq_path, stem, items=int(stats.get('items', 0)), accepted=int(stats.get('accepted', 0)), time_sec=float(stats.get('time_sec', 0.0)))
                 except Exception as _e:
+                    observe("math_metadata_persist_failed", error=_e, legacy_stem=stem, status="failed")
                     self.logger.warning("Parquet math-enrich update failed for %s: %s", stem, _e)
             except Exception as e:
+                observe("math_exception", error=e, legacy_stem=stem, status="failed")
                 self.logger.warning("Phase‑2 failed for %s: %s", stem, e)
                 # Emit a minimal sidecar to aid downstream bookkeeping, even on failure.
                 try:
@@ -659,6 +672,7 @@ class OcrMathPhaseMixin:
                 except Exception:
                     pass
 
+    @shadow_stage("math", "math.triage")
     def triage_math(self) -> None:
         """Summarize per-page formula density and update routing recommendation in parquet.
 
@@ -697,9 +711,11 @@ class OcrMathPhaseMixin:
                 update_download_results_parquet(self.output_dir, stem, summary, rec, url_column=self.url_column)
                 self.logger.info("Triage: %s -> %s", stem, rec)
             except Exception as e:
+                observe("math_triage_failed", path=mpath, error=e, legacy_stem=stem, status="failed")
                 self.logger.warning("Triage failed for %s: %s", stem, e)
 
 
+@worker_observation_scope
 def _gpu_math_worker(
     device_id: int,
     in_dir: str,
@@ -713,6 +729,7 @@ def _gpu_math_worker(
     status_map=None,
     marker_dir: str | None = None,
 ) -> None:
+    from ..ledger.journal import drain_worker_observations
     import os as _os
     from pathlib import Path as _Path
     import sys as _sys
@@ -814,6 +831,7 @@ def _gpu_math_worker(
                 try:
                     result_q.put(
                         {
+                            "ledger_observations": drain_worker_observations(),
                             "event": "exit",
                             "worker": device_id,
                             "exitcode": 1,
@@ -823,6 +841,8 @@ def _gpu_math_worker(
                 except Exception:
                     pass
             _sys.exit(1)
+    from ..ledger.journal import start_worker_observations, drain_worker_observations
+    start_worker_observations()
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
     B = max(1, int(batch_size))
     exit_code = 0
@@ -838,6 +858,7 @@ def _gpu_math_worker(
             try:
                 result_q.put(
                     {
+                        "ledger_observations": drain_worker_observations(),
                         "event": "math_batch",
                         "worker": device_id,
                         "problematic": list(items),
@@ -962,6 +983,7 @@ def _gpu_math_worker(
             try:
                 result_q.put(
                     {
+                        "ledger_observations": drain_worker_observations(),
                         "event": "exit",
                         "worker": device_id,
                         "exitcode": exit_code,

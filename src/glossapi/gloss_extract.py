@@ -1,3 +1,4 @@
+from .ledger.journal import observe, observe_store, observe_source_rows
 from typing import Dict, Set, List, Optional, Iterable, Tuple, Any, Union, Callable
 import importlib
 import sys
@@ -1181,6 +1182,7 @@ class GlossExtract:
         try:
             import pypdfium2 as pdfium  # type: ignore
         except ImportError as exc:
+            observe("pdf_backend_missing", path=file_path, error=exc, status="failed")
             self._log.error("PyPDFium backend requested but pypdfium2 is not installed: %s", exc)
             return False
 
@@ -1191,11 +1193,13 @@ class GlossExtract:
         try:
             doc = pdfium.PdfDocument(str(file_path))
         except Exception as exc:
+            observe("pdf_open_failed", path=file_path, error=exc, status="failed")
             self._log.error("PyPDFium failed to open %s: %s", Path(file_path).name, exc)
             self._update_extraction_metadata(output_dir, file_path, "failure", "pypdfium")
             return False
 
         texts: List[str] = []
+        attempted_pages, succeeded_pages, blank_pages, failed_pages = [], [], [], []
         page_count = 0
         try:
             page_count = len(doc)
@@ -1207,6 +1211,7 @@ class GlossExtract:
             timeout_budget = self._remaining_text_timeout(file_path, timeout_budget)
             deadline = time.monotonic() + timeout_budget
             for index in range(page_count):
+                attempted_pages.append(index + 1)
                 if time.monotonic() > deadline:
                     raise TimeoutError(
                         f"PyPDFium extraction timed out after {timeout_budget}s "
@@ -1223,16 +1228,24 @@ class GlossExtract:
                     finally:
                         page.close()
                     text = content.replace("\r\n", "\n").replace("\r", "\n").strip()
+                    succeeded_pages.append(index + 1)
                     if text:
                         texts.append(text)
+                    else:
+                        blank_pages.append(index + 1)
                 except Exception as page_exc:
+                    failed_pages.append(index + 1)
+                    observe("safe_page_error", path=file_path, error=page_exc, page=index + 1, coverage="incomplete")
                     self._log.warning(
                         "PyPDFium failed on page %d of %s: %s",
                         index + 1,
                         Path(file_path).name,
                         page_exc,
                     )
+            observe("legacy_observed", path=file_path, page_coverage={"attempted": attempted_pages, "succeeded": succeeded_pages, "blank": blank_pages, "failed": failed_pages}, complete=not failed_pages)
             markdown = "\n\n".join(texts)
+            if not markdown:
+                observe("safe_empty_text", path=file_path, blank_pages=blank_pages)
             out_md_path.write_text(markdown, encoding="utf-8")
             self._update_extraction_metadata(
                 output_dir=output_dir,
@@ -1243,6 +1256,7 @@ class GlossExtract:
             )
             return True
         except TimeoutError as exc:
+            observe("extract_timeout", path=file_path, error=exc, status="failed")
             self._log.error("PyPDFium extraction timeout for %s: %s", Path(file_path).name, exc)
             try:
                 self._update_extraction_metadata(
@@ -1261,6 +1275,7 @@ class GlossExtract:
                     pass
             return False
         except Exception as exc:
+            observe("extract_exception", path=self._original_extract_file(Path(file_path)), error=exc, status="failed")
             self._log.error("PyPDFium extraction failed for %s: %s", Path(file_path).name, exc)
             try:
                 self._update_extraction_metadata(
@@ -1299,6 +1314,8 @@ class GlossExtract:
         no_partial_output: bool = False,
     ) -> None:
         """Write extraction metadata to sidecar (eliminate in-worker parquet writes)."""
+        reason_code = ("extract_completed" if status in ("ok", "success") else "extract_timeout" if status == "timeout" else "extract_exception" if extraction_mode == "pypdfium" else "chunk_assembly_failed" if extraction_mode == "chunked" else "docling_partial" if status == "partial" else "docling_failed")
+        observe(reason_code, path=self._original_extract_file(Path(src_file)), status="ok" if status in ("ok", "success") else "failed", backend_status=status, extraction_mode=extraction_mode, page_count=page_count, no_partial_output=no_partial_output)
         try:
             root = Path(output_dir).parent
             sc_dir = root / "sidecars" / "extract"
@@ -1344,6 +1361,7 @@ class GlossExtract:
             import json as _json
             p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
+            observe("extract_exception", path=src_file, error=e, warning=True, operation="extract.metadata_write", backend_result_unchanged=True)
             self._log.warning(f"Failed to write extraction sidecar for {src_file}: {e}")
 
     
@@ -1666,6 +1684,7 @@ class GlossExtract:
                     if getattr(self, "emit_formula_index", False):
                         self._emit_formula_index(conv_res, output_dir, doc_filename)
                 except Exception as e:
+                    observe("required_extract_artifact_missing", path=conv_res.input.file, error=e, required=False, warning=True)
                     self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
 
                 # Optionally can also export to other formats like JSON
@@ -1710,6 +1729,7 @@ class GlossExtract:
                     if getattr(self, "emit_formula_index", False):
                         self._emit_formula_index(conv_res, output_dir, doc_filename)
                 except Exception as e:
+                    observe("required_extract_artifact_missing", path=conv_res.input.file, error=e, required=False, warning=True)
                     self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
             else:
                 # Attempt best-effort export even on failure if a document exists
@@ -1756,6 +1776,7 @@ class GlossExtract:
                     if doc_filename and getattr(self, "emit_formula_index", False):
                         self._emit_formula_index(conv_res, output_dir, doc_filename)
                 except Exception as e:
+                    observe("required_extract_artifact_missing", path=conv_res.input.file, error=e, required=False, warning=True)
                     self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
             # Write per-document metrics JSON (Docling timings) and per-page metrics (skipped in benchmark mode)
             if not getattr(self, "benchmark_mode", False):

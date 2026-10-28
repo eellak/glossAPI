@@ -1,6 +1,8 @@
 """Bounded, in-worker ToUnicode pre-pass for Phase-1 extraction."""
 from __future__ import annotations
 
+from ..ledger.journal import observe, observe_store, observe_source_rows
+
 from contextlib import contextmanager
 import json
 import os
@@ -50,6 +52,7 @@ def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: flo
             "font_repair_valid_rate_before": None, "font_repair_valid_rate_after": None,
             "font_repair_error": ""}
     if not enabled or source.suffix.lower() != ".pdf":
+        observe("repair_disabled_or_non_pdf", path=source)
         return source, data
     target = root / "repaired_pdfs" / f"{source.stem}.pdf"
     try:
@@ -85,11 +88,14 @@ def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: flo
                 data["font_repair_valid_rate_after"] = rate(target)
                 data["font_repair_status"] = "repaired"
                 data["font_repair_error"] = ""
+                observe("repair_cache_observed", path=source, repair=data, cache_path=str(target))
                 return target, data
 
             backend = get_backend()
             data["font_repair_backend"] = backend.name
             report = backend.analyze_pdf(source)
+            from dataclasses import asdict, is_dataclass
+            observe("legacy_observed", path=source, font_analysis=asdict(report) if is_dataclass(report) else {"unavailable": "unknown_not_recorded"})
             if report.error:
                 raise ValueError(report.error)
 
@@ -112,13 +118,16 @@ def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: flo
                     protect_sources(target, (source,))
                     os.replace(staged_pdf, target)
                 data["font_repair_status"] = "repaired"
+                observe("font_repaired", path=source, repair=data, repaired_path=str(target))
                 return target, data
             data["font_repair_status"] = (
                 "no_text_layer" if report.category == "no_text_layer" else
                 "not_needed" if report.category == "consistent" else "unsupported")
             data["font_repair_valid_rate_after"] = data["font_repair_valid_rate_before"]
     except (_RepairDeadline, Exception) as exc:
+        observe("font_repair_error", path=source, error=exc, fallback="original_pdf")
         data.update(font_repair_status="error", font_repair_fonts=0,
                     font_repair_valid_rate_after=None,
                     font_repair_error=f"{type(exc).__name__}: {exc}")
+    observe({"not_needed":"font_not_needed", "unsupported":"font_unsupported", "no_text_layer":"font_no_text_layer"}.get(data["font_repair_status"], "legacy_observed"), path=source, repair=data)
     return source, data

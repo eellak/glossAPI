@@ -10,6 +10,8 @@ main pipeline can stay focused on span ownership and mode selection.
 """
 from __future__ import annotations
 
+from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
+
 import importlib
 import json
 import logging
@@ -2725,6 +2727,7 @@ def _enrich_extraction_metrics(df: pd.DataFrame, output_dir: Path, markdown_dir:
                 if not isinstance(payload, dict):
                     raise ValueError("Extraction sidecar must be an object")
             except (OSError, ValueError) as exc:
+                observe("extract_sidecar_invalid", path=sidecar, error=exc)
                 logging.getLogger(__name__).warning("Ignoring extraction sidecar %s: %s", sidecar, exc)
                 payload = {}
         old_status = row.get("extract_status")
@@ -2801,6 +2804,7 @@ def _attach_page_quality_routes(df: pd.DataFrame, metrics_dir: Path) -> pd.DataF
             if not bool(row.get("needs_ocr", False)):
                 result.at[index, "ocr_pages_unflagged_count"] = count
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            observe("page_quality_invalid", path=path, error=exc)
             logging.getLogger(__name__).warning("Ignoring page-quality sidecar %s: %s", path, exc)
     return result
 
@@ -3047,6 +3051,7 @@ class CleanPhaseMixin:
             metadata_target = parquet_path
         return self._cache_metadata_parquet(metadata_target)
 
+    @shadow_stage("clean", "clean.clean")
     def clean(
         self,
         input_dir: Union[str, Path] = None,
@@ -3097,6 +3102,7 @@ class CleanPhaseMixin:
         # Ensure cleaned directory exists and is empty (idempotent runs)
         if write_cleaned_files:
             if self.cleaned_markdown_dir.exists():
+                observe_store(self.cleaned_markdown_dir, kind="legacy_removed_directory")
                 shutil.rmtree(self.cleaned_markdown_dir)
             self.cleaned_markdown_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3292,6 +3298,7 @@ class CleanPhaseMixin:
             # Do not abort the entire cleaning pass – proceed to evaluate gates
             # using existing metrics on disk. If the Rust report is available,
             # it will be merged below as usual.
+            observe("clean_process_failed", status="failed", return_code=return_code, continuation="existing_metrics")
             self.logger.error("Rust cleaning pipeline failed (code=%s); proceeding with existing metrics", return_code)
 
         # ----- Parse metrics Parquet produced by Rust -----
@@ -3310,16 +3317,21 @@ class CleanPhaseMixin:
                         }
                     )
             except Exception as e:
+                observe("clean_report_invalid", path=report_parquet_path, error=e, status="failed")
                 self.logger.warning("Failed to parse cleaning report %s: %s", report_parquet_path, e)
         else:
+            observe("clean_report_missing", path=report_parquet_path, status="failed")
             self.logger.warning("Cleaning report Parquet not found: %s", report_parquet_path)
 
         # ---- Delete cleaning report to avoid retaining it ----
         try:
             if report_parquet_path.exists():
+                observe_store(report_parquet_path, kind="clean_report")
                 report_parquet_path.unlink(missing_ok=True)
+                observe("delete_completed", path=report_parquet_path, deletion="legacy_temporary_report_cleanup")
                 self.logger.debug("Deleted temporary cleaning report %s", report_parquet_path)
         except Exception as e:
+            observe("delete_failed", path=report_parquet_path, error=e)
             self.logger.warning("Could not delete cleaning report %s: %s", report_parquet_path, e)
 
         self.logger.info(f"Cleaned {len(records)} markdown files → {self.cleaned_markdown_dir}")
@@ -3435,6 +3447,7 @@ class CleanPhaseMixin:
                     parquet_schema.write_metadata_parquet(df, parquet_path)
                     self.logger.info("Noise metrics filled in %s", parquet_path)
         except Exception as e:
+            observe("clean_noise_scoring_failed", error=e, status="failed", continuation="existing_metrics")
             self.logger.warning("Noise-metrics scoring failed: %s", e)
 
         # Determine good / bad list based on enriched metrics
@@ -3523,6 +3536,8 @@ class CleanPhaseMixin:
                 applicable = (mask & pdf_mask).fillna(False)
                 if not bool(applicable.any()):
                     return
+                reason_code = {"non_greek_text": "clean_non_greek", "non_greek_readable": "clean_readable_non_greek", "is_empty": "clean_empty", "extract_failed": "clean_extract_failed", "ocr_noise": "clean_ocr_noise"}.get(reason, "clean_mojibake" if reason.startswith("mojibake") else "clean_short_document" if reason.endswith("_short") else "clean_short_text")
+                observe(reason_code, filter_token=reason, needs_ocr=requires_ocr, filenames=df_final.loc[applicable, "filename"].astype(str).tolist())
                 current = df_final.loc[applicable, "filter"].astype(str)
 
                 def _merge_reason(value: str) -> str:
@@ -3632,10 +3647,12 @@ class CleanPhaseMixin:
         else:
             self.good_files = []
 
+        observe("clean_completed", status="ok", accepted_for_sections=list(self.good_files), selection_policy="legacy_needs_ocr_false_when_drop_bad", effective_thresholds={"mojibake": threshold, "greek_badness": 60, "empty_char_threshold": empty_char_threshold, "empty_min_pages": empty_min_pages}, spans={"status": "unknown_not_recorded", "reason": "native_backend_does_not_emit_rule_spans"})
         # After cleaning, point markdown_dir to cleaned files for downstream stages
         if write_cleaned_files:
             self.markdown_dir = self.cleaned_markdown_dir
 
+    @shadow_stage("clean", "clean.clean_ocr")
     def clean_ocr(
         self,
         input_dir: Union[str, Path] = None,
@@ -3710,6 +3727,7 @@ class CleanPhaseMixin:
         if write_debug_files:
             debug_dir = Path(debug_output_dir) if debug_output_dir is not None else (self.output_dir / "debug")
             if debug_dir.exists():
+                observe_store(debug_dir, kind="legacy_removed_directory")
                 shutil.rmtree(debug_dir)
             debug_dir.mkdir(parents=True, exist_ok=True)
             debug_manifest_path = debug_dir / "manifest.jsonl"
@@ -3719,6 +3737,7 @@ class CleanPhaseMixin:
 
         if write_cleaned_files:
             if self.cleaned_markdown_dir.exists():
+                observe_store(self.cleaned_markdown_dir, kind="legacy_removed_directory")
                 shutil.rmtree(self.cleaned_markdown_dir)
             self.cleaned_markdown_dir.mkdir(parents=True, exist_ok=True)
 
@@ -4021,6 +4040,7 @@ class CleanPhaseMixin:
         if write_cleaned_files:
             self.markdown_dir = self.cleaned_markdown_dir
 
+    @shadow_stage("clean", "clean.clean_ocr_debug")
     def clean_ocr_debug(
         self,
         output_dir: Union[str, Path],
@@ -4084,6 +4104,7 @@ class CleanPhaseMixin:
         )
         return [dict(row) for row in rows]
 
+    @shadow_stage("clean", "clean.clean_ocr_numeric_debug")
     def clean_ocr_numeric_debug(
         self,
         output_dir: Union[str, Path],
@@ -4147,6 +4168,7 @@ class CleanPhaseMixin:
         )
         return [dict(row) for row in rows]
 
+    @shadow_stage("clean", "clean.clean_token_category_debug")
     def clean_token_category_debug(
         self,
         output_dir: Union[str, Path],
@@ -4287,6 +4309,7 @@ class CleanPhaseMixin:
         )
         return manifest_rows
 
+    @shadow_stage("clean", "clean.clean_ocr_numeric_word_debug_docs")
     def clean_ocr_numeric_word_debug_docs(
         self,
         output_dir: Union[str, Path],
@@ -4475,6 +4498,7 @@ class CleanPhaseMixin:
         )
         return rows
 
+    @shadow_stage("clean", "clean.clean_ocr_hybrid_debug")
     def clean_ocr_hybrid_debug(
         self,
         output_dir: Union[str, Path],
@@ -4571,6 +4595,7 @@ class CleanPhaseMixin:
         )
         return rows
 
+    @shadow_stage("clean", "clean.clean_ocr_latex_slot_progression_debug")
     def clean_ocr_latex_slot_progression_debug(
         self,
         output_dir: Union[str, Path],
@@ -4666,6 +4691,7 @@ class CleanPhaseMixin:
         )
         return rows
 
+    @shadow_stage("clean", "clean.clean_ocr_latex_debug")
     def clean_ocr_latex_debug(
         self,
         output_dir: Union[str, Path],

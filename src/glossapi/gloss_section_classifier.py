@@ -1,7 +1,10 @@
+from .ledger.journal import observe, observe_store, observe_source_rows
 import logging
 import os
 import re
 import time
+import traceback
+from .ledger.encoding import file_hash, typed_value
 import numpy as np
 import pandas as pd
 from .optional_dependencies import optional_dependencies
@@ -232,6 +235,7 @@ class GlossSectionClassifier:
                     flag, nums = self._compute_likely_index_for_section(row['section'])
                     if flag == 1:
                         # If detected as index, override with "π" and skip SVM decision.
+                        observe("annotation_index_override", legacy_filename=str(filename), legacy_row_id=int(row["id"]), model_label=str(row["predicted_section"]), final_label="π", effective_thresholds={"length":length_threshold,"proportion":propo_threshold})
                         new_preds.append("π")
                         continue
                 else:
@@ -330,6 +334,7 @@ class GlossSectionClassifier:
         meta['predicted_section'] = ''
         
         # Define a closure that captures self
+        prediction_failures = []
         def predict_partition(df):
             # If the dataframe is empty, return it with the predicted_section column added
             if len(df) == 0:
@@ -345,6 +350,7 @@ class GlossSectionClassifier:
                 # Assign SVM predictions
                 df['predicted_section'] = self.clf_pipeline.predict(X)
             except Exception as e:
+                prediction_failures.append({"error_type": type(e).__module__ + "." + type(e).__name__, "message": str(e), "traceback": "".join(traceback.format_exception(type(e), e, e.__traceback__)), "row_ids": df["id"].tolist()})
                 # If prediction fails, assign a default value
                 print(f"Error during prediction: {str(e)}")
                 print(f"Assigning default prediction value to all rows")
@@ -361,6 +367,8 @@ class GlossSectionClassifier:
         with ProgressBar():
             ddf_pred.to_parquet(temp_output, write_index=False)
         end = time.time()
+        for failure in prediction_failures:
+            observe("annotation_prediction_fallback", reported_error={key:failure[key] for key in ("error_type", "message", "traceback")}, row_ids=failure["row_ids"], fallback_label="άλλο", degraded=True)
         self.logger.info(f"New predictions written in {end - start:.2f} seconds.")
         
         # Merge new predictions with existing ones, if any.
@@ -386,10 +394,12 @@ class GlossSectionClassifier:
         # run compute_likely_index_for_section on the section text (without the header) and override
         # the predicted label with "π" if detected.
         self.logger.info("Adjusting predictions based on index detection and cumulative thresholds...")
+        observe("legacy_observed", annotation_model_labels=typed_value(df_final[[column for column in ("id", "row_id", "filename", "predicted_section") if column in df_final.columns]].to_dict("records")), model_path=str(model_path), model_sha256=file_hash(model_path) if model_path and os.path.isfile(model_path) else None)
         df_final = self._adjust_predictions_with_index_detection(df_final, length_threshold=300, propo_threshold=300)
         
         self.logger.info("Writing merged and adjusted predictions to final output Parquet file...")
         df_final.to_parquet(output_parquet, index=False)
+        observe("annotate_completed", path=output_parquet, status="ok")
         self.logger.info("Predictions saved and progress maintained.")
 
     # -----------------------------------------------------------------------------
@@ -639,6 +649,7 @@ class GlossSectionClassifier:
             
             # Check if markers are in the correct order
             if first_pi_id > last_beta_id:
+                observe("annotation_boundary_reversed", legacy_filename=str(group["filename"].iloc[0]), first_start_id=int(first_pi_id), last_end_id=int(last_beta_id))
                 self.logger.warning(f"Boundary markers in wrong order for {group['filename'].iloc[0]}. Keeping original labels.")
                 return group  # Return with original labels
             
@@ -664,10 +675,13 @@ class GlossSectionClassifier:
         else:
             # Missing one or both boundary markers, log warning but don't change labels
             if not has_pi and not has_beta:
+                observe("annotation_boundaries_missing", legacy_filename=str(group["filename"].iloc[0]))
                 self.logger.warning(f"Both 'π' and 'β' boundary markers missing for {group['filename'].iloc[0]}. Keeping original labels.")
             elif not has_pi:
+                observe("annotation_start_missing", legacy_filename=str(group["filename"].iloc[0]))
                 self.logger.warning(f"'π' boundary marker missing for {group['filename'].iloc[0]}. Keeping original labels.")
             else:
+                observe("annotation_end_missing", legacy_filename=str(group["filename"].iloc[0]))
                 self.logger.warning(f"'β' boundary marker missing for {group['filename'].iloc[0]}. Keeping original labels.")
                 
             return group  # Return with original labels
