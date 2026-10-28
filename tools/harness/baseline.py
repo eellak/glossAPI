@@ -34,10 +34,36 @@ def execute(command, root, name, timeout=None):
     return row
 
 
+def audit_page_timings(left, right, output):
+    """Generate pair-bound declarations only after auditing every changed JSON leaf."""
+    from .compare import compare, timing_field
+    strict = compare(left, right)
+    write_json(output/'docling-pages-strict.json', strict)
+    declarations = []
+    for row in strict['results']:
+        for diff in row['differences']:
+            fields = diff.get('json_fields', [])
+            if fields and all(timing_field(f) for f in fields):
+                declarations.append(dict(document=row['document'], stage=row['stage'],
+                    path=diff['path'], a_sha256=diff['a_sha256'], b_sha256=diff['b_sha256'],
+                    fields=fields, reason='Audited numeric runtime timing leaves only'))
+    write_json(output/'docling-pages-declared-timings.json', declarations)
+    return output/'docling-pages-declared-timings.json'
+
+
+def gate_status(campaign):
+    required = ('subset30-text-1', 'subset30-text-2', 'cohort242-text', 'determinism', 'speed',
+                'subset30-docling-pages-1', 'subset30-docling-pages-2', 'pages-determinism')
+    campaign['gates_passed'] = all(campaign['gating'].get(k, {}).get('exit_code') == 0
+                                   and not campaign['gating'][k].get('timed_out', False) for k in required)
+    return 0 if campaign['gates_passed'] else 1
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--out',required=True);p.add_argument('--data',required=True);p.add_argument('--cohort',required=True)
     p.add_argument('--docling-python',required=True);p.add_argument('--docling-only',action='store_true')
+    p.add_argument('--gating-only',action='store_true',help='finish after required text/speed/fixed-page gates')
     p.add_argument('--pilot-limit-seconds',type=int,default=600)
     a=p.parse_args();root=Path(a.out).resolve();root.mkdir(parents=True,exist_ok=a.docling_only)
     subset=REPO/'tools/harness/manifests/subset30.json'
@@ -53,14 +79,21 @@ def main():
         campaign['gating']['speed']=execute([sys.executable,'-m','tools.harness.speed',str(subset),'--data',a.data,'--out',str(root/'speed-text')],root,'speed-text');save()
         # Required bounded page sample is the CPU Docling equivalence gate.
         # Run its distinct interpreter at lower priority after all text work.
-        campaign['text_complete']=True;save()
+        campaign['text_complete']=True;gate_status(campaign);save()
     os.nice(10)
     for index in (1,2):
         name=f'subset30-docling-pages-{index}'
         if name not in campaign['docling']:
             campaign['docling'][name]=golden(a.docling_python,subset,name,'docling-cpu-pages',2700);save()
+        campaign['gating'][name]=campaign['docling'][name];save()
     if all((root/f'subset30-docling-pages-{i}/run.json').exists() for i in (1,2)):
-        campaign['docling']['pages-determinism']=execute([sys.executable,'-m','tools.harness.compare',str(root/'subset30-docling-pages-1'),str(root/'subset30-docling-pages-2'),'--out',str(root/'docling-pages-determinism.json')],root,'docling-pages-determinism');save()
+        declared=audit_page_timings(root/'subset30-docling-pages-1', root/'subset30-docling-pages-2', root)
+        campaign['docling']['pages-determinism']=execute([sys.executable,'-m','tools.harness.compare',str(root/'subset30-docling-pages-1'),str(root/'subset30-docling-pages-2'),'--declared',str(declared),'--out',str(root/'docling-pages-determinism.json')],root,'docling-pages-determinism');save()
+        campaign['gating']['pages-determinism']=campaign['docling']['pages-determinism'];save()
+    gate_status(campaign);save()
+    if a.gating_only:
+        campaign['complete']=True;save()
+        return gate_status(campaign)
     docs=load_manifest(subset)
     by_pages=sorted(docs,key=lambda d:(d['pages'],d['filename']))
     pilot=[by_pages[0],by_pages[len(by_pages)//2],by_pages[-1]]
@@ -123,7 +156,8 @@ def main():
         process=subprocess.Popen(['timeout','--signal=TERM','--kill-after=10','10800',*command],stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
         log.close();campaign['docling']['cohort_background']={'pid':process.pid,'command':command,'budget_seconds':10800}
     else:campaign['docling']['cohort_skipped']='projection >3h or pilot censored; defer full Docling baseline to GPU'
-    campaign['complete']=True;save()
-    return 0
+    campaign['complete']=True
+    code=gate_status(campaign);save()
+    return code
 
 if __name__=='__main__':raise SystemExit(main())

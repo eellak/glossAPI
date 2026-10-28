@@ -10,7 +10,7 @@ import difflib
 import json
 from pathlib import Path
 import re
-from .common import STAGES, write_json
+from .common import STAGES, sha256, write_json
 
 
 def markdown_diff(a, b):
@@ -31,11 +31,89 @@ def markdown_diff(a, b):
     return {'normalized_identical': left == right, 'lines_changed': lines, 'words_changed': words, 'first_differences': first}
 
 
+def json_changes(a, b, path=''):
+    """Exact decoded leaf changes, using JSON pointers (array order is significant)."""
+    if type(a) is not type(b):
+        return {path}
+    if isinstance(a, dict):
+        if a.keys() != b.keys():
+            return {path}  # schema changes cannot be timing declarations
+        return set().union(*(json_changes(a[k], b[k], path+'/'+k.replace('~', '~0').replace('/', '~1')) for k in a))
+    if isinstance(a, list):
+        if len(a) != len(b):
+            return {path}
+        return set().union(*(json_changes(x, y, path+'/'+str(i)) for i, (x, y) in enumerate(zip(a, b))))
+    return {path} if a != b else set()
+
+
+def timing_field(path):
+    return bool(re.fullmatch(
+        r'/timings/[^/]+/(?:avg_sec|p50_sec|p90_sec|total_sec|times_sec/\d+)'
+        r'|/pages/\d+/(?:parse_sec|table_sec|layout_sec)'
+        r'|/totals/doc_enrich_total_sec', path))
+
+
+def validate_snapshots(run, root):
+    """Fail closed before comparing products or considering declarations."""
+    issues = []
+    if not all(key in run for key in ('documents', 'manifest', 'profile', 'manifest_sha256', 'complete')):
+        return ['missing required run/manifest fields']
+    if not run['complete']:
+        issues.append('incomplete run')
+    docs = run['documents']
+    if len({d['filename'] for d in docs}) != len(docs):
+        issues.append('duplicate documents')
+    manifest = run.get('manifest')
+    rows = manifest if isinstance(manifest, list) else (manifest or {}).get('documents', [])
+    expected = {r['filename']: r for r in rows}
+    if not rows or len(expected) != len(rows):
+        issues.append('missing or duplicate frozen manifest rows')
+    if set(expected) != {d['filename'] for d in docs}:
+        issues.append('document coverage differs from frozen manifest')
+    checked = {}
+    for doc in docs:
+        row = expected.get(doc['filename'])
+        if row and doc['input_sha256'] != row['sha256']:
+            issues.append(f"{doc['filename']}: input differs from frozen manifest")
+        if row and run.get('profile') == 'docling-cpu-pages':
+            if (doc.get('page_ranges') or [doc.get('page_range')]) != (row.get('page_ranges') or [row.get('page_range')]):
+                issues.append(f"{doc['filename']}: page ranges differ from frozen manifest")
+        if set(doc['stages']) != set(STAGES):
+            issues.append(f"{doc['filename']}: stage coverage differs")
+        for stage, state in doc['stages'].items():
+            if state['status'] != 'ok':
+                issues.append(f"{doc['filename']} {stage}: failed stage")
+            files = state['files']
+            if len({f['path'] for f in files}) != len(files):
+                issues.append(f"{doc['filename']} {stage}: duplicate product paths")
+            for f in files:
+                path = (root / f['stored_path']).resolve()
+                if not path.is_relative_to(root.resolve()):
+                    issues.append(f"snapshot outside run: {f['stored_path']}")
+                    continue
+                try:
+                    actual = checked.get(path)
+                    if actual is None:
+                        actual = (path.stat().st_size, sha256(path))
+                        checked[path] = actual
+                    if actual != (f['bytes'], f['sha256']):
+                        issues.append(f"snapshot size/SHA-256 mismatch: {f['stored_path']}")
+                except OSError:
+                    issues.append(f"snapshot missing/unreadable: {f['stored_path']}")
+    return issues
+
+
 def compare(a, b, declarations=()):
     a, b = Path(a), Path(b)
     a = a / 'run.json' if a.is_dir() else a
     b = b / 'run.json' if b.is_dir() else b
     left, right = json.loads(a.read_text()), json.loads(b.read_text())
+    integrity = [f'{side}: {issue}' for side, run, root in (('A', left, a.parent), ('B', right, b.parent))
+                 for issue in validate_snapshots(run, root)]
+    if integrity:
+        return dict(identical=False, passes=False, undeclared_differences=0,
+                    issues=['snapshot/run integrity failed'], integrity_errors=integrity,
+                    unused_declarations=[], results=[])
     accepted = {}
     for d in declarations:
         required = ('document', 'stage', 'path', 'a_sha256', 'b_sha256', 'reason')
@@ -43,7 +121,12 @@ def compare(a, b, declarations=()):
             raise ValueError('declarations need document, stage, path, a_sha256, b_sha256, reason')
         key = tuple(d[k] for k in required[:-1])
         if key in accepted: raise ValueError('duplicate declaration')
-        accepted[key] = d['reason']
+        fields = d.get('fields', [])
+        if not fields or len(set(fields)) != len(fields) or not all(timing_field(f) for f in fields):
+            raise ValueError('declarations require exact timing leaf fields as JSON pointers')
+        if not d['path'].endswith('.metrics.json'):
+            raise ValueError('only timing metric JSON files may be declared')
+        accepted[key] = d
     results, used = [], set()
     docs_a = {d['filename']: d for d in left['documents']}
     docs_b = {d['filename']: d for d in right['documents']}
@@ -55,8 +138,11 @@ def compare(a, b, declarations=()):
             differences = []
             def difference(path, ah, bh, detail=None):
                 key = (doc, stage, path, ah, bh)
-                reason = accepted.get(key)
-                if reason: used.add(key)
+                declaration = accepted.get(key)
+                reason = None
+                if declaration and detail and set(detail.get('json_fields', [])) == set(declaration['fields']):
+                    reason = declaration['reason']
+                    used.add(key)
                 differences.append({'path': path, 'a_sha256': ah, 'b_sha256': bh, 'accepted_reason': reason, **(detail or {})})
             if sa is None or sb is None:
                 difference('@presence', 'present' if sa else None, 'present' if sb else None)
@@ -78,6 +164,13 @@ def compare(a, b, declarations=()):
                     detail = {}
                     if path.endswith('.md') and x and y:
                         detail['markdown'] = markdown_diff((a.parent / x['stored_path']).read_text(), (b.parent / y['stored_path']).read_text())
+                    if path.endswith('.metrics.json') and x and y:
+                        try:
+                            detail['json_fields'] = sorted(json_changes(
+                                json.loads((a.parent / x['stored_path']).read_text()),
+                                json.loads((b.parent / y['stored_path']).read_text())))
+                        except (ValueError, UnicodeError):
+                            pass
                     difference(path, x['sha256'] if x else None, y['sha256'] if y else None, detail)
                 if sa.get('removed_files', []) != sb.get('removed_files', []):
                     difference('@removed_files', json.dumps(sa.get('removed_files', [])), json.dumps(sb.get('removed_files', [])))

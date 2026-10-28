@@ -212,7 +212,9 @@ class GlossSectionClassifier:
             pandas.DataFrame: DataFrame with adjusted predictions
         """
         def process_group(group):
+            filename = group.name  # pandas 3 excludes the grouping column from apply.
             group = group.sort_values('id').copy()
+            group['filename'] = filename
             running_length = 0
             running_propo = 0
             new_preds = []
@@ -242,7 +244,8 @@ class GlossSectionClassifier:
             group['predicted_section'] = new_preds
             return group
 
-        return df.groupby('filename', group_keys=False).apply(process_group)
+        # Selecting the original columns also preserves their order across pandas 2/3.
+        return df.groupby('filename', group_keys=False).apply(process_group).loc[:, df.columns]
 
     # -----------------------------------------------------------------------------
     # Process Predictions Using Dask with Progress Bar and Checkpointing

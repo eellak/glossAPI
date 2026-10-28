@@ -88,6 +88,9 @@ class PeakRSS:
     def __enter__(self):
         self.pid = os.getpid()
         self.peak = self.own_peak = 0
+        self.available = True
+        self.basis = 'process + descendants current RSS'
+        self.unavailable_reason = None
         self.stop = threading.Event()
         self.sample()
         self.thread = threading.Thread(target=self.run, daemon=True)
@@ -113,13 +116,26 @@ class PeakRSS:
             except (OSError, ValueError, IndexError): own = 0
             total = rss(self.pid)
         else:
-            import psutil  # optional, only needed outside the Linux measurement node
-            process = psutil.Process(self.pid)
-            own = process.memory_info().rss
-            total = own
-            for child in process.children(recursive=True):
-                try: total += child.memory_info().rss
-                except psutil.Error: pass
+            # BSD ps is present on macOS; no optional Python package or sysctl
+            # process enumeration is needed. A restricted host may deny ps.
+            try:
+                rows = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,rss='],
+                                               text=True, stderr=subprocess.DEVNULL)
+                processes = {int(pid): (int(parent), int(kib)*1024)
+                             for pid, parent, kib in (line.split() for line in rows.splitlines())}
+                own = processes[self.pid][1]
+                descendants = {self.pid}
+                while True:
+                    found = {pid for pid, (parent, _) in processes.items() if parent in descendants}
+                    if found <= descendants: break
+                    descendants.update(found)
+                total = sum(processes[pid][1] for pid in descendants)
+                self.basis = 'BSD ps current process + descendants RSS (KiB to bytes)'
+            except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
+                self.available = False
+                self.unavailable_reason = f'{type(exc).__name__}: {exc}'
+                self.basis = 'unavailable; zero is not a memory measurement'
+                return
         self.peak = max(self.peak, total)
         self.own_peak = max(self.own_peak, own)
 

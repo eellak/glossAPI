@@ -14,7 +14,7 @@ def receipt(tmp_path, name, text='one\ntwo\n'):
     root = tmp_path/name; root.mkdir()
     f = root/'sample.md'; f.write_text(text)
     doc = dict(filename='sample.pdf',input_sha256='a'*64,stages={stage: dict(status='ok',error=None,files=[dict(path='sample.md',stored_path='sample.md',sha256=sha256(f),bytes=f.stat().st_size)]) for stage in STAGES})
-    write_json(root/'run.json',dict(complete=True,profile='text-layer',manifest_sha256='b'*64,documents=[doc]))
+    write_json(root/'run.json',dict(complete=True,profile='text-layer',manifest_sha256='b'*64,manifest=[dict(filename='sample.pdf',sha256='a'*64)],documents=[doc]))
     return root
 
 
@@ -25,11 +25,11 @@ def test_compare_exact_and_normalized_and_bound_declarations(tmp_path):
     diff=result['results'][0]['differences'][0]
     assert diff['markdown']['lines_changed']=={'removed':1,'added':1}
     assert diff['markdown']['words_changed']=={'removed':1,'added':1}
-    declared=[dict(d,document=r['document'],stage=r['stage'],reason='test replacement') for r in result['results'] for d in r['differences']]
-    assert compare(a,b,declared)['passes']
-    assert not compare(a,b,declared)['identical']
-    receipt_path=b/'run.json'; data=json.loads(receipt_path.read_text());data['documents'][0]['stages']['extract']['files'][0]['sha256']='c'*64;write_json(receipt_path,data)
-    assert not compare(a,b,declared)['passes']
+    # Product changes cannot be waived by a free-text reason.
+    declared=[dict(d,document=r['document'],stage=r['stage'],reason='runtime timing only') for r in result['results'] for d in r['differences']]
+    with pytest.raises(ValueError, match='timing leaf'):
+        compare(a,b,declared)
+
 
 
 def test_fail_closed_missing_document_incomplete_and_status(tmp_path):
@@ -37,7 +37,7 @@ def test_fail_closed_missing_document_incomplete_and_status(tmp_path):
     assert compare(a,b)['identical']
     value=json.loads((b/'run.json').read_text());value['complete']=False;value['documents']=[];write_json(b/'run.json',value)
     r=compare(a,b)
-    assert not r['passes'] and r['issues']==['incomplete run'] and r['undeclared_differences']==5
+    assert not r['passes'] and any('coverage' in e for e in r['integrity_errors'])
 
 
 def test_normalization_does_not_discard_words():
@@ -113,3 +113,83 @@ def test_rss_samples_process_memory_without_extra_packages():
         payload=bytearray(4*1024*1024)
         rss.sample()
         assert len(payload)>0 and rss.peak>=rss.own_peak>4*1024*1024
+
+
+@pytest.mark.parametrize('mutation', ['markdown-byte', 'deleted-directory', 'export-reorder'])
+def test_stale_receipts_never_hide_physical_product_mutations(tmp_path, mutation):
+    import shutil
+    a, b = receipt(tmp_path, 'a'), receipt(tmp_path, 'b')
+    for root in (a, b):
+        value=json.loads((root/'run.json').read_text())
+        docdir=root/'documents/sample'; docdir.mkdir(parents=True)
+        f=docdir/('export.jsonl' if mutation=='export-reorder' else 'sample.md')
+        f.write_text('{"id":1}\n{"id":2}\n' if mutation=='export-reorder' else 'one\ntwo\n')
+        for state in value['documents'][0]['stages'].values():
+            state['files']=[dict(path=f.name,stored_path=str(f.relative_to(root)),bytes=f.stat().st_size,sha256=sha256(f))]
+        write_json(root/'run.json',value)
+    assert compare(a,b)['passes']
+    if mutation=='deleted-directory': shutil.rmtree(b/'documents')
+    elif mutation=='export-reorder': (b/'documents/sample/export.jsonl').write_text('{"id":2}\n{"id":1}\n')
+    else: (b/'documents/sample/sample.md').write_text('One\ntwo\n')
+    result=compare(a,b)
+    assert not result['passes'] and not result['identical'] and result['integrity_errors']
+
+
+def metric_pair(tmp_path):
+    a,b=receipt(tmp_path,'a'),receipt(tmp_path,'b')
+    for root,seconds in ((a,1.0),(b,2.0)):
+        f=root/'sample.metrics.json';write_json(f,dict(timings={'layout':{'total_sec':seconds}},product='same'))
+        value=json.loads((root/'run.json').read_text())
+        for state in value['documents'][0]['stages'].values():state['files']=[]
+        value['documents'][0]['stages']['extract']['files']=[dict(path=f.name,stored_path=f.name,bytes=f.stat().st_size,sha256=sha256(f))]
+        write_json(root/'run.json',value)
+    diff=compare(a,b)['results'][0]['differences'][0]
+    declaration=dict(document='sample.pdf',stage='extract',path=diff['path'],a_sha256=diff['a_sha256'],b_sha256=diff['b_sha256'],fields=['/timings/layout/total_sec'],reason='runtime timing only')
+    return a,b,declaration
+
+
+@pytest.mark.parametrize('rehash', [False, True])
+def test_product_mutation_under_existing_timing_declaration_fails(tmp_path,rehash):
+    a,b,d=metric_pair(tmp_path)
+    assert compare(a,b,[d])['passes']
+    f=b/'sample.metrics.json';value=json.loads(f.read_text());value['review_injected_product']='changed';write_json(f,value)
+    if rehash:
+        run=json.loads((b/'run.json').read_text());r=run['documents'][0]['stages']['extract']['files'][0]
+        r.update(sha256=sha256(f),bytes=f.stat().st_size);write_json(b/'run.json',run)
+        # Even a fresh hash pair may waive only the explicitly named timing leaves.
+        d['b_sha256']=r['sha256']
+    result=compare(a,b,[d])
+    assert not result['passes']
+    if rehash: assert result['undeclared_differences']==1 and result['unused_declarations']
+    else: assert result['integrity_errors']
+
+
+@pytest.mark.parametrize('failed', ['all', 'determinism', 'pages-determinism', None])
+def test_campaign_exit_propagates_required_failures_without_subprocesses(tmp_path,monkeypatch,failed):
+    from tools.harness import baseline
+    def execute(command,root,name,timeout=None):
+        if 'tools.harness.golden' in command:
+            write_json(Path(command[command.index('--out')+1])/'run.json',{})
+        return dict(exit_code=int(failed=='all' or name=={'determinism':'text-determinism','pages-determinism':'docling-pages-determinism'}.get(failed,failed)),timed_out=False,wall_seconds=1)
+    monkeypatch.setattr(baseline,'execute',execute)
+    monkeypatch.setattr(baseline,'audit_page_timings',lambda a,b,out:out/'declared.json')
+    monkeypatch.setattr(baseline.os,'nice',lambda n:None)
+    def forbidden(*a,**kw):raise AssertionError('must not spawn')
+    monkeypatch.setattr(baseline.subprocess,'Popen',forbidden)
+    monkeypatch.setattr(sys,'argv',['baseline','--out',str(tmp_path/'campaign'),'--data','unused','--cohort','unused','--docling-python',sys.executable,'--gating-only'])
+    assert baseline.main()==(0 if failed is None else 1)
+    c=json.loads((tmp_path/'campaign/campaign.json').read_text())
+    assert c['complete'] and c['text_complete'] and c['gates_passed']==(failed is None)
+
+
+def test_mac_rss_ps_sampler_and_permission_denial(monkeypatch):
+    from tools.harness import common
+    monkeypatch.setattr(common.sys,'platform','darwin')
+    pid=common.os.getpid()
+    monkeypatch.setattr(common.subprocess,'check_output',lambda *a,**kw:f'{pid} 1 1000\n987654 {pid} 200\n')
+    with common.PeakRSS() as rss:
+        assert rss.available and rss.own_peak==1024000 and rss.peak==1228800
+    def denied(*a,**kw):raise PermissionError('sandbox')
+    monkeypatch.setattr(common.subprocess,'check_output',denied)
+    with common.PeakRSS() as rss:
+        assert not rss.available and rss.peak==0 and 'PermissionError' in rss.unavailable_reason

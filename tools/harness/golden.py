@@ -67,6 +67,8 @@ def document_job(row, data, root, profile):
                 peak_rss_bytes=max(s['peak_rss_bytes'] for s in states),
                 own_peak_rss_bytes=max(s['own_peak_rss_bytes'] for s in states),
                 rss_sample_interval_seconds=.01,
+                rss_available=all(s.get('rss_available', True) for s in states),
+                rss_basis=states[0].get('rss_basis'),
                 intervals=[[s['started_monotonic'], s['finished_monotonic']] for s in states],
                 files=[dict(f, path=f"pages{window[0]}-{window[1]}/"+f['path'])
                        for window,d in zip(ranges,segments) for f in d['stages'][stage]['files']],
@@ -142,6 +144,9 @@ def document_job(row, data, root, profile):
             'seconds_per_page': wall / pages if pages else None,
             'started_monotonic': began, 'finished_monotonic': began + wall, 'peak_rss_bytes': rss.peak,
             'own_peak_rss_bytes': rss.own_peak, 'rss_sample_interval_seconds': .01,
+            'rss_available': getattr(rss, 'available', True),
+            'rss_basis': getattr(rss, 'basis', None),
+            'rss_unavailable_reason': getattr(rss, 'unavailable_reason', None),
             'files': files, 'removed_files': sorted(set(before) - set(after))}
         write_json(jobroot / 'document.json', result)
     return result
