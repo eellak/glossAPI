@@ -308,7 +308,8 @@ class ExtractPhaseMixin:
             accel_type=accel_type,
             require_ocr=False,
             require_math=bool(formula_enrichment or code_enrichment),
-            require_backend_gpu=(backend_choice == "docling" and plugin_options is None),
+            require_backend_gpu=(backend_choice == "docling" and plugin_options is None
+                                 and str(accel_type).strip().lower() != "cpu"),
         )
 
         # Configure batch/backend policy based on resolved choice
@@ -439,6 +440,7 @@ class ExtractPhaseMixin:
         _prepared: bool = False,
         batched: bool | None = None,
         _stability_benchmark: dict | None = None,
+        page_range: tuple[int, int] | None = None,
         ocr_engine: str | None = None,
         ocr_checkpoint: str | Path | None = None,
         ocr_codec: str | Path | None = None,
@@ -463,6 +465,8 @@ class ExtractPhaseMixin:
             phase1_backend: Selects the Phase-1 backend. ``"auto"`` (default) keeps the safe backend unless
                 math/code enrichment is requested, ``"safe"`` forces the PyPDFium backend, and ``"docling"``
                 forces the Docling backend.
+            page_range: Inclusive one-based Docling page range; explicit single-device, sequential
+                Docling only. Source PDF is passed intact to Docling.
             repair_fonts: Repair eligible PDF ToUnicode maps in repaired_pdfs/ before extraction (default: True).
             workers_per_device: Number of extraction workers to bind to each visible GPU when ``use_gpus='multi'``.
             ocr_engine: Optional 'glossapi' Docling engine. Requires a checkpoint and
@@ -476,6 +480,13 @@ class ExtractPhaseMixin:
                 True is forwarded to each worker for layout-only Docling instrumentation.
 
         """
+        if page_range is not None:
+            if (len(page_range) != 2 or any(type(n) is not int for n in page_range)
+                    or not 1 <= page_range[0] <= page_range[1]):
+                raise ValueError("page_range must be an inclusive, one-based (start, end)")
+            if phase1_backend != "docling" or use_gpus == "multi" or batched:
+                raise ValueError("page_range requires explicit sequential single-device Docling")
+            batched = False
         arguments = locals().copy()
         arguments.pop("self")
         if ocr_engine is not None:
@@ -1137,6 +1148,7 @@ class ExtractPhaseMixin:
             pass
         # Extract files to markdown
         os.makedirs(self.markdown_dir, exist_ok=True)
+        self.extractor.page_range = page_range
         self.extractor.extract_path(input_files, self.markdown_dir, skip_existing=skip_existing)
         if not getattr(self.extractor, "external_state_updates", False):
             self._finalize_font_repair_metadata(input_files)

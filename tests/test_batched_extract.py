@@ -400,10 +400,10 @@ def test_serialization_resource_oracle_rejects_retention(tmp_path, exporter, rec
     monkeypatch.setattr(core, '_cp0_kept_tasks', kept_tasks, raising=False)
     original_export = core._ExportSession.export
 
-    def retaining_export(session, task, deadline):
+    def retaining_export(session, task, deadline, *args, **kwargs):
         if mutation == 'growing-retention' or not core._cp0_kept_tasks:
             core._cp0_kept_tasks.append(task)
-        return original_export(session, task, deadline)
+        return original_export(session, task, deadline, *args, **kwargs)
 
     monkeypatch.setattr(core._ExportSession, 'export', retaining_export)
     try:

@@ -371,6 +371,7 @@ def gpu_extract_worker_queue(
     marker_dir: Optional[str] = None,
     repair_fonts: bool = True,
     batched: bool | None = False,
+    stability_benchmark: dict | None = None,
 ) -> None:
     import os as _os
     import sys as _sys
@@ -519,20 +520,24 @@ def gpu_extract_worker_queue(
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
     # Prime once per worker (persistent converter)
     try:
-        c.prime_extractor(
-            input_format=input_fmt,
-            num_threads=threads,
-            accel_type="cuda:0",
-            force_ocr=force,
-            formula_enrichment=fe,
-            code_enrichment=ce,
-            use_cls=use_cls_w,
-            benchmark_mode=benchmark,
-            export_doc_json=bool(export_json),
-            emit_formula_index=bool(emit_index),
-            phase1_backend=backend,
-            repair_fonts=repair_fonts,
-        )
+        if stability_benchmark is not None:
+            from ..scripts.batched_stability_benchmark import install_sequential_worker
+            install_sequential_worker(c, stability_benchmark, str(device_id), worker_key)
+        else:
+            c.prime_extractor(
+                input_format=input_fmt,
+                num_threads=threads,
+                accel_type="cuda:0",
+                force_ocr=force,
+                formula_enrichment=fe,
+                code_enrichment=ce,
+                use_cls=use_cls_w,
+                benchmark_mode=benchmark,
+                export_doc_json=bool(export_json),
+                emit_formula_index=bool(emit_index),
+                phase1_backend=backend,
+                repair_fonts=repair_fonts,
+            )
     except Exception as _e:
         msg = f"[{_worker_label}] Prime failed: {_e}"
         print(msg)

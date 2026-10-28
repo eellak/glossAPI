@@ -1,0 +1,35 @@
+[
+  {
+    "source": "/Users/foivoskarounos-zamparloukos/Projects/glossapi-development/src/glossapi/scripts/batched_stability_benchmark.py",
+    "destination": "src/glossapi/scripts/batched_stability_benchmark.py",
+    "sha256": "76ecd32ce5e7acb7c3d7d93c8b14c38d267d6fb1e94aa729109f40fac0748673",
+    "mtime_ns": 1791367234451339509,
+    "mtime_utc": "2026-10-07T10:00:34.451339+00:00",
+    "bytes": 52639
+  },
+  {
+    "source": "/Users/foivoskarounos-zamparloukos/Projects/glossapi-development/tests/test_batched_stability_benchmark.py",
+    "destination": "tests/test_batched_stability_benchmark.py",
+    "sha256": "05b26a6538ed8ad0111e1cb13ca6b3ac320c71de439b44c5b9c5877d3ef69af1",
+    "mtime_ns": 1791367210956712699,
+    "mtime_utc": "2026-10-07T10:00:10.956713+00:00",
+    "bytes": 41996
+  },
+  {
+    "source": "/Users/foivoskarounos-zamparloukos/Projects/glossapi-development/tests/b2_fake_crash_driver.py",
+    "destination": "tests/b2_fake_crash_driver.py",
+    "sha256": "667c0d55fd9f95a962f0bc066523cbd09ed0716fc9472002df7a057809e85896",
+    "mtime_ns": 1791367151222618626,
+    "mtime_utc": "2026-10-07T09:59:11.222619+00:00",
+    "bytes": 2199
+  },
+  {
+    "source": "/Users/foivoskarounos-zamparloukos/Projects/glossapi-development/src/glossapi/corpus/batched_extract.py",
+    "destination": "src/glossapi/corpus/batched_extract.py",
+    "sha256": "d284f3ce4acd70fe966b8f2e24cb71ea2115e1496cb38b9992109851cba96166",
+    "mtime_ns": 1791364978434837060,
+    "mtime_utc": "2026-10-07T09:22:58.434837+00:00",
+    "bytes": 64257,
+    "reason": "required recorder/callback dependency of the copied stability instrument; reviewed full diff"
+  }
+]

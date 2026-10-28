@@ -405,6 +405,8 @@ class GlossExtract:
 
     def _convert_all_with_timeout(self, files: Iterable[Path], timeout_s: int, **kwargs):
         """Use Docling native timeout if available; otherwise call directly (no fallback wrapper)."""
+        if getattr(self, "page_range", None) is not None:
+            kwargs.setdefault("page_range", self.page_range)
         file_list = [Path(f) for f in files]
         if not file_list:
             return []
@@ -444,6 +446,8 @@ class GlossExtract:
         budget = self._remaining_text_timeout(file, budget)
         timeout_kw = self._supports_native_timeout()
         kw = dict(raises_on_error=False)
+        if getattr(self, "page_range", None) is not None:
+            kw["page_range"] = self.page_range
         kw.update(kwargs)
         if timeout_kw:
             kw[timeout_kw] = int(budget)
@@ -1362,7 +1366,8 @@ class GlossExtract:
                 if file_path.suffix.lower() == ".pdf":
                     n_pages = self._get_pdf_page_count(file_path)
                     if (not self.use_pypdfium_backend and n_pages is not None
-                            and n_pages > self.long_pdf_page_threshold):
+                            and n_pages > self.long_pdf_page_threshold
+                            and getattr(self, "page_range", None) is None):
                         long_files.append(file_path)
                     else:
                         normal_files.append(file_path)

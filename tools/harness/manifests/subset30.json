@@ -1,0 +1,1982 @@
+{
+  "schema": 1,
+  "frozen": true,
+  "selection_rule": "v2 reviewed anchors in selection_review.json first; fill to30 by round-robin page-count quartiles, sha256 order; no replacement. Three pages each, inclusive Docling page_ranges, including visually reviewed table103 and two-column206 in YZU; raster-only page68 in BTS. Other ranges use v1 sampled-geometry rule. v1 candidate was rejected before baselines. v1: verify every cohort hash, count pages, analyze fonts using the production repair selector; inspect text and character geometry on pages 1, floor((N+1)/2), N. Choose, without replacement and ties by filename: maximum Greek fraction among native Greek pages with nonrepairable fonts (clean); maximum affected Greek font codes among repairable documents (repair); minimum characters/page among no-text samples (scan); longest document; strongest two-column line geometry; strongest table-like aligned numeric-row geometry; maximum min(Greek,Latin) characters (mixed); shortest. Fill to 30 by round-robin across ascending page-count quartiles, each sorted by sha256. Layout/scan labels are heuristic evidence on sampled pages, not human ground truth. Freeze three contiguous pages per document by maximizing both layout signals in the same three-page window, ties by earliest start; if signals are on distant pages, table gets priority. Never overwrite the manifest.",
+  "cohort_manifest_sha256": "bbc4e8a10b3ee43a53952778e9d9ce3fc2195b3027ae2fb77291739e73dc5175",
+  "inventory_sha256": "5c522bafec0615bb15f9356208602c43735168c87626f32bf116b8a3f35c0a10",
+  "review_sha256": "ac3c72bec3dee5916b57268435e701bf37e9a6743ff57525ff310b8737cdc462",
+  "documents": [
+    {
+      "filename": "OWH_803.pdf",
+      "pdf_url": "https://dspace.lib.ntua.gr/xmlui/bitstream/handle/123456789/6675/full-text_.pdf?sequence=1&amp;isAllowed=y",
+      "sha256": "ec0ca472e35cfcc72cec99aa613844330b404bc174e634c4024fd99967295dc6",
+      "bytes": 4029910,
+      "pages": 109,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 361,
+          "greek": 255,
+          "latin": 29,
+          "two_column_rows": 6,
+          "table_rows": 8,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "ΕΘΝΙΚΟ ΜΕΤΣΟΒΙΟ ΠΟΛΥΤΕΧΝΕΙΟ \r\nΣΧΟΛΗ ΜΗΧΑΝΟΛΟΓΩΝ ΜΗΧΑΝΙΚΩΝ \r\nΔ.Π.Μ.Σ. «ΣΥΣΤΗΜΑΤΑ ΑΥΤΟΜΑΤΙΣΜΟΥ» \r\nΔΙΠΛΩΜΑΤΙΚΗ ΕΡΓΑΣΙΑ \r\n«Μελέτη εφαρμογής Ολικής Παραγωγικής \r\nΣυντήρησης (Total Productive Maintenance – \r\nT.P.M.) σε Συσκευαστήριο Εργοστασιακής \r\nΕγκατάστασης» \r\nΠαναγιώτης Παπανικολόπουλος \r\nΕπιβλέπων: Ιωάννης Αντωνιάδης, Αναπληρωτής Καθηγητής Ε.Μ.Π. \r\nΑθήνα 2012"
+        },
+        {
+          "page": 55,
+          "characters": 3246,
+          "greek": 2619,
+          "latin": 8,
+          "two_column_rows": 22,
+          "table_rows": 33,
+          "numeric_tokens": 5,
+          "table_score": 0,
+          "text_excerpt": "54\r\nμε τις ανησυχίες τους και τα ενδιαφέροντά τους, επιτρέπει στους εργαζόμενους να είναι πιο \r\nσυνεργάσιμοι και πιο δημιουργικοί στην απάντηση του ερωτήματος. \r\nΟ κύκλος PDCA έχει, επίσης αναλυθεί σε μια διαδικασία επτά βημάτων, όπως αρχικά \r\nπεριγράφηκε από τον Kume. Ανεξάρτητα, όμως, από τον ακριβή αριθμό των βημάτων της \r\nδιαδικασίας βελτίωσης, είναι η δομή του κύκλου βελτίωσης που καθιστά ικανά τα μέλη \r\nμιας ομάδας να φέρουν εις γνώση τα προβλήματα με μεγαλύτερη βεβαιότητα. Κάθε μέλος \r\nτη"
+        },
+        {
+          "page": 109,
+          "characters": 3,
+          "greek": 0,
+          "latin": 0,
+          "two_column_rows": 0,
+          "table_rows": 0,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "108"
+        }
+      ],
+      "font_category": "mixed",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 0,
+      "affected_greek_codes": 0,
+      "characters": 3610,
+      "greek": 2874,
+      "latin": 37,
+      "selection_reason": "Greek born-digital clean",
+      "reviewed_evidence": "page54 rendered: legible Greek prose; affected_greek_codes=0",
+      "page_range": [
+        52,
+        54
+      ],
+      "page_ranges": [
+        [
+          52,
+          54
+        ]
+      ]
+    },
+    {
+      "filename": "FOK_514.pdf",
+      "pdf_url": "https://dspace.lib.ntua.gr/xmlui/bitstream/handle/123456789/5708/mavrogiannism_residual.pdf?sequence=3&amp;isAllowed=y",
+      "sha256": "e78965f12dd6bda20284f6f1e92b8690da4224c81c878c280b2a84abeb201443",
+      "bytes": 10608236,
+      "pages": 188,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 367,
+          "greek": 310,
+          "latin": 0,
+          "two_column_rows": 2,
+          "table_rows": 5,
+          "numeric_tokens": 0,
+          "table_score": 0,
+          "text_excerpt": "ΔΘΝΙΚΟ ΜΔΣ΢ΟΒΙΟ ΠΟΛΤΣΔΥΝΔΙΟ\r\n΢ΥΟΛΗ ΠΟΛΙΣΙΚΩΝ ΜΗΥΑΝΙΚΩΝ\r\nΣΟΜΔΑ΢ ΓΟΜΟ΢ΣΑΣΙΚΗ΢\r\nΔργαζηήριο Μεηαλλικών Καηαζκεσών\r\nΑΡΙΘΜΗΣΙΚΗ ΚΑΙ ΑΝΑΛΤΣΙΚΗ\r\nΔΙΕΡΕΤΝΗ΢Η Α΢ΣΟΥΙΑ΢ ΢ΤΝΘΕΣΧΝ \r\nΤΠΟ΢ΣΤΛΧΜΑΣΧΝ ΤΠΟ ΕΚΚΕΝΣΡΗ ΘΛΙΦΗ\r\nΓΙΠΛΩΜΑΣΙΚΗ ΔΡΓΑ΢ΙΑ\r\nΜΙΥΑΗΛ Γ. ΜΑΤΡΟΓΙΑΝΝΗ\r\nΔπιβλέπφν: Υάρης Ι. Γανηές, Αναπληρφηής Καθηγηηής ΔΜΠ\r\n΢σνεπιβλέπφν: Κφνζηανηίνος Δ. Καλοταιρέηης, Τπουήθιος Γιδάκηφρ ΔΜΠ"
+        },
+        {
+          "page": 94,
+          "characters": 205,
+          "greek": 123,
+          "latin": 18,
+          "two_column_rows": 6,
+          "table_rows": 5,
+          "numeric_tokens": 6,
+          "table_score": 0,
+          "text_excerpt": " 84 Κεθάιαην 6 \r\nΓηπισκαηηθή Δξγαζία ηνπ Μαπξνγηάλλε Μηραήι\r\n \r\n΢ρ. 3.107 Κξηηήξην Αζηνρίαο- Βήκα 91ν αλάιπζεο GMNIA (πξώηε δηαξξνή)\r\n \r\n΢ρ. 3.108 Σάζεηο von Mises- Βήκα 107ν αλάιπζεο GMNIA (κέγηζην θνξηίν)"
+        },
+        {
+          "page": 188,
+          "characters": 0,
+          "greek": 0,
+          "latin": 0,
+          "two_column_rows": 0,
+          "table_rows": 0,
+          "numeric_tokens": 0,
+          "table_score": 0,
+          "text_excerpt": ""
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 29,
+      "affected_greek_codes": 325,
+      "characters": 572,
+      "greek": 433,
+      "latin": 18,
+      "selection_reason": "broken ToUnicode repair path",
+      "reviewed_evidence": "max affected Greek codes=325; production analyzer repairable",
+      "page_range": [
+        92,
+        94
+      ]
+    },
+    {
+      "filename": "BTS_524.pdf",
+      "pdf_url": "https://dspace.lib.ntua.gr/xmlui/bitstream/handle/123456789/47636/%ce%9a%ce%b1%cf%84%ce%b1%cf%83%cf%84%ce%ac%cf%83%ce%b5%ce%b9%cf%82%20%ce%a4%ce%ac%ce%be%ce%b7%cf%82%20%cf%83%ce%b5%20%ce%b4%ce%b9%cf%83%ce%b4%ce%b9%ce%ac%cf%83%cf%84%ce%b1%cf%84%ce%b5%cf%82%20%ce%b5%cf%84%ce%b5%cf%81%ce%bf%ce%b4%ce%bf%ce%bc%ce%ad%cf%82%20%ce%b3%ce%b9%ce%b1%20%cf%84%ce%b7%ce%bd%20%cf%83%cf%80%ce%b9%ce%bd%cf%84%cf%81%ce%bf%ce%bd%ce%b9%ce%ba%ce%ae.pdf?sequence=1&amp;isAllowed=y",
+      "sha256": "ab82907094ca7dfe6171bf44ca2cbc03fa8e3ebd9c314df82d460dacd79d41ca",
+      "bytes": 2750226,
+      "pages": 75,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 287,
+          "greek": 235,
+          "latin": 0,
+          "two_column_rows": 4,
+          "table_rows": 6,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "Εθνικό Μετσόβιο Πολυτεχνείο\r\nΣχολή Εφαρμοσμένων Μαθηματικών και Φυσικών Επιστημών\r\nΤομέας Φυσικής\r\nΚαταστάσεις Τάξης σε δισδιάστατες ετεροδομές\r\nγια τη Σπιντρονική\r\nΜεταπτυχιακή Εργασία\r\nτου\r\nΗΛΙΑ ΠΑΠΑΘΑΝΑΣΙΟΥ\r\nΕπιβλέπων: Γεώργιος Βαρελογιάννης\r\nΑν. Καθηγητής Ε.Μ.Π.\r\nΑθήνα, Ιούλιος 2018"
+        },
+        {
+          "page": 38,
+          "characters": 3021,
+          "greek": 2384,
+          "latin": 74,
+          "two_column_rows": 39,
+          "table_rows": 56,
+          "numeric_tokens": 15,
+          "table_score": 56,
+          "text_excerpt": "36\r\nΚεφάλαιο 2. Βασικός Φορμαλισμός και επίλυση διατάξεων Σπιντρονικής με κβαντικές\r\nκαταστάσεις τάξεως\r\nτων παραμέτρων. Αν η παράμετρος τάξης είναι συνεχής στο σημείο της μετάβασης με ασυνεχή\r\nπρώτη παράγωγο τότε πρόκειται για μετάβαση φάσης δεύτερης τάξης. Ομοίως αν η πρώτης\r\nπαράγωγος είναι συνεχής και η δεύτερη εμφανίζει ασυνέχεια τότε πρόκειται για μετάβαση\r\nτρίτης φάσης κ.ο.κ. Μεταβάσεις φάσεις μεγαλύτερες της πρώτης δεν εμφανίζουν συνύπαρξη\r\nφάσεων.\r\n2.5 Κύματα πυκνότητας Φορτίου και Σπιν"
+        },
+        {
+          "page": 75,
+          "characters": 15,
+          "greek": 12,
+          "latin": 0,
+          "two_column_rows": 1,
+          "table_rows": 0,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "Βιβλιογραφία 73"
+        }
+      ],
+      "font_category": "unsupported",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 0,
+      "affected_greek_codes": 0,
+      "characters": 3323,
+      "greek": 2631,
+      "latin": 74,
+      "selection_reason": "image-only pages in a mixed document",
+      "reviewed_evidence": "page68 rendered readable fullpage raster; PDFium characters=0; image coverage=0.999667",
+      "page_range": [
+        67,
+        69
+      ],
+      "page_ranges": [
+        [
+          67,
+          69
+        ]
+      ]
+    },
+    {
+      "filename": "BZA_238.pdf",
+      "pdf_url": "https://pergamos.lib.uoa.gr/uoa/dl/object/1326357/file.pdf",
+      "sha256": "eb9a9ce422e1e07cf519d32e2a4ff59f9a4ccd03993f0bfbd9f4cbb8a7ccbebf",
+      "bytes": 10829670,
+      "pages": 246,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 224,
+          "greek": 186,
+          "latin": 0,
+          "two_column_rows": 6,
+          "table_rows": 4,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "ΔΘΝΙΚΟΝ ΚΑΙ ΚΑΠΟΓΙ΢ΣΡΙΑΚΟΝ ΠΑΝΔΠΙ΢ΣΗΜΙΟΝ\r\nΑΘΗΝΩΝ\r\nΣΜΗΜΑ ΒΙΟΛΟΓΙΑ΢\r\nΣΟΜΔΑ΢ ΒΟΣΑΝΙΚΗ΢\r\nΟπηικές και θωηονικές ιδιόηηηες πεηάλων από άνθη θσηών \r\nηοσ Μεζογειακού οικοζσζηήμαηος\r\nΓιδακτορική Γιατριβή\r\nΔημήηριος Γκίκας\r\nΑθήνα 2016"
+        },
+        {
+          "page": 123,
+          "characters": 2338,
+          "greek": 1689,
+          "latin": 119,
+          "two_column_rows": 22,
+          "table_rows": 38,
+          "numeric_tokens": 16,
+          "table_score": 38,
+          "text_excerpt": "102\r\nβκςζηή ηδ ζοκάνηδζδ αοηή, είκαζ εθζηηή δ δδιζμονβία εκυξ αθβμνίειμο, πμο κα \r\nαπμηοπχκεζ ημ πμζμζηυ απμννυθδζδξ ηάεε ιμκμπνςιαηζηήξ αηηίκαξ πμο δζένπεηαζ \r\nιέζα απυ έκα δζάθοια πνςζηζηχκ (Li et al. 2012).\r\nΟ αθβυνζειμξ ζπεδζάζηδηε ιε βκχιμκα ηδκ μπηζηή δζαδνμιή ηαζ ηδ \r\nζοκάνηδζδ απμννυθδζδξ mθ. Ζ μπηζηή δζαδνμιή οπμθμβίγεηαζ απυ ημ πνυκμ \r\nπαναιμκήξ ηδξ αηηίκαξ θςηυξ, ιέζα ζηδκ πενζμπή απμννυθδζδξ. Ζ πενζμπή \r\nαπμννυθδζδξ εζζάβεηαζ ζημ πνυβναιια ιε ηδκ επζθμβή ζδιείςκ απυ ηδκ εβηάνζζα \r\nημ"
+        },
+        {
+          "page": 246,
+          "characters": 3,
+          "greek": 0,
+          "latin": 0,
+          "two_column_rows": 0,
+          "table_rows": 0,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "225"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 12,
+      "affected_greek_codes": 124,
+      "characters": 2565,
+      "greek": 1875,
+      "latin": 119,
+      "selection_reason": "longest (none >250 pages)",
+      "reviewed_evidence": "246 pages; maximum of all242",
+      "page_range": [
+        121,
+        123
+      ]
+    },
+    {
+      "filename": "YZU_230.pdf",
+      "pdf_url": "https://pergamos.lib.uoa.gr/uoa/dl/object/1309489/file.pdf",
+      "sha256": "b994ecc4392fb962b109940c027a7e67f8317b3d97c301cd0a30c0083b39a4d1",
+      "bytes": 22041886,
+      "pages": 206,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 293,
+          "greek": 227,
+          "latin": 6,
+          "two_column_rows": 1,
+          "table_rows": 0,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "ΕΛΛΗΝΙΚΗ ΔΗΜΟΚΡΑΤΙΑ \r\nΕθνικό και Καποδιστριακό \r\nΠανεπιστήμιο Αθηνών \r\nΣΧΟΛΗ ΘΕΤΙΚΩΝ ΕΠΙΣΤΗΜΩΝ \r\nΤΜΗΜΑ ΒΙΟΛΟΓΙΑΣ \r\nΤΟΜΕΑΣ ΒΙΟΛΟΓΙΑΣ ΚΥΤΤΑΡΟΥ & ΒΙΟΦΥΣΙΚΗΣ \r\nΔΙΔΑΚΤΟΡΙΚΗ ΔΙΑΤΡΙΒΗ \r\nΥΠΟΛΟΓΙΣΤΙΚΕΣ ΜΕΛΕΤΕΣ ΣΕ ΣΥΖΕΥΓΜΕΝΟΥΣ ΜΕ G‐ΠΡΩΤΕΪΝΕΣ \r\nΥΠΟΔΟΧΕΙΣ (GPCRs)\r\nΜΑΡΓΑΡΙΤΑ Κ.  ΘΕΟΔΩΡΟΠΟΥΛΟΥ \r\nΑΘΗΝΑ 2014\r\n   "
+        },
+        {
+          "page": 103,
+          "characters": 935,
+          "greek": 292,
+          "latin": 274,
+          "two_column_rows": 30,
+          "table_rows": 10,
+          "numeric_tokens": 44,
+          "table_score": 10,
+          "text_excerpt": "3.  Αποτελέσματα και Συζήτηση 73\r\nΠίνακας 3.1 Σύγκριση  της ακρίβειας εντοπισμού (accuracy), στο σύνολο  των  1311 ανθρωπίνων \r\nGPCRs\r\nMethod Ποσοστό των GPCRs που έχουν προβλεφθεί σωστά\r\nGPCRpipe (AND method) 97%\r\nGPCRpipe (OR method) 100%\r\nGPCRHMM 99%\r\nHMM‐TM 38%\r\nHMMTOP 82%\r\nMEMSAT1 56%\r\nMEMSAT3 64%\r\nMEMSAT‐SVM 36%\r\nOCTOPUS 68%\r\nPhilius 55%\r\nPhobius 68%\r\nPolyPhobius 82%\r\nPRO 52%\r\nPRODIV 76%\r\nSCAMPI 65%\r\nSCAMPI‐single 23%\r\nSPOCTOPUS 52%\r\nTMHMM 69%\r\nTOPCONS 74%\r\nTOPCONS‐single 53%\r\nTopPred2 38%"
+        },
+        {
+          "page": 206,
+          "characters": 11039,
+          "greek": 0,
+          "latin": 7069,
+          "two_column_rows": 108,
+          "table_rows": 37,
+          "numeric_tokens": 282,
+          "table_score": 37,
+          "text_excerpt": "Grishina, G., Berlot, C.H., 1997. Identification of common and distinct residues\r\ninvolved in the interaction of alphai2 and alphas with adenylyl cyclase. J. Biol.\r\nChem. 272, 20619–20626.\r\nGrishina, G., Berlot, C.H., 2000. A surface-exposed region of G(salpha) in which\r\nsubstitutions decrease receptor-mediated activation and increase receptor\r\naffinity. Mol. Pharmacol. 57, 1081–1092.\r\nHaga, K., Kruse, A.C., Asada, H., Yurugi-Kobayashi, T., Shiroishi, M., et al., 2012.\r\nStructure of the human M2"
+        }
+      ],
+      "font_category": "mixed",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 0,
+      "affected_greek_codes": 0,
+      "characters": 12267,
+      "greek": 519,
+      "latin": 7349,
+      "selection_reason": "two-column and tables",
+      "reviewed_evidence": "page103 rendered two tables; page206 rendered two-column journal references",
+      "page_range": [
+        103,
+        103
+      ],
+      "page_ranges": [
+        [
+          103,
+          103
+        ],
+        [
+          205,
+          206
+        ]
+      ]
+    },
+    {
+      "filename": "FHG_024.pdf",
+      "pdf_url": "http://repository.edulll.gr/edulll/bitstream/10795/3146/2/3146_WP%201.1.2.pdf",
+      "sha256": "eeb7001eaf89cd8750ba86fcaeb31ed87cea60f2f5482fda0dd8b0b937f26725",
+      "bytes": 2671574,
+      "pages": 31,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 1086,
+          "greek": 840,
+          "latin": 3,
+          "two_column_rows": 17,
+          "table_rows": 20,
+          "numeric_tokens": 10,
+          "table_score": 0,
+          "text_excerpt": "ΠΡΑΞΗ:\r\n«ΘΑΛΗΣ-ΠΑΝΕΠΙΣΤΗΜΙΟ ΜΑΚΕΔΟΝΙΑΣ\u0002Το ανθρώπινο δυναμικό ως βασική συνιστώσα της αναπτυξιακής δυναμικής και \r\nδιαφοροποίησης των περιοχών: Η περίπτωση της Ελλάδας»\r\nΚωδικός MIS 380421\r\nΤΠΟΕΡΓΟ:\r\n«Το ανθρώπινο δυναμικό ως βασική συνιστώσα της αναπτυξιακής δυναμικής και \r\nδιαφοροποίησης των περιοχών: Η περίπτωση της Ελλάδας»\r\nκαι α/α «01»\r\nΕΠΙΧΕΙΡΗ΢ΙΑΚΟ ΠΡΟΓΡΑΜΜΑ:\r\n«Εκπαίδευση και Δια Βίου Μάθηση» (Ε.Π.Ε.Δ.Β.Μ.) 2007-2013\r\nΥπουργείο Παιδείας, Δια Βίου Μάθησης και Θρησκευμάτων\r\nΑΞΟΝΑ΢ ΠΡΟΣΕΡΑΙΟ"
+        },
+        {
+          "page": 16,
+          "characters": 1463,
+          "greek": 157,
+          "latin": 20,
+          "two_column_rows": 15,
+          "table_rows": 32,
+          "numeric_tokens": 274,
+          "table_score": 32,
+          "text_excerpt": "Πίνακασ 2-3: Αποτελζςματα υπολογιςμοφ του ΣΔΡΑ για τουσ νομοφσ τθσ Ελλάδασ, ζτθ 2008 και 2010\r\nΡθγι: Ιδία επεξεργαςία \r\nGR300 Αηηηθήο 52,7 2 42,7 4 81,0 27 98,8 100,0 76,7 52,5 43,5 36,8 36,5 27,4 19,1 4,8 1,9 1,7 3,2 3,3 99,0 76,6 48,6 46,3 100,0 77,1\r\nGR411 Λέζβνπ 23,3 37 16,3 46 70,0 3 3,9 3,8 85,4 49,0 1,0 0,8 6,0 5,8 35,4 7,6 5,9 5,8 17,8 18,1 28,6 27,2 17,2 18,0 31,6 26,7\r\nGR412 ΢άκνπ 33,9 18 28,5 15 84,0 30 4,4 4,4 92,9 92,5 3,0 3,4 25,1 24,6 25,0 11,3 22,9 22,8 29,0 32,1 26,6 21,9 39,4 3"
+        },
+        {
+          "page": 31,
+          "characters": 745,
+          "greek": 267,
+          "latin": 238,
+          "two_column_rows": 6,
+          "table_rows": 8,
+          "numeric_tokens": 19,
+          "table_score": 8,
+          "text_excerpt": "Tobler W. (1970) «A computer movie simulating urban growth in the Detroit region», \r\nEconomic Geography, 46, 234-40.\r\nUN (2009) Human Development Report 2009: Overcoming Barriers: Human Mobility \r\nand Development, New York: Palgrave Macmillan.\r\nVaury O. (2003), Is GDP a good measure of economic progress? Post-autistic \r\nEconomics Review, 20(1). \r\nΕλλθνόγλωςςθ\r\nΡαπαδαςκαλόπουλοσ Α. Δ. (2000) Μζκοδοι Περιφερειακισ Ανάλυςθσ, Ακινα: \r\nΡαπαηιςθσ. \r\nΡετράκοσ Γ. και Ψυχάρθσ Γ. (2004) Περιφερειακι Ανάπτ"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 8,
+      "affected_greek_codes": 78,
+      "characters": 3294,
+      "greek": 1264,
+      "latin": 261,
+      "selection_reason": "table",
+      "reviewed_evidence": "page16 rendered numeric colored table with caption",
+      "page_range": [
+        14,
+        16
+      ],
+      "page_ranges": [
+        [
+          14,
+          16
+        ]
+      ]
+    },
+    {
+      "filename": "VQP_963.pdf",
+      "pdf_url": "https://pergamos.lib.uoa.gr/uoa/dl/object/2937004/file.pdf",
+      "sha256": "32174711b297806155fbfcec46e743806c9540a9275f42339bf133b43dd420dc",
+      "bytes": 2080962,
+      "pages": 188,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 352,
+          "greek": 292,
+          "latin": 0,
+          "two_column_rows": 3,
+          "table_rows": 4,
+          "numeric_tokens": 2,
+          "table_score": 0,
+          "text_excerpt": "1\r\nΣΜΖΜΑ ΦΗΛΟ΢ΟΦΗΑ΢ ΣΖ΢ ΦΗΛΟ΢ΟΦΗΚΖ΢ ΢ΥΟΛΖ΢\r\nΣΟΤ ΔΘΝΗΚΟΤ ΚΑΗ ΚΑΠΟΓΗ΢ΣΡΗΑΚΟΤ ΠΑΝΔΠΗ΢ΣΖΜΗΟΤ ΑΘΖΝΧΝ\r\nΑΓΓΔΛΗΚΖ Γ. ΒΑ΢ΗΛΟΠΟΤΛΟΤ\r\nΦΤ΢Η΢ ΚΑΗ ΣΔΛΟ΢ ΢ΣΖΝ ΠΡΟ΢ΧΚΡΑΣΗΚΖ ΓΗΑΝΟΖ΢Ζ\r\nΓηαηξηβή επί δηδαθηνξίᾳ ππνβαιινκέλε ζην Σκήκα Φηινζνθίαο \r\nηεο Φηινζνθηθήο ΢ρνιήο ηνπ Δζληθνχ θαη Καπνδηζηξηαθνχ Παλεπηζηεκίνπ Αζελψλ\r\nΔΠΗΒΛΔΠΧΝ:\r\nΚΧΝ΢ΣΑΝΣΗΝΟ΢ Η. ΒΟΤΓΟΤΡΖ΢\r\nΑΘΖΝΑ 2020"
+        },
+        {
+          "page": 94,
+          "characters": 3257,
+          "greek": 2272,
+          "latin": 164,
+          "two_column_rows": 30,
+          "table_rows": 34,
+          "numeric_tokens": 37,
+          "table_score": 34,
+          "text_excerpt": "94\r\nπην ζπγθεθξηκέλν, ζαθέο θαη νηθείν. Οκηιεί γηα ην θπζηθφ ζηνηρείν ηνπ αέξα σο \r\nζηνηρείν πνπ έρεη ηελ ηδηφηεηα λα θαηαλέκεηαη θαη λα δηαρέεηαη ζην ρψξν, θαη σο \r\nηέηνην ζεσξείηαη σο ζπλέρνλ ηα πάληα.85« λαμηκέλελ δέ θαζη ηὴλ η῵λ ὅισλ ἀξρήλ \r\nηὸλ ἀέξα εἰπεῖλ θαὶ ηνύηνλ εἶλαη ηῶ κὲλ κεγέζεη ἄπεηξνλ, ηαῖο δὲ πεξὶ α὎ηὸλ πνηόηεζηλ \r\nὡξηζκέλνλ».\r\n86 Ο αήξ σο θηλνῦλ87 αίηηνλ φισλ ησλ θνζκηθψλ κεηαζρεκαηηζκψλ \r\nραξαθηεξίδεηαη απφ ηελ πχθλσζε88 θαη ηε κάλσζε (ή ηελ αξαίσζε) ησλ ζηνηρείσλ.\r\n \r\nηεο εθε"
+        },
+        {
+          "page": 188,
+          "characters": 2782,
+          "greek": 0,
+          "latin": 2188,
+          "two_column_rows": 24,
+          "table_rows": 25,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "188\r\nfragments of the Milesian philosophers we examine the various views that have been \r\nexpressed about the meaning of infinity, dike, time and order, and we recognize the \r\nfact that the concept of the infinite falls within a natural law. In this light, any damage \r\nor change in the physical world has a good or bad consequence from which no one \r\ncan escape because of the role of Dike. Aristotle, commenting on the passage, states \r\nthat infinity is an „intermediate substance‟, which actually "
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 3,
+      "affected_greek_codes": 102,
+      "characters": 6391,
+      "greek": 2564,
+      "latin": 2352,
+      "selection_reason": "mixed Greek/Latin",
+      "reviewed_evidence": "sampled Greek/Latin characters both >=2352",
+      "page_range": [
+        92,
+        94
+      ]
+    },
+    {
+      "filename": "WWZ_685.pdf",
+      "pdf_url": "https://repository.ihu.gr/bitstreams/fcc52e42-03fc-4df3-bd2b-dab8b4efde38/download",
+      "sha256": "d1da83844147dd5ac4a8901194632c5f6e2197d4d392ec10e1a84ba24a442460",
+      "bytes": 216332,
+      "pages": 11,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 3491,
+          "greek": 0,
+          "latin": 2738,
+          "two_column_rows": 32,
+          "table_rows": 25,
+          "numeric_tokens": 16,
+          "table_score": 25,
+          "text_excerpt": "A brave new world for libraries: the Sui Generis Right\r\nCitation: Rania Konsta and Michalis Gerolimos, “A brave new world for libraries: the \r\nsui generis right” in Maria Bottis (ed.), Eighth International Conference of Computer \r\nEthics: Philosophical Enquiry, Athens: Nomiki Bibliothiki, 2009, pp. 413-424.\r\nRania Konsta\r\nIonian University\r\nCorfu, Greece\r\nTel.: +302661080391\r\ne-mail: rania@ionio.gr\r\nMichalis Gerolimos\r\nIonian University\r\nCorfu, Greece\r\nTel.: +302661080394\r\ne-mail: mike@ionio.gr\r"
+        },
+        {
+          "page": 6,
+          "characters": 3602,
+          "greek": 0,
+          "latin": 2869,
+          "two_column_rows": 33,
+          "table_rows": 27,
+          "numeric_tokens": 19,
+          "table_score": 27,
+          "text_excerpt": " The monopoly power in the hands of those who hold intellectual property \r\nrights is a relatively recent development. Back in the days of printed infor\u0002mation and document distribution it was –to all intents and purposes- impossi\u0002ble for a publisher to control and/or prevent the creation of copies. However, \r\nthis has changed in the digital world, as copyright owners have digital docu\u0002ment supply contracts that allow them to deny a user‟s rights to utilisation ex\u0002ceptions. In order to avoid suc"
+        },
+        {
+          "page": 11,
+          "characters": 902,
+          "greek": 0,
+          "latin": 630,
+          "two_column_rows": 8,
+          "table_rows": 8,
+          "numeric_tokens": 17,
+          "table_score": 8,
+          "text_excerpt": "http://209.85.129.132/custom?q=cache:GS1R0XlkdnEJ:www.ifla.org/III/clm/p1/IFL\r\nA_Response_ Green-paper-copyright.pdf+sui+generis&cd=7&hl=en&ct=clnk.\r\nNimmer M. B. (1999). Cases and Materials on Copyright. Matthiew Bender.\r\nReichman J.H. (1998). Database Protection at the Crossroads: Recent Developments \r\nand the Long term Perspective, available at: \r\nhttp://library.findlaw.com/1998/Dec/2/131341.html.\r\nRoss A. (1999). Copyright Law and the Internet: Selected Statutes and Cases, Thelen \r\nReid & Pr"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 2,
+      "affected_greek_codes": 0,
+      "characters": 7995,
+      "greek": 0,
+      "latin": 6237,
+      "selection_reason": "very short (shortest in cohort)",
+      "reviewed_evidence": "11 pages; minimum of all242",
+      "page_range": [
+        4,
+        6
+      ]
+    },
+    {
+      "filename": "FQE_952.pdf",
+      "pdf_url": "https://www.ecclesia.gr/greek/press/theologia/material/2021_2_9_charalambidis.pdf",
+      "sha256": "08b7a7f9e8483f28ca531666d04d6e832d231d7160ee31c59caa8743cde19ccb",
+      "bytes": 620549,
+      "pages": 29,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 1676,
+          "greek": 1271,
+          "latin": 0,
+          "two_column_rows": 21,
+          "table_rows": 23,
+          "numeric_tokens": 20,
+          "table_score": 23,
+          "text_excerpt": "ΘΕΟΛΟΓΙΑ 92, 2 (2021) 105-133\r\nἝνας ἄγνωστος θεολογικὸς διάλογος \r\nστὸν Ἑλλαδικὸ χῶρο \r\nἩ περίπτωση τῶν Χρυσοστόμου Παπαδόπουλου \r\nκαὶ Γεωργίου Χαλαβαζῆ\r\nΣτυλιανοῦ Δ. Χαραλαμπίδη*\r\nΕἰσαγωγὴ\r\nἝνα περιστατικὸ βίας, ἀπότοκο ὀξυμένων θρησκευτικῶν παθῶν μιᾶς \r\nἄλλης ἐποχῆς, ὑπῆρξε ἡ ἀφορμὴ γιὰ τὴν ἔναρξη ἑνὸς σημαντικοῦ καὶ ἐν \r\nπολλοῖς ἀγνώστου ἐπιστολιμαίου θεολογικοῦ διαλόγου στὸν ἑλλαδικὸ \r\nχῶρο. Εἰδικώτερα, στὶς 21 Μαΐου 1927, ὁ τότε Ἀρχιεπίσκοπος Ἀθηνῶν \r\nΧρυσόστομος, προσερχόμενος στὸν ἱ. ναὸ "
+        },
+        {
+          "page": 15,
+          "characters": 2245,
+          "greek": 1746,
+          "latin": 5,
+          "two_column_rows": 21,
+          "table_rows": 32,
+          "numeric_tokens": 20,
+          "table_score": 32,
+          "text_excerpt": "119\r\nἘκκλησίας πρὸ τοῦ σχίσματος, οἰκειοποιηθεῖσα δὲ τὸν τίτλον “Καθολική” \r\nπροσέδωκεν εἰς αὐτὸν ὅλως ἐξωτερικὴν ἔννοιαν»36. Ἡ ὀρθόδοξη αὐτὴ \r\nἀντίληψη εἶναι τόσο παλαιά, ὥστε ἐπικαλεῖται εὔστοχα τὸ παράδειγμα \r\nτοῦ ἁγίου Πολυκάρπου Σμύρνης (2ος αἰώνας), ὁ ὁποῖος μνημονεύεται \r\nὡς «Ἐπίσκοπος τῆς ἐν Σμύρνῃ καθολικῆς Ἐκκλησίας»37 σὲ ἀντίθεση \r\nπροφανῶς πρὸς τὶς κοινότητες τῶν αἱρετικῶν τῆς ἐπαρχίας του.\r\nὍσον ἀφορᾶ τὸν ἰσχυρισμὸ τοῦ Γεωργίου Χαλαβαζῆ περὶ τῆς παλαιό\u0002τητας τῆς ἑλληνορρυθμίας, ὁ Ἀθ"
+        },
+        {
+          "page": 29,
+          "characters": 336,
+          "greek": 46,
+          "latin": 229,
+          "two_column_rows": 0,
+          "table_rows": 2,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "133\r\nThe translation of the letters of the two protagonists in French and their \r\npublication by the Pontifical Institute of Eastern Studies (Pontificium \r\nInstitutum Orientalium Studiorum) is indicative of the importance that \r\nthe Roman Catholic Church attached to this dialogue. \r\nΕΝΑΣ ΑΓΝΩΣΤΟΣ ΘΕΟΛΟΓΙΚΟΣ ΔΙΑΛΟΓΟΣ ΣΤΟΝ ΕΛΛΑΔΙΚΟ ΧΩΡΟ"
+        }
+      ],
+      "font_category": "unsupported",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 0,
+      "affected_greek_codes": 0,
+      "characters": 4257,
+      "greek": 3063,
+      "latin": 234,
+      "selection_reason": "page-count quartile 1; sha256 order",
+      "page_range": [
+        13,
+        15
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 15,
+          "characters": 2245,
+          "greek": 1746,
+          "latin": 5,
+          "two_column_rows": 21,
+          "table_rows": 32,
+          "numeric_tokens": 20,
+          "table_score": 32,
+          "text_excerpt": "119\r\nἘκκλησίας πρὸ τοῦ σχίσματος, οἰκειοποιηθεῖσα δὲ τὸν τίτλον “Καθολική” \r\nπροσέδωκεν εἰς αὐτὸν ὅλως ἐξωτερικὴν ἔννοιαν»36. Ἡ ὀρθόδοξη αὐτὴ \r\nἀντίληψη εἶναι τόσο παλαιά, ὥστε ἐπικαλεῖται εὔστοχα τὸ παράδειγμα \r\nτοῦ ἁγίου Πολυκάρπου Σμύρνης (2ος αἰώνας), ὁ ὁποῖος μνημονεύεται \r\nὡς «Ἐπίσκοπος τῆς ἐν Σμύρνῃ καθολικῆς Ἐκκλησίας»37 σὲ ἀντίθεση \r\nπροφανῶς πρὸς τὶς κοινότητες τῶν αἱρετικῶν τῆς ἐπαρχίας του.\r\nὍσον ἀφορᾶ τὸν ἰσχυρισμὸ τοῦ Γεωργίου Χαλαβαζῆ περὶ τῆς παλαιό\u0002τητας τῆς ἑλληνορρυθμίας, ὁ Ἀθ"
+        }
+      ]
+    },
+    {
+      "filename": "DNU_178.pdf",
+      "pdf_url": "https://repository.ihu.gr/bitstreams/6d166839-3cda-43f6-8baa-b411f8f46ffa/download",
+      "sha256": "09e9f604b65410a50ba2be92da99a6d5c5bdcb567cbef11be3b73a7465a187a1",
+      "bytes": 4220458,
+      "pages": 74,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 290,
+          "greek": 252,
+          "latin": 7,
+          "two_column_rows": 10,
+          "table_rows": 9,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "ΑλεξάνδρειοΤεχνολογικόΕκπαιδευτικόΊδρυμαΘεσσαλονίκης\r\nΣχολήΤεχνολογικώνΕφαρμογών\r\nΤμήμαΗλεκτρονικής\r\nΈλεγχοςοθόνηςTFT μετηχρήσηολοκληρωμένου\r\nκυκλώματοςπρογραμματιζόμενηςλογικής(FPGA)\r\nΦοιτητής: ΤσαμσακίζογλουΜωυσής\r\nΕισηγητής: ΧρήστοςΒ. Τζίκας\r\nΚαθηγητήςΕφαρμογών\r\nΘεσσαλονίκη, Ιούνιος2009"
+        },
+        {
+          "page": 37,
+          "characters": 1991,
+          "greek": 1500,
+          "latin": 222,
+          "two_column_rows": 17,
+          "table_rows": 29,
+          "numeric_tokens": 31,
+          "table_score": 29,
+          "text_excerpt": "Error! Use the Home tab to apply Επικεφαλίδα2 to the text that you want to appear here.\r\nError! Use the Home tab to apply Επικεφαλίδα1\r\nto the text that you want to appear here.\r\n32\r\n=\r\n_\r\nΟσυντελεστήςείναιοCLKDV_DIVIDE καιοιτιμέςπουμπορείναπάρειείναι: 1.5, 2, 2.5, 3,\r\n3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 9, 10, 11, 12, 13, 14, 15, 16.\r\nΗέξοδοςLOCKED είναιπολύσημαντικήγιατίθέτεταισελογικόέναμονόόταντοσήμα\r\nχρονισμούστηνέξοδοσταθεροποιηθεί. Έναφαινόμενοπουπαρατηρείταισταψηφιακά\r\nκυκλώματακαιδη"
+        },
+        {
+          "page": 74,
+          "characters": 0,
+          "greek": 0,
+          "latin": 0,
+          "two_column_rows": 0,
+          "table_rows": 0,
+          "numeric_tokens": 0,
+          "table_score": 0,
+          "text_excerpt": ""
+        }
+      ],
+      "font_category": "mixed",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 0,
+      "affected_greek_codes": 0,
+      "characters": 2281,
+      "greek": 1752,
+      "latin": 229,
+      "selection_reason": "page-count quartile 2; sha256 order",
+      "page_range": [
+        35,
+        37
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 37,
+          "characters": 1991,
+          "greek": 1500,
+          "latin": 222,
+          "two_column_rows": 17,
+          "table_rows": 29,
+          "numeric_tokens": 31,
+          "table_score": 29,
+          "text_excerpt": "Error! Use the Home tab to apply Επικεφαλίδα2 to the text that you want to appear here.\r\nError! Use the Home tab to apply Επικεφαλίδα1\r\nto the text that you want to appear here.\r\n32\r\n=\r\n_\r\nΟσυντελεστήςείναιοCLKDV_DIVIDE καιοιτιμέςπουμπορείναπάρειείναι: 1.5, 2, 2.5, 3,\r\n3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8, 9, 10, 11, 12, 13, 14, 15, 16.\r\nΗέξοδοςLOCKED είναιπολύσημαντικήγιατίθέτεταισελογικόέναμονόόταντοσήμα\r\nχρονισμούστηνέξοδοσταθεροποιηθεί. Έναφαινόμενοπουπαρατηρείταισταψηφιακά\r\nκυκλώματακαιδη"
+        }
+      ]
+    },
+    {
+      "filename": "PMR_229.pdf",
+      "pdf_url": "https://dspace.lib.ntua.gr/xmlui/bitstream/handle/123456789/6098/prousanidoua_silty.pdf?sequence=3&amp;isAllowed=y",
+      "sha256": "08f54af5e65aa7f062d7132c20852362cd92fd0b19a67e1833fc5c673ac5e0a2",
+      "bytes": 2379728,
+      "pages": 117,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 449,
+          "greek": 225,
+          "latin": 32,
+          "two_column_rows": 9,
+          "table_rows": 9,
+          "numeric_tokens": 25,
+          "table_score": 9,
+          "text_excerpt": "ΓΗΠΛΩΜΑΣΗΚΖ ΔΡΓΑ΢ΗΑ\r\nΜεραληθή ζπκπεξηθνξά αξγηιντιύνο Λακίαο\r\nΠξνπζαλίδνπ Η. Αηθαηεξίλε\r\nΔπηβιέπνπζα: Β. Ν. Γεσξγηάλλνπ, αλαπιεξψηξηα \r\nΚαζεγήηξηα ΔΜΠ\r\nΑΘΖΝΑ ΜΑΡΣΗΟ΢ 2012\r\nΔΘΝΗΚΟ ΜΔΣ΢ΟΒΗΟ ΠΟΛΤΣΔΥΝΔΗΟ\r\n΢ΥΟΛΖ ΠΟΛΗΣΗΚΩΝ ΜΖΥΑΝΗΚΩΝ\r\nΣΟΜΔΑ΢ ΓΔΩΣΔΥΝΗΚΖ΢\r\n-2.5\r\n-2.0\r\n-1.5\r\n-1.0\r\n-0.5\r\n0.0\r\n0.5\r\n1.0\r\n1.5\r\n2.0\r\n2.5\r\n1 10 100 1000 10000 100000\r\nελεξγόο ηάζε (kPa)\r\nδείθηεο θελώλ (Iv)\r\nBurland\r\nL_1.28LL_B\r\nL_1.32LL_B\r\nL_1.32LL_A\r\nL_1.32LL_A(2)\r\nL_1.28LL_B(2)"
+        },
+        {
+          "page": 59,
+          "characters": 476,
+          "greek": 201,
+          "latin": 34,
+          "two_column_rows": 6,
+          "table_rows": 8,
+          "numeric_tokens": 35,
+          "table_score": 8,
+          "text_excerpt": "55\r\n0.00\r\n0.20\r\n0.40\r\n0.60\r\n0.80\r\n1.00\r\n1.20\r\n1 10 100 1000 10000 100000\r\nελεξγόο ηάζε ζv' (kPa)\r\nδείθηεο πόξσλ e\r\nL_1.33LL_A\r\nΓηάγξακκα 5.1.1: πεηξακαηηθή θακπχιε ζηεξενπνίεζεο γηα ην πιηθφ απφ ηε Λακία κε \r\nwo=75.5%\r\n-2.0\r\n-1.5\r\n-1.0\r\n-0.5\r\n0.0\r\n0.5\r\n1.0\r\n1 10 100 1000 10000 100000\r\nελεξγόο ηάζε ζv'\r\nδείθηεο θελώλ Iv\r\nL_1.33LL_A\r\n Burland\r\nΓηάγξακκα 5.1.2: θαλνληθνπνηεκέλε πεηξακαηηθή θακπχιε γηα ην πιηθφ ηεο Λακίαο κε \r\nwo=75.5% θαη ζχγθξηζε κε ηε ζεσξεηηθή ηνπ Burland"
+        },
+        {
+          "page": 117,
+          "characters": 3,
+          "greek": 0,
+          "latin": 0,
+          "two_column_rows": 0,
+          "table_rows": 0,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "113"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 7,
+      "affected_greek_codes": 79,
+      "characters": 928,
+      "greek": 426,
+      "latin": 66,
+      "selection_reason": "page-count quartile 3; sha256 order",
+      "page_range": [
+        1,
+        3
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 1,
+          "characters": 449,
+          "greek": 225,
+          "latin": 32,
+          "two_column_rows": 9,
+          "table_rows": 9,
+          "numeric_tokens": 25,
+          "table_score": 9,
+          "text_excerpt": "ΓΗΠΛΩΜΑΣΗΚΖ ΔΡΓΑ΢ΗΑ\r\nΜεραληθή ζπκπεξηθνξά αξγηιντιύνο Λακίαο\r\nΠξνπζαλίδνπ Η. Αηθαηεξίλε\r\nΔπηβιέπνπζα: Β. Ν. Γεσξγηάλλνπ, αλαπιεξψηξηα \r\nΚαζεγήηξηα ΔΜΠ\r\nΑΘΖΝΑ ΜΑΡΣΗΟ΢ 2012\r\nΔΘΝΗΚΟ ΜΔΣ΢ΟΒΗΟ ΠΟΛΤΣΔΥΝΔΗΟ\r\n΢ΥΟΛΖ ΠΟΛΗΣΗΚΩΝ ΜΖΥΑΝΗΚΩΝ\r\nΣΟΜΔΑ΢ ΓΔΩΣΔΥΝΗΚΖ΢\r\n-2.5\r\n-2.0\r\n-1.5\r\n-1.0\r\n-0.5\r\n0.0\r\n0.5\r\n1.0\r\n1.5\r\n2.0\r\n2.5\r\n1 10 100 1000 10000 100000\r\nελεξγόο ηάζε (kPa)\r\nδείθηεο θελώλ (Iv)\r\nBurland\r\nL_1.28LL_B\r\nL_1.32LL_B\r\nL_1.32LL_A\r\nL_1.32LL_A(2)\r\nL_1.28LL_B(2)"
+        }
+      ]
+    },
+    {
+      "filename": "RJF_491.pdf",
+      "pdf_url": "https://dspace.lib.ntua.gr/xmlui/bitstream/handle/123456789/3866/ermidoum_emissions.pdf?sequence=3&amp;isAllowed=y",
+      "sha256": "032466ee050e253eb07188102d8a69d1433beee15fdf1080ba5b0e2e4a153325",
+      "bytes": 4341192,
+      "pages": 140,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 349,
+          "greek": 278,
+          "latin": 0,
+          "two_column_rows": 10,
+          "table_rows": 10,
+          "numeric_tokens": 2,
+          "table_score": 0,
+          "text_excerpt": "1\r\nΔΘΝΙΚΟ ΜΔΣ΢ΟΒΔΙΟ ΠΟΛΤΣΔΥΝΔΙΟ\r\n ΢ΥΟΛΗ ΜΗΥΑΝΟΛΟΓΩΝ ΜΗΥΑΝΙΚΩΝ\r\nΣΟΜΕΑ΢ ΘΕΡΜΟΣΗΣΑ΢\r\nΕΡΓΑ΢ΣΗΡΙΟ ΜΗΥΑΝΩΝ Ε΢ΩΣΕΡΙΚΗ΢ ΚΑΤ΢ΕΩ΢\r\nΓιπλωματική Δπγασία:\r\n\"Σεσνικέρ Πεπιστολήρ Δκπομπών Αεπίων Ρύπων \r\nΝαςτικών Κινητήπων και Οικονομική Αξιολόγηση \r\nαςτών\"\r\nΕπμίδος Μαπία Αλεξία\r\nΕπιβλέπων Καθηγητήρ:\r\nΓπ. Γ. Θ. Υοςντάλαρ\r\nΚαθηγητήρ Ε.Μ.Π.\r\nΑΘΗΝΑ, Φεβρουάριοσ 2011"
+        },
+        {
+          "page": 70,
+          "characters": 1485,
+          "greek": 1111,
+          "latin": 32,
+          "two_column_rows": 12,
+          "table_rows": 19,
+          "numeric_tokens": 18,
+          "table_score": 19,
+          "text_excerpt": "70\r\n4.1.3 ΟΙΚΟΝΟΜΙΚΘ ΑΞΙΟΛΟΓΘΣΘ ΤΩΝ ΤΕΧΝΙΚΩΝ ΜΕΙΩΣΘΣ ΤΩΝ ΟΞΕΙΔΙΩΝ ΤΟΥ \r\nΘΕΙΟΥ\r\nΟι περιοριςμοί ςτισ εκπομπζσ ρφπων που ζχουν ιδθ τεκεί ςε εφαρμογι, ζχουν αυξιςει \r\nςθμαντικά τθν ηιτθςθ για καφςιμα με χαμθλό ποςοςτό κείου αλλά και τθν τιμι τουσ. Σον \r\nΙοφλιο του 2010 τα καφςιμα με 1% κείο ςτοίχιηαν $32,25 ανά τόνο περιςςότερο από αυτά με \r\nπεριεκτικότθτα 3,5% ςε κείο. Η διαφορά αυτι αναμζνεται να διευρυνκεί ςε $59 μζχρι τον \r\nΙοφλιο του 2011. Αυτι τθν εποχι, Δεκζμβριοσ 2010, θ διαφορά βρίςκεται πε"
+        },
+        {
+          "page": 140,
+          "characters": 2863,
+          "greek": 824,
+          "latin": 1341,
+          "two_column_rows": 26,
+          "table_rows": 38,
+          "numeric_tokens": 45,
+          "table_score": 38,
+          "text_excerpt": "140\r\n65. Timothy Jacobs, Dennis Assanis, Zorar Filipi, The Impact of Exhaust Gas recirculation on \r\nPerformance and Emissions of a Heavy-Duty Diesel Engine, Society of Autumotive \r\nengineers, 2003\r\n66. Tireli Enco, Orovic Josip, Exhaust emission reduction technology for marine Diesel \r\nengines and gas turbines, ICTS 2003, November 2003\r\n67. Toh Ai Pei Jannell, Diesel Technology & Emissions-Assignment 2: Direct Water injection, \r\nSingapore Polytechnic\r\n68. Torbjorn Henriksson, SOx scrubbing of ma"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 6,
+      "affected_greek_codes": 55,
+      "characters": 4697,
+      "greek": 2213,
+      "latin": 1373,
+      "selection_reason": "page-count quartile 4; sha256 order",
+      "page_range": [
+        138,
+        140
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 140,
+          "characters": 2863,
+          "greek": 824,
+          "latin": 1341,
+          "two_column_rows": 26,
+          "table_rows": 38,
+          "numeric_tokens": 45,
+          "table_score": 38,
+          "text_excerpt": "140\r\n65. Timothy Jacobs, Dennis Assanis, Zorar Filipi, The Impact of Exhaust Gas recirculation on \r\nPerformance and Emissions of a Heavy-Duty Diesel Engine, Society of Autumotive \r\nengineers, 2003\r\n66. Tireli Enco, Orovic Josip, Exhaust emission reduction technology for marine Diesel \r\nengines and gas turbines, ICTS 2003, November 2003\r\n67. Toh Ai Pei Jannell, Diesel Technology & Emissions-Assignment 2: Direct Water injection, \r\nSingapore Polytechnic\r\n68. Torbjorn Henriksson, SOx scrubbing of ma"
+        }
+      ]
+    },
+    {
+      "filename": "HYI_276.pdf",
+      "pdf_url": "https://pergamos.lib.uoa.gr/uoa/dl/object/2863451/file.pdf",
+      "sha256": "0a23e96c90a214a93763157626d6dbba8a4ddb1e870366b88d4b763506b6bd75",
+      "bytes": 777274,
+      "pages": 40,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 395,
+          "greek": 301,
+          "latin": 0,
+          "two_column_rows": 4,
+          "table_rows": 7,
+          "numeric_tokens": 4,
+          "table_score": 0,
+          "text_excerpt": "ΝΟΜΗΚΖ ΢ΥΟΛΖ\r\nΔΝΗΑΗΟ ΠΡΟΓΡΑΜΜΑ ΜΔΣΑΠΣΤΥΗΑΚΩΝ ΢ΠΟΤΓΩΝ\r\nΚΑΣΔΤΘΤΝ΢Ζ: ΗΓΗΩΣΗΚΟ ΓΗΔΘΝΔ΢ ΓΗΚΑΗΟ & ΓΗΚΑΗΟ ΓΗΔΘΝΩΝ ΢ΤΝΑΛΛΑΓΩΝ\r\nΠΑΝΔΠΗ΢ΣΖΜΗΑΚΟ ΔΣΟ΢: 2017 - 2018\r\nΓΗΠΛΩΜΑΣΗΚΖ ΔΡΓΑ΢ΗΑ\r\nΣεο Βαιέξηαο – Βειεζζαξίαο Γξακκέλνπ ηνπ Κωλζηαληίλνπ\r\nΑ.Μ.: 7340012117005\r\nΖ δηεζλήο δηθαηνδνζία \r\nεπί πξνζβνιώλ πλεπκαηηθήο ηδηνθηεζίαο \r\nζην δηαδίθηπν\r\nΔπηβιέπσλ θαζεγεηήο:\r\nΥαξάιακπνο Πακπνχθεο\r\nΑζήλα, Γεθέκβξηνο 2018"
+        },
+        {
+          "page": 20,
+          "characters": 3141,
+          "greek": 2235,
+          "latin": 254,
+          "two_column_rows": 26,
+          "table_rows": 42,
+          "numeric_tokens": 24,
+          "table_score": 42,
+          "text_excerpt": "20\r\nδίδεη απνθιεηζηηθή δηθαηνδνζία ζηα δηθαζηήξηα ηνπ θξάηνπο – κέινπο φπνπ\r\nπξαγκαηνπνηήζεθε ε θαηάζεζε ή θαηαρψξεζε ηνπ δηθαηψκαηνο απηνχ (π.ρ. ηνπ \r\nζήκαηνο). Δπνκέλσο, ζχκθσλα κε ην άξζξν δελ απαηηείηαη ηα κέξε λα έρνπλ ηελ \r\nθαηνηθία ηνπο ζε θξάηνο – κέινο. Γηθαηνδνζία ζε θάζε πεξίπησζε έρνπλ ηα δηθαζηήξηα \r\nφπνπ έρεη γίλεη ε θαηαρψξεζε, αθφκε θαη ζε πεξίπησζε πνπ θαλέλα απφ ηα δχν \r\nζπκβαιιφκελα κέξε δελ έρνπλ ηελ θαηνηθία ηνπο ζην θξάηνο ηνπ forum κηαο θαη θχξην \r\nδήηεκα ηεο δηαθνξάο απνη"
+        },
+        {
+          "page": 40,
+          "characters": 1494,
+          "greek": 149,
+          "latin": 982,
+          "two_column_rows": 7,
+          "table_rows": 13,
+          "numeric_tokens": 9,
+          "table_score": 0,
+          "text_excerpt": "40\r\nG. Dutfield – U. Suthersanen, Global Intellectual Property Law, Edward Elgar Publishing, Cheltenham –\r\nNorthampton, 2008.\r\nL. Edwards – C. Waelde, Law and the Internet, 3rd Edition, Hart Publishing, Oxford and Portland, \r\nOregon, 2009.\r\nΣ. Kono, Intellectual Property and Private International Law: Comparative Perspectives, Hart Publishing, \r\nOxford and Portland, Oregon, 2012.\r\nS. Leible – A. Ohly, Intellectual Property and Private International Law, Mohr Siebeck, Tübingen, 2009.\r\nX. Li – C. "
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 3,
+      "affected_greek_codes": 92,
+      "characters": 5030,
+      "greek": 2685,
+      "latin": 1236,
+      "selection_reason": "page-count quartile 1; sha256 order",
+      "page_range": [
+        18,
+        20
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 20,
+          "characters": 3141,
+          "greek": 2235,
+          "latin": 254,
+          "two_column_rows": 26,
+          "table_rows": 42,
+          "numeric_tokens": 24,
+          "table_score": 42,
+          "text_excerpt": "20\r\nδίδεη απνθιεηζηηθή δηθαηνδνζία ζηα δηθαζηήξηα ηνπ θξάηνπο – κέινπο φπνπ\r\nπξαγκαηνπνηήζεθε ε θαηάζεζε ή θαηαρψξεζε ηνπ δηθαηψκαηνο απηνχ (π.ρ. ηνπ \r\nζήκαηνο). Δπνκέλσο, ζχκθσλα κε ην άξζξν δελ απαηηείηαη ηα κέξε λα έρνπλ ηελ \r\nθαηνηθία ηνπο ζε θξάηνο – κέινο. Γηθαηνδνζία ζε θάζε πεξίπησζε έρνπλ ηα δηθαζηήξηα \r\nφπνπ έρεη γίλεη ε θαηαρψξεζε, αθφκε θαη ζε πεξίπησζε πνπ θαλέλα απφ ηα δχν \r\nζπκβαιιφκελα κέξε δελ έρνπλ ηελ θαηνηθία ηνπο ζην θξάηνο ηνπ forum κηαο θαη θχξην \r\nδήηεκα ηεο δηαθνξάο απνη"
+        }
+      ]
+    },
+    {
+      "filename": "SXX_549.pdf",
+      "pdf_url": "https://dspace.lib.ntua.gr/xmlui/bitstream/handle/123456789/38854/vitalis_flame_spread.pdf?sequence=1&amp;isAllowed=y",
+      "sha256": "0dd0dca0e84761234231d0e838c717a574689384a04abed35f4d308e168674d2",
+      "bytes": 3612666,
+      "pages": 90,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 258,
+          "greek": 200,
+          "latin": 3,
+          "two_column_rows": 8,
+          "table_rows": 10,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "΢υγκριτικό μελϋτη ςτοιχεύων προφύλ φλόγασ \r\n(ρυθμόσ διϊδοςησ, ύψοσ και θερμοκραςύα) ςε \r\nδαςικϊ εύδη μεςογειακού τύπου με και χωρύσ \r\nτην επύδραςη χημικού επιβραδυντό-DAP.\r\nτοσ Βιτάλη Δημήτρη\r\nΕπιβλέπων καθηγητής: Σ. Λιοδάκης\r\n2013\r\nΠΣΤΥΗΑΚΖ ΜΔΛΔΣΖ ΜΔ ΣΗΣΛΟ:"
+        },
+        {
+          "page": 45,
+          "characters": 2411,
+          "greek": 1884,
+          "latin": 49,
+          "two_column_rows": 25,
+          "table_rows": 41,
+          "numeric_tokens": 20,
+          "table_score": 41,
+          "text_excerpt": "ΚΔΦΑΛΑΗΟ 4: Υεκηθνί επηβξαδπληέο\r\n45\r\nηα θαχζηκα πηεηηθά θάησ απφ ην θάησ φξην αλάθιεμεο. Δπίζεο κπνξεί λα θαιχπηνπλ \r\nεπηθαλεηαθά ην πιηθφ παξεκπνδίδνληαο έηζη ηελ επαθή ηνπ κε ηνλ αέξα.\r\nΣέηνηνη επηβξαδπληέο είλαη ηα δηάθνξα αλζξαθηθά θαη φμηλα αλζξαθηθά άιαηα π.ρ. NaHC03, \r\nακκσληαθά, ζεηηθά θαη θσζθνξηθά άιαηα φπσο επίζεο θαη ρισξίδηα ησλ Zn, Ca, Mg θαη ην \r\nAI2(S04)3.\r\nΘεξκηθή δξάζε: ΢χκθσλα κε απηή ηελ ζεσξία νη επηβξαδπληέο ζπγθξαηνχλ ηελ \r\nζεξκνθξαζία ηνπ θαπζίκνπ θάησ απφ ην φξην αλάθιε"
+        },
+        {
+          "page": 90,
+          "characters": 406,
+          "greek": 239,
+          "latin": 75,
+          "two_column_rows": 4,
+          "table_rows": 5,
+          "numeric_tokens": 6,
+          "table_score": 0,
+          "text_excerpt": "ΚΔΦΑΛΑΗΟ 7: Δθηέιεζε πεηξακάησλ\r\n90\r\n16. Σ. Καθαξδάθεο «Αλαιπηηθέο θαη άιιεο εξγαζηεξηαθέο δνθηκαζίεο γηα ηνλ \r\nθαζνξηζκφ δεηθηψλ επθιεθηφηεηαο δαζηθψλ πιψλ, επηιεγκέλσλ απφ δψλεο κίμεσο \r\nδάζνπο-θαηνηθηψλ ηνπ ιεθαλνπεδίνπ Αηηηθήο ζε ζπλάξηεζε κε ηηο ηνπνγξαθηθέο θαη \r\nκεηεσξνινγηθέο ζπλζήθεο» p.42-43.\r\n17. S. Liodakis, G. Katsigiannis, G. Kakali «Ash properties of some dominant Greek \r\nforest species»."
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 7,
+      "affected_greek_codes": 81,
+      "characters": 3075,
+      "greek": 2323,
+      "latin": 127,
+      "selection_reason": "page-count quartile 2; sha256 order",
+      "page_range": [
+        43,
+        45
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 45,
+          "characters": 2411,
+          "greek": 1884,
+          "latin": 49,
+          "two_column_rows": 25,
+          "table_rows": 41,
+          "numeric_tokens": 20,
+          "table_score": 41,
+          "text_excerpt": "ΚΔΦΑΛΑΗΟ 4: Υεκηθνί επηβξαδπληέο\r\n45\r\nηα θαχζηκα πηεηηθά θάησ απφ ην θάησ φξην αλάθιεμεο. Δπίζεο κπνξεί λα θαιχπηνπλ \r\nεπηθαλεηαθά ην πιηθφ παξεκπνδίδνληαο έηζη ηελ επαθή ηνπ κε ηνλ αέξα.\r\nΣέηνηνη επηβξαδπληέο είλαη ηα δηάθνξα αλζξαθηθά θαη φμηλα αλζξαθηθά άιαηα π.ρ. NaHC03, \r\nακκσληαθά, ζεηηθά θαη θσζθνξηθά άιαηα φπσο επίζεο θαη ρισξίδηα ησλ Zn, Ca, Mg θαη ην \r\nAI2(S04)3.\r\nΘεξκηθή δξάζε: ΢χκθσλα κε απηή ηελ ζεσξία νη επηβξαδπληέο ζπγθξαηνχλ ηελ \r\nζεξκνθξαζία ηνπ θαπζίκνπ θάησ απφ ην φξην αλάθιε"
+        }
+      ]
+    },
+    {
+      "filename": "ZKG_350.pdf",
+      "pdf_url": "https://dspace.lib.ntua.gr/xmlui/bitstream/handle/123456789/42558/%ce%9d%ce%b1%cf%83%cf%84%ce%bf%cf%82%20%ce%a0%ce%b1%ce%bd%ce%b1%ce%b3%ce%b9%cf%89%cf%84%ce%b7%cf%82%20%20TO%20%ce%91%ce%9d%ce%a4%ce%99%ce%a3%ce%a4%ce%a1%ce%9f%ce%a6%ce%9f%20%ce%a0%ce%a1%ce%9f%ce%92%ce%9b%ce%97%ce%9c%ce%91%20%ce%a4%ce%97%ce%a3%20%ce%95%ce%a5%ce%a1%ce%95%ce%a3%ce%97%ce%a3%20%ce%a4%ce%97%ce%a3%20%ce%a3%ce%a5%ce%a3%ce%a4%ce%91%ce%a3%ce%97%ce%a3%20%ce%94%ce%95%ce%a1%ce%9c%ce%91%ce%a4%ce%99%ce%9a%ce%9f%ce%a5%20%ce%99%ce%a3%ce%a4%ce%9f%ce%a5.pdf?sequence=1&amp;isAllowed=y",
+      "sha256": "0b26cee92e887710b66d1c2a20e3e58fa7d1038ac2105275dcad5b146723ff96",
+      "bytes": 2252709,
+      "pages": 116,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 316,
+          "greek": 265,
+          "latin": 0,
+          "two_column_rows": 9,
+          "table_rows": 12,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "Εθνικό Μεηζόβιο Πολσηετνείο\r\nΣτολή Εθαρμοζμένων Μαθημαηικών και Φσζικών Επιζηημών\r\nΠρόγραμμα Μεηαπηστιακών Σποσδών\r\nΕθαρμοζμένες Μαθημαηικές Επιζηήμες\r\nΤο Αντίστρουο Πρόβλημα της Εύρεσης της Σύστασης \r\nΔερματικού Ιστού\r\nΔιπλωματική\r\nτου\r\nΝάστου Παναγιώτη\r\nΕπιβλέπων Καθηγητήσ: Δρόςοσ Γκιντίδησ\r\nΑΘΗΝΑ, ΟΚΤΩΒΡΙΟΣ 2015"
+        },
+        {
+          "page": 58,
+          "characters": 1860,
+          "greek": 1461,
+          "latin": 40,
+          "two_column_rows": 22,
+          "table_rows": 34,
+          "numeric_tokens": 3,
+          "table_score": 0,
+          "text_excerpt": "58\r\n3.3 Δηάγλσζε θαη ζεξαπεία κε ρξήζε laser\r\nΟη εθαξκνγέο ησλ laser ηε ζεκεξηλή επνρή είλαη ηφζεο πνιιέο πνπ \r\nείλαη δχζθνιν λα ηηο απαξηζκήζνπκε. Απφ ηελ επηζηήκε – ηερλνινγία \r\n(βηνκεραληθέο ρξήζεηο θνπήο θαη ζπγθφιιεζεο) κέρξη ηε θσηνγξαθία, ηηο \r\nκεηξήζεηο απνζηάζεσλ, ηηο νπηηθέο ηειεπηθνηλσλίεο θαη ηα νπηηθά Radar γηα \r\nζηξαηησηηθή ρξήζε. ΢ηελ ηαηξηθή ε ρξήζε ησλ laser είλαη πιένλ αλαπφζπαζην \r\nθνκκάηη θαη ζε απηφ ζα εκβαζχλνπκε θαη ζπγθεθξηκέλα ζηε δηάγλσζε θαη ζηε \r\nζεξαπεία\r\nΜεξηθέο απφ"
+        },
+        {
+          "page": 116,
+          "characters": 1862,
+          "greek": 1174,
+          "latin": 203,
+          "two_column_rows": 25,
+          "table_rows": 39,
+          "numeric_tokens": 30,
+          "table_score": 39,
+          "text_excerpt": "116\r\n26.Yamada J., Kawamura A., Miura Y., Takata S., Ogawa K., «Study on \r\nradiation transfer in human skin for cosmetics», Journal of Quantitative \r\nSpectroscopy & Radiative Transfer, Vol. 93, Is. 1-3, 219-230 (2005).\r\n27.Young A.R, “Chromophores in human skin”, Phys. Med. Biol. 42 \r\n789‐802 (1997).\r\n28.Γθηληίδεο Γ., ΢εκεηψζεηο ηνπ Μεηαπηπρηαθνχ καζήκαηνο \r\n“Οινθιεξσηηθέο Δμηζψζεηο”, ΢ρνιή Δθαξκνζκέλσλ Μαζεκαηηθψλ θαη \r\nΦπζηθψλ επηζηεκψλ, πξφγξακκα Μεηαπηπρηαθνχ Δθαξκνζκέλεο \r\nΜαζεκαηηθέο Δπηζη"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 8,
+      "affected_greek_codes": 107,
+      "characters": 4038,
+      "greek": 2900,
+      "latin": 243,
+      "selection_reason": "page-count quartile 3; sha256 order",
+      "page_range": [
+        114,
+        116
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 116,
+          "characters": 1862,
+          "greek": 1174,
+          "latin": 203,
+          "two_column_rows": 25,
+          "table_rows": 39,
+          "numeric_tokens": 30,
+          "table_score": 39,
+          "text_excerpt": "116\r\n26.Yamada J., Kawamura A., Miura Y., Takata S., Ogawa K., «Study on \r\nradiation transfer in human skin for cosmetics», Journal of Quantitative \r\nSpectroscopy & Radiative Transfer, Vol. 93, Is. 1-3, 219-230 (2005).\r\n27.Young A.R, “Chromophores in human skin”, Phys. Med. Biol. 42 \r\n789‐802 (1997).\r\n28.Γθηληίδεο Γ., ΢εκεηψζεηο ηνπ Μεηαπηπρηαθνχ καζήκαηνο \r\n“Οινθιεξσηηθέο Δμηζψζεηο”, ΢ρνιή Δθαξκνζκέλσλ Μαζεκαηηθψλ θαη \r\nΦπζηθψλ επηζηεκψλ, πξφγξακκα Μεηαπηπρηαθνχ Δθαξκνζκέλεο \r\nΜαζεκαηηθέο Δπηζη"
+        }
+      ]
+    },
+    {
+      "filename": "GUK_498.pdf",
+      "pdf_url": "https://pergamos.lib.uoa.gr/uoa/dl/object/2867779/file.pdf",
+      "sha256": "08b2e66d36f430833457c3d4d82e724f4422d7ad7ae1e6c3ce63ff8d617023de",
+      "bytes": 6450169,
+      "pages": 152,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 674,
+          "greek": 559,
+          "latin": 0,
+          "two_column_rows": 4,
+          "table_rows": 5,
+          "numeric_tokens": 3,
+          "table_score": 0,
+          "text_excerpt": "ΣΧΟΛΘ ΟΛΚΟΝΟΜΛΚΩΝ & ΡΟΛΛΤΛΚΩΝ ΕΡΛΣΤΘΜΩΝ ΤΜΘΜΑ ΕΡΛΚΟΛΝΩΝΛΑΣ & ΜΕΣΩΝ \r\nΜΑΗΛΚΘΣ ΕΝΘΜΕ΢ΩΣΘΣ\r\nΡ΢ΟΓ΢ΑΜΜΑ ΜΕΤΑΡΤΥΧΛΑΚΩΝ ΣΡΟΥΔΩΝ ΣΤΘΝ ΕΡΛΚΟΛΝΩΝΛΑ ΚΑΛ ΤΑ ΜΕΣΑ ΜΑΗΛΚΘΣ \r\nΕΝΘΜΕ΢ΩΣΘΣ\r\nΚΑΤΕΥΚΥΝΣΘ: ΨΘΦΛΑΚΑ ΜΕΣΑ ΕΡΛΚΟΛΝΩΝΛΑΣ ΚΑΛ ΡΕ΢ΛΒΑΛΛΟΝΤΑ ΑΛΛΘΛΕΡΛΔ΢ΑΣΘΣ\r\nΑκαδθμαϊκό ζτοσ: 2017-18\r\n«Ψθφιακι Αφιγθςθ και θ Εφαρμογι τθσ ςε Άτομα με Λδεοψυχαναγκαςτικι Διαταραχι»\r\nΑργυροποφλου Μεταξία-Μαρία\r\nΔιπλωματικι Εργαςία που κατατίκεται ωσ μζροσ των απαιτιςεων του Ρρογράμματοσ \r\nΜεταπτυχιακϊν Σπουδϊν ςτθν Επικοινωνία και τα"
+        },
+        {
+          "page": 76,
+          "characters": 1146,
+          "greek": 905,
+          "latin": 0,
+          "two_column_rows": 10,
+          "table_rows": 11,
+          "numeric_tokens": 3,
+          "table_score": 0,
+          "text_excerpt": "76\r\nοξφμωρο, ιταν αυτζσ που τελικά με ζςωςαν. Είχαν πάρει τθ μορφι του Κφκλωπα \r\nκαι του κυμωμζνου Ροςειδϊνα. Των Λαιςτρυγόνων. Ιταν τελικά αυτζσ που με \r\nόπλιςαν με πείρα, με δφναμθ, με ςοφία, ζτοιμθ για να αντιμετωπίςω τισ \r\nιςχυρότερεσ προκλιςεισ τθσ ηωισ που ζρχεται.\r\nΕικόνα 12: Στιγμιότυπο οκόνθσ από τθν ψθφιακι αφιγθςθ τθσ Κωνςταντίνασ.\r\nΑνάλυςθ\r\n Θ Κωνςταντίνα επιλζγει ςτθν αφιγθςι τθσ να ξεκινιςει απαγγζλοντασ τουσ πρϊτουσ \r\nςτίχουσ του ποιιματοσ «Λκάκθ» του Κωνςταντίνου Καβάφθ. Το ποίθμ"
+        },
+        {
+          "page": 152,
+          "characters": 3,
+          "greek": 0,
+          "latin": 0,
+          "two_column_rows": 0,
+          "table_rows": 0,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "152"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 5,
+      "affected_greek_codes": 63,
+      "characters": 1823,
+      "greek": 1464,
+      "latin": 0,
+      "selection_reason": "page-count quartile 4; sha256 order",
+      "page_range": [
+        74,
+        76
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 76,
+          "characters": 1146,
+          "greek": 905,
+          "latin": 0,
+          "two_column_rows": 10,
+          "table_rows": 11,
+          "numeric_tokens": 3,
+          "table_score": 0,
+          "text_excerpt": "76\r\nοξφμωρο, ιταν αυτζσ που τελικά με ζςωςαν. Είχαν πάρει τθ μορφι του Κφκλωπα \r\nκαι του κυμωμζνου Ροςειδϊνα. Των Λαιςτρυγόνων. Ιταν τελικά αυτζσ που με \r\nόπλιςαν με πείρα, με δφναμθ, με ςοφία, ζτοιμθ για να αντιμετωπίςω τισ \r\nιςχυρότερεσ προκλιςεισ τθσ ηωισ που ζρχεται.\r\nΕικόνα 12: Στιγμιότυπο οκόνθσ από τθν ψθφιακι αφιγθςθ τθσ Κωνςταντίνασ.\r\nΑνάλυςθ\r\n Θ Κωνςταντίνα επιλζγει ςτθν αφιγθςι τθσ να ξεκινιςει απαγγζλοντασ τουσ πρϊτουσ \r\nςτίχουσ του ποιιματοσ «Λκάκθ» του Κωνςταντίνου Καβάφθ. Το ποίθμ"
+        }
+      ]
+    },
+    {
+      "filename": "GJB_083.pdf",
+      "pdf_url": "https://repository.ihu.gr/bitstreams/2e7ec849-194d-4021-a3d0-92319d624deb/download",
+      "sha256": "131e60fa9be75b471c0cae2a6b992f49672278630e9559d6e472b878ed4ce503",
+      "bytes": 1647013,
+      "pages": 72,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 215,
+          "greek": 3,
+          "latin": 154,
+          "two_column_rows": 3,
+          "table_rows": 2,
+          "numeric_tokens": 6,
+          "table_score": 0,
+          "text_excerpt": "Thesis of Chiotakis Konstantinos \r\n1 από 72\r\nTHESIS\r\nStudy and Analysis of wireless networking 802.11n\r\nprotocol\r\nStudent Supervisor\r\nChiotakis Konstantinos Dr. Periklis Chatzimisios\r\nAM: 03/2279 \r\nThessaloniki 2011"
+        },
+        {
+          "page": 36,
+          "characters": 2047,
+          "greek": 3,
+          "latin": 1582,
+          "two_column_rows": 14,
+          "table_rows": 15,
+          "numeric_tokens": 20,
+          "table_score": 15,
+          "text_excerpt": "Thesis of Chiotakis Konstantinos \r\n36 από 72\r\nCHAPTER 4\r\nIEEE 802.11n MAC literature review \r\nINTRODUCTION\r\nBefore the publication of IEEE 802.11n, studies were conducted to research the \r\namendment’s features, evaluate performances, propose new mechanisms. The \r\ndevelopment of the amendment was based on studies and proposals. Features \r\nimplemented in works were discoursed and some of them were adopted by the \r\namendment. Nowadays studies research multiple scenarios to export conclusions \r\nin a"
+        },
+        {
+          "page": 72,
+          "characters": 1627,
+          "greek": 3,
+          "latin": 987,
+          "two_column_rows": 11,
+          "table_rows": 12,
+          "numeric_tokens": 57,
+          "table_score": 12,
+          "text_excerpt": "Thesis of Chiotakis Konstantinos \r\n72 από 72\r\n[31] D. T. C. Wong, P. Y. Kong, Y. C. Liang, K. C. Chua, J. W. Mark, “Wireless \r\nBroadband Networks”, United States of America, NJ, John Wiley & Sons Inc., \r\n2009.\r\n[32] X. Wang, L. Wang, Y. Wang, Y. Zhang, A. Yamada, \"Supporting MAC Layer \r\nMulticast in IEEE 802.11n: Issues and Solutions\", Wireless Communications and \r\nNetworking Conference, 2009. WCNC 2009, IEEE, vol., no., pp.1-6, 5-8 April \r\n2009.\r\n[33] D. Skordoulis, N. Qiang, H. H. Chen, A. P. "
+        }
+      ],
+      "font_category": "mixed",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 0,
+      "affected_greek_codes": 0,
+      "characters": 3889,
+      "greek": 9,
+      "latin": 2723,
+      "selection_reason": "page-count quartile 1; sha256 order",
+      "page_range": [
+        34,
+        36
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 36,
+          "characters": 2047,
+          "greek": 3,
+          "latin": 1582,
+          "two_column_rows": 14,
+          "table_rows": 15,
+          "numeric_tokens": 20,
+          "table_score": 15,
+          "text_excerpt": "Thesis of Chiotakis Konstantinos \r\n36 από 72\r\nCHAPTER 4\r\nIEEE 802.11n MAC literature review \r\nINTRODUCTION\r\nBefore the publication of IEEE 802.11n, studies were conducted to research the \r\namendment’s features, evaluate performances, propose new mechanisms. The \r\ndevelopment of the amendment was based on studies and proposals. Features \r\nimplemented in works were discoursed and some of them were adopted by the \r\namendment. Nowadays studies research multiple scenarios to export conclusions \r\nin a"
+        }
+      ]
+    },
+    {
+      "filename": "NQP_403.pdf",
+      "pdf_url": "https://ktisis.cut.ac.cy/bitstream/20.500.14279/8810/1/%ce%91.%20%ce%a0%ce%91%ce%a0%ce%91%ce%94%ce%9f%ce%a0%ce%9f%ce%a5%ce%9b%ce%9f%ce%a5.pdf",
+      "sha256": "0ee73298fbd7646d7c754ae7ccdaed40ac33c64d9479fa31b362609ff9f6aab0",
+      "bytes": 4575391,
+      "pages": 95,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 239,
+          "greek": 200,
+          "latin": 0,
+          "two_column_rows": 8,
+          "table_rows": 8,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "ΣΔΥΝΟΛΟΓΗΚΟ ΠΑΝΔΠΗ΢ΣΖΜΗΟ ΚΤΠΡΟΤ\r\n΢ΥΟΛΖ ΜΖΥΑΝΗΚΖ΢ ΚΑΗ ΣΔΥΝΟΛΟΓΗΑ΢\r\nΠηπρηαθή εξγαζία\r\nΑΝΑΠΣΤΞΖ ΓΔΧΓΡΑΦΗΚΟΤ ΠΛΖΡΟΦΟΡΗΑΚΟΤ\r\n΢Τ΢ΣΖΜΑΣΟ΢ ΓΗΑ ΣΟ ΑΡΥΔΗΟ \r\nΔΚΚΛΖ΢ΗΑ΢ΣΗΚΧΝ ΜΝΖΜΔΗΧΝ ΣΖ΢ ΗΔΡΑ΢ \r\nΜΖΣΡΟΠΟΛΖ΢ ΛΔΜΔ΢ΟΤ\r\nΑιεμάλδξα Παπαδνπνχινπ\r\nΛεκεζφο 2016"
+        },
+        {
+          "page": 48,
+          "characters": 2765,
+          "greek": 2237,
+          "latin": 0,
+          "two_column_rows": 28,
+          "table_rows": 48,
+          "numeric_tokens": 12,
+          "table_score": 0,
+          "text_excerpt": "27\r\nπινπνηεκέλνπ ειεθηξνληθνχ ραξηνγξαθηθνχ παξάγσγνπ φπσο ππφκλεκα, εκπεξηέρνληαο \r\nνπσζδήπνηε ηνλ ζπκβνιηζκφ ησλ ζεκεηαθψλ θαηλνκέλσλ γηα φιεο ηηο ρσξηθέο νληφηεηεο πνπ \r\nαπεηθνλίδνληαη, γξαθηθή θιίκαθα, ζχκβνιν Βνξξά, θαη νηηδήπνηε άιιν ραξηνγξαθηθφ \r\nζηνηρείν επηζπκεί ν θάζε ρξήζηεο (ηίηιν, ζηνηρεία ζπζηήκαηνο αλαθνξάο, θάλλαβν, \r\nθαηαζθεπαζηήο ηνπ ράξηε, έκβιεκα ππεξεζίαο θαηαζθεπήο, θιπ.). Γηα επίηεπμε ηνπ ζηφρνπ \r\nηεο ζρεηηθήο κειέηεο, δνκήζεθε έλα νινθιεξσκέλν ζχζηεκα αμηνπνίεζεο ηεο γεσ"
+        },
+        {
+          "page": 95,
+          "characters": 474,
+          "greek": 385,
+          "latin": 1,
+          "two_column_rows": 0,
+          "table_rows": 1,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "74\r\nΠΑΡΑΡΣΖΜΑΣΑ\r\nΠΑΡΑΡΣΖΜΑ Η - ΛΗ΢ΣΑ: ΔΚΚΛΖ΢ΗΑ΢ΣΗΚΑ ΜΝΖΜΔΗΑ ΜΖΣΡΟΠΟΛΗΣΗΚΖ΢ \r\nΔΠΑΡΥΗΑ΢ ΛΔΜΔ΢ΟΤ – ΚΖΡΤΓΜΔΝΑ ΑΡΥΑΗΑ ΜΝΖΜΔΗΑ\r\nΠΑΡΑΡΣΖΜΑ ΗΗ - ΛΗ΢ΣΑ: ΟΡΘΟΓΟΞΟΗ ΝΑΟΗ ΜΖΣΡΟΠΟΛΗΣΗΚΖ΢ \r\nΠΔΡΗΦΔΡΔΗΑ΢ ΛΔΜΔ΢ΟΤ\r\nΠΑΡΑΡΣΖΜΑ ΗΗΗ - ΥΑΡΣΖ΢: ΔΚΚΛΖ΢ΗΑ΢ΣΗΚΑ ΚΖΡΤΓΜΔΝΑ ΑΡΥΑΗΑ \r\nΜΝΖΜΔΗΑ ΣΖ΢ ΜΖΣΡΟΠΟΛΗΣΗΚΖ΢ ΔΠΑΡΥΗΑ΢ ΛΔΜΔ΢ΟΤ – ΚΑΣΑΛΟΓΟ΢ ΗΔΡΑ΢ \r\nΜΖΣΡΟΠΟΛΔΧ΢ ΛΔΜΔ΢ΟΤ\r\nΠΑΡΑΡΣΖΜΑ ΗV - ΥΑΡΣΖ΢: ΔΝΟΡΗΑΚΟΗ ΚΑΗ ΑΛΛΟΗ ΟΡΘΟΓΟΞΟΗ ΝΑΟΗ \r\nΣΖ΢ ΜΖΣΡΟΠΟΛΗΣΗΚΖ΢ ΔΠΑΡΥΗΑ΢ ΛΔΜΔ΢ΟΤ – ΚΑΣΑΛΟΓΟ΢ ΗΔΡΑ΢ \r\nΜΖΣΡΟΠΟΛΔΧ΢ ΛΔΜΔ΢ΟΤ "
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 6,
+      "affected_greek_codes": 113,
+      "characters": 3478,
+      "greek": 2822,
+      "latin": 1,
+      "selection_reason": "page-count quartile 2; sha256 order",
+      "page_range": [
+        46,
+        48
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 48,
+          "characters": 2765,
+          "greek": 2237,
+          "latin": 0,
+          "two_column_rows": 28,
+          "table_rows": 48,
+          "numeric_tokens": 12,
+          "table_score": 0,
+          "text_excerpt": "27\r\nπινπνηεκέλνπ ειεθηξνληθνχ ραξηνγξαθηθνχ παξάγσγνπ φπσο ππφκλεκα, εκπεξηέρνληαο \r\nνπσζδήπνηε ηνλ ζπκβνιηζκφ ησλ ζεκεηαθψλ θαηλνκέλσλ γηα φιεο ηηο ρσξηθέο νληφηεηεο πνπ \r\nαπεηθνλίδνληαη, γξαθηθή θιίκαθα, ζχκβνιν Βνξξά, θαη νηηδήπνηε άιιν ραξηνγξαθηθφ \r\nζηνηρείν επηζπκεί ν θάζε ρξήζηεο (ηίηιν, ζηνηρεία ζπζηήκαηνο αλαθνξάο, θάλλαβν, \r\nθαηαζθεπαζηήο ηνπ ράξηε, έκβιεκα ππεξεζίαο θαηαζθεπήο, θιπ.). Γηα επίηεπμε ηνπ ζηφρνπ \r\nηεο ζρεηηθήο κειέηεο, δνκήζεθε έλα νινθιεξσκέλν ζχζηεκα αμηνπνίεζεο ηεο γεσ"
+        }
+      ]
+    },
+    {
+      "filename": "YCM_048.pdf",
+      "pdf_url": "https://dspace.lib.ntua.gr/xmlui/bitstream/handle/123456789/48123/%ce%94%ce%b9%cf%80%ce%bb%cf%89%ce%bc%ce%b1%cf%84%ce%b9%ce%ba%ce%ae%20%ce%95%cf%81%ce%b3%ce%b1%cf%83%ce%af%ce%b1_%ce%9a%ce%ac%ce%bb%ce%bb%ce%b7%cf%82.pdf?sequence=1&amp;isAllowed=y",
+      "sha256": "0d46ea30c4c73dca4e28638be35b58f18af615b2b88718b66411f5ade3e1e33b",
+      "bytes": 8028246,
+      "pages": 113,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 352,
+          "greek": 289,
+          "latin": 0,
+          "two_column_rows": 7,
+          "table_rows": 12,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "ΕΘΝΙΚΟ ΜΕΤΣΟΒΙΟ ΠΟΛΥΤΕΦΝΕΙΟ\r\nΕργαστήριο Ατμοκινητήρων & Λεβήτων\r\nΤομέαρ Θεπμότηταρ τηρ Σσολήρ Μησανολόγων Μησανικών\r\nΔΙΠΛΩΜΑΣΙΚΗ ΕΡΓΑ΢ΙΑ\r\nΑνάλςση Κύκλος Ζωήρ Καινοτόμος \r\nΣςστήματορ Ηλιακήρ Ψύξηρ με Πποσπόυηση \r\nΣου Φοιτητή\r\nΚάλλθ Γεωργίου\r\nΕπιβλέπων\r\nΚαρέλλας Σωτήριος, Αναπληρωτής Καθηγητής, \r\nΣχολι Μθχανολόγων Μθχανικϊν, ΕΜΡ\r\n Αθήνα, Οκτώβριος 2018"
+        },
+        {
+          "page": 57,
+          "characters": 2518,
+          "greek": 1965,
+          "latin": 27,
+          "two_column_rows": 15,
+          "table_rows": 19,
+          "numeric_tokens": 23,
+          "table_score": 19,
+          "text_excerpt": "44\r\n Θ απόςταςθ μεταφοράσ των επιμζρουσ ςυνιςτωςϊν προσ το χϊρο διαχείριςθσ των \r\nαποβλιτων, λαμβάνεται ίςθ με 24 km.\r\nΟι μεταφορζσ μεγάλων αποςτάςεων κεωρείται ότι πραγματοποιοφνται οδικϊσ, με τθ \r\nχριςθ φορτθγοφ μζγιςτου φορτίου μεγαλφτερου από 32 τόνουσ. Οι μεταφορζσ μικρϊν \r\nαποςτάςεων που παρζχονται από τισ καταςκευάςτριεσ εταιρείεσ κεωρείται ότι \r\nπραγματοποιοφνται επίςθσ οδικϊσ με τθ χριςθ μικροφ φορτθγοφ μζγιςτου βάρουσ \r\nμικρότερου των 3.5 τόνων.\r\nΘ μεταφορά των επιμζρουσ ςυνιςτωςϊν πρ"
+        },
+        {
+          "page": 113,
+          "characters": 531,
+          "greek": 87,
+          "latin": 288,
+          "two_column_rows": 3,
+          "table_rows": 3,
+          "numeric_tokens": 10,
+          "table_score": 0,
+          "text_excerpt": "100\r\n65. Γιαννάκογλου, Κ.Χ., Λ. Αναγνωςτόπουλοσ, and Γ. Μπεργελζσ, Αρικμθτικι Ανάλυςθ \r\nγια Μθχανικοφσ. 3θ ed. 2003, Ακινα: Εκδόςεισ Ε.Μ.Ρ. p.\r\n66. Wischhusen, S. An enhanced discretization method for storage tank models within \r\nenergy systems. in Proc. of the 5-th International Modelica Conference. 2006.\r\n67. Roumpedakis, T.C., T. Christou, K. Braimakis, E. Varvagiannis, and S. Karellas, \r\nIntegrated ORC-Adsorption cycle: A first and second law analysis of potential \r\nconfigurations, in ECOS 2"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 9,
+      "affected_greek_codes": 70,
+      "characters": 3401,
+      "greek": 2341,
+      "latin": 315,
+      "selection_reason": "page-count quartile 3; sha256 order",
+      "page_range": [
+        55,
+        57
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 57,
+          "characters": 2518,
+          "greek": 1965,
+          "latin": 27,
+          "two_column_rows": 15,
+          "table_rows": 19,
+          "numeric_tokens": 23,
+          "table_score": 19,
+          "text_excerpt": "44\r\n Θ απόςταςθ μεταφοράσ των επιμζρουσ ςυνιςτωςϊν προσ το χϊρο διαχείριςθσ των \r\nαποβλιτων, λαμβάνεται ίςθ με 24 km.\r\nΟι μεταφορζσ μεγάλων αποςτάςεων κεωρείται ότι πραγματοποιοφνται οδικϊσ, με τθ \r\nχριςθ φορτθγοφ μζγιςτου φορτίου μεγαλφτερου από 32 τόνουσ. Οι μεταφορζσ μικρϊν \r\nαποςτάςεων που παρζχονται από τισ καταςκευάςτριεσ εταιρείεσ κεωρείται ότι \r\nπραγματοποιοφνται επίςθσ οδικϊσ με τθ χριςθ μικροφ φορτθγοφ μζγιςτου βάρουσ \r\nμικρότερου των 3.5 τόνων.\r\nΘ μεταφορά των επιμζρουσ ςυνιςτωςϊν πρ"
+        }
+      ]
+    },
+    {
+      "filename": "WEF_165.pdf",
+      "pdf_url": "https://dspace.lib.ntua.gr/xmlui/bitstream/handle/123456789/3409/mystriotich_quarries.pdf?sequence=3&amp;isAllowed=y",
+      "sha256": "1002c676b00279090376740e65191976def7c44edb598c797df1a5b4e9f5b8ff",
+      "bytes": 2327944,
+      "pages": 151,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 381,
+          "greek": 298,
+          "latin": 0,
+          "two_column_rows": 6,
+          "table_rows": 10,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "ΔΘΝΗΚΟ ΜΔΣ΢ΟΒΗΟ\r\nΠΟΛΤΣΔΥΝΔΗΟ\r\nΓΗΔΠΗ΢ΣΖΜΟΝΗΚΟ - ΓΗΑΣΜΖΜΑΣΗΚΟ\r\nΠΡΟΓΡΑΜΜΑ ΜΔΣΑΠΣΤΥΗΑΚΩΝ ΢ΠΟΤΓΩΝ\r\n(Γ.Π.Μ.΢.) \"ΠΔΡΗΒΑΛΛΟΝ ΚΑΗ ΑΝΑΠΣΤΞΖ\"\r\nΓζπθςιαηζηή Δνβαζία:\r\n«Γιασείπιζη ανηιδπάζευν κοινού: Ζ πεπίπηυζη \r\nηυν λαηομείυν Μαπκόποςλος»\r\n \r\nΜςζηπιώηη Υπιζηιάνα\r\n(Μησανικόρ Μεηαλλείυν/ Μεηαλλοςπγόρ, Δ.Μ.Π.)\r\nΔπιβλέπυν: Καθηγηηήρ Γ. Καλιαμπάκορ\r\nΑθήνα, Ηούνιορ 2010\r\nΠεπιβάλλον\r\nκαι\r\nΑνάπηςξη"
+        },
+        {
+          "page": 76,
+          "characters": 2423,
+          "greek": 1905,
+          "latin": 69,
+          "two_column_rows": 29,
+          "table_rows": 38,
+          "numeric_tokens": 6,
+          "table_score": 0,
+          "text_excerpt": "Μοζηνζχηδ Υνζζηζάκα ΓΠΜ΢ Πενζαάθθμκ ηαζ Ακάπηολδ, Δ.Μ.Π.\r\nΓζαπείνζζδ ακηζδνάζεςκ ημζκμφ: Ζ πενίπηςζδ ηςκ θαημιείςκ Μανηυπμοθμο 72\r\nΚαηά ηδκ πενίμδμ απυ ηα ιέζα ηδξ δεηαεηίαξ ημο 70‘ ιέπνζ ηαζ ηα ηέθδ ηδξ \r\nδεηαεηίαξ ημο 80‘ πανμοζζάζηδηε ιζα ηάζδ ζοκέπζζδξ ηςκ δεδμιέκςκ πμο ίζποακ \r\nζηζξ ανπέξ ηδξ δεηαεηίαξ ημο 70‘, ζπεηζηά ιε ημ είδμξ ηςκ αβαεχκ ηα μπμία \r\nαπμηζιμφκηακ ιε ηδκ Μέεμδμ Τπμεεηζηήξ Αλζμθυβδζδξ. \r\nΟ ημιέαξ ηδξ οπαίενζαξ ροπαβςβίαξ ζοκέπζζε κα ζοβηεκηνχκεζ ηδκ πθεζμρδθία \r\nηςκ εθανιμβ"
+        },
+        {
+          "page": 151,
+          "characters": 415,
+          "greek": 214,
+          "latin": 0,
+          "two_column_rows": 4,
+          "table_rows": 5,
+          "numeric_tokens": 16,
+          "table_score": 5,
+          "text_excerpt": "Μοζηνζχηδ Υνζζηζάκα ΓΠΜ΢ Πενζαάθθμκ ηαζ Ακάπηολδ, Δ.Μ.Π.\r\nΓζαπείνζζδ ακηζδνάζεςκ ημζκμφ: Ζ πενίπηςζδ ηςκ θαημιείςκ Μανηυπμοθμο 147\r\n8. Πμζμ είκαζ ημ ζοκμθζηυ εζζυδδια πμο έθααε δ μζημβέκεζά ζαξ απυ υθα ηα εκήθζηα \r\nιέθδ ηδξ ημ πεναζιέκμ έημξ;\r\nΑ. Κάης απυ 9.000 €\r\nΒ.9.000 – 13.000 €\r\nΓ. 13.000 - 17.500 €\r\nΓ. 17.500 - 21.500 €\r\nΔ. 21.500 - 26.500 €\r\n΢Σ. 26.500 - 33.500 €\r\nΗ. 33.500 - 42.500 €\r\nΕ. Άκς ηςκ 42.000 €"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 5,
+      "affected_greek_codes": 84,
+      "characters": 3219,
+      "greek": 2417,
+      "latin": 69,
+      "selection_reason": "page-count quartile 4; sha256 order",
+      "page_range": [
+        149,
+        151
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 151,
+          "characters": 415,
+          "greek": 214,
+          "latin": 0,
+          "two_column_rows": 4,
+          "table_rows": 5,
+          "numeric_tokens": 16,
+          "table_score": 5,
+          "text_excerpt": "Μοζηνζχηδ Υνζζηζάκα ΓΠΜ΢ Πενζαάθθμκ ηαζ Ακάπηολδ, Δ.Μ.Π.\r\nΓζαπείνζζδ ακηζδνάζεςκ ημζκμφ: Ζ πενίπηςζδ ηςκ θαημιείςκ Μανηυπμοθμο 147\r\n8. Πμζμ είκαζ ημ ζοκμθζηυ εζζυδδια πμο έθααε δ μζημβέκεζά ζαξ απυ υθα ηα εκήθζηα \r\nιέθδ ηδξ ημ πεναζιέκμ έημξ;\r\nΑ. Κάης απυ 9.000 €\r\nΒ.9.000 – 13.000 €\r\nΓ. 13.000 - 17.500 €\r\nΓ. 17.500 - 21.500 €\r\nΔ. 21.500 - 26.500 €\r\n΢Σ. 26.500 - 33.500 €\r\nΗ. 33.500 - 42.500 €\r\nΕ. Άκς ηςκ 42.000 €"
+        }
+      ]
+    },
+    {
+      "filename": "ECL_679.pdf",
+      "pdf_url": "https://pergamos.lib.uoa.gr/uoa/dl/object/2466545/file.pdf",
+      "sha256": "1ee9a45b2b424bfe4450c51e8adefed231331918cc0191d4332b152b2d354497",
+      "bytes": 947483,
+      "pages": 67,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 420,
+          "greek": 330,
+          "latin": 11,
+          "two_column_rows": 0,
+          "table_rows": 0,
+          "numeric_tokens": 3,
+          "table_score": 0,
+          "text_excerpt": "1\r\nΜΔΣΑΠΣΤΥΗΑΚΟ ΠΡΟΓΡΑΜΜΑ ΢ΠΟΤΓΧΝ\r\n«ΚΛΗΝΗΚΖ ΠΑΗΓΗΑΣΡΗΚΖ ΚΑΗ ΝΟ΢ΖΛΔΤΣΗΚΖ - ΔΡΔΤΝΑ»\r\nΔΘΝΗΚΟ ΚΑΗ ΚΑΠΟΓΗ΢ΣΡΗΑΚΟ ΠΑΝΔΠΗ΢ΣΖΜΗΟ ΑΘΖΝΧΝ\r\nΗΑΣΡΗΚΖ ΢ΥΟΛΖ ΢Δ ΢ΤΝΔΡΓΑ΢ΗΑ ΜΔ ΣΟ ΣΜΖΜΑ\r\nΝΟ΢ΖΛΔΤΣΗΚΖ΢ ΣΟΤ ΣΔΗ ΑΘΖΝΑ΢\r\nΓΗΠΛΧΜΑΣΗΚΖ ΔΡΓΑ΢ΗΑ\r\nΘΔΜΑ: ΑΠΟΣΔΛΔ΢ΜΑΣΗΚΟΣΖΣΑ ΣΖ΢ ΥΡΖ΢Ζ΢ LOCK\r\nTHERAPY ΜΔ ΑΗΘΑΝΟΛΖ 70% ΓΗΑ ΣΖΝ \r\nΑΝΣΗΜΔΣΧΠΗ΢Ζ ΛΟΗΜΧΞΔΧΝ ΑΠΟ ΚΔΝΣΡΗΚΟ \r\nΦΛΔΒΗΚΟ ΚΑΘΔΣΖΡΑ\r\nΜΔΣΑΠΣΤΥΗΑΚΖ ΦΟΗΣΖΣΡΗΑ: Σ΢ΗΡΟΓΗΑΝΝΖ ΥΡΤ΢ΑΝΘΖ\r\nΑΘΖΝΑ\r\nΓΔΚΔΜΒΡΗΟ΢ 2017"
+        },
+        {
+          "page": 34,
+          "characters": 1807,
+          "greek": 1375,
+          "latin": 54,
+          "two_column_rows": 26,
+          "table_rows": 36,
+          "numeric_tokens": 19,
+          "table_score": 36,
+          "text_excerpt": "34\r\nνγθνινγηθνχο αζζελείο θαη αζζελείο πνπ ιακβάλνπλ καθξνρξφληα \r\nπαξεληεξηθή δηαηξνθή (114) αιιά ηα δεδνκέλα γηα ηε ρξήζε ηεο ζηελ\r\nαληηκεηψπηζε ησλ CIABSIθαη ηε δηάζσζε ησλ ΚΦΚ είλαη πεξηνξηζκέλε \r\n(100,106,80),νπφηε, ειιείςεη επαξθνχο βηβιηνγξαθίαο, δελ \r\nζπκπεξηιακβάλεηαη ζηηο ηζρχνληεο νδεγίεο γηα ηελ αληηκεηψπηζε ησλ CLABSI\r\nθαη ηε δηάζσζε ησλ ΚΦΚ(9).\r\n΢ΚΟΠΟ΢ ΣΖ΢ ΜΔΛΔΣΖ΢\r\n΢θνπφο ηεο παξνχζαο κειέηεο είλαη ε αμηνιφγεζε ηεο \r\nαπνηειεζκαηηθφηεηαο ηεο ρξήζεο αηζαλφιεο 70% γηα ηελ αληηκεηψπηζε"
+        },
+        {
+          "page": 67,
+          "characters": 1835,
+          "greek": 0,
+          "latin": 1270,
+          "two_column_rows": 15,
+          "table_rows": 15,
+          "numeric_tokens": 56,
+          "table_score": 15,
+          "text_excerpt": "67\r\n109. Kayton M, Garmey E, Ishill N, Cheung N, Kushner B, Kramer K, La Quaglia M. \r\nPreliminary results of a phase I trial of prophylactic ethanol-lock administration \r\nto prevent mediport catheter-related bloodstream infections. J Ped Surg \r\n2010;45(10):1961-1966\r\n110. Davies D, Understanding biofilm resistance to antibacterial agents. Nat Rev \r\nDrug Discov 2003;2:114-22\r\n111. Maiefski M, Rupp ME, Hermsen ED. Ethanol lock technique: review of the \r\nliterature. Infect Control HospEpidemiol 200"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 4,
+      "affected_greek_codes": 59,
+      "characters": 4062,
+      "greek": 1705,
+      "latin": 1335,
+      "selection_reason": "page-count quartile 1; sha256 order",
+      "page_range": [
+        32,
+        34
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 34,
+          "characters": 1807,
+          "greek": 1375,
+          "latin": 54,
+          "two_column_rows": 26,
+          "table_rows": 36,
+          "numeric_tokens": 19,
+          "table_score": 36,
+          "text_excerpt": "34\r\nνγθνινγηθνχο αζζελείο θαη αζζελείο πνπ ιακβάλνπλ καθξνρξφληα \r\nπαξεληεξηθή δηαηξνθή (114) αιιά ηα δεδνκέλα γηα ηε ρξήζε ηεο ζηελ\r\nαληηκεηψπηζε ησλ CIABSIθαη ηε δηάζσζε ησλ ΚΦΚ είλαη πεξηνξηζκέλε \r\n(100,106,80),νπφηε, ειιείςεη επαξθνχο βηβιηνγξαθίαο, δελ \r\nζπκπεξηιακβάλεηαη ζηηο ηζρχνληεο νδεγίεο γηα ηελ αληηκεηψπηζε ησλ CLABSI\r\nθαη ηε δηάζσζε ησλ ΚΦΚ(9).\r\n΢ΚΟΠΟ΢ ΣΖ΢ ΜΔΛΔΣΖ΢\r\n΢θνπφο ηεο παξνχζαο κειέηεο είλαη ε αμηνιφγεζε ηεο \r\nαπνηειεζκαηηθφηεηαο ηεο ρξήζεο αηζαλφιεο 70% γηα ηελ αληηκεηψπηζε"
+        }
+      ]
+    },
+    {
+      "filename": "UJF_975.pdf",
+      "pdf_url": "https://repository.ihu.gr/bitstreams/3247b1f4-faae-444b-8ebb-3786baa1a498/download",
+      "sha256": "1676cf43a9f30765f1ac3bb83758e7acf385491d15347057a0e25d4515b1f6ec",
+      "bytes": 1614080,
+      "pages": 75,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 213,
+          "greek": 181,
+          "latin": 0,
+          "two_column_rows": 4,
+          "table_rows": 1,
+          "numeric_tokens": 0,
+          "table_score": 0,
+          "text_excerpt": "΢ΥΟΛΗ ΔΟΙΗΚΗ΢Η΢ ΚΑΙ ΟΙΚΟΝΟΜΙΑ΢\r\nΣΜΗΜΑ ΛΟΓΙ΢ΣΙΚΗ΢\r\nΠΣΤΥΙΑΚΗ ΔΙΑΣΡΙΒΗ\r\nΘΓΜΑ:ΠΑΡΟΤ΢ΙΑ΢Η ΚΑΙ ΑΝΑΛΤ΢Η ΠΡΟΫΠΟΛΟΓΙ΢ΜΩΝ \r\n΢Γ ΜΙΑ ΠΑΡΑΓΩΓΙΚΗ ΓΠΙΥΓΙΡΗ΢Η\r\nΓΠΙΜΓΛΓΙΑ: ΓΠΙΒΛΓΠΟΤ΢Α ΚΑΘΗΓΗΣΡΙΑ:\r\nΝτάιος Βασίλης Υατζηπέτροσ Κλαίρη"
+        },
+        {
+          "page": 38,
+          "characters": 1184,
+          "greek": 929,
+          "latin": 0,
+          "two_column_rows": 21,
+          "table_rows": 28,
+          "numeric_tokens": 3,
+          "table_score": 0,
+          "text_excerpt": "37\r\nκπνξεί λα ππνινγηζηεί αλ πξψηα δελ είλαη γλσζηφ ην θφζηνο \r\nάκεζεο εξγαζίαο. Όια απηά ηα κεγέζε ζπλδένληαη ζηελά ην έλα \r\nκε ην άιιν θαη αιιεινεμαξηψληαη ζηε δηαδηθαζία θαηάξηηζεο \r\nηνπ πξνυπνινγηζκνχ.(Μειηψηε,1998)\r\n1.6 Προψποιογηζκως ΓΒΔ.\r\nΓηα λα παξαρζνχλ ηα πξντφληα δελ αξθνχλ ε άκεζε εξγαζία θαη \r\nνη πξψηεο χιεο. Απαηηνχληαη θαη άιια έμνδα, ηα γεληθά \r\nβηνκεραληθά έμνδα (Γ.Β.Δ.) ηα νπνία απνηεινχληαη απφ ηα \r\nέκκεζα πιηθά, ηα έκκεζα εξγαηηθά θαη φια ηα δηάθνξα έμνδα \r\nπνπ ζρεηίδνληαη κε"
+        },
+        {
+          "page": 75,
+          "characters": 1093,
+          "greek": 715,
+          "latin": 127,
+          "two_column_rows": 18,
+          "table_rows": 32,
+          "numeric_tokens": 7,
+          "table_score": 0,
+          "text_excerpt": "74\r\nΒηβιηογραθία\r\nΔιιεληθή Βηβιηνγξαθία\r\nΜειηψηε Δηξ. (1998) «Οηθνλνκνηερληθέο κειέηεο: Πξνβιέςεηο , \r\nΠξνυπνινγηζκνί, Αλάιπζε λεθξνχ ζεκείνπ.» ΢χγρξνλνη \r\nεθδνηηθή, Αζήλα\r\nΠατθφπνπινο Γ. (2001) «Αλάπηπμε ζπζηήκαηνο \r\nπξνυπνινγηζκνχ Απνινγηζκνχ θαη Σερληθή ησλ Απνθιίζεσλ.» \r\nΔθδφζεηο: ΢ηακνχιεο, Αζήλα \r\nΣζαθιαγθάλνο α. (1997) «Πξνυπνινγηζκνί budgeting γηα ηε \r\nιήςε επηρεηξεκαηηθψλ απνθάζεσλ» Δθδφζεηο :Αδεξθψλ \r\nΚπξηαθίδε ,Θεζζαινλίθε\r\nΞέλε Βηβιηνγξαθία\r\nGarrison R. –Noreen E. (2005).Γηνηθεηηθή Λ"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 7,
+      "affected_greek_codes": 116,
+      "characters": 2490,
+      "greek": 1825,
+      "latin": 127,
+      "selection_reason": "page-count quartile 2; sha256 order",
+      "page_range": [
+        36,
+        38
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 38,
+          "characters": 1184,
+          "greek": 929,
+          "latin": 0,
+          "two_column_rows": 21,
+          "table_rows": 28,
+          "numeric_tokens": 3,
+          "table_score": 0,
+          "text_excerpt": "37\r\nκπνξεί λα ππνινγηζηεί αλ πξψηα δελ είλαη γλσζηφ ην θφζηνο \r\nάκεζεο εξγαζίαο. Όια απηά ηα κεγέζε ζπλδένληαη ζηελά ην έλα \r\nκε ην άιιν θαη αιιεινεμαξηψληαη ζηε δηαδηθαζία θαηάξηηζεο \r\nηνπ πξνυπνινγηζκνχ.(Μειηψηε,1998)\r\n1.6 Προψποιογηζκως ΓΒΔ.\r\nΓηα λα παξαρζνχλ ηα πξντφληα δελ αξθνχλ ε άκεζε εξγαζία θαη \r\nνη πξψηεο χιεο. Απαηηνχληαη θαη άιια έμνδα, ηα γεληθά \r\nβηνκεραληθά έμνδα (Γ.Β.Δ.) ηα νπνία απνηεινχληαη απφ ηα \r\nέκκεζα πιηθά, ηα έκκεζα εξγαηηθά θαη φια ηα δηάθνξα έμνδα \r\nπνπ ζρεηίδνληαη κε"
+        }
+      ]
+    },
+    {
+      "filename": "BPZ_307.pdf",
+      "pdf_url": "https://repository.ihu.gr/bitstreams/a0e2895f-3f14-4e10-be8a-e14390f02f9d/download",
+      "sha256": "11365b64cb0911d092797cd566bb561de50139887499236fb62867306e4dcaf7",
+      "bytes": 5456263,
+      "pages": 101,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 326,
+          "greek": 261,
+          "latin": 3,
+          "two_column_rows": 2,
+          "table_rows": 1,
+          "numeric_tokens": 3,
+          "table_score": 0,
+          "text_excerpt": "΢ΥΟΛΖ ΓΔΧΣΔΥΝΗΚΧΝ ΔΠΗ΢ΣΖΜΧΝ\r\nΣΜΖΜΑ ΓΔΧΠΟΝΗΑ΢\r\nΚΑΣΔΤΘΤΝ΢Ζ ΑΓΡΟΣΗΚΖ΢ ΟΗΚΟΝΟΜΗΑ΢ ΚΑΗ \r\nΔΠΗΥΔΗΡHΜΑΣΗΚΟΣΖΣΑ΢\r\nΣΗΣΛΟ΢: ΓΖΜΗΟΤΡΓΗΑ ΦΖΦΗΑΚΟΤ ΥΑΡΣΖ ΑΓΡΟΣΗΚΟΤ ΔΝΓΗΑΦΔΡΟΝΣΟ΢ \r\nME ΔΦΑΡΜΟΓΖ ΣΖΛΔΠΗ΢ΚΟΠΗΚΧΝ ΜΔΘΟΓΧΝ\r\nΠΣΤΥΗΑΚΖ ΔΡΓΑ΢ΗΑ ΣΖ΢ ΦΟΗΣΖΣΡΗΑ΢:\r\nΜΑΡΗΑ ΕΑΥΟΤ (2016/287)\r\nΔΠΗΒΛΔΠΟΤ΢Α ΚΑΘΖΓΖΣΡΗΑ: ΜΠΟΣ΢ΗΟΤ ΜΑΡΗΑ\r\nΘΔ΢΢ΑΛΟΝΗΚΖ, ΟΚΣΧΒΡΗΟ΢ 2020"
+        },
+        {
+          "page": 51,
+          "characters": 2481,
+          "greek": 1743,
+          "latin": 175,
+          "two_column_rows": 28,
+          "table_rows": 38,
+          "numeric_tokens": 22,
+          "table_score": 38,
+          "text_excerpt": "41\r\nθπηά πνπ θαιιηεξγείηαη, γηα αξθεηά ρξφληα νη εξεπλεηέο δελ αζρνιήζεθαλ κε απηφ.\r\nΣν 1960, ηδξχζεθε ην Γηεζλέο Ηλζηηηνχην Έξεπλαο Ρπδηνχ (International Rice\r\nResearch Institute ή IRRI), κε έδξα ηηο Φηιηππίλεο ην νπνίν απνηέιεζε εθαιηήξην γηα \r\nηελ βειηίσζε ηεο ηερληθήο θαιιηέξγεηαο ηνπ ξπδηνχ θαη δεκηνχξγεζε θαηλνχξγηεο \r\nπνηθηιίεο, κε ηηο νπνίεο ε κέζε παγθφζκηα απφδνζε ζρεδφλ δηπιαζηάζηεθε. ΢ηελ \r\nΔιιάδα, αλάινγεο πξνζπάζεηεο άξρηζαλ ην 1961 πνπ ηδξχζεθε ην Ηλζηηηνχην \r\n΢ηηεξψλ. ΢χκθσλα κε "
+        },
+        {
+          "page": 101,
+          "characters": 348,
+          "greek": 71,
+          "latin": 178,
+          "two_column_rows": 2,
+          "table_rows": 4,
+          "numeric_tokens": 8,
+          "table_score": 0,
+          "text_excerpt": "91\r\n9. https://www.statistics.gr/ ΔΛ΢ΣΑΣ: Δηήζηα Γεσξγηθή Έξεπλα: Δθηάζεηο θαη \r\nπαξαγσγή ξπδηνχ\r\n10. https://www.copernicus.eu/ ΚΟΠΔΡΝΗΚΟ΢\r\n11. https://emergency.copernicus.eu/ ΚΟΠΔΡΝΗΚΟ΢\r\n12. https://earth.esa.int/web/guest/earth-topics/agriculture\r\n13. http://tiny.cc/c0sxsz\r\n14. http://ieassa.org/en/satellites-as-a-bridge-to-new-agronomic-era/"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 4,
+      "affected_greek_codes": 94,
+      "characters": 3155,
+      "greek": 2075,
+      "latin": 356,
+      "selection_reason": "page-count quartile 3; sha256 order",
+      "page_range": [
+        49,
+        51
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 51,
+          "characters": 2481,
+          "greek": 1743,
+          "latin": 175,
+          "two_column_rows": 28,
+          "table_rows": 38,
+          "numeric_tokens": 22,
+          "table_score": 38,
+          "text_excerpt": "41\r\nθπηά πνπ θαιιηεξγείηαη, γηα αξθεηά ρξφληα νη εξεπλεηέο δελ αζρνιήζεθαλ κε απηφ.\r\nΣν 1960, ηδξχζεθε ην Γηεζλέο Ηλζηηηνχην Έξεπλαο Ρπδηνχ (International Rice\r\nResearch Institute ή IRRI), κε έδξα ηηο Φηιηππίλεο ην νπνίν απνηέιεζε εθαιηήξην γηα \r\nηελ βειηίσζε ηεο ηερληθήο θαιιηέξγεηαο ηνπ ξπδηνχ θαη δεκηνχξγεζε θαηλνχξγηεο \r\nπνηθηιίεο, κε ηηο νπνίεο ε κέζε παγθφζκηα απφδνζε ζρεδφλ δηπιαζηάζηεθε. ΢ηελ \r\nΔιιάδα, αλάινγεο πξνζπάζεηεο άξρηζαλ ην 1961 πνπ ηδξχζεθε ην Ηλζηηηνχην \r\n΢ηηεξψλ. ΢χκθσλα κε "
+        }
+      ]
+    },
+    {
+      "filename": "MNC_212.pdf",
+      "pdf_url": "https://dspace.lib.ntua.gr/xmlui/bitstream/handle/123456789/5924/oikonomidouo_polyolefins.pdf?sequence=1&amp;isAllowed=y",
+      "sha256": "23d3e15f0a77ed5022d63916c542093937ccb81739db9b7e7341c21266c26b9f",
+      "bytes": 5909959,
+      "pages": 187,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 442,
+          "greek": 360,
+          "latin": 2,
+          "two_column_rows": 14,
+          "table_rows": 16,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "1\r\nΣΧΟΛΗ ΧΗΜΙΚΩΝ ΜΗΧΑΝΙΚΩΝ \r\nΤΟΜΔΑΣ IV: ΣΥΝΘΔΣΗ ΚΑΙ ΑΝΑΠΤΥΞΗ ΒΙΟΜΗΦΑΝΙΚΩΝ ΓΙΑΓΙΚΑΣΙΩΝ \r\nΕΡΓΑ΢ΣΗΡΙΟ ΣΕΥΝΟΛΟΓΙΑ΢ ΠΟΛΤΜΕΡΩΝ\r\nΔιαημημαηικό Πρόγραμμα Μεηαπηυχιακών Σπουδών\r\n“Συζηήμαηα Αυηομαηιζμού”\r\nΜεηαπηστιακή Εργαζία\r\n“Προζομοίωζη ηης μητανικής \r\nανακύκλωζης πολσολεθινών με \r\nεπαναλαμβανόμενη μορθοποίηζη \r\nζε δικότλιο ζύζηημα εκβολής”\r\nΟικονομίδου Ουρανία\r\nΕπιβλέπουζα: Π.Α. Ταρανηίλη\r\n Επικ. Καθηγήτρια ΕΜΠ\r\nΕΘΝΙΚΟ \r\nΜΕΣ΢ΟΒΙΟ \r\nΠΟΛΤΣΕΥΝΕ\r\nΙΟ"
+        },
+        {
+          "page": 94,
+          "characters": 616,
+          "greek": 485,
+          "latin": 0,
+          "two_column_rows": 5,
+          "table_rows": 10,
+          "numeric_tokens": 3,
+          "table_score": 0,
+          "text_excerpt": "94\r\n΢χήμα 4.5: Διάγραμμα πιζςεων ςτθ μιτρα ςυναρτιςθ του χρόνου για το ΡΕ, κατά τον πρϊτο \r\nκφκλο εκβολισ\r\nΌμοια με το διάγραμμα ροπϊν-χρόνου του πρϊτου κφκλου εκβολισ, ςτο \r\nδιάγραμμα πιζςεων-χρόνου του ίδιου κφκλου, ςτισ ίδιεσ χρονικζσ περιοχζσ οι πιζςεισ \r\nμειϊνονται απότομα ςε μθδενικά επίπεδα. Θ πτϊςθ αυτι τθσ πίεςθσ οωείλεται ςτο \r\nγεγονόσ ότι ο κφλινδροσ δεν ιταν επαρκϊσ γεμάτοσ με υλικό εκείνα τα χρονικά \r\nδιαςτιματα, με αποτζλεςμα θ πίεςθ που αςκεί το υλικό κατά τθν μορωοποίθςι του \r\nνα"
+        },
+        {
+          "page": 187,
+          "characters": 2347,
+          "greek": 0,
+          "latin": 1619,
+          "two_column_rows": 9,
+          "table_rows": 12,
+          "numeric_tokens": 80,
+          "table_score": 12,
+          "text_excerpt": "187\r\n \r\n26 Ray SS, Bousima M. Biodegradable polymers and their layered silicate nanocomposites: in greening \r\nthe 21st century materials world. Prog Mater Sci 2005, 50:962–1079.\r\n27 Beyer G. Nanocomposites: a new class of flame retardants for polymers. Plast Addit Compound \r\n2002, 4(10):22–7.\r\n28 Chin I-J, Thurn-Albrecht T, Kim H-C, Russell TP,Wang J. On exfoliation of montmorillonite in epoxy. \r\nPolymer 2001, 42:5947–52.\r\n29 Francesco Ciardelli, Serena Coiai, Elisa Passaglia, Andrea Pucci and G"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 7,
+      "affected_greek_codes": 53,
+      "characters": 3405,
+      "greek": 845,
+      "latin": 1621,
+      "selection_reason": "page-count quartile 4; sha256 order",
+      "page_range": [
+        185,
+        187
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 187,
+          "characters": 2347,
+          "greek": 0,
+          "latin": 1619,
+          "two_column_rows": 9,
+          "table_rows": 12,
+          "numeric_tokens": 80,
+          "table_score": 12,
+          "text_excerpt": "187\r\n \r\n26 Ray SS, Bousima M. Biodegradable polymers and their layered silicate nanocomposites: in greening \r\nthe 21st century materials world. Prog Mater Sci 2005, 50:962–1079.\r\n27 Beyer G. Nanocomposites: a new class of flame retardants for polymers. Plast Addit Compound \r\n2002, 4(10):22–7.\r\n28 Chin I-J, Thurn-Albrecht T, Kim H-C, Russell TP,Wang J. On exfoliation of montmorillonite in epoxy. \r\nPolymer 2001, 42:5947–52.\r\n29 Francesco Ciardelli, Serena Coiai, Elisa Passaglia, Andrea Pucci and G"
+        }
+      ]
+    },
+    {
+      "filename": "HFU_490.pdf",
+      "pdf_url": "https://hellanicus.lib.aegean.gr/bitstreams/9b33ead2-032f-4e8c-8dc7-2cfe5fba6776/download",
+      "sha256": "1fede56678663f42b711140df149629549e99ae5a324b0f54a1a411c2f4b797a",
+      "bytes": 397605,
+      "pages": 16,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 260,
+          "greek": 137,
+          "latin": 84,
+          "two_column_rows": 2,
+          "table_rows": 4,
+          "numeric_tokens": 0,
+          "table_score": 0,
+          "text_excerpt": "ΠΑΝΕΠΙΣΤΗΜΙΟ ΑΙΓΑΙΟΥ\r\nΤΜΗΜΑ ΕΠΙΣΤΗΜΩΝ ΘΑΛΑΣΣΑΣ\r\nΣΧΟΛΗ ΠΕΡΙΒΑΛΛΟΝΤΟΣ\r\nMedia based education and motivation through phrasing: \r\nCan they affect climate change willingness?\r\nΣυγγραφή:Τσαμόπουλος Κωνσταντίνος, Μαρίνη Κέλλυ\r\nΕπιβλέπων Καθηγητής: Σκαναβή Κωνσταντίνα"
+        },
+        {
+          "page": 8,
+          "characters": 1800,
+          "greek": 0,
+          "latin": 1213,
+          "two_column_rows": 15,
+          "table_rows": 19,
+          "numeric_tokens": 75,
+          "table_score": 19,
+          "text_excerpt": "section Paired-samples t-test\r\nTable 2:Knowledge answers before and after video\r\nClimate change \r\ncauses :\r\nIncrease in number\r\nand power of \r\nstorms\r\nIncrease in power \r\nand number of \r\nhurricanes\r\nIncrease of \r\ndroughts\r\nIncrease of \r\nwildfires\r\nDecrease of \r\nbiodiversity\r\nRight before Video 73 77 96 91 99\r\nWrong before \r\nvideo\r\n30 26 7 12 4\r\nRight after video 88 88 100 100 98\r\nWrong after video 15 15 3 3 5\r\nThere has been an increase in the number of correct answers by 36 points (8.72%) after"
+        },
+        {
+          "page": 16,
+          "characters": 2753,
+          "greek": 0,
+          "latin": 2185,
+          "two_column_rows": 15,
+          "table_rows": 28,
+          "numeric_tokens": 20,
+          "table_score": 28,
+          "text_excerpt": "Vanderveken D (1990) Meaning and Speech Acts, Vol. 2. New York: Cambridge University Press. \r\nWhite K, Simpson B (2013) When do (and don’t) normative appeals influence sustainable consumer\r\nbehaviors?. Journal of Marketing 77(2):78-95. \r\nWilson SR, Kunkel AW (2000) Identity implications of influence goals: Similarities in perceived \r\nface threats and facework across sex and close relationships. Journal of Language and Social\r\nPsychology 19(2):195-221. \r\nYoon S, Choi Y, Song S (2011) When intrusi"
+        }
+      ],
+      "font_category": "mixed",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 0,
+      "affected_greek_codes": 0,
+      "characters": 4813,
+      "greek": 137,
+      "latin": 3482,
+      "selection_reason": "page-count quartile 1; sha256 order",
+      "page_range": [
+        14,
+        16
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 16,
+          "characters": 2753,
+          "greek": 0,
+          "latin": 2185,
+          "two_column_rows": 15,
+          "table_rows": 28,
+          "numeric_tokens": 20,
+          "table_score": 28,
+          "text_excerpt": "Vanderveken D (1990) Meaning and Speech Acts, Vol. 2. New York: Cambridge University Press. \r\nWhite K, Simpson B (2013) When do (and don’t) normative appeals influence sustainable consumer\r\nbehaviors?. Journal of Marketing 77(2):78-95. \r\nWilson SR, Kunkel AW (2000) Identity implications of influence goals: Similarities in perceived \r\nface threats and facework across sex and close relationships. Journal of Language and Social\r\nPsychology 19(2):195-221. \r\nYoon S, Choi Y, Song S (2011) When intrusi"
+        }
+      ]
+    },
+    {
+      "filename": "HBW_692.pdf",
+      "pdf_url": "https://pergamos.lib.uoa.gr/uoa/dl/object/2837410/file.pdf",
+      "sha256": "1a050be2dc90e2718a3b88529cfe91d546754c212a1d06eb3858aa9b78ac6f79",
+      "bytes": 1869887,
+      "pages": 93,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 410,
+          "greek": 316,
+          "latin": 0,
+          "two_column_rows": 10,
+          "table_rows": 14,
+          "numeric_tokens": 3,
+          "table_score": 0,
+          "text_excerpt": " \r\n Εθνικό και Καποδιςτριακό Πανεπιςτήμιο Αθηνών\r\n Τμήμα Οικονομικών Επιςτημών\r\nΠτυχιακή εργασία με θέμα:\r\n«Η διείςδυςη των τραπεζών ςτα \r\nδιοικητικά ςυμβούλια των ειςηγμένων \r\nανωνύμων εταιρειών ςτο Χ.Α.Α. για την \r\nπερίοδο 1968-1984»\r\n΢υντάκτθσ: ΢ακκάσ Ευάγγελοσ (Α.Μ. 162072)\r\nΚακθγιτρια: Μπουρνόβα Ευγενία\r\nΔιοίκηση και Διαχείριση \r\nΟικονομικών Μονάδων και Οργανισμών με κατεύθυνση \r\nτο «Στρατηγικό Μάνατζμεντ»"
+        },
+        {
+          "page": 47,
+          "characters": 2016,
+          "greek": 1361,
+          "latin": 111,
+          "two_column_rows": 23,
+          "table_rows": 31,
+          "numeric_tokens": 44,
+          "table_score": 31,
+          "text_excerpt": "47\r\nκε ηελ ΣξΪπεδα Eurobank θαη ν λΫνο ηξαπεδηθφο νξγαληζκφο πνπ δεκηνπξγάζεθε \r\nΫθεξε ηελ επσλπκέα EFG Eurobank. Γελ πξΫπεη λα ζπγρΫεηαη κε ηελ νκψλπκε \r\nηξΪπεδα πνπ ιεηηνχξγεζε απφ ην 1893 θαη ζπγρσλεχηεθε ην 1953 κε ηελ Δζληθά \r\nΣξΪπεδα ηεο ΔιιΪδνο. \r\nΖ ηζηνξέα ηεο ηξΪπεδαο μεθηλΪ απφ ην 1906 κε ηελ ιεηηνπξγέα ηξαπεδηθνχ \r\nγξαθεένπ ζηνλ Πχξγν Ζιεέαο ην νπνέν ην 1924 ελζσκαηψλεηαη ζηελ λενζπζηαζεέζα \r\nεηαηξεέα «Καπλνβηνκεραλέα θαη ΣξΪπεδα Β. Καξαβαζέιε» κε Ϋδξα ηελ Αζάλα. Γχν \r\nρξφληα κεηΪ ζηη"
+        },
+        {
+          "page": 93,
+          "characters": 1020,
+          "greek": 0,
+          "latin": 549,
+          "two_column_rows": 2,
+          "table_rows": 11,
+          "numeric_tokens": 82,
+          "table_score": 11,
+          "text_excerpt": "93\r\n17. http://www.biblionet.gr/author/12847/%CE%A0%CE%B1%CE%BD%CE%B\r\n1%CE%B3%CE%B9%CF%8E%CF%84%CE%B7%CF%82_%CE%A0%CE\r\n%BF%CF%85%CE%BB%CE%AE%CF%82\r\n18. https://el.wikipedia.org/wiki/%CE%9D%CE%AF%CE%BA%CE%BF%CF%\r\n82_%CE%A3%CE%BA%CE%BF%CF%85%CE%BB%CE%AC%CF%82\r\n19. https://el.wikipedia.org/wiki/%CE%94%CE%B7%CE%BC%CE%AE%CF%\r\n84%CF%81%CE%B9%CE%BF%CF%82_%CE%A7%CE%B1%CE%BB%\r\nCE%B9%CE%BA%CE%B9%CE%AC%CF%82\r\n20. https://el.wikipedia.org/wiki/%CE%9B%CE%AC%CE%B6%CE%B1%CF%\r\n81%CE%BF%CF%82_%CE%95%CF%86%CF%81%"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 7,
+      "affected_greek_codes": 110,
+      "characters": 3446,
+      "greek": 1677,
+      "latin": 660,
+      "selection_reason": "page-count quartile 2; sha256 order",
+      "page_range": [
+        45,
+        47
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 47,
+          "characters": 2016,
+          "greek": 1361,
+          "latin": 111,
+          "two_column_rows": 23,
+          "table_rows": 31,
+          "numeric_tokens": 44,
+          "table_score": 31,
+          "text_excerpt": "47\r\nκε ηελ ΣξΪπεδα Eurobank θαη ν λΫνο ηξαπεδηθφο νξγαληζκφο πνπ δεκηνπξγάζεθε \r\nΫθεξε ηελ επσλπκέα EFG Eurobank. Γελ πξΫπεη λα ζπγρΫεηαη κε ηελ νκψλπκε \r\nηξΪπεδα πνπ ιεηηνχξγεζε απφ ην 1893 θαη ζπγρσλεχηεθε ην 1953 κε ηελ Δζληθά \r\nΣξΪπεδα ηεο ΔιιΪδνο. \r\nΖ ηζηνξέα ηεο ηξΪπεδαο μεθηλΪ απφ ην 1906 κε ηελ ιεηηνπξγέα ηξαπεδηθνχ \r\nγξαθεένπ ζηνλ Πχξγν Ζιεέαο ην νπνέν ην 1924 ελζσκαηψλεηαη ζηελ λενζπζηαζεέζα \r\nεηαηξεέα «Καπλνβηνκεραλέα θαη ΣξΪπεδα Β. Καξαβαζέιε» κε Ϋδξα ηελ Αζάλα. Γχν \r\nρξφληα κεηΪ ζηη"
+        }
+      ]
+    },
+    {
+      "filename": "CYT_755.pdf",
+      "pdf_url": "https://dspace.lib.ntua.gr/xmlui/bitstream/handle/123456789/43262/%ce%94%ce%99%ce%a0%ce%9b%ce%a9%ce%9c%ce%91%ce%a4%ce%99%ce%9a%ce%97_%ce%a3%ce%a4%ce%a1%ce%91%ce%a4%ce%9f%ce%a5%ce%a1%ce%97.pdf?sequence=1&amp;isAllowed=y",
+      "sha256": "115a154a121761f08f15f5ef02a2d2507d5b75bc708062abecf3dda271cab96c",
+      "bytes": 5490023,
+      "pages": 111,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 275,
+          "greek": 218,
+          "latin": 1,
+          "two_column_rows": 0,
+          "table_rows": 0,
+          "numeric_tokens": 4,
+          "table_score": 0,
+          "text_excerpt": "7/18/2016\r\nΕΚΝΛΚΟ ΜΕΤΣΟΒΛΟ ΡΟΛΥΤΕΧΝΕΛΟ\r\nΣΧΟΛΘ ΑΓ΢ΟΝΟΜΩΝ & ΤΟΡΟΓ΢ΑΦΩΝ ΜΘΧΑΝΛΚΩΝ \r\nΤΟΜΕΑΣ ΓΕΩΓ΢ΑΦΛΑΣ ΚΑΛ ΡΕ΢ΛΦΕ΢ΕΛΑΚΟΥ ΣΧΕΔΛΑΣΜΟΥ\r\nΣΥΝΔYΑΣΜΕΝΟΣ ΡΟΛΕΟΔΟΜΛΚΟΣ ΚΑΛ \r\nΚΥΚΛΟΦΟ΢ΛΑΚΟΣ ΣΧΕΔΛΑΣΜΟΣ ΣΤΟ ΔΘΜΟ \r\nΒ΢ΛΛΘΣΣΛΩΝ\r\n΢ΣΡΑΣΟΤΡΗ Ε. ΒΑ΢ΚΛΚΚΗ\r\nΕΡΛΒΛΕΡΩΝ:ΜΡΑΚΟΓΛΑΝΝΘΣ ΕΥΚΥΜΛΟΣ\r\nΑΚΘΝΑ 2016"
+        },
+        {
+          "page": 56,
+          "characters": 2331,
+          "greek": 1835,
+          "latin": 4,
+          "two_column_rows": 16,
+          "table_rows": 33,
+          "numeric_tokens": 19,
+          "table_score": 33,
+          "text_excerpt": "55\r\n18. Κτίρια, γιπεδα αποκικευςθσ.\r\n19. Κτίρια, γιπεδα ςτάκμευςθσ.\r\n20. Ρρατιριο βενηίνθσ, υγραερίου.\r\n21. Εγκαταςτάςεισ χονδρικοφ εμπορίου.\r\n22. Εγκαταςτάςεισ γεωργικϊν, δαςικϊν, κτθνοτροφικϊν, αλιευτικϊν και λοιπϊν \r\nαγροτικϊν εκμεταλλεφςεων.\r\n23. Εγκαταςτάςεισ εμπορικϊν εκκζςεων.\r\n24. Ακλθτικζσ εγκαταςτάςεισ.\r\n25. Ελεφκεροι κοινόχρθςτοι χϊροι (πλατείεσ, πάρκα, άλςθ, οδοί, παιδικζσ χαρζσ \r\nκ.λ.π.).\r\n26. Εγκαταςτάςεισ μζςων μαηικϊν μεταφορϊν.\r\n27. Άλλεσ ειδικζσ χριςεισ (ςτρατιωτικζσ εγκαταςτάς"
+        },
+        {
+          "page": 111,
+          "characters": 64,
+          "greek": 0,
+          "latin": 45,
+          "two_column_rows": 0,
+          "table_rows": 0,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "110\r\nwww.vrilissia.gr\r\nwww.wikipedia.com\r\nwww.smu.gr\r\nwww.zee.gr"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 3,
+      "affected_greek_codes": 44,
+      "characters": 2670,
+      "greek": 2053,
+      "latin": 50,
+      "selection_reason": "page-count quartile 3; sha256 order",
+      "page_range": [
+        54,
+        56
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 56,
+          "characters": 2331,
+          "greek": 1835,
+          "latin": 4,
+          "two_column_rows": 16,
+          "table_rows": 33,
+          "numeric_tokens": 19,
+          "table_score": 33,
+          "text_excerpt": "55\r\n18. Κτίρια, γιπεδα αποκικευςθσ.\r\n19. Κτίρια, γιπεδα ςτάκμευςθσ.\r\n20. Ρρατιριο βενηίνθσ, υγραερίου.\r\n21. Εγκαταςτάςεισ χονδρικοφ εμπορίου.\r\n22. Εγκαταςτάςεισ γεωργικϊν, δαςικϊν, κτθνοτροφικϊν, αλιευτικϊν και λοιπϊν \r\nαγροτικϊν εκμεταλλεφςεων.\r\n23. Εγκαταςτάςεισ εμπορικϊν εκκζςεων.\r\n24. Ακλθτικζσ εγκαταςτάςεισ.\r\n25. Ελεφκεροι κοινόχρθςτοι χϊροι (πλατείεσ, πάρκα, άλςθ, οδοί, παιδικζσ χαρζσ \r\nκ.λ.π.).\r\n26. Εγκαταςτάςεισ μζςων μαηικϊν μεταφορϊν.\r\n27. Άλλεσ ειδικζσ χριςεισ (ςτρατιωτικζσ εγκαταςτάς"
+        }
+      ]
+    },
+    {
+      "filename": "GEJ_049.pdf",
+      "pdf_url": "https://apothesis.eap.gr/archive/download/aed40497-60c0-44d5-b2fb-b5e2f54d4dab.pdf",
+      "sha256": "23dbd4e147492644b216b1222d552f8bcfdda8dc80bda226425da07a5e10b19a",
+      "bytes": 4684388,
+      "pages": 146,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 316,
+          "greek": 177,
+          "latin": 77,
+          "two_column_rows": 3,
+          "table_rows": 4,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "΢ΥΟΛΖ ΘΔΣΗΚΩΝ ΔΠΗ΢ΣΖΜΩΝ & ΣΔΥΝΟΛΟΓΗΑ΢\r\n«ΓΗΑΥΔΗΡΗ΢Ζ ΑΠΟΒΛΖΣΩΝ»\r\nΓΗΠΛΩΜΑΣΗΚΖ ΔΡΓΑ΢ΗΑ \r\n\"Γηαρεέξηζε αζηηθψλ ζηεξεψλ απνβιάησλ ζηνλ Γάκν Αζελαέσλ θαη \r\nηξφπνη αμηνπνέεζεο\"\r\n\" Municipal solid waste management in the Municipality of Athens and \r\nmethods of utilization\"\r\nΔπηβιέπωλ Καζεγεηήο: ΒΑΗΟ΢ ΚΑΡΑΓΗΑΝΝΖ΢\r\nΠΪηξα, 2023"
+        },
+        {
+          "page": 73,
+          "characters": 1527,
+          "greek": 1200,
+          "latin": 0,
+          "two_column_rows": 19,
+          "table_rows": 29,
+          "numeric_tokens": 16,
+          "table_score": 29,
+          "text_excerpt": "73\r\nζπγθεθξηκΫλα ζηελ νδφ ΢αιακηλέαο 22. Σν Ϋξγν ρξεκαηνδνηάζεθε απφ ην πξφγξακκα \r\nΔ΢ΠΑ 2014-2020, πξνυπνινγηζκνχ 13.766.226,39 επξψ. Δμππεξεηνχκελνη δάκνη ηνπ \r\nΫξγνπ ζα εέλαη ν Γάκνο Αζελαέσλ , Γάκνο ΑηγΪιεσ θαη φκνξνη Γάκνη ηνπ Διαηψλα. \r\nΟ ΢ΜΑ εέλαη Ϋλαο εηδηθφο πεξηβΪιινληαο ρψξνο ζηνλ νπνέν βξέζθνληαη κεγΪια \r\nθνληΫηλεξ θαη ηα νπνέα δΫρνληαη ην θΪζε Ϋλα απνξξέκκαηα απφ 4 πεξέπνπ \r\nαπνξξηκκαηνθφξα. Σα απνξξέκκαηα αθνχ κεηαθνξησζνχλ ζπκπηΫδνληαη, κε \r\nαπνηΫιεζκα λα επηηπγρΪλεηαη κεηαθνξΪ κε"
+        },
+        {
+          "page": 146,
+          "characters": 1246,
+          "greek": 745,
+          "latin": 48,
+          "two_column_rows": 11,
+          "table_rows": 16,
+          "numeric_tokens": 51,
+          "table_score": 16,
+          "text_excerpt": "146\r\nΝΟΜΟ΢ ΤΠ' ΑΡΗΘ.2939 ΔΚ Α' 179/6.8.2001. ΢πζθεπαζέεο θαη ελαιιαθηηθά \r\nδηαρεέξηζε ησλ ζπζθεπαζηψλ θαη Ϊιισλ πξντφλησλ - Ηδξπζε Δζληθνχ Οξγαληζκνχ \r\nΔλαιιαθηηθάο Γηαρεέξηζεο ΢πζθεπαζηψλ θαη Αιισλ Πξντφλησλ (Δ.Ο.Δ.Γ.΢.Α.Π.) θαη \r\nΪιιεο δηαηΪμεηο. Δ ΖΜΔΡΗ΢ ΣΖ΢ ΚΤΒΔΡΝΖ΢ΔΧ΢ ΣΖ΢ ΔΛΛΖΝΗΚΖ΢ \r\nΓΖΜΟΚΡΑΣΗΑ΢, ΣΔΤΥΟ΢ ΠΡΧΣΟ, Αξ. χιινπ 179, 6 Απγνχζηνπ 2001.\r\nΤ.Α. Ζ.Π. 29407/3508/2002 ( ΔΚ 1572/Β` 16.12.2002). Δ ΖΜΔΡΗ΢ ΣΖ΢ \r\nΚΤΒΔΡΝΖ΢ΔΧ΢ ΣΖ΢ ΔΛΛΖΝΗΚΖ΢ ΓΖΜΟΚΡΑΣΗΑ΢, ΣΔΤΥΟ΢ ΓΔΤΣΔΡΟ, Αξ. \r\n χιινπ 1572, 16 Γεθεκ"
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 9,
+      "affected_greek_codes": 127,
+      "characters": 3089,
+      "greek": 2122,
+      "latin": 125,
+      "selection_reason": "page-count quartile 4; sha256 order",
+      "page_range": [
+        71,
+        73
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 73,
+          "characters": 1527,
+          "greek": 1200,
+          "latin": 0,
+          "two_column_rows": 19,
+          "table_rows": 29,
+          "numeric_tokens": 16,
+          "table_score": 29,
+          "text_excerpt": "73\r\nζπγθεθξηκΫλα ζηελ νδφ ΢αιακηλέαο 22. Σν Ϋξγν ρξεκαηνδνηάζεθε απφ ην πξφγξακκα \r\nΔ΢ΠΑ 2014-2020, πξνυπνινγηζκνχ 13.766.226,39 επξψ. Δμππεξεηνχκελνη δάκνη ηνπ \r\nΫξγνπ ζα εέλαη ν Γάκνο Αζελαέσλ , Γάκνο ΑηγΪιεσ θαη φκνξνη Γάκνη ηνπ Διαηψλα. \r\nΟ ΢ΜΑ εέλαη Ϋλαο εηδηθφο πεξηβΪιινληαο ρψξνο ζηνλ νπνέν βξέζθνληαη κεγΪια \r\nθνληΫηλεξ θαη ηα νπνέα δΫρνληαη ην θΪζε Ϋλα απνξξέκκαηα απφ 4 πεξέπνπ \r\nαπνξξηκκαηνθφξα. Σα απνξξέκκαηα αθνχ κεηαθνξησζνχλ ζπκπηΫδνληαη, κε \r\nαπνηΫιεζκα λα επηηπγρΪλεηαη κεηαθνξΪ κε"
+        }
+      ]
+    },
+    {
+      "filename": "PDU_574.pdf",
+      "pdf_url": "https://pergamos.lib.uoa.gr/uoa/dl/object/3245804/file.pdf",
+      "sha256": "207aa527d120ac01f149807b0f0d93ad34f8de86183197b3d5429fbf11052535",
+      "bytes": 384548,
+      "pages": 53,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 182,
+          "greek": 139,
+          "latin": 7,
+          "two_column_rows": 5,
+          "table_rows": 7,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "ΣΧΟΛΗ ΘΕΤΙΚΩΝ ΕΠΙΣΤΗΜΩΝ\r\nΤΜΗΜΑ ΜΑΘΗΜΑΤΙΚΩΝ\r\nΒελτιωμένες L\r\np ανισότητες Hardy\r\nΝίκος-Παύλος Κανάκης\r\nΜεταπτυχιακή Διατριβή\r\nΕπιβλέπων καθηγητής : Γεράσιμος Μπαρμπάτης\r\nΝοέμβριος 2022"
+        },
+        {
+          "page": 27,
+          "characters": 1542,
+          "greek": 492,
+          "latin": 225,
+          "two_column_rows": 54,
+          "table_rows": 51,
+          "numeric_tokens": 46,
+          "table_score": 51,
+          "text_excerpt": "την ανισότητα Holder ¨ και έχουμε\r\nZ\r\nΩ\r\ndivT|u|\r\np\r\ndx = −\r\nZ\r\nΩ\r\n(T · ∇(|u|\r\np\r\n))dx +\r\nZ\r\n∂Ω\r\nT · |u|\r\np\r\n⃗n dx\r\n= −\r\nZ\r\nΩ\r\n(p|u|\r\np−2\r\nu∇u) · T dx\r\n= −p\r\nZ\r\nΩ\r\n(T · ∇u)|u|\r\np−2\r\nudx\r\n⩽ p\r\n\u0010\r\nZ\r\nΩ\r\n|∇u|\r\np\r\ndx\u0011 1\r\np\r\n\u0010\r\nZ\r\nΩ\r\n\f\r\n\f\r\n\f\r\n\f\r\nT|u|\r\np−2\r\nu\r\n\f\r\n\f\r\n\f\r\n\f\r\np\r\np−1\r\ndx\u00111−\r\n1\r\np\r\n⩽ p\r\n Z\r\nΩ\r\n|∇u|\r\np\r\ndx! 1\r\np\r\n Z\r\nΩ\r\n|T|\r\np\r\np−1\r\n|u|\r\np(p−1)\r\np−1 dx! p−1\r\np\r\n⩽ p\r\n Z\r\nΩ\r\n|∇u|\r\np\r\ndx! 1\r\np\r\n Z\r\nΩ\r\n|T|\r\np\r\np−1\r\n|u|\r\np\r\ndx! p−1\r\np\r\n⩽ p\r\n\"\r\n1\r\np\r\nh\u0010 Z\r\nΩ\r\n|∇u|\r\np\r\ndx|\r\n\u0011 1\r\np\r\nip\r\n+\r\np − 1\r\np\r"
+        },
+        {
+          "page": 53,
+          "characters": 822,
+          "greek": 8,
+          "latin": 507,
+          "two_column_rows": 7,
+          "table_rows": 6,
+          "numeric_tokens": 30,
+          "table_score": 6,
+          "text_excerpt": "Αναφορές\r\n[1] Ambrosio L., Soner H.M., Level set approach to mean curvature flow in\r\narbitrary codimension, J. Differential Geom. 43, no. 4, 693–737 (1996)\r\n[2] Barbatis G., Filippas S., Tertikas A., A unified approach to improved L\r\np\r\nHardy inequalities with best constants, Trans. Amer. Math. Soc., 356(6),\r\n2169–2196 (2004)\r\n[3] Brezis H. and Marcus M. Hardy’s inequalities revisited. Ann. Scuola Norm.\r\nPisa, (25), 217-237, (1997)\r\n[4] Brezis H., Vázquez J.L., Blow-up solutions of some nonlinea"
+        }
+      ],
+      "font_category": "unsupported",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 0,
+      "affected_greek_codes": 0,
+      "characters": 2546,
+      "greek": 639,
+      "latin": 739,
+      "selection_reason": "page-count quartile 1; sha256 order",
+      "page_range": [
+        25,
+        27
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 27,
+          "characters": 1542,
+          "greek": 492,
+          "latin": 225,
+          "two_column_rows": 54,
+          "table_rows": 51,
+          "numeric_tokens": 46,
+          "table_score": 51,
+          "text_excerpt": "την ανισότητα Holder ¨ και έχουμε\r\nZ\r\nΩ\r\ndivT|u|\r\np\r\ndx = −\r\nZ\r\nΩ\r\n(T · ∇(|u|\r\np\r\n))dx +\r\nZ\r\n∂Ω\r\nT · |u|\r\np\r\n⃗n dx\r\n= −\r\nZ\r\nΩ\r\n(p|u|\r\np−2\r\nu∇u) · T dx\r\n= −p\r\nZ\r\nΩ\r\n(T · ∇u)|u|\r\np−2\r\nudx\r\n⩽ p\r\n\u0010\r\nZ\r\nΩ\r\n|∇u|\r\np\r\ndx\u0011 1\r\np\r\n\u0010\r\nZ\r\nΩ\r\n\f\r\n\f\r\n\f\r\n\f\r\nT|u|\r\np−2\r\nu\r\n\f\r\n\f\r\n\f\r\n\f\r\np\r\np−1\r\ndx\u00111−\r\n1\r\np\r\n⩽ p\r\n Z\r\nΩ\r\n|∇u|\r\np\r\ndx! 1\r\np\r\n Z\r\nΩ\r\n|T|\r\np\r\np−1\r\n|u|\r\np(p−1)\r\np−1 dx! p−1\r\np\r\n⩽ p\r\n Z\r\nΩ\r\n|∇u|\r\np\r\ndx! 1\r\np\r\n Z\r\nΩ\r\n|T|\r\np\r\np−1\r\n|u|\r\np\r\ndx! p−1\r\np\r\n⩽ p\r\n\"\r\n1\r\np\r\nh\u0010 Z\r\nΩ\r\n|∇u|\r\np\r\ndx|\r\n\u0011 1\r\np\r\nip\r\n+\r\np − 1\r\np\r"
+        }
+      ]
+    },
+    {
+      "filename": "CVM_126.pdf",
+      "pdf_url": "https://repository.ihu.gr/bitstreams/a244b26d-0ba5-4477-8474-d891a02deddc/download",
+      "sha256": "1aa5f48fbe1f282394a34a21321173d3c437fa040499d43293c4cdb7c8086c6c",
+      "bytes": 2449865,
+      "pages": 84,
+      "sampled_pages": [
+        {
+          "page": 1,
+          "characters": 267,
+          "greek": 209,
+          "latin": 0,
+          "two_column_rows": 4,
+          "table_rows": 8,
+          "numeric_tokens": 3,
+          "table_score": 0,
+          "text_excerpt": "1\r\nΣτολή Κοινωνικών Επιζηημών\r\nΤμήμα: Βιβλιοθηκονομίας, Αρτειονομίας και Σσζηημάηων \r\nΠληροθόρηζης\r\nΠΣΤΥΙΑΚΗ ΕΡΓΑ΢ΙΑ\r\nΘέμα : «Μελέηη για ηην οργάνωζη ηης βιβλιοθήκης ηοσ 424 \r\nΓΣΝΕ»\r\nΦοιηήηρια: Όλγα Βλάτοσ\r\nΕπιβλέποσζα καθηγήηρια : Αθροδίηη Μάλλιαρη\r\nΚεςςαλονίκθ,2020"
+        },
+        {
+          "page": 42,
+          "characters": 1469,
+          "greek": 1043,
+          "latin": 103,
+          "two_column_rows": 10,
+          "table_rows": 14,
+          "numeric_tokens": 16,
+          "table_score": 14,
+          "text_excerpt": "42\r\nκαταλογογράφθςθ ζγινε χριςθ των AACR2 όπου εμφανίςτθκαν το 1967 ςε δυο εκδόςεισ, \r\nμια για τθν Βρετανία και μια για τθ Βόρεια Αμερικι. Από το 1988 ζωσ το 2005, ζχουν \r\nανακεωρθκεί και εμπλουτιςτεί αρκετζσ ενότθτεσ τουσ. Θ τελευταία ενθμζρωςθ ζγινε το \r\n2005. Καταλογογράφθςθ πραγματοποιείται και ςτισ ςπάνιεσ ςυλλογζσ, όπου είναι μια \r\nχρονοβόρα διαδικαςία αφοφ ςτθρίηεται ςτθν πρωτότυπθ καταλογογράφθςθ. Συνικωσ, θ \r\nδθμιουργία τζτοιων εγγραφϊν αποτελεί ζρευνα του καταλογογράφου ςε πρωτογενείσ "
+        },
+        {
+          "page": 84,
+          "characters": 34,
+          "greek": 26,
+          "latin": 0,
+          "two_column_rows": 0,
+          "table_rows": 0,
+          "numeric_tokens": 1,
+          "table_score": 0,
+          "text_excerpt": "84\r\nΕκθεσιακός χώρος \r\nΒιβλιοθήκες "
+        }
+      ],
+      "font_category": "repairable",
+      "font_backend": "rust",
+      "font_error": null,
+      "repairable_fonts": 6,
+      "affected_greek_codes": 50,
+      "characters": 1770,
+      "greek": 1278,
+      "latin": 103,
+      "selection_reason": "page-count quartile 2; sha256 order",
+      "page_range": [
+        40,
+        42
+      ],
+      "page_selection_evidence": [
+        {
+          "page": 42,
+          "characters": 1469,
+          "greek": 1043,
+          "latin": 103,
+          "two_column_rows": 10,
+          "table_rows": 14,
+          "numeric_tokens": 16,
+          "table_score": 14,
+          "text_excerpt": "42\r\nκαταλογογράφθςθ ζγινε χριςθ των AACR2 όπου εμφανίςτθκαν το 1967 ςε δυο εκδόςεισ, \r\nμια για τθν Βρετανία και μια για τθ Βόρεια Αμερικι. Από το 1988 ζωσ το 2005, ζχουν \r\nανακεωρθκεί και εμπλουτιςτεί αρκετζσ ενότθτεσ τουσ. Θ τελευταία ενθμζρωςθ ζγινε το \r\n2005. Καταλογογράφθςθ πραγματοποιείται και ςτισ ςπάνιεσ ςυλλογζσ, όπου είναι μια \r\nχρονοβόρα διαδικαςία αφοφ ςτθρίηεται ςτθν πρωτότυπθ καταλογογράφθςθ. Συνικωσ, θ \r\nδθμιουργία τζτοιων εγγραφϊν αποτελεί ζρευνα του καταλογογράφου ςε πρωτογενείσ "
+        }
+      ]
+    }
+  ]
+}

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 import functools
 import inspect
 import io
+import logging
 import multiprocessing as mp
 import pickle
 import socket
@@ -25,6 +26,101 @@ import queue
 import threading
 import time
 from typing import Any
+from types import MappingProxyType
+
+
+@dataclass(frozen=True)
+class StabilityEvent:
+    kind: str
+    document: str | None
+    epoch: int
+    at_seconds: float
+    seconds: float = 0.0
+    detail: str = ""
+    affected_documents: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class StabilityStats:
+    """Immutable snapshot; recovery ends at ready, not at process.start().
+
+    An unresolved last eviction has no fabricated respawn time. Queue stalls
+    are contiguous backpressure episodes, not failures. Export retries are
+    currently zero: the scheduler evicts failed documents instead.
+    """
+    counters: Any
+    events: tuple[StabilityEvent, ...]
+    documents: Any
+
+
+def _record(recorder, method, *args, **kwargs):
+    """Observation must never control conversion, cleanup or recovery."""
+    if recorder is None:
+        return None
+    try:
+        return getattr(recorder, method)(*args, **kwargs)
+    except BaseException:
+        # This counter does not depend on the potentially broken recorder API.
+        recorder.recorder_errors = getattr(recorder, "recorder_errors", 0) + 1
+        try:
+            logging.getLogger(__name__).exception("stability recorder failed: %s", method)
+        except BaseException:
+            pass
+        return None
+
+
+class _StabilityRecorder:
+    def __init__(self):
+        self.started = time.monotonic()
+        self.lock = threading.Lock()
+        self.events = []
+        self.documents = {}
+        self.recorder_errors = 0
+        self.counters = {key: 0 for key in ("export_deadlines", "export_worker_kills",
+            "export_worker_respawns", "export_recovery_cycles", "documents_evicted",
+            "export_documents_evicted", "document_deadlines", "layout_document_retries",
+            "export_document_retries", "queue_stalls", "parser_worker_respawns",
+            "recovery_seconds", "queue_stall_seconds", "unresolved_recovery_seconds_lower_bound",
+            "export_recovery_unresolved")}
+
+    def event(self, kind, document=None, epoch=0, seconds=0.0, detail="", affected_documents=()):
+        event = StabilityEvent(kind, document, epoch,
+            time.monotonic() - self.started, seconds, detail, tuple(affected_documents))
+        with self.lock:
+            self.events.append(event)
+            if kind in self.counters:
+                self.counters[kind] += 1
+            if kind in ("export_worker_respawns", "export_document_retries"):
+                self.counters["recovery_seconds"] += seconds
+            if kind == "queue_stalls":
+                self.counters["queue_stall_seconds"] += seconds
+            if kind == "export_recovery_unresolved":
+                self.counters["unresolved_recovery_seconds_lower_bound"] += seconds
+
+    def document(self, name, row):
+        with self.lock:
+            self.documents[name] = dict(row)
+
+    def notify(self, callback, *args):
+        callback(*args)
+
+    def checkpoint_state(self):
+        with self.lock:
+            cursor = getattr(self, "checkpoint_cursor", 0)
+            events = self.events[cursor:]
+            self.checkpoint_cursor = len(self.events)
+            counts = dict(self.counters, recorder_errors=self.recorder_errors)
+        return {"counters": counts, "events": events}
+
+    def snapshot(self):
+        # Only copy references under the mutex. No history scans, serialization,
+        # attribution, or checkpoint IO shares the scheduler's critical section.
+        with self.lock:
+            counts = dict(self.counters, recorder_errors=self.recorder_errors)
+            events = tuple(self.events)
+            documents = tuple(self.documents.items())
+        return StabilityStats(MappingProxyType(counts), events,
+            MappingProxyType({k: MappingProxyType(dict(v)) for k, v in documents}))
 
 
 @dataclass
@@ -47,6 +143,7 @@ class _Document:
     pages: dict[int, Any] = field(default_factory=dict)
     error: str | None = None
     exporting: bool = False
+    prepared_pages: int = 0
 
 
 def _parse_worker(connection, prepare, options):
@@ -245,12 +342,15 @@ def _export_worker(channel, epoch):
 
 
 class _ExportSession:
-    def __init__(self, context):
+    def __init__(self, context, stats=None):
         self.context = context
         self.epoch = 0
         self.sequence = 0
         self.process = None
         self.jobs = None
+        self.stats = stats
+        self.recovery_started = None
+        self.evicted_document = None
 
     def close(self):
         if self.process is not None:
@@ -284,18 +384,28 @@ class _ExportSession:
             child.close()
         if pickle.loads(self.jobs.get(deadline)) != (self.epoch, "ready"):
             raise RuntimeError("invalid export startup receipt")
+        if self.stats is not None:
+            _record(self.stats, "event", "export_worker_ready", epoch=self.epoch)
+            if self.recovery_started is not None:
+                _record(self.stats, "event", "export_worker_respawns", self.evicted_document, self.epoch,
+                    time.monotonic() - self.recovery_started)
+        self.recovery_started = None
 
-    def export(self, task, deadline):
+    def export(self, task, deadline, document=None):
+        phase = "startup"
         try:
             if time.monotonic() >= deadline:
                 raise TimeoutError("timeout")
             if self.process is None:
                 self._start(deadline)
             self.sequence += 1
+            phase = "serialization"
             with _DeadlineBuffer(deadline) as buffer:
                 _ExportTransportPickler(buffer, protocol=5).dump(
                     (self.epoch, self.sequence, deadline, task))
+                phase = "queue_put"
                 self.jobs.put(buffer.getvalue(), max(0, deadline - time.monotonic()))
+            phase = "receipt_wait"
             generation, sequence, completed, error = pickle.loads(self.jobs.get(deadline))
             if generation == self.epoch and sequence == "transport-error":
                 raise RuntimeError(f"export transport: {error[0]}: {error[1]}")
@@ -308,9 +418,20 @@ class _ExportSession:
                 # Preserve the useful public serialization error contract.
                 error_type = {"ValueError": ValueError, "TimeoutError": TimeoutError}.get(name, RuntimeError)
                 raise error_type(f"{name}: {message}")
-        except BaseException:
+        except BaseException as exc:
             # Reap before cleanup/failure publication; replacement is lazy and
             # gets a fresh socket and epoch on the next document's own budget.
+            fired = time.monotonic()
+            if self.stats is not None:
+                if isinstance(exc, TimeoutError):
+                    _record(self.stats, "event", "export_deadlines", document, self.epoch, detail=phase)
+                if self.process is not None:
+                    _record(self.stats, "event", "export_worker_kills", document, self.epoch, detail=phase)
+                _record(self.stats, "event", "export_documents_evicted", document, self.epoch, detail=str(exc))
+            if self.recovery_started is None and self.process is not None:
+                self.recovery_started = fired
+                self.evicted_document = document
+                _record(self.stats, "event", "export_recovery_cycles", document, self.epoch)
             self.close()
             raise
 
@@ -368,8 +489,14 @@ class BatchedExtractor:
         self.problematic_files: list[str] = []
         self.errors: dict[str, str] = {}
         self.page_counts: dict[str, int] = {}
+        self._stability = _StabilityRecorder()
 
-    def extract(self, paths, output_dir, *, max_pages=None):
+    @property
+    def stats(self):
+        return _record(self._stability, "snapshot") or StabilityStats(
+            MappingProxyType({"recorder_errors": self._stability.recorder_errors}), (), MappingProxyType({}))
+
+    def extract(self, paths, output_dir, *, max_pages=None, document_callback=None, progress_callback=None):
         paths = [Path(p).resolve() for p in paths]
         # The normal artifact tree is keyed by stem. Refuse ambiguous overwrites.
         if len({p.stem for p in paths}) != len(paths):
@@ -383,6 +510,7 @@ class BatchedExtractor:
         self.problematic_files.clear()
         self.errors.clear()
         self.page_counts.clear()
+        self._stability = _StabilityRecorder()
         for key in self.high_water:
             self.high_water[key] = 0
         pending = deque(enumerate(paths))
@@ -391,15 +519,62 @@ class BatchedExtractor:
         rotation = deque()
         exports = {}
         context = mp.get_context("spawn")
-        export_session = _ExportSession(context)
+        export_session = _ExportSession(context, self._stability)
         slots = []
         prepare_options = dict(getattr(self.adapter, "prepare_options", {}), max_pages=max_pages)
         first_ready = None
+        stall_started = None
+        stall_documents = ()
+        self.observation_seconds = 0.
+        self.observation_intervals = []
+        checkpoints = []
+        last_progress = ()
+
+        def checkpoint():
+            nonlocal last_progress, stall_started, first_ready
+            # Drain only between export futures, without a recorder lock or any
+            # native object in callback arguments. Deadline clocks pause too.
+            names = tuple(doc.path.name for doc in active.values())
+            if exports or not (document_callback is not None and checkpoints or
+                    progress_callback is not None and names != last_progress):
+                return
+            began = time.monotonic()
+            for name, row in checkpoints:
+                state = _record(self._stability, "checkpoint_state")
+                _record(self._stability, "notify", document_callback, name, row,
+                    began - self._stability.started, state)
+            checkpoints.clear()
+            if progress_callback is not None and names != last_progress:
+                _record(self._stability, "notify", progress_callback, names, began - self._stability.started)
+                last_progress = names
+            finished = time.monotonic()
+            elapsed = finished - began
+            self.observation_intervals.append([began, finished])
+            self.observation_seconds += elapsed
+            self._stability.started += elapsed
+            for doc in active.values():
+                doc.started += elapsed
+                doc.deadline += elapsed
+            if export_session.recovery_started is not None:
+                export_session.recovery_started += elapsed
+            if stall_started is not None:
+                stall_started += elapsed
+            if first_ready is not None:
+                first_ready += elapsed
+
+        def restart(slot, doc=None, reason="parser recovery"):
+            began = time.monotonic()
+            slot.restart()
+            _record(self._stability, "event", "parser_worker_respawns", doc.path.name if doc else None,
+                seconds=time.monotonic() - began, detail=reason)
 
         def fail(doc, message):
             if doc.error is None:
                 doc.error = message
                 doc.pages.clear()
+                _record(self._stability, "event", "documents_evicted", doc.path.name, export_session.epoch, detail=message)
+                if message == "timeout":
+                    _record(self._stability, "event", "document_deadlines", doc.path.name, export_session.epoch)
 
         def record_failure(doc):
             try:
@@ -429,7 +604,7 @@ class BatchedExtractor:
                     if hasattr(self.adapter, "export_task") else
                     functools.partial(self.adapter.export, result, output_dir))
             try:
-                export_session.export(task, doc.deadline)
+                export_session.export(task, doc.deadline, doc.path.name)
             except TimeoutError:
                 fail(doc, "timeout")
                 record_failure(doc)
@@ -451,7 +626,11 @@ class BatchedExtractor:
                     groups.setdefault(page.document_id, []).append(page)
                 if len(groups) > 1:
                     for group in groups.values():
+                        retry_started = time.monotonic()
                         infer(group)
+                        _record(self._stability, "event", "layout_document_retries", group[0].path.name,
+                            seconds=time.monotonic() - retry_started,
+                            detail=f"mixed layout failed: {type(exc).__name__}: {exc}")
                 else:
                     fail(active[batch[0].document_id], f"layout: {type(exc).__name__}: {exc}")
                 return
@@ -465,6 +644,7 @@ class BatchedExtractor:
                     continue
                 try:
                     self.adapter.complete(doc.result, page)
+                    doc.prepared_pages += 1
                     if time.monotonic() > doc.deadline:
                         fail(doc, "timeout")
                     else:
@@ -495,8 +675,21 @@ class BatchedExtractor:
                             else:
                                 self.problematic_files.append(doc.path.name)
                                 self.errors[doc.path.name] = doc.error or "export failure"
+                            row = {
+                                "pages": doc.count if ok else 0,
+                                "prepared_pages": doc.prepared_pages,
+                                "status": "ok" if ok else "timeout" if (doc.error or "").startswith("timeout") else "failed",
+                                "error": doc.error,
+                                "wall_seconds": time.monotonic() - doc.started,
+                                "started_seconds": doc.started - self._stability.started,
+                                "finished_seconds": time.monotonic() - self._stability.started}
+                            _record(self._stability, "document", doc.path.name, row)
+                            if document_callback is not None:
+                                checkpoints.append((doc.path.name, row))
                             del exports[did]
                             del active[did]
+                    checkpoint()
+                    now = time.monotonic()
                     for doc in active.values():
                         if not doc.exporting and now > doc.deadline:
                             fail(doc, "timeout")
@@ -507,17 +700,17 @@ class BatchedExtractor:
                             did, page_no = slot.job
                             doc = active[did]
                             if doc.error:
-                                slot.restart()
+                                restart(slot, doc, doc.error)
                             elif slot.connection.poll():
                                 try:
                                     ok, payload = slot.connection.recv()
                                 except (EOFError, OSError) as exc:
                                     ok, payload = False, f"parser process exited: {exc}"
-                                    slot.restart()
+                                    restart(slot, doc, str(exc))
                                 slot.job = None
                                 if not ok:
                                     fail(doc, str(payload))
-                                    slot.restart()
+                                    restart(slot, doc, str(payload))
                                 else:
                                     try:
                                         if page_no == 0:
@@ -532,15 +725,24 @@ class BatchedExtractor:
                                                 first_ready = time.monotonic()
                                     except Exception as exc:
                                         fail(doc, f"parse: {type(exc).__name__}: {exc}")
-                                        slot.restart()
+                                        restart(slot, doc, str(exc))
                             elif not slot.process.is_alive():
                                 fail(doc, f"parser process exited {slot.process.exitcode}")
-                                slot.restart()
+                                restart(slot, doc, "parser exited")
                     self.high_water["prepared_pages"] = max(self.high_water["prepared_pages"], ready.qsize())
                     # Full export queue stops the inference consumer. Since the
                     # CPU reservation includes in-flight jobs, this propagates
                     # backpressure all the way to parsing and document admission.
-                    if len(exports) < self.export_queue_size:
+                    stalled = (len(exports) >= self.export_queue_size or
+                               ready.qsize() + sum(s.job is not None for s in slots) >= self.queue_max_size)
+                    if stalled and stall_started is None:
+                        stall_started = time.monotonic()
+                        stall_documents = tuple(d.path.name for d in active.values())
+                    elif not stalled and stall_started is not None:
+                        _record(self._stability, "event", "queue_stalls", seconds=time.monotonic() - stall_started,
+                            detail="export/prepared queue at capacity", affected_documents=stall_documents)
+                        stall_started = None
+                    if len(exports) < self.export_queue_size and not (document_callback is not None and checkpoints):
                         waiting_jobs = any(s.job for s in slots)
                         if not ready.empty() and (ready.qsize() >= self.layout_batch or
                                 time.monotonic() - first_ready >= self.batch_wait_seconds or
@@ -571,14 +773,16 @@ class BatchedExtractor:
                         except Exception as exc:
                             active[did] = _Document(path, started, started,
                                 error=f"admission: {type(exc).__name__}: {exc}")
+                            _record(self._stability, "event", "documents_evicted", path.name, detail=active[did].error)
                         rotation.append(did)
+                    checkpoint()
                     # Reserve a bounded queue place for every submitted page or
                     # probe. No executor map/eager future list buffers the corpus.
                     for slot in slots:
                         if slot.job is not None or len(exports) >= self.export_queue_size:
                             continue
                         if not slot.process.is_alive():
-                            slot.restart()
+                            restart(slot)
                         reserved = ready.qsize() + sum(s.job is not None for s in slots)
                         if reserved >= self.queue_max_size:
                             break
@@ -604,7 +808,7 @@ class BatchedExtractor:
                                 slot.connection.send((str(doc.path), page_no))
                             except (BrokenPipeError, OSError) as exc:
                                 fail(doc, f"parser dispatch failed: {exc}")
-                                slot.restart()
+                                restart(slot, doc, str(exc))
                             break
                     self.high_water["parse_jobs"] = max(self.high_water["parse_jobs"], sum(s.job is not None for s in slots))
                     self.high_water["exports"] = max(self.high_water["exports"], len(exports))
@@ -614,6 +818,14 @@ class BatchedExtractor:
             export_session.close()
             for slot in slots:
                 slot.close()
+            if export_session.recovery_started is not None:
+                _record(self._stability, "event", "export_recovery_unresolved", export_session.evicted_document,
+                    export_session.epoch, time.monotonic() - export_session.recovery_started,
+                    "no subsequent ready receipt; elapsed lower bound")
+            if stall_started is not None:
+                _record(self._stability, "event", "queue_stalls", seconds=time.monotonic() - stall_started,
+                    detail="export/prepared queue at capacity", affected_documents=stall_documents)
+        checkpoint()
         # Stable user-facing lists regardless of worker/write completion order.
         order = {p.name: i for i, p in enumerate(paths)}
         self.processed_files.sort(key=order.get)

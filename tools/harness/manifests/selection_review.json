@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "reason": "Pre-baseline visual QA rejected initial heuristic labels; these anchors were reviewed before final freeze and before any baseline.",
+  "anchors": [
+    {
+      "filename": "OWH_803.pdf",
+      "category": "Greek born-digital clean",
+      "page_ranges": [
+        [
+          52,
+          54
+        ]
+      ],
+      "evidence": "page54 rendered: legible Greek prose; affected_greek_codes=0"
+    },
+    {
+      "filename": "FOK_514.pdf",
+      "category": "broken ToUnicode repair path",
+      "evidence": "max affected Greek codes=325; production analyzer repairable"
+    },
+    {
+      "filename": "BTS_524.pdf",
+      "category": "image-only pages in a mixed document",
+      "page_ranges": [
+        [
+          67,
+          69
+        ]
+      ],
+      "evidence": "page68 rendered readable fullpage raster; PDFium characters=0; image coverage=0.999667"
+    },
+    {
+      "filename": "BZA_238.pdf",
+      "category": "longest (none >250 pages)",
+      "evidence": "246 pages; maximum of all242"
+    },
+    {
+      "filename": "YZU_230.pdf",
+      "category": "two-column and tables",
+      "page_ranges": [
+        [
+          103,
+          103
+        ],
+        [
+          205,
+          206
+        ]
+      ],
+      "evidence": "page103 rendered two tables; page206 rendered two-column journal references"
+    },
+    {
+      "filename": "FHG_024.pdf",
+      "category": "table",
+      "page_ranges": [
+        [
+          14,
+          16
+        ]
+      ],
+      "evidence": "page16 rendered numeric colored table with caption"
+    },
+    {
+      "filename": "VQP_963.pdf",
+      "category": "mixed Greek/Latin",
+      "evidence": "sampled Greek/Latin characters both >=2352"
+    },
+    {
+      "filename": "WWZ_685.pdf",
+      "category": "very short (shortest in cohort)",
+      "evidence": "11 pages; minimum of all242"
+    }
+  ]
+}
