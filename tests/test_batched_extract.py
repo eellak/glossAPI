@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import tracemalloc
+import weakref
 from types import SimpleNamespace
 from types import ModuleType
 
@@ -323,28 +324,58 @@ def test_twelve_serialization_stalls_have_constant_resources(tmp_path, exporter,
     assert max(s['rss_bytes'] for s in receipt['samples']) - receipt['baseline']['rss_bytes'] < 24 * 1024 * 1024
 
 
-def test_warmed_serialization_stalls_have_bounded_retention(tmp_path, exporter, record_property):
+def payload_lifetimes(refs):
+    # Return scalars only: the observer must never extend a payload's lifetime.
+    live = [payload for ref in refs if (payload := ref()) is not None]
+    return dict(created_count=len(refs), retained_count=len(live),
+                retained_bytes=sum(len(payload.retained) for payload in live),
+                retained_markers=[str(payload.marker) for payload in live])
+
+
+def serialization_stall_contract(tmp_path, exporter, record_property, *, counts=(96, 12, 48)):
     # CP0's three fresh-process 12/24/48/96 probes show late allocator steps
     # through 96 stalls on macOS, then a common high-water ceiling. Warm that
     # exact workload before comparing independent short/long runs. Every warm-up
     # stall also checks reaping, no partial output, and bounded scheduler queues.
-    warmup = serialization_stall_resources(tmp_path / 'warmup', exporter, 96)
     gc.collect()
     owns_tracing = not tracemalloc.is_tracing()
     if owns_tracing:
         tracemalloc.start()
     try:
-        baseline_current = tracemalloc.get_traced_memory()[0]
-        short = serialization_stall_resources(tmp_path / 'n12', exporter, 12)
-        long = serialization_stall_resources(tmp_path / 'n48', exporter, 48)
+        refs = {name: [] for name in ('warmup', 'n12', 'n48')}
+        checkpoints = {}
+        windows = {}
+        original_init = RetainedPayload.__init__
+
+        def tracked_init(payload, marker):
+            original_init(payload, marker)
+            refs[window].append(weakref.ref(payload))
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(RetainedPayload, '__init__', tracked_init)
+            gc.collect()
+            # Both tracing and the baseline precede the FIRST warm-up payload.
+            baseline_current = tracemalloc.get_traced_memory()[0]
+            for (window, window_refs), count in zip(refs.items(), counts):
+                windows[window] = serialization_stall_resources(tmp_path / window, exporter, count)
+                gc.collect()
+                checkpoints[window] = payload_lifetimes(window_refs)
         gc.collect()
         current, peak = tracemalloc.get_traced_memory()
-        receipt = dict(warmup=warmup, n12=short, n48=long,
+        lifetimes = {name: payload_lifetimes(window_refs) for name, window_refs in refs.items()}
+        receipt = dict(**windows, payload_lifetimes=lifetimes,
+                       payload_checkpoints=checkpoints,
+                       retained_count=sum(s['retained_count'] for s in lifetimes.values()),
+                       retained_bytes=sum(s['retained_bytes'] for s in lifetimes.values()),
                        traced_baseline_bytes=baseline_current,
                        traced_current_bytes=current, traced_peak_bytes=peak,
-                       rss_growth_bytes=long['after']['rss_bytes'] - short['after']['rss_bytes'])
+                       rss_growth_bytes=windows['n48']['after']['rss_bytes'] - windows['n12']['after']['rss_bytes'])
         record_property('resource_counts', json.dumps(receipt))
         (tmp_path / 'resource-receipt.json').write_text(json.dumps(receipt, indent=2))
+        assert [s['created_count'] for s in lifetimes.values()] == list(counts)
+        assert receipt['retained_count'] == 0, (
+            f"surviving payloads: {receipt['retained_count']} / {receipt['retained_bytes']} bytes")
+        assert all(s['retained_count'] == 0 for s in checkpoints.values()), checkpoints
         # One retained 4 MiB payload must fail even when the OS reuses RSS pages.
         assert current - baseline_current < 1024 * 1024
         # 8 MiB bounds allocator noise (CP0 observed <=6.13 MiB from 12 to 48),
@@ -353,6 +384,43 @@ def test_warmed_serialization_stalls_have_bounded_retention(tmp_path, exporter, 
     finally:
         if owns_tracing:
             tracemalloc.stop()
+
+
+def test_warmed_serialization_stalls_have_bounded_retention(tmp_path, exporter, record_property):
+    serialization_stall_contract(tmp_path, exporter, record_property)
+
+
+@pytest.mark.parametrize('mutation', ['one-retention', 'growing-retention'])
+def test_serialization_resource_oracle_rejects_retention(tmp_path, exporter, record_property,
+                                                       monkeypatch, mutation):
+    # The reviewer's two production mutations, applied at the same export entry.
+    # Shorter windows keep the permanent oracle affordable; the ordinary gate
+    # above still exercises the exact warmed 96/12/48 workload and RSS bound.
+    kept_tasks = []
+    monkeypatch.setattr(core, '_cp0_kept_tasks', kept_tasks, raising=False)
+    original_export = core._ExportSession.export
+
+    def retaining_export(session, task, deadline):
+        if mutation == 'growing-retention' or not core._cp0_kept_tasks:
+            core._cp0_kept_tasks.append(task)
+        return original_export(session, task, deadline)
+
+    monkeypatch.setattr(core._ExportSession, 'export', retaining_export)
+    try:
+        with pytest.raises(AssertionError, match='surviving payloads:'):
+            serialization_stall_contract(tmp_path, exporter, record_property, counts=(1, 1, 2))
+        receipt = json.loads((tmp_path / 'resource-receipt.json').read_text())
+        expected = [1, 0, 0] if mutation == 'one-retention' else [1, 1, 2]
+        assert [s['retained_count'] for s in receipt['payload_lifetimes'].values()] == expected
+        held = [payload for task in kept_tasks for payload in task.args
+                if isinstance(payload, RetainedPayload)]
+        assert len(held) == receipt['retained_count'] == sum(expected)
+        assert sum(len(payload.retained) for payload in held) == receipt['retained_bytes'] == sum(expected) * 4 * 1024 * 1024
+        assert receipt['traced_current_bytes'] - receipt['traced_baseline_bytes'] >= receipt['retained_bytes']
+        del held
+    finally:
+        kept_tasks.clear()
+        gc.collect()
 
 
 class SlowPicklingPayload:
