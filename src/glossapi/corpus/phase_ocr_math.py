@@ -56,7 +56,7 @@ class OcrMathPhaseMixin:
             "Re-running OCR cleaner after OCR rerun to refresh cleaned text and OCR metrics"
         )
         self.clean_ocr(
-            input_dir=self.markdown_dir,
+            input_dir=self.output_dir / "markdown",
             drop_bad=False,
         )
         self.logger.info(

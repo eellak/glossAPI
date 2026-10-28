@@ -96,9 +96,11 @@ def persist_ocr_success(
     from ...parquet_schema import ParquetSchema
 
     success_files: List[str] = []
+    # OCR dispatch always writes here; clean() rebinds context.markdown_dir.
+    markdown_dir = context.output_dir / "markdown"
     for fname in filenames:
         stem = canonical_stem(fname)
-        if (context.markdown_dir / f"{stem}.md").exists():
+        if (markdown_dir / f"{stem}.md").exists():
             success_files.append(fname)
 
     if not success_files:
@@ -111,7 +113,7 @@ def persist_ocr_success(
         df_meta = apply_ocr_success_updates(
             df_meta,
             filenames=success_files,
-            markdown_dir=context.markdown_dir,
+            markdown_dir=markdown_dir,
             metrics_dir=context.output_dir / "json" / "metrics",
             backend_norm=backend_norm,
         )
@@ -137,6 +139,6 @@ def refresh_cleaner_after_ocr(context: CorpusOcrContext) -> None:
 
     context.logger.info("Re-running Rust cleaner after OCR rerun to refresh metrics")
     context.clean(
-        input_dir=context.markdown_dir,
+        input_dir=context.output_dir / "markdown",
         drop_bad=False,
     )

@@ -24,6 +24,12 @@ installing packages. The shell also accepts `--python`, `--venv`, `--editable`
 and `--run-tests`; only `--run-tests` installs build/test tools in the target
 runtime. The old `--mode docling` spelling selects `layout`; vanilla is removed.
 
+Upgrading an environment containing standalone `glossapi_rs_cleaner`,
+`glossapi_rs_noise` or `glossapi_rs_pdfrepair` distributions is refused before
+installation. Follow the printed uninstall command in that interpreter, then
+rerun the installer. After installation a fresh process verifies native module
+origins and root-wheel RECORD hashes (editable installs verify source origins).
+
 - `download`: aiohttp, aiofiles, Tenacity and YAML support.
 - `browser`: download plus Playwright and Pillow. Browser engines are a separate
   explicit `python -m playwright install chromium` download.
@@ -45,4 +51,6 @@ installed plugins; see [OCR plugin migration](../docs/ocr_plugin_migration.md).
 `requirements-tooling.txt` pins the surveyed build/test tools. Standalone Rust
 builds use maturin >=1.15; root builds use setuptools >=84.2.1. The serialized
 classifier does not support Python 3.14; the declared interpreter range describes
-core, with core 3.11/3.13 exercised on the node.
+core. The original qualification exercised core on Python 3.11; Python 3.13
+had not been run in that qualification. See the cycle-1 dead-weight reply for
+the subsequent Python 3.13 run and its exact test scope.

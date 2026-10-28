@@ -26,6 +26,12 @@ corpus.extract(phase1_backend="docling", accel_type="CPU",
                batched=False, ocr_options=plugin_options)
 ```
 
+The full-pipeline checkpoint CLI accepts `--ocr-engine KIND` and
+`--ocr-options '{"lang":["el"]}'`. `KIND` is the engine kind registered by the
+installed plugin; the JSON object supplies that plugin's option fields. The CLI
+loads external plugins and validates their options before changing outputs or
+starting extraction. Use `--skip-ocr` when no OCR engine is needed.
+
 Without options, OCR remediation reports how to install/configure a plugin.
 The old `ocr_engine`, `ocr_checkpoint`, `ocr_codec` and related C1 extraction
 arguments are replaced by `ocr_options`. DeepSeek-only inference, repair, runtime

@@ -137,3 +137,49 @@ def test_numbered_blank_pages_roundtrip(pages, tmp_path):
     markdown = page_artifacts._join_page_outputs(pages)
     page_artifacts._write_outputs(tmp_path, 'blank-pages', markdown, len(pages))
     assert page_artifacts._split_page_outputs((tmp_path / 'markdown/blank-pages.md').read_text()) == pages
+
+
+def test_clean_then_ocr_persists_fresh_canonical_text_and_exports(tmp_path, monkeypatch):
+    """Real clean, OCR persistence, refresh and export; only inference is stubbed."""
+    import hashlib
+    import json
+    from pypdf import PdfWriter
+
+    source = tmp_path / 'input'
+    source.mkdir()
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.write(source / 'source.pdf')
+    corpus = Corpus(source, tmp_path / 'output')
+    metadata = corpus.output_dir / 'download_results/download_results.parquet'
+    metadata.parent.mkdir(exist_ok=True)
+    pd.DataFrame([dict(filename='source.pdf', needs_ocr=True, ocr_pages='',
+                       text='OLD_NATIVE_SENTINEL')]).to_parquet(metadata)
+    page_artifacts._write_outputs(corpus.output_dir, 'source',
+        'OLD_NATIVE_SENTINEL\n\nThis is the old native page body.', 1)
+    corpus.clean(drop_bad=False)
+    assert corpus.markdown_dir == corpus.cleaned_markdown_dir
+    assert 'OLD_NATIVE_SENTINEL' in (corpus.cleaned_markdown_dir / 'source.md').read_text()
+    frame = pd.read_parquet(metadata)
+    frame['needs_ocr'] = True
+    frame['ocr_pages'] = ''
+    frame.to_parquet(metadata)
+    fresh = 'FRESH_OCR_SENTINEL\n\nThis is the corrected OCR page body.'
+    monkeypatch.setattr(dispatch, '_build_converter', lambda request: SimpleNamespace(
+        convert=lambda *a, **kw: SimpleNamespace(status='success', document=SimpleNamespace(
+            export_to_markdown=lambda **kw: fresh))))
+    corpus.ocr(mode='ocr_bad', ocr_options=SimpleNamespace(kind='test'))
+    raw = (corpus.output_dir / 'markdown/source.md').read_text()
+    cleaned = (corpus.cleaned_markdown_dir / 'source.md').read_text()
+    row = pd.read_parquet(metadata).iloc[0]
+    assert 'FRESH_OCR_SENTINEL' in raw and 'FRESH_OCR_SENTINEL' in cleaned
+    assert 'OLD_NATIVE_SENTINEL' not in cleaned
+    assert row.text == raw
+    assert row.ocr_text_sha256 == hashlib.sha256(raw.encode()).hexdigest()
+    assert row.ocr_markdown_relpath == 'markdown/source.md'
+    assert row.ocr_success and not row.needs_ocr
+    export = tmp_path / 'export.jsonl'
+    corpus.jsonl(export)
+    records = [json.loads(line) for line in export.read_text().splitlines()]
+    assert len(records) == 1
+    assert 'FRESH_OCR_SENTINEL' in records[0]['text']

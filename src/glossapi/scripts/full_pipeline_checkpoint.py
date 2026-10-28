@@ -52,10 +52,26 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--docling-page-batch-size", type=int, default=None)
 
     p.add_argument("--ocr-math-enhance", action="store_true")
+    p.add_argument("--ocr-engine", help="Installed Docling OCR plugin engine kind")
+    p.add_argument("--ocr-options", default="{}", help="JSON object of options for --ocr-engine")
 
     p.add_argument("--text-key", default="text")
     p.add_argument("--metadata-key", default="pipeline_metadata")
     return p.parse_args(argv)
+
+
+def _configured_ocr_options(args: argparse.Namespace):
+    if args.skip_ocr:
+        return None
+    if not args.ocr_engine:
+        raise ValueError("OCR requires --ocr-engine and optional --ocr-options JSON; use --skip-ocr to omit OCR")
+    options = json.loads(args.ocr_options)
+    if not isinstance(options, dict) or "kind" in options:
+        raise ValueError("--ocr-options must be a JSON object without 'kind'; select kind with --ocr-engine")
+    from glossapi.optional_dependencies import optional_dependencies
+    with optional_dependencies("layout"):
+        from docling.models.factories import get_ocr_factory
+    return get_ocr_factory(allow_external_plugins=True).create_options(kind=args.ocr_engine, **options)
 
 
 def _read_metadata_counts(parquet_path: Path) -> Dict[str, int]:
@@ -128,6 +144,8 @@ def _export_jsonl_with_retry(
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = _parse_args(argv)
+    # Resolve plugin configuration before extraction, cleaning or output removal.
+    ocr_options = _configured_ocr_options(args)
     _apply_cli_tuning_overrides(args)
 
     input_dir = Path(args.input_dir).expanduser().resolve()
@@ -181,6 +199,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         ocr_start = time.perf_counter()
         corpus.ocr(
+            ocr_options=ocr_options,
             math_enhance=bool(args.ocr_math_enhance),
         )
         ocr_elapsed = float(time.perf_counter() - ocr_start)

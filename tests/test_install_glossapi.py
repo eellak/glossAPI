@@ -16,7 +16,7 @@ def test_default_is_core_without_torch():
     assert plan.packages == ("core",)
     assert plan.extras == ()
     assert plan.device is None
-    assert commands == [
+    assert commands[:2] == [
         [sys.executable, "-m", "pip", "install", "--index-url", installer.PYPI_INDEX, str(REPO)],
         [sys.executable, "-m", "pip", "check"],
     ]
@@ -95,6 +95,7 @@ def test_dry_run_prints_exact_commands_without_execution(monkeypatch, capsys):
 
 
 def test_failed_torch_install_stops_before_docling(monkeypatch):
+    monkeypatch.setattr(installer, "legacy_native_distributions", lambda: [])
     monkeypatch.setattr(installer.platform, "system", lambda: "Linux")
     calls = []
     def failed(command, **kwargs):
@@ -117,3 +118,64 @@ def test_shell_dry_run_does_not_create_venv(tmp_path):
     assert commands[0] == [sys.executable, "-m", "venv", str(target)]
     assert commands[1][0] == str(target / "bin/python")
     assert commands[1][-1] == str(REPO) + "[download]"
+
+
+@pytest.mark.parametrize('name', installer.NATIVE_MODULES)
+def test_legacy_package_refused_before_any_install(tmp_path, monkeypatch, capsys, name):
+    # Real importlib.metadata detection, including normalized distribution names.
+    info = tmp_path / (name + '-0.1.0.dist-info')
+    info.mkdir()
+    (info / 'METADATA').write_text(f'Metadata-Version: 2.1\nName: {name.replace("_", "-")}\nVersion: 0.1.0\n')
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(installer.subprocess, 'run', lambda *a, **kw: pytest.fail('mutated environment'))
+    assert name in installer.legacy_native_distributions()
+    assert installer.main([]) == 1
+    message = capsys.readouterr().err
+    assert 'Refusing installation' in message
+    assert shlex.join([sys.executable, '-m', 'pip', 'uninstall', '-y', name]) in message
+
+
+def test_install_verifies_native_in_fresh_process_after_pip_check(monkeypatch):
+    monkeypatch.setattr(installer, 'legacy_native_distributions', lambda: [])
+    calls = []
+    monkeypatch.setattr(installer.subprocess, 'run', lambda cmd, **kw:
+                        (calls.append(cmd) or subprocess.CompletedProcess(cmd, 0)))
+    assert installer.main([]) == 0
+    assert calls[-2] == [sys.executable, '-m', 'pip', 'check']
+    assert calls[-1][:2] == [sys.executable, '-c']
+    assert 'verify_native_origins' in calls[-1][2]
+
+
+def test_native_verifier_checks_ownership_hash_and_shadowing(tmp_path, monkeypatch, capsys):
+    import base64
+    import hashlib
+    from importlib.machinery import EXTENSION_SUFFIXES
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(installer, 'legacy_native_distributions', lambda: [])
+    files = []
+    modules = {}
+    for name in installer.NATIVE_MODULES:
+        path = tmp_path / (name + EXTENSION_SUFFIXES[0])
+        path.write_bytes(name.encode())
+        record = installer.metadata.PackagePath(path.name)
+        record.hash = SimpleNamespace(mode='sha256', value=base64.urlsafe_b64encode(
+            hashlib.sha256(path.read_bytes()).digest()).rstrip(b'=').decode())
+        files.append(record)
+        modules[name] = SimpleNamespace(__file__=str(path))
+    dist = SimpleNamespace(files=files, locate_file=lambda f: tmp_path / f)
+    monkeypatch.setattr(installer.metadata, 'distributions', lambda **kw: [dist])
+    monkeypatch.setattr(installer.importlib, 'import_module', lambda name: modules[name])
+    installer.verify_native_origins(REPO)
+    output = capsys.readouterr().out
+    assert all(name in output for name in installer.NATIVE_MODULES)
+    path.write_bytes(b'tampered')
+    with pytest.raises(RuntimeError, match='RECORD'):
+        installer.verify_native_origins(REPO)
+    path.write_bytes(name.encode())
+    dist.files = []
+    with pytest.raises(RuntimeError, match='not owned'):
+        installer.verify_native_origins(REPO)
+    modules[installer.NATIVE_MODULES[0]].__file__ = str(tmp_path / '__init__.py')
+    with pytest.raises(RuntimeError, match='shadowing package'):
+        installer.verify_native_origins(REPO)

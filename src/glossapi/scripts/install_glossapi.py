@@ -2,6 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import importlib
+import importlib.metadata as metadata
+import json
 import platform
 import shlex
 import subprocess
@@ -15,6 +20,59 @@ DEVICES = ("cpu", "cuda126", "cuda132", "mps")
 TORCH_VERSION = "2.14.1"
 TORCHVISION_VERSION = "0.29.1"
 PYPI_INDEX = "https://pypi.org/simple"
+NATIVE_MODULES = ("glossapi_rs_cleaner", "glossapi_rs_noise", "glossapi_rs_pdfrepair")
+
+
+def legacy_native_distributions() -> list[str]:
+    """Standalone packages take import precedence over root-wheel extensions."""
+    found = []
+    for name in NATIVE_MODULES:
+        try:
+            metadata.distribution(name)
+        except metadata.PackageNotFoundError:
+            continue
+        found.append(name)
+    return found
+
+
+def verify_native_origins(repo_root: Path, *, editable: bool = False) -> None:
+    """Check fresh imports against root wheel ownership and RECORD hashes."""
+    from importlib.machinery import EXTENSION_SUFFIXES
+
+    legacy = legacy_native_distributions()
+    if legacy:
+        raise RuntimeError(f"Legacy standalone native distributions still installed: {', '.join(legacy)}")
+    modules = {name: importlib.import_module(name) for name in NATIVE_MODULES}
+    owned = {}
+    if not editable:
+        # PYTHONPATH may expose source egg-info ahead of the installed wheel.
+        # Look for ownership beside the loaded extensions, not at first metadata match.
+        parents = {Path(module.__file__).resolve().parent for module in modules.values()}
+        if len(parents) != 1:
+            raise RuntimeError("Native modules loaded from different installation directories")
+        distributions = list(metadata.distributions(name="glossapi", path=[str(parents.pop())]))
+        if len(distributions) != 1:
+            raise RuntimeError("Missing or ambiguous glossapi wheel metadata beside native modules")
+        distribution = distributions[0]
+        owned = {Path(distribution.locate_file(f)).resolve(): f for f in distribution.files or []}
+    origins = {}
+    for name in NATIVE_MODULES:
+        module = modules[name]
+        origin = Path(module.__file__).resolve()
+        if not any(origin.name == name + suffix for suffix in EXTENSION_SUFFIXES):
+            raise RuntimeError(f"{name} loaded from shadowing package: {origin}")
+        digest = hashlib.sha256(origin.read_bytes()).digest()
+        if editable:
+            if origin.parent != (repo_root / "src").resolve():
+                raise RuntimeError(f"{name} is outside the editable source: {origin}")
+        else:
+            record = owned.get(origin)
+            if record is None or record.hash is None or record.hash.mode != "sha256":
+                raise RuntimeError(f"{name} is not owned and hash-bound by the glossapi wheel: {origin}")
+            if base64.urlsafe_b64encode(digest).rstrip(b"=").decode() != record.hash.value:
+                raise RuntimeError(f"{name} does not match the glossapi wheel RECORD: {origin}")
+        origins[name] = {"origin": str(origin), "sha256": digest.hex()}
+    print(json.dumps({"native_modules": origins}, indent=2), flush=True)
 
 
 @dataclass(frozen=True)
@@ -93,6 +151,11 @@ def build_pip_commands(plan: InstallPlan, repo_root: Path) -> list[list[str]]:
         command.append(f"pypdfium2=={plan.pypdfium2_version}")
     commands.append(command)
     commands.append([sys.executable, "-m", "pip", "check"])
+    # A new process avoids certifying modules cached before pip replaced files.
+    verify = ("import runpy; from pathlib import Path; "
+              f"ns=runpy.run_path({str(Path(__file__).resolve())!r}); "
+              f"ns['verify_native_origins'](Path({str(repo_root)!r}), editable={plan.editable!r})")
+    commands.append([sys.executable, "-c", verify])
     return commands
 
 
@@ -126,6 +189,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(shlex.join(command), flush=True)
     if args.dry_run:
         return 0
+    legacy = legacy_native_distributions()
+    if legacy:
+        print("Refusing installation: legacy standalone native packages shadow the bundled extensions: "
+              + ", ".join(legacy) + ".\nMigrate this interpreter first, then rerun the installer:\n"
+              + shlex.join([sys.executable, "-m", "pip", "uninstall", "-y", *legacy]),
+              file=sys.stderr, flush=True)
+        return 1
     for command in commands:
         completed = subprocess.run(command, cwd=repo_root)
         if completed.returncode:
