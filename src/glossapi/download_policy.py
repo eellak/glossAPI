@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 from urllib.parse import urlparse
 
-import yaml
+from .optional_dependencies import optional_dependencies
+
+with optional_dependencies("download"):
+    import yaml
 
 VALID_DOWNLOADERS = {"standard", "browser", "auto"}
 ROUTE_OPTION_KEYS = {

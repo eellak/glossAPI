@@ -17,7 +17,10 @@ Features:
 - Domain-specific cookie handling
 """
 
-import aiohttp
+from .optional_dependencies import optional_dependencies
+
+with optional_dependencies("download"):
+    import aiohttp
 import asyncio
 import os
 import time
@@ -25,7 +28,8 @@ import random
 import logging
 import re
 import string
-import aiofiles
+with optional_dependencies("download"):
+    import aiofiles
 import json
 import ast
 import pandas as pd
@@ -35,7 +39,8 @@ from typing import Dict, List, Tuple, Set, Optional, Any, Iterator, Union
 from dataclasses import dataclass, field
 import mimetypes
 from pathlib import Path
-from tenacity import retry, stop_after_attempt, stop_after_delay, wait_exponential, retry_if_exception_type, before_sleep_log
+with optional_dependencies("download"):
+    from tenacity import stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
 import functools
 from email.utils import parsedate_to_datetime
 

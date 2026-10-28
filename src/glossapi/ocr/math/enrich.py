@@ -15,7 +15,10 @@ try:
 except Exception as e:  # pragma: no cover
     pdfium = None  # type: ignore
 
-from docling_core.types.doc import DocItemLabel  # type: ignore
+from ...optional_dependencies import optional_dependencies
+
+with optional_dependencies("layout"):
+    from docling_core.types.doc import DocItemLabel  # type: ignore
 
 
 @dataclass
@@ -92,9 +95,10 @@ def enrich_from_docling_json(
     Writes final Markdown and a latex_map.jsonl sidecar; returns a small metrics dict.
     """
     from glossapi.ocr.utils.json_io import load_docling_json  # type: ignore
-    from docling.models.code_formula_model import CodeFormulaModel, CodeFormulaModelOptions  # type: ignore
-    from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice  # type: ignore
-    from docling.datamodel.base_models import ItemAndImageEnrichmentElement  # type: ignore
+    with optional_dependencies("layout"):
+        from docling.models.code_formula_model import CodeFormulaModel, CodeFormulaModelOptions  # type: ignore
+        from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice  # type: ignore
+        from docling.datamodel.base_models import ItemAndImageEnrichmentElement  # type: ignore
 
     doc = load_docling_json(json_path)
     rc = PageRasterCache(pdf_path)

@@ -42,13 +42,13 @@ def repair_pdf(src: str | Path, dst: str | Path, *, protected_sources=()) -> dic
     return get_backend().repair_pdf(src, dst, protected_sources=protected_sources).to_dict()
 
 
-from glossapi.scripts.pdf_font_repair import _worker as _reference_worker
 
 
 def _cli_worker(*args):
     # Reuse the proven bounded worker/report/metrics infrastructure. Only the
     # analyze/repair decisions and PDF/font parsing are replaced by Rust.
-    from glossapi.pdf_repair.tounicode import PdfFontReport, FontReport, RepairResult
+    from glossapi.pdf_repair.reports import PdfFontReport, FontReport, RepairResult
+    from glossapi.scripts.pdf_font_repair import _worker as _reference_worker
     import glossapi.scripts.pdf_font_repair as cli
 
     def analyze(path):

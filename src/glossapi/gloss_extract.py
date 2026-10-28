@@ -5,47 +5,55 @@ import warnings
 
 from ._naming import canonical_stem
 
-try:
-    from docling.datamodel.base_models import InputFormat, ConversionStatus
-    from docling.datamodel.pipeline_options import (
-        AcceleratorDevice,
-        AcceleratorOptions,
-        PdfPipelineOptions,
-        LayoutOptions,
-        TableStructureOptions,
-        TableFormerMode,
-    )
+from enum import Enum
+from types import SimpleNamespace
 
-    try:
-        from docling.datamodel.pipeline_options import PictureDescriptionApiOptions
-    except ImportError:  # pragma: no cover - older docling versions
-        class PictureDescriptionApiOptions:  # type: ignore
-            """Compatibility shim when PictureDescriptionApiOptions is missing."""
+class ConversionStatus(str, Enum):
+    SUCCESS = "success"
+    PARTIAL_SUCCESS = "partial_success"
+    FAILURE = "failure"
 
-            def __init__(self, *args, **kwargs):
-                pass
-    from docling.datamodel.document import ConversionResult
-    from docling.datamodel.settings import settings
-except ModuleNotFoundError as exc:
-    if not (exc.name == "docling" or (exc.name or "").startswith("docling.")):
-        raise
-    # Safe PDF extraction needs no Docling. These stand-ins only hold its
-    # configuration until the caller selects the real Docling path.
-    from enum import Enum
-    from types import SimpleNamespace
+InputFormat = None
+ConversionResult = Any
+PdfPipelineOptions = AcceleratorOptions = LayoutOptions = TableStructureOptions = SimpleNamespace
+PictureDescriptionApiOptions = SimpleNamespace
+AcceleratorDevice = SimpleNamespace(AUTO="auto", CUDA="cuda", MPS="mps", CPU="cpu")
+TableFormerMode = SimpleNamespace(ACCURATE="accurate")
+settings = None
 
-    class ConversionStatus(str, Enum):
-        SUCCESS = "success"
-        PARTIAL_SUCCESS = "partial_success"
-        FAILURE = "failure"
+_DOCLING_DATAMODEL_LOADED = False
 
-    InputFormat = None
-    ConversionResult = Any
-    PdfPipelineOptions = AcceleratorOptions = LayoutOptions = TableStructureOptions = SimpleNamespace
-    PictureDescriptionApiOptions = SimpleNamespace
-    AcceleratorDevice = SimpleNamespace(AUTO="auto", CUDA="cuda", MPS="mps", CPU="cpu")
-    TableFormerMode = SimpleNamespace(ACCURATE="accurate")
-    settings = None
+
+def _ensure_docling_datamodel_loaded():
+    global _DOCLING_DATAMODEL_LOADED
+    global InputFormat, AcceleratorDevice, AcceleratorOptions
+    global PdfPipelineOptions, LayoutOptions, TableStructureOptions, TableFormerMode
+    global PictureDescriptionApiOptions, ConversionResult, settings
+    if _DOCLING_DATAMODEL_LOADED:
+        return
+    from .optional_dependencies import optional_dependencies
+    with optional_dependencies("layout"):
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import (
+            AcceleratorDevice,
+            AcceleratorOptions,
+            PdfPipelineOptions,
+            LayoutOptions,
+            TableStructureOptions,
+            TableFormerMode,
+        )
+
+        try:
+            from docling.datamodel.pipeline_options import PictureDescriptionApiOptions
+        except ImportError:  # pragma: no cover - older docling versions
+            class PictureDescriptionApiOptions:  # type: ignore
+                """Compatibility shim when PictureDescriptionApiOptions is missing."""
+
+                def __init__(self, *args, **kwargs):
+                    pass
+        from docling.datamodel.document import ConversionResult
+        from docling.datamodel.settings import settings
+    _DOCLING_DATAMODEL_LOADED = True
 
 
 def _maybe_import_torch(*, force: bool = False):
@@ -53,6 +61,8 @@ def _maybe_import_torch(*, force: bool = False):
     torch_mod = sys.modules.get("torch")
     if torch_mod is not None:
         return torch_mod
+    if not force:
+        return None
     try:
         return importlib.import_module("torch")  # type: ignore
     except Exception:
@@ -87,6 +97,7 @@ def _ensure_docling_converter_loaded() -> None:
     global PowerpointFormatOption, MarkdownFormatOption, CsvFormatOption
     if _DOC_CONVERTER_LOADED:
         return
+    _ensure_docling_datamodel_loaded()
     try:
         module = importlib.import_module("docling.document_converter")
         DocumentConverter = getattr(module, "DocumentConverter")
@@ -99,7 +110,7 @@ def _ensure_docling_converter_loaded() -> None:
         CsvFormatOption = getattr(module, "CsvFormatOption", _NoOpOption)
         _DOC_CONVERTER_LOADED = True
     except Exception as exc:
-        raise RuntimeError(f"Failed to load docling document converter components: {exc}")
+        raise RuntimeError(f"Failed to load Docling converter; install layout with `pip install 'glossapi[layout]'`: {exc}")
 
 
 def _ensure_docling_pipeline_loaded() -> None:
@@ -126,7 +137,7 @@ def _ensure_docling_pipeline_loaded() -> None:
         ).PyPdfiumDocumentBackend
         _DOC_PIPELINE_LOADED = True
     except Exception as exc:
-        raise RuntimeError(f"Failed to load docling PDF pipeline components: {exc}")
+        raise RuntimeError(f"Failed to load Docling pipeline; install layout with `pip install 'glossapi[layout]'`: {exc}")
 
 
 import inspect
@@ -151,7 +162,6 @@ import re
 from pathlib import Path
 from typing import Iterable, List, Tuple
 from multiprocessing import Pool, cpu_count
-from tqdm import tqdm
 import shutil
 from shutil import copy2
 from collections import defaultdict
@@ -611,6 +621,7 @@ class GlossExtract:
             return
         _ensure_docling_converter_loaded()
         _ensure_docling_pipeline_loaded()
+        _ensure_docling_datamodel_loaded()
         from docling.pipeline.simple_pipeline import SimplePipeline
         # Enable/disable Docling pipeline timings collection (for benchmarks)
         try:
@@ -867,14 +878,14 @@ class GlossExtract:
                         timeout_s=chunk_timeout_budget,
                         page_range=(start, end),
                     )
-                    if conv_res.status in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
+                    if getattr(conv_res.status, "value", conv_res.status) in (ConversionStatus.SUCCESS.value, ConversionStatus.PARTIAL_SUCCESS.value):
                         markdown_content = conv_res.document.export_to_markdown()
                         fixed_content = self._fix_greek_text(markdown_content)
                         chunk_name = f"{stem}__p{start:04d}-{end:04d}.md"
                         with (chunk_dir / chunk_name).open("w", encoding="utf-8") as fp:
                             fp.write(fixed_content)
                         all_segments.append(fixed_content)
-                        status = "ok" if conv_res.status == ConversionStatus.SUCCESS else "partial"
+                        status = "ok" if getattr(conv_res.status, "value", conv_res.status) == ConversionStatus.SUCCESS.value else "partial"
                         break
                     else:
                         status = "error"
@@ -1403,7 +1414,7 @@ class GlossExtract:
                         self._export_documents(conv_results, output_dir=output_dir)
                         for res in conv_results:
                             fname = self._original_extract_file(Path(res.input.file)).name
-                            if res.status in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
+                            if getattr(res.status, "value", res.status) in (ConversionStatus.SUCCESS.value, ConversionStatus.PARTIAL_SUCCESS.value):
                                 successful.append(fname)
                             else:
                                 problematic.append(fname)
@@ -1620,7 +1631,7 @@ class GlossExtract:
         partial_success_count = 0
         
         for conv_res in conv_results:
-            if conv_res.status == ConversionStatus.SUCCESS:
+            if getattr(conv_res.status, "value", conv_res.status) == ConversionStatus.SUCCESS.value:
                 success_count += 1
                 doc_filename = conv_res.input.file.stem
 
@@ -1661,7 +1672,7 @@ class GlossExtract:
                 # with (output_dir / f"{doc_filename}.json").open("w", encoding='utf-8') as fp:
                 #     json.dump(conv_res.document.export_to_dict(), fp, ensure_ascii=False, indent=2)
 
-            elif conv_res.status == ConversionStatus.PARTIAL_SUCCESS:
+            elif getattr(conv_res.status, "value", conv_res.status) == ConversionStatus.PARTIAL_SUCCESS.value:
                 self._log.info(
                     f"Document {conv_res.input.file} was partially extracted with the following errors:"
                 )

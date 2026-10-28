@@ -12,9 +12,12 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 from typing import Any, Dict, Optional, Tuple
 
-import aiofiles
-import aiohttp
-from PIL import Image
+from .optional_dependencies import optional_dependencies
+
+with optional_dependencies("browser"):
+    import aiofiles
+    import aiohttp
+    from PIL import Image
 
 from .download_policy import DownloadPolicy, load_download_policy
 from .gloss_downloader import GlossDownloader
@@ -282,7 +285,7 @@ class BrowserGlossDownloader(GlossDownloader):
         except ImportError as exc:  # pragma: no cover - exercised via monkeypatch
             raise RuntimeError(
                 "Browser download mode requires the optional 'browser' dependencies "
-                "(install Playwright and browser binaries)"
+                "(pip install 'glossapi[browser]'; then playwright install chromium)"
             ) from exc
 
         accepted_responses: list[tuple[str, Dict[str, str], str]] = []

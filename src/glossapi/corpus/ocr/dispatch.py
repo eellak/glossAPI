@@ -1,6 +1,8 @@
 """OCR remediation through Docling's external OCR engine entry points."""
 from __future__ import annotations
 
+from glossapi.optional_dependencies import optional_dependencies
+
 from importlib.metadata import entry_points
 
 from ...ocr import page_artifacts
@@ -26,8 +28,10 @@ def require_ocr_options(options):
 
 def _build_converter(request):
     try:
-        from docling.datamodel.base_models import InputFormat
-        from docling.document_converter import DocumentConverter, PdfFormatOption
+        with optional_dependencies("layout"):
+            from docling.datamodel.base_models import InputFormat
+        with optional_dependencies("layout"):
+            from docling.document_converter import DocumentConverter, PdfFormatOption
         from ...ocr.docling.pipeline import _apply_common_pdf_options, _resolve_accelerator
     except ImportError as exc:
         raise RuntimeError("Install glossapi[docling] and an OCR plugin to use Corpus.ocr().") from exc

@@ -18,12 +18,7 @@ import numpy as np
 import pandas as pd
 
 from .._naming import canonical_stem
-from ..gloss_downloader import GlossDownloader
 from ..gloss_section import GlossSection
-try:
-    from ..gloss_section_classifier import GlossSectionClassifier  # type: ignore
-except Exception:
-    GlossSectionClassifier = None  # type: ignore[assignment]
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch
@@ -148,10 +143,7 @@ class Corpus(
         # Lazy-create extractor to avoid heavy imports unless needed
         self.extractor = None
         self.sectioner = GlossSection()
-        try:
-            self.classifier = GlossSectionClassifier() if GlossSectionClassifier is not None else None  # type: ignore[call-arg, assignment]
-        except Exception:
-            self.classifier = None
+        self.classifier = None
         
         self.output_dir = Path(output_dir)
         self.downloads_dir = self.output_dir / "downloads"

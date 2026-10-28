@@ -10,6 +10,8 @@ cooperative document timeout. A zero-recovery sample cannot estimate its cost.
 """
 from __future__ import annotations
 
+from glossapi.optional_dependencies import optional_dependencies
+
 import argparse
 from dataclasses import asdict
 import hashlib
@@ -368,7 +370,8 @@ def sequential_document(path, adapter, config, output):
     No observation thread, second PDF handle, parser subprocess, timing model
     wrapper or previous ConversionResult lives across the next convert call.
     """
-    from docling.datamodel.base_models import ConversionStatus
+    with optional_dependencies("layout"):
+        from docling.datamodel.base_models import ConversionStatus
     began = time.monotonic()
     row = {"file": path.name, "pages": 0, "prepared_pages": 0, "status": "failed", "error": None}
     result = None

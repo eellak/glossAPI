@@ -19,8 +19,6 @@ import numpy as np
 import pandas as pd
 
 from .._naming import canonical_stem
-from ..gloss_browser_downloader import BrowserGlossDownloader
-from ..gloss_downloader import GlossDownloader
 # Avoid importing section/classifier here; download phase does not use them.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
@@ -54,6 +52,9 @@ class DownloadPhaseMixin:
         Returns:
             pd.DataFrame: DataFrame with download results
         """
+        from ..gloss_downloader import GlossDownloader
+        BrowserGlossDownloader = None
+
         # If input_parquet not specified, find parquet files in input_dir
         if input_parquet is None:
             parquet_files = list(self.input_dir.glob('*.parquet'))
@@ -222,9 +223,11 @@ class DownloadPhaseMixin:
             downloader_cls = GlossDownloader
             default_download_route = 'standard'
         elif download_mode in {'browser', 'browser_protected'} or policy_requested:
+            from ..gloss_browser_downloader import BrowserGlossDownloader
             downloader_cls = BrowserGlossDownloader
             default_download_route = 'browser' if download_mode in {'browser', 'browser_protected'} else 'standard'
         elif download_mode in {'auto', 'browser_fallback'}:
+            from ..gloss_browser_downloader import BrowserGlossDownloader
             downloader_cls = BrowserGlossDownloader
             default_download_route = 'auto'
         else:

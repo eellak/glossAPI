@@ -23,7 +23,7 @@ from typing import Iterable
 
 import pypdfium2 as pdfium
 
-from glossapi.pdf_repair.tounicode import _is_greek, _load_words, _text_stats
+from glossapi.pdf_repair.text_stats import _is_greek, _load_words, _text_stats
 
 
 @dataclass(frozen=True)

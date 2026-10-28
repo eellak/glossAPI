@@ -1,11 +1,11 @@
 """Conservative, CPU-only repair of PDF font Unicode maps."""
 
-from .tounicode import (
+from .reports import (
     FontReport,
     PdfFontReport,
     RepairResult,
-    extract_text_stats,
 )
+from .text_stats import extract_text_stats
 from .selector import analyze_pdf, get_backend, repair_pdf
 
 __all__ = [

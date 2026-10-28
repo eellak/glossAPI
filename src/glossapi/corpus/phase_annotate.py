@@ -19,7 +19,6 @@ import numpy as np
 import pandas as pd
 
 from .._naming import canonical_stem
-from ..gloss_downloader import GlossDownloader
 from ..gloss_section import GlossSection
 # Avoid importing classifier at import time; annotate() checks model presence and
 # uses the instance classifier initialized by the orchestrator when available.
@@ -39,6 +38,10 @@ class AnnotatePhaseMixin:
                            - 'chapter': Use chapter-based annotation with chapter numbers
             fully_annotate: Whether to perform full annotation of sections (default: True)
         """
+        if self.classifier is None:
+            from ..gloss_section_classifier import GlossSectionClassifier
+            self.classifier = GlossSectionClassifier()
+
         self.logger.info("Running section classification...")
 
         # Check if input parquet file exists

@@ -8,6 +8,8 @@ is reported separately. CPU results never constitute GPU performance evidence.
 """
 from __future__ import annotations
 
+from glossapi.optional_dependencies import optional_dependencies
+
 import argparse
 import hashlib
 import importlib.util
@@ -41,11 +43,7 @@ core = load_core()
 
 
 def page_count(path):
-    try:
-        import pypdfium2
-    except ImportError:
-        from pypdf import PdfReader
-        return len(PdfReader(path).pages)
+    import pypdfium2
     source = pypdfium2.PdfDocument(str(path))
     try:
         return len(source)
@@ -255,7 +253,8 @@ def run(args):
                     layout_forward_log=getattr(adapter, "forward_log", []),
                     mixed_batches=sum(len({p[0] for p in batch}) > 1 for batch in runner.batch_log))
             else:
-                from docling.datamodel.base_models import ConversionStatus
+                with optional_dependencies("layout"):
+                    from docling.datamodel.base_models import ConversionStatus
                 for path in paths:
                     try:
                         result = adapter.converter.convert(path, raises_on_error=False,

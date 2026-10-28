@@ -3,13 +3,16 @@ from __future__ import annotations
 import os
 from typing import Callable, Tuple
 
-from docling.datamodel.pipeline_options import (
-    AcceleratorDevice,
-    AcceleratorOptions,
-    PdfPipelineOptions,
-    TableFormerMode,
-    TableStructureOptions,
-)
+from ...optional_dependencies import optional_dependencies
+
+with optional_dependencies("layout"):
+    from docling.datamodel.pipeline_options import (
+        AcceleratorDevice,
+        AcceleratorOptions,
+        PdfPipelineOptions,
+        TableFormerMode,
+        TableStructureOptions,
+    )
 
 try:  # pragma: no cover - depends on installed Docling version
     from docling.datamodel.pipeline_options import LayoutOptions
@@ -188,10 +191,11 @@ def build_layout_pipeline(
     if options_hook is not None:
         options_hook(opts)
 
-    try:
-        from docling.pipelines.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
-    except Exception:  # pragma: no cover
-        from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
+    with optional_dependencies("layout"):
+        try:
+            from docling.pipelines.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
+        except Exception:  # pragma: no cover
+            from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline  # type: ignore
 
-    pipeline = StandardPdfPipeline(opts)  # type: ignore[arg-type]
+        pipeline = StandardPdfPipeline(opts)  # type: ignore[arg-type]
     return pipeline, opts

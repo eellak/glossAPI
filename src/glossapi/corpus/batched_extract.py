@@ -6,6 +6,8 @@ IPC. One owner thread calls both resident inference models. See T3_1_NOTES.md.
 """
 from __future__ import annotations
 
+from glossapi.optional_dependencies import optional_dependencies
+
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from copy import copy, deepcopy
@@ -860,12 +862,17 @@ def prepare_docling_page(path, page_no, *, images_scale=1.25, max_pages=None):
 def _prepare_docling_page(path, page_no, *, images_scale=1.25, max_pages=None):
     """CPU-only worker entry: one cached native backend per worker, no models."""
     global _CPU_CACHE
-    from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
-    from docling.datamodel.base_models import InputFormat, Page
-    from docling.datamodel.document import InputDocument, ConversionResult
-    from docling.datamodel.settings import settings
-    from docling.models.stages.page_preprocessing.page_preprocessing_model import (
-        PagePreprocessingModel, PagePreprocessingOptions)
+    with optional_dependencies("layout"):
+        from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
+    with optional_dependencies("layout"):
+        from docling.datamodel.base_models import InputFormat, Page
+    with optional_dependencies("layout"):
+        from docling.datamodel.document import InputDocument, ConversionResult
+    with optional_dependencies("layout"):
+        from docling.datamodel.settings import settings
+    with optional_dependencies("layout"):
+        from docling.models.stages.page_preprocessing.page_preprocessing_model import (
+            PagePreprocessingModel, PagePreprocessingOptions)
     settings.debug.profile_pipeline_timings = True
     if _CPU_CACHE is None or _CPU_CACHE[0] != path:
         _discard_cpu_backend()
@@ -993,10 +1000,14 @@ class DoclingAdapter:
         for key in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                     "VECLIB_MAXIMUM_THREADS", "NUMEXPR_NUM_THREADS"):
             os.environ.setdefault(key, "1")
-        from docling.document_converter import DocumentConverter, PdfFormatOption
-        from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.settings import settings
-        from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
+        with optional_dependencies("layout"):
+            from docling.document_converter import DocumentConverter, PdfFormatOption
+        with optional_dependencies("layout"):
+            from docling.datamodel.base_models import InputFormat
+        with optional_dependencies("layout"):
+            from docling.datamodel.settings import settings
+        with optional_dependencies("layout"):
+            from docling.backend.docling_parse_backend import DoclingParseDocumentBackend
         from glossapi.ocr.docling.pipeline import _apply_common_pdf_options, _resolve_accelerator
         options = _apply_common_pdf_options(acc=_resolve_accelerator(device)[0],
             images_scale=images_scale, formula_enrichment=False, code_enrichment=False)
@@ -1028,9 +1039,12 @@ class DoclingAdapter:
         self.exporter = exporter
 
     def open(self, path, metadata):
-        from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.document import InputDocument, ConversionResult
-        from docling.datamodel.settings import DocumentLimits
+        with optional_dependencies("layout"):
+            from docling.datamodel.base_models import InputFormat
+        with optional_dependencies("layout"):
+            from docling.datamodel.document import InputDocument, ConversionResult
+        with optional_dependencies("layout"):
+            from docling.datamodel.settings import DocumentLimits
         source = InputDocument.model_construct(file=path, format=InputFormat.PDF,
             document_hash=metadata["document_hash"], filesize=metadata["filesize"],
             page_count=metadata["page_count"], valid=True,
@@ -1048,7 +1062,8 @@ class DoclingAdapter:
         work.payload = page
 
     def layout(self, batch, results):
-        from docling.utils.profiling import ProfilingItem, ProfilingScope
+        with optional_dependencies("layout"):
+            from docling.utils.profiling import ProfilingItem, ProfilingScope
         model = self.pipeline.layout_model
         if isinstance(model, _PerPageLayoutTimings):
             model = model.model
@@ -1106,7 +1121,8 @@ class DoclingAdapter:
         self.pipeline._release_page_resources(type("Item", (), {"payload": work.payload})())
 
     def finish(self, result, pages):
-        from docling.datamodel.base_models import ConversionStatus
+        with optional_dependencies("layout"):
+            from docling.datamodel.base_models import ConversionStatus
         result.pages = pages
         result.status = ConversionStatus.SUCCESS
         # Timings must follow page order too: downstream per-page metrics maps
@@ -1123,7 +1139,8 @@ class DoclingAdapter:
         result = self.pipeline._assemble_document(result)
         result = self.pipeline._enrich_document(result)
         if hasattr(result, "_t31_started"):
-            from docling.utils.profiling import ProfilingItem, ProfilingScope
+            with optional_dependencies("layout"):
+                from docling.utils.profiling import ProfilingItem, ProfilingScope
             from datetime import datetime, timezone
             elapsed = time.monotonic() - result._t31_started
             result.timings["pipeline_total"] = ProfilingItem(scope=ProfilingScope.DOCUMENT,
@@ -1213,7 +1230,8 @@ def corpus_batched_extract(self, original, *args, _auto_cuda=False, **kwargs):
             fallback_result = saved(fallback, out, skip_existing=skip_existing) if fallback else None
             if not batchable:
                 return fallback_result
-            from docling.datamodel.base_models import InputFormat
+            with optional_dependencies("layout"):
+                from docling.datamodel.base_models import InputFormat
             exporter.converter.initialize_pipeline(InputFormat.PDF)
             adapter = DoclingAdapter.__new__(DoclingAdapter)
             adapter.converter = exporter.converter

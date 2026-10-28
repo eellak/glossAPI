@@ -21,7 +21,6 @@ import pandas as pd
 import zstandard as zstd
 
 from .._naming import canonical_stem
-from ..gloss_downloader import GlossDownloader
 from ..gloss_section import GlossSection
 # Avoid importing classifier at import time; export phase does not require it.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path

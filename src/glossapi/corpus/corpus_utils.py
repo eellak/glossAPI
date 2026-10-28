@@ -15,6 +15,8 @@ def _maybe_import_torch(*, force: bool = False) -> Optional[ModuleType]:
         torch_mod = sys.modules.get("torch")
         if torch_mod is not None:
             return torch_mod
+    if not force:
+        return None
     try:
         return importlib.import_module("torch")  # type: ignore[import]
     except Exception:

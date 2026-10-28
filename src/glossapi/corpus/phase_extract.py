@@ -1,6 +1,8 @@
 """Phase-1 extraction helpers split from Corpus."""
 from __future__ import annotations
 
+from glossapi.optional_dependencies import optional_dependencies
+
 import json
 import logging
 import math
@@ -19,7 +21,6 @@ import numpy as np
 import pandas as pd
 
 from .._naming import canonical_stem
-from ..gloss_downloader import GlossDownloader
 # Avoid importing section/classifier here; extract phase does not use them.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
@@ -101,18 +102,6 @@ def _estimate_extract_work_pages(path: Path) -> int:
                 close()
     except Exception:
         pass
-
-    for module_name, attr_name in (
-        ("pypdf", "PdfReader"),
-        ("PyPDF2", "PdfReader"),
-    ):
-        try:
-            module = __import__(module_name, fromlist=[attr_name])
-            reader_cls = getattr(module, attr_name)
-            reader = reader_cls(str(path))
-            return max(1, int(len(reader.pages)))
-        except Exception:
-            continue
 
     return 1
 
@@ -1044,7 +1033,8 @@ class ExtractPhaseMixin:
                 except Exception:
                     pass
                 try:
-                    from docling.models.code_formula_model import CodeFormulaModel  # type: ignore
+                    with optional_dependencies("layout"):
+                        from docling.models.code_formula_model import CodeFormulaModel  # type: ignore
                     fb = int(formula_batch_env) if str(formula_batch_env).isdigit() else 16
                     CodeFormulaModel.elements_batch_size = int(fb)  # type: ignore[attr-defined]
                 except Exception:

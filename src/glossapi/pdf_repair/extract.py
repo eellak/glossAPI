@@ -54,7 +54,7 @@ def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: flo
     target = root / "repaired_pdfs" / f"{source.stem}.pdf"
     try:
         with _deadline(deadline - time.monotonic()):
-            from . import tounicode
+            from . import text_stats
             from .selector import get_backend
             from .protection import protect_sources
 
@@ -62,7 +62,7 @@ def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: flo
                 if not os.environ.get("GLOSSAPI_GREEK_WORDLIST"):
                     return None
                 try:
-                    return tounicode.extract_text_stats(path, max_pages=20)["totals"]["dictionary_valid_rate"]
+                    return text_stats.extract_text_stats(path, max_pages=20)["totals"]["dictionary_valid_rate"]
                 except Exception:
                     return None
 

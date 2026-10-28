@@ -25,10 +25,7 @@ except ImportError:  # pragma: no cover - exercised when pyarrow missing
     pa = None  # type: ignore[assignment]
     pq = None  # type: ignore[assignment]
 
-try:
-    from filelock import FileLock
-except ImportError:  # pragma: no cover - optional helper
-    FileLock = None
+from filelock import FileLock
 
 from ._naming import canonical_stem
 

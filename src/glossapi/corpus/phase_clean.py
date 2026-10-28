@@ -36,7 +36,6 @@ import numpy as np
 import pandas as pd
 
 from .._naming import canonical_stem
-from ..gloss_downloader import GlossDownloader
 # Avoid importing section/classifier here; cleaning phase does not use them.
 from .ocr_table import (
     HTML_TABLE_BLOCK_RE,

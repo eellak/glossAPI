@@ -78,42 +78,10 @@ def _apply_cli_tuning_overrides(args: argparse.Namespace) -> None:
 
 
 def _count_pdf_pages(pdf_path: Path) -> int:
-    try:
-        import fitz
-
-        doc = fitz.open(pdf_path)
-        try:
-            return int(doc.page_count)
-        finally:
-            doc.close()
-    except Exception:
-        pass
-
-    try:
-        import pypdfium2 as pdfium
-
-        pdf = pdfium.PdfDocument(str(pdf_path))
-        try:
-            return int(len(pdf))
-        finally:
-            try:
-                pdf.close()
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    try:
-        from pypdf import PdfReader
-
-        return int(len(PdfReader(str(pdf_path)).pages))
-    except Exception as exc:
-        try:
-            from PyPDF2 import PdfReader  # type: ignore
-
-            return int(len(PdfReader(str(pdf_path)).pages))
-        except Exception as exc2:
-            raise RuntimeError(f"Unable to count PDF pages for {pdf_path}: {exc2}") from exc2
+    from contextlib import closing
+    import pypdfium2 as pdfium
+    with closing(pdfium.PdfDocument(str(pdf_path))) as pdf:
+        return len(pdf)
 
 
 def _sha256_bytes(data: bytes) -> str:

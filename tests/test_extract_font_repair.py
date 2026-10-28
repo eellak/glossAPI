@@ -232,7 +232,8 @@ def test_timeout_after_repair_does_not_publish(greek_fixture, tmp_path, monkeypa
         if Path(path) != source:
             time.sleep(2)
         return {"totals": {"dictionary_valid_rate": 0.0}}
-    monkeypatch.setattr(tounicode, "extract_text_stats", stats)
+    from glossapi.pdf_repair import text_stats
+    monkeypatch.setattr(text_stats, "extract_text_stats", stats)
     _extract(corpus)
     assert _row(tmp_path, source.name).font_repair_status == "error"
     assert not (tmp_path / "repaired_pdfs" / source.name).exists()

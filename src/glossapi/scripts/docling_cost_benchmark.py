@@ -1,6 +1,8 @@
 """Isolated E3 layout benchmarks; importing this module never imports Docling/Corpus."""
 from __future__ import annotations
 
+from glossapi.optional_dependencies import optional_dependencies
+
 import argparse
 from contextlib import contextmanager, nullcontext
 from difflib import SequenceMatcher
@@ -48,7 +50,8 @@ def apply_variant(options: Any, name: str) -> None:
         if obj is None or not hasattr(obj, attr):
             raise UnsupportedVariant(f"{name}: installed options do not expose {field}")
         if field == "table_structure_options.mode":
-            from docling.datamodel.pipeline_options import TableFormerMode
+            with optional_dependencies("layout"):
+                from docling.datamodel.pipeline_options import TableFormerMode
             value = getattr(TableFormerMode, value)
         try:
             setattr(obj, attr, value)
@@ -349,7 +352,7 @@ def run_variant(config: dict[str, Any], variant: str, out: Path) -> dict[str, An
                         kwargs["page_range"] = (1, min(config["max_pages"], pages[str(Path(files[0]))]))
                     results = convert_all(files, timeout_s, **kwargs)
                     conversion["pages"] = sum(len(res.document.pages) for res in results if res.document is not None)
-                    conversion["success"] = all(res.status == extract_module.ConversionStatus.SUCCESS for res in results)
+                    conversion["success"] = all(getattr(res.status, "value", res.status) == extract_module.ConversionStatus.SUCCESS.value for res in results)
                     return results
                 extractor._convert_all_with_timeout = limited_convert
 
@@ -464,8 +467,10 @@ def _pdf_paths(inputs: list[str]) -> list[Path]:
 
 def _count_pages(path: Path) -> int:
     # Lightweight readers only; do not import the Corpus-based checkpoint benchmark.
-    from pypdf import PdfReader
-    pages = len(PdfReader(str(path)).pages)
+    from contextlib import closing
+    import pypdfium2 as pdfium
+    with closing(pdfium.PdfDocument(str(path))) as pdf:
+        pages = len(pdf)
     if pages < 1:
         raise ValueError(f"PDF has no pages: {path}")
     return pages

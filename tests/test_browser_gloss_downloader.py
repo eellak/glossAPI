@@ -7,7 +7,7 @@ from PIL import Image
 from glossapi import Corpus
 from glossapi.download_policy import build_download_policy
 from glossapi.gloss_browser_downloader import BrowserGlossDownloader, BrowserSessionState
-import glossapi.corpus.phase_download as phase_download_mod
+import glossapi.gloss_browser_downloader as browser_downloader_mod
 
 
 def test_browser_downloader_skips_viewer_interstitial(tmp_path, monkeypatch):
@@ -402,7 +402,7 @@ def test_corpus_download_mode_selects_browser_downloader(tmp_path, monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(phase_download_mod, "BrowserGlossDownloader", DummyBrowserDownloader)
+    monkeypatch.setattr(browser_downloader_mod, "BrowserGlossDownloader", DummyBrowserDownloader)
 
     corpus = Corpus(input_dir=tmp_path, output_dir=tmp_path)
     result = corpus.download(input_parquet=input_parquet, download_mode="browser")
@@ -434,7 +434,7 @@ def test_corpus_browser_mode_alias_selects_browser_downloader(tmp_path, monkeypa
                 }
             )
 
-    monkeypatch.setattr(phase_download_mod, "BrowserGlossDownloader", DummyBrowserDownloader)
+    monkeypatch.setattr(browser_downloader_mod, "BrowserGlossDownloader", DummyBrowserDownloader)
 
     corpus = Corpus(input_dir=tmp_path, output_dir=tmp_path)
     corpus.download(input_parquet=input_parquet, browser_mode=True)
@@ -468,7 +468,7 @@ def test_corpus_policy_file_selects_browser_router(tmp_path, monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(phase_download_mod, "BrowserGlossDownloader", DummyBrowserDownloader)
+    monkeypatch.setattr(browser_downloader_mod, "BrowserGlossDownloader", DummyBrowserDownloader)
 
     corpus = Corpus(input_dir=tmp_path, output_dir=tmp_path)
     corpus.download(input_parquet=input_parquet, download_policy_file=policy_path)
