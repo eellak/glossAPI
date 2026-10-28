@@ -22,8 +22,9 @@ import time
 import traceback as traceback_module
 from urllib.parse import urlsplit, urlunsplit
 
-from .encoding import canonical_json, dataframe_records, file_hash, typed_value
+from .encoding import canonical_json, dataframe_records, file_hash, pack_evidence, typed_value
 from .writer import LedgerWriter, new_id, utc_now
+from .stores import TEXT_FIELDS, membership_snapshot, read_store, store_states
 
 _active_journal = ContextVar("glossapi_shadow_result_journal", default=None)
 _loaded_tools_cache = {}
@@ -47,7 +48,7 @@ def payload_evidence(value):
     if isinstance(value, dict):
         result = {}
         for key, item in value.items():
-            if key in ("text", "content", "markdown", "latex", "body") and isinstance(item, str):
+            if key in TEXT_FIELDS and isinstance(item, str):
                 result[key] = {"sha256": hashlib.sha256(item.encode("utf-8")).hexdigest(), "characters": len(item)}
             else:
                 result[key] = payload_evidence(item)
@@ -175,8 +176,17 @@ class ResultJournal:
                 document_id = writer.document(source_key(uri))
                 version_id = writer.version(document_id, source_sha256=digest, stored_sha256=digest)
                 self.versions[str(path)] = version_id
-                writer.source_record(document_id, self.run_id, uri, {"path": str(path), "naming_policy": "local_path:v1", "provenance": "local_input_observed"}, source_row=str(ordinal))
-                file_id = writer.artifact(self.run_id, stage, "initial_input", uri, sha256=digest, bytes=path.stat().st_size if present else None, version_id=version_id, ownership="initial_external", retention_class="initial", presence="present" if present else "missing")
+                metadata = {"path": str(path), "naming_policy": "local_path:v1", "provenance": "local_input_observed"}
+                encoded_metadata = canonical_json({"schema_version": 1, "fields": typed_value(metadata)})
+                # The same source occurrence is an input to five wrappers, not
+                # five new acquisition rows. Each attempt still binds its file.
+                if writer.connection.execute("SELECT 1 FROM source_records WHERE document_id=? AND source_uri=? AND source_row=? AND manifest_sha256 IS NULL AND metadata_json=? LIMIT 1",
+                        (document_id, uri, str(ordinal), encoded_metadata)).fetchone() is None:
+                    writer.source_record(document_id, self.run_id, uri, metadata, source_row=str(ordinal))
+                size = path.stat().st_size if present else None
+                prior = writer.connection.execute("SELECT file_id FROM current_file_state WHERE uri=? AND sha256 IS ? AND bytes IS ? AND version_id=? AND presence=? ORDER BY event_id DESC LIMIT 1",
+                    (uri, digest, size, version_id, "present" if present else "missing")).fetchone()
+                file_id = prior[0] if prior else writer.artifact(self.run_id, stage, "initial_input", uri, sha256=digest, bytes=size, version_id=version_id, ownership="initial_external", retention_class="initial", presence="present" if present else "missing")
                 if digest is not None:
                     observed_inputs.append({"file_id": file_id, "role": f"source_observation:{ordinal}", "sha256": digest})
                 if str(path) not in self.document_tasks:
@@ -186,13 +196,17 @@ class ResultJournal:
             source_inventory_hash = writer.snapshot("inputs", {"kind": "inputs", "files": observed_inputs})
             self.task_id = writer.task(self.run_id, stage, operation, {"compatibility_profile": "legacy_shadow", "required_output_kinds": [], "parameters": self.parameters, "source_inventory_sha256": source_inventory_hash}, scope_key="corpus:" + source_inventory_hash)
             self.attempt_id = writer.attempt(self.task_id, worker_id=f"orchestrator:{os.getpid()}", device_id=str(parameters.get("accel_type", "unknown_not_recorded")),
-                fingerprint={"reuse_eligible": False, "provenance": "shadow_observation", "code_revision": self.revision, "observed_inputs": observed_inputs}, inputs={"files": observed_inputs}, settings=self.parameters, tools=loaded_tools())
+                fingerprint={"reuse_eligible": False, "provenance": "shadow_observation", "code_revision": self.revision, "source_inventory_sha256": source_inventory_hash}, inputs={"files": observed_inputs}, settings=self.parameters, tools=loaded_tools())
             for input_reference in observed_inputs:
                 writer.input(self.attempt_id, input_reference["file_id"], input_reference["role"], input_reference["sha256"])
             writer.event(self.run_id, event_kind="lifecycle", reason_code="stage_planned", status="planned", task_id=self.task_id)
             writer.event(self.run_id, event_kind="lifecycle", reason_code="stage_started", status="running", task_id=self.task_id, attempt_id=self.attempt_id, started_at=self.started_at)
             for name, receipt in self.before.items():
                 self._register(Path(name), receipt, producer=None)
+        # Capture a pre-existing store before its first legacy mutation. New
+        # stores start from an empty row set; subsequent calls append deltas.
+        for name in self.before:
+            self.store(Path(name), kind="legacy_preexisting", preexisting=True)
         original_frame = getattr(corpus, "_shadow_original_source_frame", None)
         if original_frame is not None and corpus.metadata_path is not None:
             self.source_rows(original_frame, Path(corpus.metadata_path), url_column=corpus.url_column)
@@ -202,7 +216,14 @@ class ResultJournal:
         # Unbound compatibility files stay aggregate observations. A nearby
         # source, or even a singleton source set, is not evidence of ownership.
         relative = str(path.relative_to(self.corpus.output_dir.absolute())) if path.is_relative_to(self.corpus.output_dir.absolute()) else str(path)
-        file_id = self.writer.artifact(self.run_id, self.stage, kind or relative, path.absolute().as_uri(), **receipt,
+        uri = path.absolute().as_uri()
+        previous = self.writer.connection.execute(
+            "SELECT file_id,version_id FROM current_file_state WHERE uri=? AND sha256=? AND bytes=? AND presence='present' ORDER BY event_id DESC LIMIT 1",
+            (uri, receipt["sha256"], receipt["bytes"])).fetchone()
+        if previous is not None:
+            self.files[str(path.absolute())] = (previous[0], previous[1], receipt)
+            return previous[0]
+        file_id = self.writer.artifact(self.run_id, self.stage, kind or relative, uri, **receipt,
             version_id=version_id, producer_attempt_id=producer, ownership="managed" if producer else "legacy_external",
             retention_class="evidence" if path.suffix in (".json", ".jsonl", ".parquet") else "intermediate")
         self.files[str(path.absolute())] = (file_id, version_id, receipt)
@@ -211,7 +232,7 @@ class ResultJournal:
     def observe(self, reason_code, *, path=None, error=None, status=None, message="", **details):
         reported_error = details.pop("reported_error", None)
         receipt = {"observation": "current_branch", "operation": self.operation, "path": str(path) if path is not None else None,
-                   "backend_status": status, "retryable": details.pop("retryable", None), **safe_settings(details)}
+                   "backend_status": status, "retryable": details.pop("retryable", None), **payload_evidence(details)}
         if error is not None:
             error_type = type(error).__module__ + "." + type(error).__name__
             trace = "".join(traceback_module.format_exception(type(error), error, error.__traceback__))
@@ -221,7 +242,7 @@ class ResultJournal:
             message = message or reported_error["message"]
         else: error_type, trace = None, None
         with self.writer.transaction():
-            evidence_hash = self.writer.snapshot("branch_evidence", {"kind": "branch_evidence", **receipt})
+            evidence_hash = self.branch_snapshot({"kind": "branch_evidence", **receipt})
             self.writer.event(self.run_id, event_kind="decision", reason_code=reason_code, task_id=self.task_id, attempt_id=self.attempt_id,
                 message=message, error_type=error_type, traceback=trace, details={"evidence_sha256": evidence_hash})
         if path is not None:
@@ -232,39 +253,89 @@ class ResultJournal:
         elif status == "skipped": self.skips.append(reason_code)
         elif status == "ok": self.successes.append(reason_code)
 
-    def store(self, path, *, kind):
+    def branch_snapshot(self, value):
+        value = dict(value)
+        for field, members in list(value.items()):
+            if (isinstance(members, list) and members and
+                    (len(members) >= 8 or field in ("stems", "legacy_stems", "processed", "problematic")) and
+                    all(isinstance(v, str) for v in members) and members == sorted(set(members))):
+                scope = canonical_json([str(value.get("path") or self.corpus.output_dir.absolute().as_uri()), field])
+                digest = membership_snapshot(self.writer, scope, members)
+                value.pop(field)
+                value.setdefault("shared_fields", {})[field] = digest
+        return self.writer.snapshot("branch_evidence", pack_evidence(value))
+
+    def store(self, path, *, kind, preexisting=False, register=True):
         if path.is_dir():
             for child in sorted(path.rglob("*")):
-                if child.is_file(): self.store(child, kind=kind)
+                if child.is_file(): self.store(child, kind=kind, preexisting=preexisting, register=register)
             return
         if not path.is_file(): return
         receipt = {"sha256": file_hash(path), "bytes": path.stat().st_size}
+        uri = path.absolute().as_uri()
+        states = store_states(self.writer)
+        previous = states.get(uri)
+        if previous and previous["sha256"] == receipt["sha256"]:
+            return
+        read_error = None
+        try:
+            decoded = read_store(path, payload_evidence, kind=kind)
+        except Exception as caught:
+            read_error = type(caught).__name__
+            decoded = ({"format": "unreadable", "read_error_type": type(caught).__name__,
+                        "read_error_message": str(caught)}, {})
+        self._store_observation(path, kind, receipt, decoded, read_error, preexisting=preexisting, register=register)
+
+    def _store_observation(self, path, kind, receipt, decoded, read_error=None, *, preexisting=False, register=True):
+        """Commit local or forwarded rows; workers never open this database."""
+        uri = path.absolute().as_uri()
+        states = store_states(self.writer)
+        previous = states.get(uri)
+        if previous and previous["sha256"] == receipt["sha256"]:
+            return
         with self.writer.transaction():
-            self._register(path.absolute(), receipt, producer=None, kind=kind)
-            # Existing versioned diagnostics can be explained after payload removal.
-            value = None
-            if path.suffix == ".parquet" and "pandas" in sys.modules:
-                try:
-                    frame = sys.modules["pandas"].read_parquet(path)
-                    value = {"columns": [{"name": str(name), "dtype": str(dtype)} for name, dtype in frame.dtypes.items()],
-                        "rows": [typed_value({name: ({"sha256": hashlib.sha256(str(item).encode()).hexdigest(), "characters": len(str(item))} if name in ("text", "content", "title", "markdown") else item) for name, item in row.items()}) for _, row in dataframe_records(frame)]}
-                except Exception as caught:
-                    value = {"read_error_type": type(caught).__name__, "read_error_message": str(caught)}
-            if path.suffix == ".json" and not path.name.endswith(".docling.json"):
-                try: value = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, ValueError): value = None
-            if value is not None:
-                digest = self.writer.snapshot("legacy_store", {"kind": kind, "uri": path.absolute().as_uri(), "sha256": receipt["sha256"], "payload": payload_evidence(value), "binding": "observed_not_verified"})
-                self.writer.event(self.run_id, event_kind="import", reason_code="legacy_observed", task_id=self.task_id, attempt_id=self.attempt_id, details={"evidence_sha256": digest})
+            if register:
+                self._register(path.absolute(), receipt, producer=None, kind=kind)
+            if decoded is None:
+                return  # Ordinary PDF/Markdown/JSONL/Docling bodies stay files.
+            schema, rows = decoded
+            schema_hash = self.writer.snapshot("store_schema", {"kind": "store_schema", **schema})
+            old_rows = previous["rows"] if previous else {}
+            if read_error:
+                rows = old_rows
+            delta = {"kind": kind, "encoding": "row_delta_v1", "uri": uri, **receipt,
+                     "row_count": None if read_error else len(rows), "schema_sha256": schema_hash,
+                     "row_count_unavailable_reason": read_error,
+                     "previous_sha256": previous["digest"] if previous else None,
+                     "mode": "first_import" if preexisting and previous is None else "delta",
+                     "changed": {key: row for key, row in rows.items() if key not in old_rows or old_rows[key] != row},
+                     "deleted": sorted(old_rows.keys() - rows.keys()), "binding": "observed_not_verified"}
+            digest = self.writer.snapshot("legacy_store", delta)
+            self.writer.event(self.run_id, event_kind="import", reason_code="legacy_observed", task_id=self.task_id, attempt_id=self.attempt_id, details={"evidence_sha256": digest})
+        # Publish cache only after commit; a rolled-back write cannot become a base.
+        states[uri] = {"digest": digest, "rows": rows, "schema_sha256": schema_hash, "sha256": receipt["sha256"]}
 
     def source_rows(self, frame, path, *, url_column):
         columns = [{"name": str(name), "dtype": str(dtype)} for name, dtype in frame.dtypes.items()]
+        frame_digest = hashlib.sha256(canonical_json(columns).encode("utf-8"))
+        for index, row in dataframe_records(frame):
+            frame_digest.update(canonical_json([typed_value(index), typed_value(row)]).encode("utf-8"))
+        frame_hash = frame_digest.hexdigest()
         with self.writer.transaction():
             manifest_hash = file_hash(path) if path.is_file() else None
-            manifest_file = self.writer.artifact(self.run_id, self.stage, "source_manifest", path.absolute().as_uri(), sha256=manifest_hash, bytes=path.stat().st_size if path.is_file() else None, ownership="initial_external", retention_class="initial", presence="present" if path.is_file() else "missing")
+            for original_digest, encoded in self.writer.connection.execute("SELECT sha256,json FROM snapshots WHERE kind='source_manifest'"):
+                original = json.loads(encoded)
+                if original.get("uri") == path.absolute().as_uri() and original.get("frame_sha256") == frame_hash and original.get("url_column") == url_column:
+                    self.writer.event(self.run_id, event_kind="import", reason_code="legacy_observed", task_id=self.task_id,
+                        attempt_id=self.attempt_id, details={"source_manifest_sha256": original_digest,
+                            "current_file_sha256": manifest_hash, "binding": "original_frame_reobserved_current_bytes_not_verified"})
+                    return
+            previous_file = self.writer.connection.execute("SELECT file_id FROM files WHERE uri=? AND sha256 IS ? ORDER BY rowid DESC LIMIT 1", (path.absolute().as_uri(), manifest_hash)).fetchone()
+            manifest_file = previous_file[0] if previous_file else self.writer.artifact(self.run_id, self.stage, "source_manifest", path.absolute().as_uri(), sha256=manifest_hash, bytes=path.stat().st_size if path.is_file() else None, ownership="initial_external", retention_class="initial", presence="present" if path.is_file() else "missing")
             manifest = self.writer.snapshot("source_manifest", {"kind": "source_manifest", "uri": path.absolute().as_uri(), "original_file_sha256": manifest_hash, "original_file_id": manifest_file, "binding": "legacy_dataframe_and_current_manifest_bytes_observed_not_verified",
-                "columns": columns, "rows": [{"index": typed_value(index), "fields": typed_value(row)} for index, row in dataframe_records(frame)]})
-            if manifest in self.source_manifests: return
+                "columns": columns, "frame_sha256": frame_hash, "url_column": url_column, "row_count": len(frame), "row_indices": [typed_value(index) for index in frame.index],
+                "metadata_home": "source_records.metadata_json; source_row is the occurrence ordinal"})
+            if manifest in self.source_manifests or self.writer.connection.execute("SELECT 1 FROM source_records WHERE manifest_sha256=? LIMIT 1", (manifest,)).fetchone(): return
             self.source_manifests.add(manifest)
             for ordinal, (index, row) in enumerate(dataframe_records(frame)):
                 values = row; uri = values.get(url_column)
@@ -279,7 +350,10 @@ class ResultJournal:
         after = inventory(self.corpus.output_dir)
         for name, receipt in after.items():
             if self.before.get(name) != receipt:
-                self.store(Path(name), kind=str(Path(name).relative_to(self.corpus.output_dir.absolute())))
+                # Terminal output registration below owns this file fact. Early
+                # hooks still register transient observations before cleanup;
+                # the final inventory must not create a duplicate unowned fact.
+                self.store(Path(name), kind=str(Path(name).relative_to(self.corpus.output_dir.absolute())), register=False)
         with self.writer.transaction():
             for name, (file_id, version_id, receipt) in self.files.items():
                 if not Path(name).exists() and self.writer.connection.execute("SELECT presence FROM current_file_state WHERE file_id=?", (file_id,)).fetchone()[0] != "deleted":
@@ -305,7 +379,7 @@ class ResultJournal:
                 error_type=type(error).__module__ + "." + type(error).__name__ if error else None, traceback=trace, message=str(error) if error else "Legacy wrapper observation",
                 details={"wrapper_return": wrapper_return_receipt(result), "wrapper_raised": error is not None, "mode": "shadow", "reuse_eligible": False,
                          "tools_sha256": self.writer.snapshot("tools", {"kind": "tools", **loaded_tools()}),
-                         "observed_files": [{"file_id": file_id, **receipt} for file_id, _, receipt in self.files.values()],
+                         "observed_files": [{"file_id": file_id} for file_id, _, _ in self.files.values()],
                          "unavailable": ["native_rule_spans", "unreported_worker_substeps", "unreported_model_identity"],
                          "measurement_basis": "wrapper_and_observation_wall_monotonic_ns", "cpu_ns": None, "peak_rss_bytes": None})
 
@@ -357,11 +431,26 @@ class WorkerObservations:
             "message": message or (str(error) if error else ""),
             "error_type": type(error).__module__ + "." + type(error).__name__ if error else None,
             "traceback": "".join(traceback_module.format_exception(type(error), error, error.__traceback__)) if error else None,
-            "details": {"worker_pid": os.getpid(), "visible_device_ids": os.environ.get("CUDA_VISIBLE_DEVICES"), **safe_settings(details)}})
+            "details": {"worker_pid": os.getpid(), "visible_device_ids": os.environ.get("CUDA_VISIBLE_DEVICES"), **payload_evidence(details)}})
 
     def store(self, path, *, kind):
+        if path.is_dir():
+            for child in sorted(path.rglob("*")):
+                if child.is_file(): self.store(child, kind=kind)
+            return
         if path.is_file():
-            self.observe("legacy_observed", path=path, store_kind=kind, sha256=file_hash(path), bytes=path.stat().st_size)
+            fact = {"sha256": file_hash(path), "bytes": path.stat().st_size}
+            read_error = None
+            try:
+                decoded = read_store(path, payload_evidence, kind=kind)
+            except Exception as caught:
+                read_error = type(caught).__name__
+                decoded = ({"format": "unreadable", "read_error_type": read_error,
+                            "read_error_message": str(caught)}, {})
+            self.observe("legacy_observed", path=path, store_kind=kind, **fact)
+            # Transport observed rows before legacy cleanup can erase them.
+            # Only the owning writer computes/persists the committed row delta.
+            self.receipts[-1]["store_observation"] = {"decoded": decoded, "read_error": read_error}
 
     def source_rows(self, frame, path, *, url_column):
         self.observe("legacy_observed", path=path, source_rows=[{"index":typed_value(index), "fields":typed_value(row)} for index,row in dataframe_records(frame)])
@@ -394,11 +483,23 @@ def accept_worker_observations(receipts):
     journal = _active_journal.get()
     if not isinstance(journal, ResultJournal): return
     for receipt in receipts:
+        forwarded_store = receipt.get("store_observation")
+        if forwarded_store is not None:
+            journal._store_observation(Path(receipt["path"]), receipt["details"]["store_kind"],
+                {key: receipt["details"][key] for key in ("sha256", "bytes")},
+                forwarded_store["decoded"], forwarded_store["read_error"])
         with journal.writer.transaction():
+            details = dict(receipt["details"])
+            if "source_rows" in details:
+                details["source_rows_sha256"] = journal.writer.snapshot("worker_source_rows", {
+                    "kind": "worker_source_rows", "uri": receipt["path"], "rows": details.pop("source_rows")})
+            evidence_hash = journal.branch_snapshot({"kind": "branch_evidence",
+                "measurement_basis": "worker_report", "path": receipt["path"],
+                "backend_status": receipt["status"], **details})
             journal.writer.event(journal.run_id, event_kind="decision", reason_code=receipt["reason_code"],
                 task_id=journal.task_id, attempt_id=journal.attempt_id, message=receipt["message"],
                 error_type=receipt["error_type"], traceback=receipt["traceback"],
-                details={"measurement_basis":"worker_report", "path":receipt["path"], "backend_status":receipt["status"], **receipt["details"]})
+                details={"measurement_basis": "worker_report", "evidence_sha256": evidence_hash})
         if receipt.get("path"):
             exact_path = str(Path(receipt["path"]).absolute())
             if exact_path in journal.document_tasks and receipt["status"] in ("ok", "skipped", "failed"):

@@ -378,9 +378,11 @@ def serialization_stall_contract(tmp_path, exporter, record_property, *, counts=
         assert all(s['retained_count'] == 0 for s in checkpoints.values()), checkpoints
         # One retained 4 MiB payload must fail even when the OS reuses RSS pages.
         assert current - baseline_current < 1024 * 1024
-        # 8 MiB bounds allocator noise (CP0 observed <=6.13 MiB from 12 to 48),
-        # while refusing growth proportional to the number of stalled payloads.
-        assert receipt['rss_growth_bytes'] < 8 * 1024 * 1024
+        # Absolute RSS is qualified on Linux. macOS malloc can retain reusable
+        # pages after every payload is dead; lifetime and traced-retention
+        # oracles above remain identical on every platform.
+        if sys.platform == 'linux':
+            assert receipt['rss_growth_bytes'] < 8 * 1024 * 1024
     finally:
         if owns_tracing:
             tracemalloc.stop()

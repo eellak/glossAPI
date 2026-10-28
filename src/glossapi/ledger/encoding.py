@@ -97,3 +97,54 @@ def dataframe_records(frame):
     """Preserve column scalar types; iterrows can round mixed numeric rows."""
     for index, values in zip(frame.index, frame.itertuples(index=False, name=None)):
         yield index, dict(zip(frame.columns, values))
+
+
+def pack_evidence(value):
+    """Factor repeated field names and categorical values, losslessly.
+
+    Font/page diagnostic arrays often repeat a wide schema and long reason
+    strings thousands of times. This is a JSON table with dictionaries, not a
+    text payload or an opaque compressed blob. Every original field survives.
+    """
+    def pack(item):
+        if isinstance(item, list):
+            if len(item) >= 4 and all(isinstance(row, dict) for row in item):
+                columns = sorted(item[0])
+                if all(sorted(row) == columns for row in item):
+                    rows = [[pack(row[key]) for key in columns] for row in item]
+                    dictionaries = {}
+                    for index in range(len(columns)):
+                        values = [row[index] for row in rows]
+                        if all(v is None or isinstance(v, str) for v in values):
+                            unique = list(dict.fromkeys(values))
+                            codes = {v: n for n, v in enumerate(unique)}
+                            encoded = [codes[v] for v in values]
+                            if len(canonical_json([unique, encoded])) + 24 < len(canonical_json(values)):
+                                dictionaries[str(index)] = unique
+                                for row, code in zip(rows, encoded): row[index] = code
+                    return {"_table": {"columns": columns, "rows": rows, "dictionaries": dictionaries}}
+            return [pack(v) for v in item]
+        if isinstance(item, dict):
+            result = {key: pack(v) for key, v in item.items()}
+            return {"_object": result} if "_table" in item or "_object" in item else result
+        return item
+    encoded = {"kind": value.get("kind"), "encoding": "columnar_json_v1", "value": pack(value)}
+    return encoded if len(canonical_json(encoded)) + 128 < len(canonical_json(value)) else value
+
+
+def unpack_evidence(value):
+    """Recover all original explanatory JSON fields without opening payloads."""
+    if value.get("encoding") != "columnar_json_v1":
+        return value
+    def unpack(item):
+        if isinstance(item, list): return [unpack(v) for v in item]
+        if isinstance(item, dict):
+            if "_table" in item:
+                table = item["_table"]
+                return [{key: unpack(table["dictionaries"][str(i)][row[i]] if str(i) in table["dictionaries"] else row[i])
+                         for i, key in enumerate(table["columns"])} for row in table["rows"]]
+            if "_object" in item:
+                return {key: unpack(v) for key, v in item["_object"].items()}
+            return {key: unpack(v) for key, v in item.items()}
+        return item
+    return unpack(value["value"])
