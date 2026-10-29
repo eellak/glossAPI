@@ -131,6 +131,8 @@ def enrich_from_docling_json(
         if targets_set and (page_no, cur_ix) not in targets_set:
             observe("math_region_not_targeted", page=page_no, item=cur_ix)
             continue
+        observe("math_region_input", page=page_no, item=cur_ix, label=lab,
+            bbox={**{key: getattr(bbox, key, None) for key in ("l", "t", "r", "b")}, "coord_origin": str(getattr(bbox,"coord_origin", "unknown_not_reported"))})
         rois.append(RoiEntry(page_no=page_no, bbox=bbox, label=lab, per_page_ix=cur_ix))
 
     if not rois:

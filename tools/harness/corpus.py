@@ -30,6 +30,8 @@ def audit_ledger(path, documents):
         pages = [dict(name=name, bytes=size) for name, size in database.execute(
             "SELECT name,SUM(pgsize) FROM dbstat GROUP BY name ORDER BY 2 DESC")]
         stores = [json.loads(row[0]) for row in database.execute("SELECT json FROM snapshots WHERE kind='legacy_store'")]
+        stage_storage = audit_stage_storage(database, documents)
+
     database.close()
     size = path.stat().st_size
     assert not path.with_name(path.name + "-wal").exists()
@@ -37,8 +39,55 @@ def audit_ledger(path, documents):
     return dict(bytes=size, bytes_per_document=size/documents, events_per_document=counts["events"]/documents,
                 counts=counts, snapshot_kinds=kinds, sqlite_pages=pages, sha256=sha256(path),
                 store_observations=len(stores), full_imports=sum(s.get("mode")=="first_import" for s in stores),
-                changed_rows=sum(len(s.get("changed", {})) for s in stores))
+                changed_rows=sum(len(s.get("changed", {})) for s in stores), stage_storage=stage_storage)
 
+
+
+def audit_stage_storage(database, documents):
+    """Attribute unique snapshot JSON to its referencing stage, including sharing.
+
+    SQLite table/index/free-page allocation remains in sqlite_pages; logical
+    UTF-8 bytes here are not falsely described as physical database allocation.
+    """
+    from collections import defaultdict
+    snapshots={digest:(kind,encoded) for digest,kind,encoded in database.execute('SELECT sha256,kind,json FROM snapshots')}
+    owners=defaultdict(set)
+    for row in database.execute("SELECT stage,specification_sha256 FROM tasks"):
+        owners[row[1]].add(row[0])
+    for row in database.execute("SELECT t.stage,a.fingerprint_sha256,a.input_manifest_sha256,a.settings_sha256,a.tools_sha256 FROM attempts a JOIN tasks t ON t.task_id=a.task_id"):
+        for digest in row[1:]: owners[digest].add(row[0])
+    event_bytes=defaultdict(int)
+    for stage,manifest,encoded in database.execute("SELECT COALESCE(t.stage,'run'),e.output_manifest_sha256,e.details_json FROM events e LEFT JOIN tasks t ON t.task_id=e.task_id"):
+        event_bytes[stage]+=len(encoded.encode('utf-8'))
+        if manifest: owners[manifest].add(stage)
+        details=json.loads(encoded)
+        for key,value in details.items():
+            if isinstance(value,str) and value in snapshots: owners[value].add(stage)
+    for row in database.execute('SELECT run_id,settings_sha256,plan_sha256,environment_sha256 FROM runs'):
+        stages={item[0] for item in database.execute('SELECT DISTINCT stage FROM tasks WHERE run_id=?',(row[0],))} or {'run'}
+        for digest in row[1:]: owners[digest].update(stages)
+    def references(value):
+        if isinstance(value,str):
+            if value in snapshots: yield value
+        elif isinstance(value,dict):
+            for item in value.values(): yield from references(item)
+        elif isinstance(value,list):
+            for item in value: yield from references(item)
+    edges={digest:set(references(json.loads(encoded)))-{digest} for digest,(kind,encoded) in snapshots.items()}
+    changed=True
+    while changed:
+        changed=False
+        for digest,children in edges.items():
+            for child in children:
+                prior=len(owners[child]);owners[child].update(owners[digest]);changed |= len(owners[child])!=prior
+    groups=defaultdict(lambda:{'snapshots':0,'json_bytes':0})
+    for digest,(kind,encoded) in snapshots.items():
+        stage=next(iter(owners[digest])) if len(owners[digest])==1 else 'shared' if owners[digest] else 'unattributed'
+        group=groups[(stage,kind)];group['snapshots']+=1;group['json_bytes']+=len(encoded.encode('utf-8'))
+    return {'basis':'unique canonical snapshot UTF-8 JSON; shared facts charged once; physical page allocation is separate',
+        'snapshot_kinds':[{'stage':stage,'kind':kind,**group,'bytes_per_document':group['json_bytes']/documents}
+            for (stage,kind),group in sorted(groups.items())],
+        'event_details_bytes':dict(event_bytes)}
 
 def run_arm(manifest, data, root, enabled):
     from glossapi import Corpus

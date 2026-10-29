@@ -292,6 +292,15 @@ pub fn generate_analysis_report_for_directory(
     scripts_to_keep: Vec<String>,
     num_threads: usize,
 ) -> PyResult<PyObject> {
+    generate_analysis_report_with_evidence(py, input_dir_str, output_csv_path_str,
+        output_dir_cleaned_files_str, scripts_to_keep, num_threads, None)
+}
+
+pub fn generate_analysis_report_with_evidence(
+    py: Python, input_dir_str: &str, output_csv_path_str: Option<&str>,
+    output_dir_cleaned_files_str: Option<&str>, scripts_to_keep: Vec<String>,
+    num_threads: usize, evidence_directory: Option<&str>,
+) -> PyResult<PyObject> {
     let debug_logging = std::env::var_os("GLOSSAPI_RS_DEBUG").is_some();
 
     // Single policy builder shared with `clean_text` / `clean_text_with_stats`.
@@ -406,6 +415,7 @@ pub fn generate_analysis_report_for_directory(
                 let allowed_chars_for_thread = Arc::clone(&final_allowed_chars_arc);
                 let unusual_chars_for_thread = Arc::clone(&unusual_chars_arc);
 
+                if evidence_directory.is_some() { crate::edit_evidence::begin(); }
                 // Perform the text analysis
                 let analysis_result = cleaning_module::perform_text_analysis(
                     &file_content,
@@ -415,6 +425,14 @@ pub fn generate_analysis_report_for_directory(
                     true,             // calculate_specific_counts
                     None,             // min_chars_for_comment_override
                 );
+
+                if let Some(directory) = evidence_directory {
+                    let path = Path::new(directory).join(md_file_path.file_name().unwrap()).with_extension("edits.csv");
+                    // A missing capture is a contract failure in the adapter.
+                    if let Err(error) = crate::edit_evidence::finish(&path) {
+                        eprintln!("Edit evidence write failed: {}", error);
+                    }
+                }
 
                 let removed_total_chars = analysis_result
                     .original_total_chars

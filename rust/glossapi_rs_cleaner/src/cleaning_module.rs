@@ -823,7 +823,9 @@ pub fn core_clean_text_with_stats_with_mode(
     // per-line Rule B regex which strips the same patterns AND
     // line-drops dense ones via the count/coverage gate).
     let step1 = normalize::decode_html_entities(text);
+    crate::edit_evidence::change("decode_html_entities", text, &step1, 0);
     let step4b = normalize::strip_base64_images(&step1);
+    crate::edit_evidence::change("strip_base64_images", &step1, &step4b, 0);
     // Phase A — mode-selectable per Q4 / Point 9. Default
     // `ParserSurgicalVerified` (Pilot B with the safe checked wrapper)
     // surfaces fallback signals into `CleanStats`. `LineBased` is
@@ -839,6 +841,7 @@ pub fn core_clean_text_with_stats_with_mode(
         phase_a_dialect_ambiguous_input = r.dialect_ambiguous_input;
         r.output
     };
+    crate::edit_evidence::change("format_surgical_checked", &step4b, &step5, 0);
     let wave2_out_len = step5.chars().count();
     let wave2_preprocessing_delta = wave2_in_len.saturating_sub(wave2_out_len);
     // Re-alias `text` so the rest of the function sees the preprocessed
@@ -913,7 +916,29 @@ pub fn core_clean_text_with_stats_with_mode(
     // all normalizations so code indentation and punctuation survive intact.
     let mut in_code_fence = false;
 
+    let trace_enabled = crate::edit_evidence::enabled();
+    let mut trace_fragments = text.split_inclusive('\n');
+    let mut trace_cursor = 0usize;
     for (_line_index, line) in text.lines().enumerate() {
+        let trace_byte_start = cleaned_output_string_builder.len();
+        let trace_offset = trace_cursor;
+        let trace_fragment = trace_fragments.next().unwrap_or(line);
+        let mut trace_line = if trace_enabled { line.to_string() } else { String::new() };
+        macro_rules! trace_step {
+            ($rule:expr, $after:expr) => { if trace_enabled {
+                let next: &str = $after;
+                crate::edit_evidence::change($rule, &trace_line, next, trace_offset);
+                trace_line = next.to_string();
+            } }
+        }
+        macro_rules! capture_line {
+            () => { if trace_enabled {
+                trace_line.push_str(&trace_fragment[line.len()..]);
+                crate::edit_evidence::change("line_ending", &trace_line,
+                    &cleaned_output_string_builder[trace_byte_start..], trace_offset);
+                trace_cursor += cleaned_output_string_builder[trace_byte_start..].chars().count();
+            } }
+        }
         let trimmed_line = line.trim();
         if trimmed_line == TEXT_MISSING_COMMENT {
             let line_chars = line.chars().count();
@@ -922,8 +947,10 @@ pub fn core_clean_text_with_stats_with_mode(
             // content. Attribute all its chars to marker_chars_passthrough so
             // they don't pollute content_chars_kept or any drop bucket.
             marker_chars_passthrough += line_chars;
+            trace_step!("retain_text_missing_marker", TEXT_MISSING_COMMENT);
             cleaned_output_string_builder.push_str(TEXT_MISSING_COMMENT);
             cleaned_output_string_builder.push('\n');
+            capture_line!();
             continue;
         }
 
@@ -950,12 +977,15 @@ pub fn core_clean_text_with_stats_with_mode(
             content_chars_kept += line_chars;
             cleaned_output_string_builder.push_str(line);
             cleaned_output_string_builder.push('\n');
+            capture_line!();
             continue;
         }
         if in_code_fence {
+
             let line_chars = line.chars().count();
             let cleaned_code_line = clean_impossible_noise_inside_code_fence(line);
             let line_to_keep = cleaned_code_line.as_deref().unwrap_or(line);
+            trace_step!("code_fence_impossible_noise", line_to_keep);
             let kept_chars = line_to_keep.chars().count();
             original_chars_for_badness += line_chars;
             chars_dropped_by_per_char_filter += line_chars.saturating_sub(kept_chars);
@@ -963,6 +993,7 @@ pub fn core_clean_text_with_stats_with_mode(
             content_chars_kept += kept_chars;
             cleaned_output_string_builder.push_str(line_to_keep);
             cleaned_output_string_builder.push('\n');
+            capture_line!();
             continue;
         }
 
@@ -972,6 +1003,8 @@ pub fn core_clean_text_with_stats_with_mode(
         let line_after_entity_decoding_str = decoded_entity_data
             .to_string()
             .unwrap_or_else(|_| line.to_string());
+
+        trace_step!("line_entity_decode", &line_after_entity_decoding_str);
 
         let mut skip_bad_line_check = carry_math_state || trimmed_line == "$$";
         if !skip_bad_line_check && trimmed_line.contains("$$") {
@@ -992,6 +1025,7 @@ pub fn core_clean_text_with_stats_with_mode(
             rule_a_match_count += math_rule_a_count as u64;
             rule_b_match_count += math_rule_b_count as u64;
             if drop_math_line {
+                trace_step!("display_math_glyph_residue_drop", LINE_REMOVED_COMMENT);
                 let line_chars = line.chars().count();
                 original_chars_for_badness += line_chars;
                 chars_dropped_by_line_drop += line_chars;
@@ -999,7 +1033,8 @@ pub fn core_clean_text_with_stats_with_mode(
                 marker_chars_added += LINE_REMOVED_COMMENT.chars().count();
                 cleaned_output_string_builder.push_str(LINE_REMOVED_COMMENT);
                 cleaned_output_string_builder.push('\n');
-                continue;
+                capture_line!();
+            continue;
             }
         }
 
@@ -1027,6 +1062,7 @@ pub fn core_clean_text_with_stats_with_mode(
             r.stripped
         };
         if rule_b_line_drop {
+            trace_step!("glyph_rule_b_coverage_drop", LINE_REMOVED_COMMENT);
             let line_chars = line.chars().count();
             original_chars_for_badness += line_chars;
             chars_dropped_by_line_drop += line_chars;
@@ -1034,8 +1070,11 @@ pub fn core_clean_text_with_stats_with_mode(
             marker_chars_added += LINE_REMOVED_COMMENT.chars().count();
             cleaned_output_string_builder.push_str(LINE_REMOVED_COMMENT);
             cleaned_output_string_builder.push('\n');
+            capture_line!();
             continue;
         }
+
+        trace_step!("glyph_rule_a_b_span_strip", &post_rule_strip);
 
         // After CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 4 the
         // line-drop check has TWO independent engines, both line-level
@@ -1049,6 +1088,7 @@ pub fn core_clean_text_with_stats_with_mode(
         // (regex-set) were both subsumed by Rule B's regex.
         if !skip_bad_line_check && normalize::is_residue_mojibake_line(&post_rule_strip) {
             // Point 7: count R1∪R2 line drops for downstream sampling.
+            trace_step!("residue_mojibake_line_drop", LINE_REMOVED_COMMENT);
             residue_line_drop_count += 1;
             let line_chars = line.chars().count();
             original_chars_for_badness += line_chars;
@@ -1057,6 +1097,7 @@ pub fn core_clean_text_with_stats_with_mode(
             marker_chars_added += LINE_REMOVED_COMMENT.chars().count();
             cleaned_output_string_builder.push_str(LINE_REMOVED_COMMENT);
             cleaned_output_string_builder.push('\n');
+            capture_line!();
             continue;
         }
 
@@ -1068,6 +1109,8 @@ pub fn core_clean_text_with_stats_with_mode(
         // on the rule-A/B-stripped decoded line content
         let removed_from_tags_count =
             strip_tags_custom(&post_rule_strip, &mut line_after_tag_handling_buf);
+
+        trace_step!("strip_tags_preserve_comments", &line_after_tag_handling_buf);
 
         // Iterate the result of tag stripping for character filtering, keeping track of LaTeX math spans.
         let chars: Vec<char> = line_after_tag_handling_buf.chars().collect();
@@ -1131,6 +1174,7 @@ pub fn core_clean_text_with_stats_with_mode(
             idx += 1;
         }
 
+        trace_step!("fold_codepoints_and_filter_unicode_noise", &processed_line_segment_buf);
         carry_math_state = in_math;
 
         // If the line only contained math content, preserve it but skip scoring contributions.
@@ -1139,6 +1183,7 @@ pub fn core_clean_text_with_stats_with_mode(
             content_chars_kept += processed_line_segment_buf.chars().count();
             cleaned_output_string_builder.push_str(&processed_line_segment_buf);
             cleaned_output_string_builder.push('\n');
+            capture_line!();
             continue;
         }
 
@@ -1188,6 +1233,7 @@ pub fn core_clean_text_with_stats_with_mode(
             }
         }
 
+        trace_step!("text_missing_marker_threshold", &line_content_to_add);
         let kept_chars_total = line_content_to_add.chars().count();
         sum_kept_line_content_chars += kept_chars_total.saturating_sub(math_chars_this_line); // exclude math spans
         original_chars_for_badness += line.chars().count().saturating_sub(math_chars_this_line);
@@ -1218,18 +1264,23 @@ pub fn core_clean_text_with_stats_with_mode(
             //   punctuation run.
             let mut s = line_content_to_add.clone();
             if let Some(n) = normalize_layout_leader_runs(&s) {
+                trace_step!("layout_leader_runs", &n);
                 s = n;
             }
             if let Some(n) = normalize::normalize_malformed_entities(&s) {
+                trace_step!("malformed_entities", &n);
                 s = n;
             }
             if let Some(n) = normalize::normalize_whitespace_runs(&s) {
+                trace_step!("whitespace_runs", &n);
                 s = n;
             }
             if let Some(n) = normalize::normalize_escaped_run_chars(&s) {
+                trace_step!("escaped_markdown_runs", &n);
                 s = n;
             }
             if let Some(n) = normalize::normalize_punctuation_runs(&s) {
+                trace_step!("punctuation_runs", &n);
                 s = n;
             }
             s
@@ -1271,8 +1322,10 @@ pub fn core_clean_text_with_stats_with_mode(
 
         cleaned_output_string_builder.push_str(&line_to_write);
         cleaned_output_string_builder.push('\n');
+        capture_line!();
     }
 
+    let line_surface = if trace_enabled { cleaned_output_string_builder.clone() } else { String::new() };
     let mut final_cleaned_text = cleaned_output_string_builder;
 
     // Collapse runs of 3+ consecutive newlines to exactly 2 (single
@@ -1291,6 +1344,9 @@ pub fn core_clean_text_with_stats_with_mode(
             chars_dropped_by_normalization.saturating_add(pre_chars.saturating_sub(post_chars));
     }
 
+    crate::edit_evidence::change("collapse_blank_lines", &line_surface, &final_cleaned_text, 0);
+    let before_newline = if trace_enabled { final_cleaned_text.clone() } else { String::new() };
+
     // Adjust final newline if original text didn't have one.
     // This affects the final string, but sum_kept_line_content_chars and original_chars_for_badness
     // are based on line contents only, so they remain unaffected by this specific string manipulation.
@@ -1299,6 +1355,8 @@ pub fn core_clean_text_with_stats_with_mode(
             final_cleaned_text.pop();
         }
     }
+
+    crate::edit_evidence::change("preserve_final_newline", &before_newline, &final_cleaned_text, 0);
 
     // Calculate the total content penalty from placeholders.
     let mut total_placeholder_content_penalty = 0;

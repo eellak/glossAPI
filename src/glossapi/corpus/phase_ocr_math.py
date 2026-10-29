@@ -463,6 +463,7 @@ class OcrMathPhaseMixin:
             batch_size: batch size for recognizer
             dpi_base: base DPI for crops; actual DPI adapts per ROI size
         """
+        adapter_profile = os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters"
         from ..ocr import math as _math_pkg  # type: ignore
 
         try:
@@ -487,25 +488,26 @@ class OcrMathPhaseMixin:
             self.logger.info("No Docling JSON files found for Phase‑2 enrichment")
             return
         self.logger.info("Phase‑2: enriching %d document(s) from JSON", len(stems))
-        # Pre-create sidecar entries for visibility even if enrichment fails later.
-        try:
-            self.logger.info("Phase‑2: placeholder sidecars for stems: %s", ",".join(stems))
-            sc_dir = self.output_dir / 'sidecars' / 'math'
-            sc_dir.mkdir(parents=True, exist_ok=True)
-            import json as _json
-            for _stem in stems:
-                p = sc_dir / f"{_stem}.json"
-                if not p.exists():
-                    p.write_text(_json.dumps({"items": 0, "accepted": 0, "time_sec": 0.0}, ensure_ascii=False), encoding='utf-8')
-                    try:
-                        self.logger.info("Phase‑2: wrote placeholder sidecar: %s", p)
-                    except Exception:
-                        pass
-        except Exception as _e:
+        if not adapter_profile:
+            # Pre-create sidecar entries for visibility even if enrichment fails later.
             try:
-                self.logger.warning("Phase‑2: failed to write placeholder sidecars: %s", _e)
-            except Exception:
-                pass
+                self.logger.info("Phase‑2: placeholder sidecars for stems: %s", ",".join(stems))
+                sc_dir = self.output_dir / 'sidecars' / 'math'
+                sc_dir.mkdir(parents=True, exist_ok=True)
+                import json as _json
+                for _stem in stems:
+                    p = sc_dir / f"{_stem}.json"
+                    if not p.exists():
+                        p.write_text(_json.dumps({"items": 0, "accepted": 0, "time_sec": 0.0}, ensure_ascii=False), encoding='utf-8')
+                        try:
+                            self.logger.info("Phase‑2: wrote placeholder sidecar: %s", p)
+                        except Exception:
+                            pass
+            except Exception as _e:
+                try:
+                    self.logger.warning("Phase‑2: failed to write placeholder sidecars: %s", _e)
+                except Exception:
+                    pass
         # Parquet route: prefer stems marked for math in parquet if available
         try:
             from glossapi.parquet_schema import ParquetSchema
@@ -533,21 +535,22 @@ class OcrMathPhaseMixin:
                     stems = [s for s in stems if s in set(parq_stems)]
             except Exception:
                 pass
-        # Ensure placeholders exist for final target stems (post-parquet filter)
-        try:
-            sc_dir = self.output_dir / 'sidecars' / 'math'
-            sc_dir.mkdir(parents=True, exist_ok=True)
-            import json as _json
-            for _stem in stems:
-                p = sc_dir / f"{_stem}.json"
-                if not p.exists():
-                    p.write_text(_json.dumps({"items": 0, "accepted": 0, "time_sec": 0.0}, ensure_ascii=False), encoding='utf-8')
-                    try:
-                        self.logger.info("Phase‑2: ensured placeholder sidecar: %s", p)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        if not adapter_profile:
+            # Ensure placeholders exist for final target stems (post-parquet filter)
+            try:
+                sc_dir = self.output_dir / 'sidecars' / 'math'
+                sc_dir.mkdir(parents=True, exist_ok=True)
+                import json as _json
+                for _stem in stems:
+                    p = sc_dir / f"{_stem}.json"
+                    if not p.exists():
+                        p.write_text(_json.dumps({"items": 0, "accepted": 0, "time_sec": 0.0}, ensure_ascii=False), encoding='utf-8')
+                        try:
+                            self.logger.info("Phase‑2: ensured placeholder sidecar: %s", p)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
         for stem in stems:
             try:
                 try:
@@ -561,7 +564,7 @@ class OcrMathPhaseMixin:
                 elif (json_dir / f"{stem}.docling.json").exists():
                     jp = json_dir / f"{stem}.docling.json"
                 if jp is None:
-                    observe("math_json_missing", status="skipped", legacy_stem=stem)
+                    observe("math_json_missing", status="failed" if adapter_profile and files else "skipped", legacy_stem=stem)
                     self.logger.warning("JSON not found for %s", stem)
                     continue
                 # Resolve PDF path
@@ -584,7 +587,7 @@ class OcrMathPhaseMixin:
                     except Exception:
                         pass
                 if pdfp is None:
-                    observe("math_pdf_missing", status="skipped", legacy_stem=stem)
+                    observe("math_pdf_missing", status="failed" if adapter_profile and files else "skipped", legacy_stem=stem)
                     self.logger.warning("PDF not found for %s; skipping", stem)
                     continue
                 else:
@@ -604,38 +607,44 @@ class OcrMathPhaseMixin:
                         picks = [(int(p), int(ix)) for (p, ix) in targets_by_stem.get(stem, [])]
                 except Exception:
                     picks = None
-                # Emit a placeholder sidecar early to ensure metrics artifact exists
-                try:
-                    # Write sidecar early (best-effort)
-                    sc_dir = self.output_dir / 'sidecars' / 'math'
-                    sc_dir.mkdir(parents=True, exist_ok=True)
-                    import json as _json
-                    (sc_dir / f"{stem}.json").write_text(
-                        _json.dumps({"items": 0, "accepted": 0, "time_sec": 0.0}, ensure_ascii=False),
-                        encoding='utf-8',
-                    )
-                except Exception as _e:
+                if not adapter_profile:
+                    # Emit a placeholder sidecar early to ensure metrics artifact exists
                     try:
-                        self.logger.warning("Phase-2: failed to write placeholder for %s: %s", stem, _e)
+                        # Write sidecar early (best-effort)
+                        sc_dir = self.output_dir / 'sidecars' / 'math'
+                        sc_dir.mkdir(parents=True, exist_ok=True)
+                        import json as _json
+                        (sc_dir / f"{stem}.json").write_text(
+                            _json.dumps({"items": 0, "accepted": 0, "time_sec": 0.0}, ensure_ascii=False),
+                            encoding='utf-8',
+                        )
+                    except Exception as _e:
+                        try:
+                            self.logger.warning("Phase-2: failed to write placeholder for %s: %s", stem, _e)
+                        except Exception:
+                            pass
+                    try:
+                        from ..ocr.utils.triage import update_math_enrich_results  # type: ignore
+                        pq_path = self._get_cached_metadata_parquet()
+                        if pq_path is None:
+                            from ..parquet_schema import ParquetSchema as _ParquetSchema
+                            pq_schema = _ParquetSchema({"url_column": self.url_column})
+                            pq_path = self._resolve_metadata_parquet(pq_schema, ensure=True, search_input=True)
+                        if pq_path is None:
+                            pq_path = self.output_dir / 'download_results' / 'download_results.parquet'
+                        self._cache_metadata_parquet(pq_path)
+                        update_math_enrich_results(pq_path, stem, items=0, accepted=0, time_sec=0.0)
                     except Exception:
                         pass
-                try:
-                    from ..ocr.utils.triage import update_math_enrich_results  # type: ignore
-                    pq_path = self._get_cached_metadata_parquet()
-                    if pq_path is None:
-                        from ..parquet_schema import ParquetSchema as _ParquetSchema
-                        pq_schema = _ParquetSchema({"url_column": self.url_column})
-                        pq_path = self._resolve_metadata_parquet(pq_schema, ensure=True, search_input=True)
-                    if pq_path is None:
-                        pq_path = self.output_dir / 'download_results' / 'download_results.parquet'
-                    self._cache_metadata_parquet(pq_path)
-                    update_math_enrich_results(pq_path, stem, items=0, accepted=0, time_sec=0.0)
-                except Exception:
-                    pass
 
-                stats = enrich_from_docling_json(
-                    jp, pdfp, out_md, out_map, device=device, batch_size=int(batch_size), dpi_base=int(dpi_base), targets=picks
-                )
+                if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+                    from ..stages.compatibility import math_compatibility_document
+                    stats = math_compatibility_document(self, pdfp, jp, device=device,
+                        batch_size=int(batch_size),dpi_base=int(dpi_base),targets=picks)
+                else:
+                    stats = enrich_from_docling_json(
+                        jp, pdfp, out_md, out_map, device=device, batch_size=int(batch_size), dpi_base=int(dpi_base), targets=picks
+                    )
                 observe("math_completed", status="ok", path=out_md, legacy_stem=stem, metrics=stats, compile_status="not_run")
                 self.logger.info("Phase‑2: %s -> items=%s accepted=%s time=%.2fs", stem, stats.get('items'), stats.get('accepted'), stats.get('time_sec'))
                 # Update parquet with enrichment results
@@ -657,20 +666,21 @@ class OcrMathPhaseMixin:
             except Exception as e:
                 observe("math_exception", error=e, legacy_stem=stem, status="failed")
                 self.logger.warning("Phase‑2 failed for %s: %s", stem, e)
-                # Emit a minimal sidecar to aid downstream bookkeeping, even on failure.
-                try:
-                    from ..ocr.utils.triage import update_math_enrich_results  # type: ignore
-                    pq_path = self._get_cached_metadata_parquet()
-                    if pq_path is None:
-                        from ..parquet_schema import ParquetSchema as _ParquetSchema
-                        pq_schema = _ParquetSchema({"url_column": self.url_column})
-                        pq_path = self._resolve_metadata_parquet(pq_schema, ensure=True, search_input=True)
-                    if pq_path is None:
-                        pq_path = self.output_dir / 'download_results' / 'download_results.parquet'
-                    self._cache_metadata_parquet(pq_path)
-                    update_math_enrich_results(pq_path, stem, items=0, accepted=0, time_sec=0.0)
-                except Exception:
-                    pass
+                if not adapter_profile:
+                    # Emit a minimal sidecar to aid downstream bookkeeping, even on failure.
+                    try:
+                        from ..ocr.utils.triage import update_math_enrich_results  # type: ignore
+                        pq_path = self._get_cached_metadata_parquet()
+                        if pq_path is None:
+                            from ..parquet_schema import ParquetSchema as _ParquetSchema
+                            pq_schema = _ParquetSchema({"url_column": self.url_column})
+                            pq_path = self._resolve_metadata_parquet(pq_schema, ensure=True, search_input=True)
+                        if pq_path is None:
+                            pq_path = self.output_dir / 'download_results' / 'download_results.parquet'
+                        self._cache_metadata_parquet(pq_path)
+                        update_math_enrich_results(pq_path, stem, items=0, accepted=0, time_sec=0.0)
+                    except Exception:
+                        pass
 
     @shadow_stage("math", "math.triage")
     def triage_math(self) -> None:
@@ -704,10 +714,14 @@ class OcrMathPhaseMixin:
         for mpath in metrics_files:
             stem = mpath.name.replace(".per_page.metrics.json", "")
             try:
-                summary = summarize_math_density_from_metrics(mpath)
-                # Add max as helper
-                summary["formula_max_pp"] = float(summary.get("formula_p90_pp", 0.0))
-                rec = recommend_phase(summary)
+                if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+                    from ..stages.compatibility import math_triage_compatibility_document
+                    summary,rec=math_triage_compatibility_document(self,mpath)
+                else:
+                    summary = summarize_math_density_from_metrics(mpath)
+                    # Add max as helper
+                    summary["formula_max_pp"] = float(summary.get("formula_p90_pp", 0.0))
+                    rec = recommend_phase(summary)
                 update_download_results_parquet(self.output_dir, stem, summary, rec, url_column=self.url_column)
                 self.logger.info("Triage: %s -> %s", stem, rec)
             except Exception as e:

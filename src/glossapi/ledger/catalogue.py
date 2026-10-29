@@ -1,5 +1,5 @@
 """Versioned status/reason vocabulary; details retain original backend tokens."""
-CATALOGUE_VERSION = 1
+CATALOGUE_VERSION = 2
 STAGES = frozenset(("download", "extract", "clean", "ocr", "math", "sections", "annotate", "export"))
 STATUSES = frozenset(("planned", "running", "ok", "skipped", "failed"))
 TERMINAL_STATUSES = frozenset(("ok", "skipped", "failed"))
@@ -122,6 +122,7 @@ REASON_CODES = frozenset((
     'math_no_regions',
     'math_not_selected',
     'math_pdf_missing',
+    'math_region_input',
     'math_region_not_targeted',
     'math_region_without_provenance',
     'math_repeat_truncated',

@@ -158,6 +158,9 @@ class ResultJournal:
         self.document_tasks = {}
         self.document_outcomes = {}
         self.failures, self.skips, self.successes = [], [], []
+        self.adapter_stages = set()
+        self.adapter_attempts = set()
+        self.adapter_profile = os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters"
         self.started_at, self.started_ns = utc_now(), time.monotonic_ns()
         self.before = inventory(corpus.output_dir)
         self.source_manifests = set()
@@ -193,7 +196,7 @@ class ResultJournal:
                 file_id = prior[0] if prior else writer.artifact(self.run_id, stage, "initial_input", uri, sha256=digest, bytes=size, version_id=version_id, ownership="initial_external", retention_class="initial", presence="present" if present else "missing")
                 if digest is not None:
                     observed_inputs.append({"file_id": file_id, "role": f"source_observation:{ordinal}", "sha256": digest})
-                if str(path) not in self.document_tasks:
+                if str(path) not in self.document_tasks and not (self.adapter_profile and stage in ("clean", "ocr", "math")):
                     document_task = writer.task(self.run_id, stage, operation + ".document_observation", {"compatibility_profile": "legacy_shadow", "reuse_eligible": False}, version_id=version_id, ordinal=ordinal + 1)
                     self.document_tasks[str(path)] = (document_task, version_id)
                     writer.event(self.run_id, event_kind="lifecycle", reason_code="stage_planned", status="planned", task_id=document_task, version_id=version_id)
@@ -234,6 +237,14 @@ class ResultJournal:
         return file_id
 
     def observe(self, reason_code, *, path=None, error=None, status=None, message="", **details):
+        if (self.adapter_profile and self.stage in self.adapter_stages
+                and reason_code.startswith(self.stage + "_") and error is None
+                and reason_code not in ("math_json_missing", "math_pdf_missing")):
+            # The producer result already owns these decisions. Warnings for
+            # non-adapter dependencies (e.g. page_quality_invalid) stay shadow.
+            # Missing math inputs are detected before invoking an adapter, so
+            # another document's producer cannot own those observations.
+            return
         reported_error = details.pop("reported_error", None)
         receipt = {"observation": "current_branch", "operation": self.operation, "path": str(path) if path is not None else None,
                    "backend_status": status, "retryable": details.pop("retryable", None), **payload_evidence(details)}
@@ -275,11 +286,19 @@ class ResultJournal:
                 if child.is_file(): self.store(child, kind=kind, preexisting=preexisting, register=register)
             return
         if not path.is_file(): return
+        if self.adapter_profile and self.stage in ("clean", "ocr", "math") and path.suffix == ".parquet" and not preexisting and not getattr(self,"finishing",False):
+            return  # Final compatibility values are recorded after their producer facts.
         receipt = {"sha256": file_hash(path), "bytes": path.stat().st_size}
         uri = path.absolute().as_uri()
         states = store_states(self.writer)
         previous = states.get(uri)
         if previous and previous["sha256"] == receipt["sha256"]:
+            return
+        if self.adapter_profile and kind == "clean_report" and "clean" in self.adapter_stages:
+            return
+        if self.adapter_profile and self.writer.connection.execute(
+                "SELECT 1 FROM files WHERE uri=? AND sha256=? AND producer_attempt_id IS NOT NULL AND version_id IS NOT NULL LIMIT 1",
+                (uri, receipt["sha256"])).fetchone():
             return
         read_error = None
         try:
@@ -288,6 +307,37 @@ class ResultJournal:
             read_error = type(caught).__name__
             decoded = ({"format": "unreadable", "read_error_type": type(caught).__name__,
                         "read_error_message": str(caught)}, {})
+        if self.adapter_profile and decoded is not None and decoded[0].get("format") == "parquet":
+            schema, rows = decoded
+            columns=[column.get("value") for column in schema["columns"]]
+            fields_by_stage={
+                "clean": {"mojibake_badness_score", "mojibake_latin_percentage", "percentage_greek", "latin_percentage",
+                    "greek_badness_score", "greek_latin_percentage", "polytonic_ratio", "rejection_reason", "filter",
+                    "needs_ocr", "char_count_no_comments", "is_empty", "latin_word_shape_rate", "ocr_pages", "ocr_pages_count",
+                    "ocr_pages_unflagged_count", "page_rule_profile", "page_fold_validity", "ocr_noise_suspect", "ocr_noise_flags",
+                    "ocr_repeat_phrase_run_max", "ocr_repeat_line_run_max", "ocr_repeat_suspicious_line_count", "ocr_repeat_suspicious_line_ratio"},
+                "ocr": {"text", "ocr_success", "ocr_markdown_relpath", "ocr_metrics_relpath", "ocr_text_sha256", "extraction_mode"},
+                "math": {"math_enriched", "enriched_math", "math_items", "math_accepted", "math_accept_rate", "math_time_sec"}}
+            owners={}
+            fields_by_operation={
+                "clean.initial": {"mojibake_badness_score","mojibake_latin_percentage","percentage_greek","latin_percentage","greek_badness_score","greek_latin_percentage","polytonic_ratio","rejection_reason","char_count_no_comments","is_empty"},
+                "clean.selection": {"filter","needs_ocr","latin_word_shape_rate","ocr_pages","ocr_pages_count","ocr_pages_unflagged_count","page_rule_profile","page_fold_validity"},
+                "clean.ocr_artifacts": {"percentage_greek","latin_percentage","polytonic_ratio","ocr_noise_suspect","ocr_noise_flags","ocr_repeat_phrase_run_max","ocr_repeat_line_run_max","ocr_repeat_suspicious_line_count","ocr_repeat_suspicious_line_ratio"},
+                "math.triage": {"formula_total","formula_avg_pp","formula_p90_pp","pages_with_formula","pages_total","phase_recommended"}}
+            fields_by_operation["clean.score_after_ocr"]=fields_by_operation["clean.initial"]
+            for stage,operation,attempt_id,encoded in self.writer.connection.execute(
+                    "SELECT t.stage,t.operation,a.attempt_id,s.json FROM attempts a JOIN tasks t ON t.task_id=a.task_id JOIN snapshots s ON s.sha256=a.settings_sha256 WHERE t.stage IN ('clean','ocr','math') AND EXISTS (SELECT 1 FROM events e WHERE e.attempt_id=a.attempt_id AND e.event_kind='lifecycle' AND e.status='ok') ORDER BY a.rowid"):
+                filename=json.loads(encoded).get("compatibility_filename")
+                if filename:
+                    for field in fields_by_operation.get(operation.split(".artifact:",1)[0],fields_by_stage[stage]): owners[(filename,field)]=attempt_id
+            filename_position=columns.index("filename") if "filename" in columns else None
+            if owners and filename_position is not None:
+                rows={key:{**row,"values":[
+                    {"producer_attempt_id":owners[(row["values"][filename_position] if isinstance(row["values"][filename_position],str) else None,column)],"field":column}
+                    if (row["values"][filename_position] if isinstance(row["values"][filename_position],str) else None,column) in owners else value
+                    for column,value in zip(columns,row["values"])]} for key,row in rows.items()}
+                schema={**schema,"adapter_owned_values":"producer_reference_v1; facts are recorded only by their producer"}
+                decoded=schema,rows
         self._store_observation(path, kind, receipt, decoded, read_error, preexisting=preexisting, register=register)
 
     def _store_observation(self, path, kind, receipt, decoded, read_error=None, *, preexisting=False, register=True):
@@ -351,6 +401,7 @@ class ResultJournal:
                 self.writer.source_record(document_id, self.run_id, uri, values, source_kind=kind, manifest_sha256=manifest, source_row=str(ordinal))
 
     def finish(self, result, error):
+        self.finishing = True
         after = inventory(self.corpus.output_dir)
         for name, receipt in after.items():
             if self.before.get(name) != receipt:
@@ -377,7 +428,10 @@ class ResultJournal:
                     error_type=document_error_type, traceback=document_trace, message=document_message,
                     details={"mode": "shadow", "reuse_eligible": False, "wrapper_attempt_id": self.attempt_id,
                              "measurement_basis": "legacy_branch_observation", "duration_unavailable_reason": "per_document_timing_not_reported"})
-            outputs = [{"kind": str(Path(name).relative_to(self.corpus.output_dir.absolute())) if Path(name).is_relative_to(self.corpus.output_dir.absolute()) else name, "uri": Path(name).as_uri(), **receipt} for name, receipt in after.items() if self.before.get(name) != receipt]
+            outputs = [{"kind": str(Path(name).relative_to(self.corpus.output_dir.absolute())) if Path(name).is_relative_to(self.corpus.output_dir.absolute()) else name, "uri": Path(name).as_uri(), **receipt} for name, receipt in after.items() if self.before.get(name) != receipt and not (
+                self.adapter_profile and self.writer.connection.execute(
+                    "SELECT 1 FROM files WHERE uri=? AND sha256=? AND producer_attempt_id IS NOT NULL AND version_id IS NOT NULL LIMIT 1",
+                    (Path(name).as_uri(),receipt["sha256"])).fetchone())]
             self.writer.finish(self.run_id, self.task_id, self.attempt_id, status=status, reason_code=reason, outputs=outputs,
                 started_at=self.started_at, finished_at=utc_now(), duration_ns=time.monotonic_ns()-self.started_ns,
                 error_type=type(error).__module__ + "." + type(error).__name__ if error else None, traceback=trace, message=str(error) if error else "Legacy wrapper observation",

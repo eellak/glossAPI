@@ -5,7 +5,7 @@ Compatibility parquet serializers remain in the public phase wrappers.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import os
 from pathlib import Path
 import time
@@ -35,8 +35,17 @@ class SequentialStageRunner:
         runtime_settings = dict(specification.settings)
         if runtime_settings.get("memory_saving", "normal") != "normal":
             raise ValueError("disk_guard_unavailable: extreme mode requires the qualified quota and retention policy")
+        if stage.name == "ocr":
+            runtime_settings["input_producers"] = {artifact.file_id: self.writer.connection.execute(
+                "SELECT producer_attempt_id FROM files WHERE file_id=?", (artifact.file_id,)).fetchone()[0] for artifact in document.artifacts}
         runtime_settings["required_output_kinds"] = list(specification.required_output_kinds)
         settings = safe_settings(runtime_settings)
+        if run_id and stage.name == "clean" and document.artifacts and self.writer.connection.execute(
+                "SELECT 1 FROM tasks WHERE run_id=? AND scope_key=? AND stage=? AND operation=?",
+                (run_id,document.version_id,stage.name,specification.operation)).fetchone():
+            # A canonical text and its chunks can share one document version.
+            # Keep their transform operations distinct without inventing documents.
+            specification = replace(specification, operation=specification.operation+".artifact:"+document.artifacts[0].file_id)
         specification_receipt = safe_settings(asdict(specification))
         tools = tools or loaded_tools()
         revision = code_revision()
@@ -67,6 +76,9 @@ class SequentialStageRunner:
                 fact = self.writer.connection.execute("SELECT * FROM files WHERE file_id=?", (artifact.file_id,)).fetchone()
                 if fact is None or fact["version_id"] != version or fact["sha256"] != artifact.sha256 or fact["uri"] != artifact.path.absolute().as_uri():
                     raise ValueError("Input is not a committed artifact of this version")
+                if fact["producer_attempt_id"]:
+                    producer_task = self.writer.connection.execute("SELECT task_id FROM attempts WHERE attempt_id=?",(fact["producer_attempt_id"],)).fetchone()[0]
+                    self.writer.dependency(task,producer_task,specification.input_roles[ordinal] if ordinal < len(specification.input_roles) else artifact.kind)
                 bound_inputs.append({"file_id": artifact.file_id, "sha256": artifact.sha256, "role": specification.input_roles[ordinal] if ordinal < len(specification.input_roles) else artifact.kind})
             attempt = self.writer.attempt(task, worker_id=f"sequential:{os.getpid()}", device_id=specification.device_id,
                 fingerprint={"contract_version": stage.contract_version, "specification": specification_receipt, "inputs": bound_inputs,
@@ -121,7 +133,9 @@ class SequentialStageRunner:
                             "canonical_document_id": duplicate["document_id"], "canonical_version_id": duplicate["version_id"],
                             "evidence_hash": acquisition["stored_sha256"], "policy": "record_only"})
             for ordinal, decision in enumerate(result.decisions):
-                evidence = self.writer.snapshot("stage_evidence", {"kind": "stage_evidence", "contract_version": stage.contract_version, **safe_settings(decision)})
+                from ..ledger.encoding import pack_evidence
+                evidence = self.writer.snapshot("stage_evidence", pack_evidence({"kind": "stage_evidence", "stage": stage.name,
+                    "operation": specification.operation, "contract_version": stage.contract_version, **safe_settings(decision)}))
                 self.writer.event(run, event_kind="decision", reason_code=result.reason_code, task_id=task, version_id=version,
                     attempt_id=attempt, details={"evidence_sha256": evidence, "ordinal": ordinal})
             outputs = [{**record, "uri": (destination / output.relative_path).as_uri()} for record, output in zip(records, result.outputs)]
@@ -131,5 +145,5 @@ class SequentialStageRunner:
                 traceback=result.error.traceback if result.error else None,
                 message=result.error.message if result.error else "",
                 duration_ns=time.monotonic_ns()-started_ns, details={"metrics": result.metrics,
-                    "error": asdict(result.error) if result.error else None, "profile": "sequential-adapters"})
+                    "error": {"retryable":result.error.retryable} if result.error else None, "profile": "sequential-adapters"})
         return result, destination

@@ -164,8 +164,12 @@ def _render_page_from_merged_labeled_spans(
     *,
     mode: str,
 ) -> str:
+    from ..stages.edits import _ocr_edit_sink
+    sink = _ocr_edit_sink.get() if mode == "clean" else None
     if not merged_spans:
-        return _replace_html_tables_with_markdown(page_text)
+        result = _replace_html_tables_with_markdown(page_text)
+        if sink: sink.emit("ocr_html_table_to_markdown",0,len(page_text),result)
+        return result
 
     parts: List[str] = []
     pos = 0
@@ -173,7 +177,9 @@ def _render_page_from_merged_labeled_spans(
         start = span["start"]
         end = span["end"]
         if start > pos:
-            parts.append(_replace_html_tables_with_markdown(page_text[pos:start]))
+            fragment = _replace_html_tables_with_markdown(page_text[pos:start])
+            parts.append(fragment)
+            if sink: sink.emit("ocr_html_table_to_markdown",pos,start,fragment)
         match_types = list(span.get("match_types", []))
         if mode == "debug":
             open_tag = f'<match of type {",".join(match_types)}'
@@ -226,9 +232,13 @@ def _render_page_from_merged_labeled_spans(
                 )
             else:
                 parts.append(_clean_fill_for_removed_span(page_text, start, end))
+        if sink:
+            sink.emit("ocr_" + "+".join(match_types),start,end,parts[-1],reason=str(span.get("kind") or ",".join(match_types)))
         pos = end
     if pos < len(page_text):
-        parts.append(_replace_html_tables_with_markdown(page_text[pos:]))
+        fragment = _replace_html_tables_with_markdown(page_text[pos:])
+        parts.append(fragment)
+        if sink: sink.emit("ocr_html_table_to_markdown",pos,len(page_text),fragment)
     return "".join(parts)
 
 

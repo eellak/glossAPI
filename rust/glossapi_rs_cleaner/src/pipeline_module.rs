@@ -75,7 +75,7 @@ fn sanitized_char_count(content: &str) -> (i64, bool) {
 /// 4. Writing processed files to the output directory.
 /// 5. Final analysis (badness, script percentages) on processed files, generating a CSV report.
 #[pyfunction]
-#[pyo3(signature = (input_dir_str, output_cleaned_files_dir_str, output_report_csv_str, scripts_to_keep_input, num_threads, write_cleaned_files=true))]
+#[pyo3(signature = (input_dir_str, output_cleaned_files_dir_str, output_report_csv_str, scripts_to_keep_input, num_threads, write_cleaned_files=true, evidence_directory=None))]
 pub fn run_complete_pipeline(
     py: Python,
     input_dir_str: &str,
@@ -84,6 +84,7 @@ pub fn run_complete_pipeline(
     scripts_to_keep_input: Vec<String>,
     num_threads: usize,
     write_cleaned_files: bool,
+    evidence_directory: Option<&str>,
 ) -> PyResult<()> {
     println!("Rust: Starting REFACTORED STAGED complete pipeline (calling batch functions)...");
     println!("Rust: Input directory: {}", input_dir_str);
@@ -131,7 +132,7 @@ pub fn run_complete_pipeline(
         "text_cleaner_rs_pipeline_{}",
         chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
     );
-    let mut temp_pipeline_root_dir = std::env::temp_dir();
+    let mut temp_pipeline_root_dir = evidence_directory.map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     temp_pipeline_root_dir.push(temp_pipeline_root_name);
 
     println!(
@@ -199,13 +200,14 @@ pub fn run_complete_pipeline(
             ))
         })?;
 
-        directory_processor::generate_analysis_report_for_directory(
+        directory_processor::generate_analysis_report_with_evidence(
             py,
             input_dir_str,
             None, // output_csv_path_str: We don't want a CSV from this stage
             Some(&temp_stage1_cleaned_dir_str), // output_dir_cleaned_files_str: Output to our temp dir
             scripts_to_keep_input.clone(),      // scripts_to_keep
             num_threads,
+            evidence_directory,
         )
         .map_err(|e| {
             let err_msg = format!(
@@ -524,6 +526,18 @@ pub fn run_complete_pipeline(
     })(); // End of the main try block for pipeline stages
 
     // --- Cleanup Main Temporary Directory ---
+    if let Some(directory) = evidence_directory {
+        let retained = Path::new(directory).join("native_stages");
+        fs::create_dir_all(&retained).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        for entry in walkdir::WalkDir::new(&temp_pipeline_root_dir).into_iter().filter_map(Result::ok) {
+            if entry.path().is_file() {
+                let target = retained.join(entry.path().strip_prefix(&temp_pipeline_root_dir).unwrap());
+                if let Some(parent) = target.parent() { fs::create_dir_all(parent).map_err(|e| PyValueError::new_err(e.to_string()))?; }
+                fs::copy(entry.path(), target).map_err(|e| PyValueError::new_err(e.to_string()))?;
+            }
+        }
+    }
+
     println!(
         "Rust: Attempting to clean up main temporary pipeline directory: {}...",
         temp_pipeline_root_dir.display()

@@ -49,6 +49,10 @@ def run_plugin_ocr(
     context: CorpusOcrContext, filenames: list[str], *, request: OcrRequest,
     page_ranges: list[str] | None = None,
 ) -> None:
+    import os
+    if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters" and not getattr(context, "_inside_ocr_stage", False):
+        from ...stages.compatibility import ocr_compatibility_documents
+        return ocr_compatibility_documents(context, filenames, request=request, page_ranges=page_ranges)
     require_ocr_options(request.ocr_options)
     if request.max_pages is not None and request.max_pages < 1:
         raise ValueError("max_pages must be positive")

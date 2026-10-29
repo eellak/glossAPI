@@ -2362,7 +2362,10 @@ def _process_combined_ocr_document(
     page_metric_rows: List[Dict[str, Any]] = []
     match_index_rows: List[Dict[str, Any]] = []
 
+    from ..stages.edits import _ocr_edit_sink
+    edit_sink = _ocr_edit_sink.get()
     for page_index, page in enumerate(pages, start=1):
+        if edit_sink: edit_sink.delta = 0
         if clean_output_path is not None and debug_output_path is not None:
             page_result = _render_combined_ocr_page_modes(
                 page,
@@ -2424,6 +2427,7 @@ def _process_combined_ocr_document(
 
         if clean_output_path is not None:
             cleaned_pages.append(cleaned_page)
+            if edit_sink: edit_sink.offset += len(cleaned_page) + len(PAGE_SPLIT_MARKER)
         if debug_output_path is not None:
             debug_pages.append(debug_page)
 
@@ -3099,9 +3103,13 @@ class CleanPhaseMixin:
         )
         self.logger.info("Using compiled glossapi_rs_cleaner extension for fast cleaning")
 
+        import os
+        adapter_profile = os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters"
+        frozen_input = None
+
         # Ensure cleaned directory exists and is empty (idempotent runs)
         if write_cleaned_files:
-            if self.cleaned_markdown_dir.exists():
+            if self.cleaned_markdown_dir.exists() and not adapter_profile:
                 observe_store(self.cleaned_markdown_dir, kind="legacy_removed_directory")
                 shutil.rmtree(self.cleaned_markdown_dir)
             self.cleaned_markdown_dir.mkdir(parents=True, exist_ok=True)
@@ -3272,27 +3280,33 @@ class CleanPhaseMixin:
             f"{'True' if write_cleaned_files else 'False'})\n"
         )
 
-        process = subprocess.Popen(
-            [sys.executable, "-c", cmd],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        )
-        try:
-            assert process.stdout is not None
-            for line in process.stdout:
-                progress.handle_line(line)
-            return_code = process.wait()
-        except Exception:
-            process.kill()
-            raise
-        finally:
-            if process.stdout is not None:
-                process.stdout.close()
-            progress.finalize()
+        adapter_scores = None
+        if adapter_profile:
+            from ..stages.compatibility import clean_compatibility_kernel
+            adapter_scores = clean_compatibility_kernel(self, sorted(input_dir.rglob("*.md")), report_parquet_path, input_root=input_dir, num_threads=num_threads or 1, write_cleaned_files=write_cleaned_files)
+            return_code = 0
+        else:
+            process = subprocess.Popen(
+                [sys.executable, "-c", cmd],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+            try:
+                assert process.stdout is not None
+                for line in process.stdout:
+                    progress.handle_line(line)
+                return_code = process.wait()
+            except Exception:
+                process.kill()
+                raise
+            finally:
+                if process.stdout is not None:
+                    process.stdout.close()
+                progress.finalize()
 
         if return_code != 0:
             # Do not abort the entire cleaning pass – proceed to evaluate gates
@@ -3388,7 +3402,7 @@ class CleanPhaseMixin:
                 "rust/glossapi_rs_noise/Cargo.toml",
                 required_attrs=("score_markdown_directory_detailed",),
             )
-            results = noise_mod.score_markdown_directory_detailed(
+            results = adapter_scores if adapter_scores is not None else noise_mod.score_markdown_directory_detailed(
                 str(self.cleaned_markdown_dir), os.cpu_count()
             )
             if results:
@@ -3647,6 +3661,13 @@ class CleanPhaseMixin:
         else:
             self.good_files = []
 
+        if adapter_profile and parquet_path.exists():
+            from ..stages.compatibility import record_clean_selection
+            record_clean_selection(self, df_final, drop_bad=drop_bad,
+                thresholds={"mojibake": 0.1, "requested_threshold_noop": threshold, "greek_badness": 60,
+                    "empty_char_threshold": empty_threshold_int, "empty_min_pages": min_pages})
+        if frozen_input is not None:
+            shutil.rmtree(frozen_input)
         observe("clean_completed", status="ok", accepted_for_sections=list(self.good_files), selection_policy="legacy_needs_ocr_false_when_drop_bad", effective_thresholds={"mojibake": threshold, "greek_badness": 60, "empty_char_threshold": empty_char_threshold, "empty_min_pages": empty_min_pages}, spans={"status": "unknown_not_recorded", "reason": "native_backend_does_not_emit_rule_spans"})
         # After cleaning, point markdown_dir to cleaned files for downstream stages
         if write_cleaned_files:
@@ -3682,6 +3703,8 @@ class CleanPhaseMixin:
         """
         from glossapi.parquet_schema import ParquetSchema
 
+        adapter_profile = os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters"
+        adapter_ocr_scores = None
         if input_dir is None:
             input_dir = self.markdown_dir
         else:
@@ -3726,7 +3749,7 @@ class CleanPhaseMixin:
         debug_summary_path: Optional[Path] = None
         if write_debug_files:
             debug_dir = Path(debug_output_dir) if debug_output_dir is not None else (self.output_dir / "debug")
-            if debug_dir.exists():
+            if debug_dir.exists() and not adapter_profile:
                 observe_store(debug_dir, kind="legacy_removed_directory")
                 shutil.rmtree(debug_dir)
             debug_dir.mkdir(parents=True, exist_ok=True)
@@ -3736,60 +3759,185 @@ class CleanPhaseMixin:
             debug_summary_path = debug_dir / "summary.json"
 
         if write_cleaned_files:
-            if self.cleaned_markdown_dir.exists():
+            if self.cleaned_markdown_dir.exists() and not adapter_profile:
                 observe_store(self.cleaned_markdown_dir, kind="legacy_removed_directory")
                 shutil.rmtree(self.cleaned_markdown_dir)
             self.cleaned_markdown_dir.mkdir(parents=True, exist_ok=True)
 
-        if write_cleaned_files or write_debug_files:
-            mode_label = "clean+debug" if write_cleaned_files and write_debug_files else ("debug" if write_debug_files else "clean")
-            self.logger.info(
-                "Running shared OCR %s loop over %d markdown files (workers=%d)…",
-                mode_label,
-                len(md_files),
-                render_workers,
-            )
+        if adapter_profile and (write_cleaned_files or write_debug_files):
+            from ..stages.compatibility import clean_ocr_compatibility_kernel
+            adapter_ocr_scores = clean_ocr_compatibility_kernel(self, md_files,
+                {"min_repeat_run":min_repeat_run,"min_progress_steps":min_progress_steps,
+                 "min_repeat_steps":min_repeat_steps,"min_same_digit_steps":min_same_digit_steps,
+                 "word_rep_threshold":word_rep_threshold,"word_min_period":word_min_period,"word_window":word_window,
+                 "write_debug_files":write_debug_files},
+                write_cleaned_files=write_cleaned_files, debug_dir=debug_dir)
+        else:
+            if write_cleaned_files or write_debug_files:
+                mode_label = "clean+debug" if write_cleaned_files and write_debug_files else ("debug" if write_debug_files else "clean")
+                self.logger.info(
+                    "Running shared OCR %s loop over %d markdown files (workers=%d)…",
+                    mode_label,
+                    len(md_files),
+                    render_workers,
+                )
 
-            if write_debug_files:
-                rows: List[Dict[str, Any]] = []
-                total_page_times: List[float] = []
-                table_page_times: List[float] = []
-                numeric_page_times: List[float] = []
-                latex_page_times: List[float] = []
-                shared_page_times: List[float] = []
-                hybrid_page_times: List[float] = []
-                char_eval_times: List[float] = []
-                bad_char_ratios: List[float] = []
+                if write_debug_files:
+                    rows: List[Dict[str, Any]] = []
+                    total_page_times: List[float] = []
+                    table_page_times: List[float] = []
+                    numeric_page_times: List[float] = []
+                    latex_page_times: List[float] = []
+                    shared_page_times: List[float] = []
+                    hybrid_page_times: List[float] = []
+                    char_eval_times: List[float] = []
+                    bad_char_ratios: List[float] = []
 
-                def _consume_debug_doc_result(
-                    doc_result: Dict[str, Any],
-                    *,
-                    page_metrics_handle: Any,
-                    match_index_handle: Any,
-                ) -> None:
-                    rows.append(dict(doc_result["row"]))
-                    for page_row in doc_result["page_metric_rows"]:
-                        page_metrics_handle.write(json.dumps(page_row, ensure_ascii=False))
-                        page_metrics_handle.write("\n")
-                        total_page_times.append(float(page_row["total_page_seconds"]))
-                        table_page_times.append(float(page_row["table_seconds"]))
-                        numeric_page_times.append(float(page_row["numeric_seconds"]))
-                        latex_page_times.append(float(page_row["latex_seconds"]))
-                        hybrid_page_times.append(float(page_row["hybrid_seconds"]))
-                        shared_page_times.append(float(page_row["shared_repeat_seconds"]))
-                        char_eval_times.append(float(page_row["char_eval_seconds"]))
-                        bad_char_ratios.append(float(page_row["bad_char_ratio"]))
-                    for match_row in doc_result["match_index_rows"]:
-                        match_index_handle.write(json.dumps(match_row, ensure_ascii=False))
-                        match_index_handle.write("\n")
+                    def _consume_debug_doc_result(
+                        doc_result: Dict[str, Any],
+                        *,
+                        page_metrics_handle: Any,
+                        match_index_handle: Any,
+                    ) -> None:
+                        rows.append(dict(doc_result["row"]))
+                        for page_row in doc_result["page_metric_rows"]:
+                            page_metrics_handle.write(json.dumps(page_row, ensure_ascii=False))
+                            page_metrics_handle.write("\n")
+                            total_page_times.append(float(page_row["total_page_seconds"]))
+                            table_page_times.append(float(page_row["table_seconds"]))
+                            numeric_page_times.append(float(page_row["numeric_seconds"]))
+                            latex_page_times.append(float(page_row["latex_seconds"]))
+                            hybrid_page_times.append(float(page_row["hybrid_seconds"]))
+                            shared_page_times.append(float(page_row["shared_repeat_seconds"]))
+                            char_eval_times.append(float(page_row["char_eval_seconds"]))
+                            bad_char_ratios.append(float(page_row["bad_char_ratio"]))
+                        for match_row in doc_result["match_index_rows"]:
+                            match_index_handle.write(json.dumps(match_row, ensure_ascii=False))
+                            match_index_handle.write("\n")
 
-                if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
-                    if write_cleaned_files:
+                    if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
+                        if write_cleaned_files:
+                            jobs = [
+                                (
+                                    str(source_path),
+                                    str(self.cleaned_markdown_dir / source_path.name),
+                                    str(debug_dir / source_path.name),
+                                    int(min_progress_steps),
+                                    int(min_repeat_steps),
+                                    int(min_same_digit_steps),
+                                    int(word_rep_threshold),
+                                    int(word_min_period),
+                                    int(word_window),
+                                )
+                                for source_path in md_files
+                            ]
+                        else:
+                            jobs = [
+                                (
+                                    str(source_path),
+                                    str(debug_dir / source_path.name),
+                                    int(min_progress_steps),
+                                    int(min_repeat_steps),
+                                    int(min_same_digit_steps),
+                                    int(word_rep_threshold),
+                                    int(word_min_period),
+                                    int(word_window),
+                                )
+                                for source_path in md_files
+                            ]
+                        with debug_page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, debug_match_index_path.open("w", encoding="utf-8") as match_index_handle:
+                            with _combined_ocr_process_pool_warning_ctx():
+                                with ProcessPoolExecutor(
+                                    max_workers=render_workers,
+                                    mp_context=mp.get_context("fork"),
+                                    initializer=_init_combined_ocr_worker,
+                                ) as executor:
+                                    if write_cleaned_files:
+                                        iterator = executor.map(_process_combined_ocr_dual_document_job, jobs)
+                                    else:
+                                        iterator = executor.map(_process_combined_ocr_debug_document_job, jobs)
+                                    for doc_result in iterator:
+                                        _consume_debug_doc_result(
+                                            doc_result,
+                                            page_metrics_handle=page_metrics_handle,
+                                            match_index_handle=match_index_handle,
+                                        )
+                    else:
+                        if write_cleaned_files:
+                            def _run_dual_doc(source_path: Path) -> Dict[str, Any]:
+                                return _process_combined_ocr_document(
+                                    source_path,
+                                    clean_output_path=self.cleaned_markdown_dir / source_path.name,
+                                    debug_output_path=debug_dir / source_path.name,
+                                    noise_mod=noise_mod,
+                                    min_progress_steps=int(min_progress_steps),
+                                    min_repeat_steps=int(min_repeat_steps),
+                                    min_same_digit_steps=int(min_same_digit_steps),
+                                    word_rep_threshold=int(word_rep_threshold),
+                                    word_min_period=int(word_min_period),
+                                    word_window=int(word_window),
+                                    include_page_metrics=True,
+                                    include_match_index=True,
+                                )
+                            run_doc = _run_dual_doc
+                        else:
+                            def _run_debug_doc(source_path: Path) -> Dict[str, Any]:
+                                return _process_combined_ocr_debug_document(
+                                    source_path,
+                                    debug_dir / source_path.name,
+                                    noise_mod=noise_mod,
+                                    min_progress_steps=int(min_progress_steps),
+                                    min_repeat_steps=int(min_repeat_steps),
+                                    min_same_digit_steps=int(min_same_digit_steps),
+                                    word_rep_threshold=int(word_rep_threshold),
+                                    word_min_period=int(word_min_period),
+                                    word_window=int(word_window),
+                                )
+                            run_doc = _run_debug_doc
+
+                        with debug_page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, debug_match_index_path.open("w", encoding="utf-8") as match_index_handle:
+                            with ThreadPoolExecutor(max_workers=render_workers) as executor:
+                                for doc_result in executor.map(run_doc, md_files):
+                                    _consume_debug_doc_result(
+                                        doc_result,
+                                        page_metrics_handle=page_metrics_handle,
+                                        match_index_handle=match_index_handle,
+                                    )
+
+                    with debug_manifest_path.open("w", encoding="utf-8") as handle:
+                        for row in rows:
+                            handle.write(json.dumps(row, ensure_ascii=False))
+                            handle.write("\n")
+
+                    debug_summary = {
+                        "doc_count": len(rows),
+                        "matched_doc_count": sum(1 for row in rows if int(row["matched_page_count"]) > 0),
+                        "matched_page_count": int(sum(int(row["matched_page_count"]) for row in rows)),
+                        "match_count": int(sum(int(row.get("match_count", 0)) for row in rows)),
+                        "table_match_count": int(sum(int(row["table_match_count"]) for row in rows)),
+                        "numeric_match_count": int(sum(int(row["numeric_match_count"]) for row in rows)),
+                        "latex_match_count": int(sum(int(row["latex_match_count"]) for row in rows)),
+                        "hybrid_match_count": int(sum(int(row["hybrid_match_count"]) for row in rows)),
+                        "word_match_count": int(sum(int(row["word_match_count"]) for row in rows)),
+                        "word_rep_threshold": int(word_rep_threshold),
+                        "word_min_period": int(word_min_period),
+                        "word_window": int(word_window),
+                        "total_page_seconds": _summarize_metric(total_page_times),
+                        "table_seconds": _summarize_metric(table_page_times),
+                        "numeric_seconds": _summarize_metric(numeric_page_times),
+                        "latex_seconds": _summarize_metric(latex_page_times),
+                        "hybrid_seconds": _summarize_metric(hybrid_page_times),
+                        "shared_repeat_seconds": _summarize_metric(shared_page_times),
+                        "char_eval_seconds": _summarize_metric(char_eval_times),
+                        "bad_char_ratio": _summarize_metric(bad_char_ratios),
+                    }
+                    debug_summary_path.write_text(json.dumps(debug_summary, ensure_ascii=False, indent=2), encoding="utf-8")
+                else:
+                    if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
                         jobs = [
                             (
                                 str(source_path),
                                 str(self.cleaned_markdown_dir / source_path.name),
-                                str(debug_dir / source_path.name),
                                 int(min_progress_steps),
                                 int(min_repeat_steps),
                                 int(min_same_digit_steps),
@@ -3799,60 +3947,18 @@ class CleanPhaseMixin:
                             )
                             for source_path in md_files
                         ]
-                    else:
-                        jobs = [
-                            (
-                                str(source_path),
-                                str(debug_dir / source_path.name),
-                                int(min_progress_steps),
-                                int(min_repeat_steps),
-                                int(min_same_digit_steps),
-                                int(word_rep_threshold),
-                                int(word_min_period),
-                                int(word_window),
-                            )
-                            for source_path in md_files
-                        ]
-                    with debug_page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, debug_match_index_path.open("w", encoding="utf-8") as match_index_handle:
                         with _combined_ocr_process_pool_warning_ctx():
                             with ProcessPoolExecutor(
                                 max_workers=render_workers,
                                 mp_context=mp.get_context("fork"),
                                 initializer=_init_combined_ocr_worker,
                             ) as executor:
-                                if write_cleaned_files:
-                                    iterator = executor.map(_process_combined_ocr_dual_document_job, jobs)
-                                else:
-                                    iterator = executor.map(_process_combined_ocr_debug_document_job, jobs)
-                                for doc_result in iterator:
-                                    _consume_debug_doc_result(
-                                        doc_result,
-                                        page_metrics_handle=page_metrics_handle,
-                                        match_index_handle=match_index_handle,
-                                    )
-                else:
-                    if write_cleaned_files:
-                        def _run_dual_doc(source_path: Path) -> Dict[str, Any]:
-                            return _process_combined_ocr_document(
-                                source_path,
-                                clean_output_path=self.cleaned_markdown_dir / source_path.name,
-                                debug_output_path=debug_dir / source_path.name,
-                                noise_mod=noise_mod,
-                                min_progress_steps=int(min_progress_steps),
-                                min_repeat_steps=int(min_repeat_steps),
-                                min_same_digit_steps=int(min_same_digit_steps),
-                                word_rep_threshold=int(word_rep_threshold),
-                                word_min_period=int(word_min_period),
-                                word_window=int(word_window),
-                                include_page_metrics=True,
-                                include_match_index=True,
-                            )
-                        run_doc = _run_dual_doc
+                                list(executor.map(_process_combined_ocr_clean_document_job, jobs))
                     else:
-                        def _run_debug_doc(source_path: Path) -> Dict[str, Any]:
-                            return _process_combined_ocr_debug_document(
+                        def _run_clean_doc(source_path: Path) -> None:
+                            _process_combined_ocr_clean_document(
                                 source_path,
-                                debug_dir / source_path.name,
+                                self.cleaned_markdown_dir / source_path.name,
                                 noise_mod=noise_mod,
                                 min_progress_steps=int(min_progress_steps),
                                 min_repeat_steps=int(min_repeat_steps),
@@ -3861,83 +3967,9 @@ class CleanPhaseMixin:
                                 word_min_period=int(word_min_period),
                                 word_window=int(word_window),
                             )
-                        run_doc = _run_debug_doc
 
-                    with debug_page_metrics_path.open("w", encoding="utf-8") as page_metrics_handle, debug_match_index_path.open("w", encoding="utf-8") as match_index_handle:
                         with ThreadPoolExecutor(max_workers=render_workers) as executor:
-                            for doc_result in executor.map(run_doc, md_files):
-                                _consume_debug_doc_result(
-                                    doc_result,
-                                    page_metrics_handle=page_metrics_handle,
-                                    match_index_handle=match_index_handle,
-                                )
-
-                with debug_manifest_path.open("w", encoding="utf-8") as handle:
-                    for row in rows:
-                        handle.write(json.dumps(row, ensure_ascii=False))
-                        handle.write("\n")
-
-                debug_summary = {
-                    "doc_count": len(rows),
-                    "matched_doc_count": sum(1 for row in rows if int(row["matched_page_count"]) > 0),
-                    "matched_page_count": int(sum(int(row["matched_page_count"]) for row in rows)),
-                    "match_count": int(sum(int(row.get("match_count", 0)) for row in rows)),
-                    "table_match_count": int(sum(int(row["table_match_count"]) for row in rows)),
-                    "numeric_match_count": int(sum(int(row["numeric_match_count"]) for row in rows)),
-                    "latex_match_count": int(sum(int(row["latex_match_count"]) for row in rows)),
-                    "hybrid_match_count": int(sum(int(row["hybrid_match_count"]) for row in rows)),
-                    "word_match_count": int(sum(int(row["word_match_count"]) for row in rows)),
-                    "word_rep_threshold": int(word_rep_threshold),
-                    "word_min_period": int(word_min_period),
-                    "word_window": int(word_window),
-                    "total_page_seconds": _summarize_metric(total_page_times),
-                    "table_seconds": _summarize_metric(table_page_times),
-                    "numeric_seconds": _summarize_metric(numeric_page_times),
-                    "latex_seconds": _summarize_metric(latex_page_times),
-                    "hybrid_seconds": _summarize_metric(hybrid_page_times),
-                    "shared_repeat_seconds": _summarize_metric(shared_page_times),
-                    "char_eval_seconds": _summarize_metric(char_eval_times),
-                    "bad_char_ratio": _summarize_metric(bad_char_ratios),
-                }
-                debug_summary_path.write_text(json.dumps(debug_summary, ensure_ascii=False, indent=2), encoding="utf-8")
-            else:
-                if _can_use_combined_ocr_process_pool(noise_mod, render_workers):
-                    jobs = [
-                        (
-                            str(source_path),
-                            str(self.cleaned_markdown_dir / source_path.name),
-                            int(min_progress_steps),
-                            int(min_repeat_steps),
-                            int(min_same_digit_steps),
-                            int(word_rep_threshold),
-                            int(word_min_period),
-                            int(word_window),
-                        )
-                        for source_path in md_files
-                    ]
-                    with _combined_ocr_process_pool_warning_ctx():
-                        with ProcessPoolExecutor(
-                            max_workers=render_workers,
-                            mp_context=mp.get_context("fork"),
-                            initializer=_init_combined_ocr_worker,
-                        ) as executor:
-                            list(executor.map(_process_combined_ocr_clean_document_job, jobs))
-                else:
-                    def _run_clean_doc(source_path: Path) -> None:
-                        _process_combined_ocr_clean_document(
-                            source_path,
-                            self.cleaned_markdown_dir / source_path.name,
-                            noise_mod=noise_mod,
-                            min_progress_steps=int(min_progress_steps),
-                            min_repeat_steps=int(min_repeat_steps),
-                            min_same_digit_steps=int(min_same_digit_steps),
-                            word_rep_threshold=int(word_rep_threshold),
-                            word_min_period=int(word_min_period),
-                            word_window=int(word_window),
-                        )
-
-                    with ThreadPoolExecutor(max_workers=render_workers) as executor:
-                        list(executor.map(_run_clean_doc, md_files))
+                            list(executor.map(_run_clean_doc, md_files))
 
 
         self.logger.info(
@@ -3945,7 +3977,7 @@ class CleanPhaseMixin:
             len(md_files),
         )
 
-        results = noise_mod.score_markdown_directory_ocr_profile(
+        results = adapter_ocr_scores if adapter_ocr_scores is not None else noise_mod.score_markdown_directory_ocr_profile(
             str(input_dir),
             n_threads,
             int(min_repeat_run),

@@ -35,6 +35,7 @@
 // Internal modules
 mod charset_module;
 mod cleaning_module;
+mod edit_evidence;
 mod cmark_gfm_oracle;
 mod directory_processor;
 mod latex_module;
