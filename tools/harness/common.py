@@ -75,7 +75,7 @@ def environment():
             'package_count': len(packages), 'venv_disk_bytes': int(size) * 1024,
             'environment': {k: v for k, v in os.environ.items() if k in (
                 'DOCLING_ARTIFACTS_PATH', 'HF_HUB_OFFLINE', 'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS',
-                'MKL_NUM_THREADS', 'RAYON_NUM_THREADS', 'GLOSSAPI_IMAGES_SCALE')}}
+                'MKL_NUM_THREADS', 'RAYON_NUM_THREADS', 'GLOSSAPI_IMAGES_SCALE', 'GLOSSAPI_STAGE_PROFILE')}}
 
 
 class PeakRSS:

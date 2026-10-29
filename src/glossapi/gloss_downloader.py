@@ -18,6 +18,7 @@ Features:
 """
 
 from .ledger.journal import observe, observe_store, observe_source_rows, observe_http_response, observe_acquisition
+from .stages.receipts import recorded_request, received_bytes, resolved_route
 from .optional_dependencies import optional_dependencies
 
 with optional_dependencies("download"):
@@ -626,8 +627,8 @@ class GlossDownloader:
         initial_url = base_url
         try:
             # Access the base domain to get cookies
-            async with session.get(initial_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)):
-                pass
+            async with recorded_request(session, 'get', initial_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                observe_http_response(response, initial_url)
             return headers
         except Exception as e:
             self.logger.warning(f"Failed to setup session for {base_url}: {e}")
@@ -675,17 +676,19 @@ class GlossDownloader:
         ):
             with attempt:
                 if requester == 'get':
-                    async with session.get(url, headers=headers, timeout=timeout) as response:
+                    async with recorded_request(session, 'get', url, headers=headers, timeout=timeout, retry_index=attempt.retry_state.attempt_number - 1) as response:
                         observe_http_response(response, url, retry_index=attempt.retry_state.attempt_number - 1)
                         response.raise_for_status()
                         content = await response.read()
+                        received_bytes(len(content))
                         resp_headers = dict(response.headers) if response.headers else {}
                         return content, response.status, resp_headers
                 else:  # post
-                    async with session.post(url, headers=headers, timeout=timeout) as response:
+                    async with recorded_request(session, 'post', url, headers=headers, timeout=timeout, retry_index=attempt.retry_state.attempt_number - 1) as response:
                         observe_http_response(response, url, retry_index=attempt.retry_state.attempt_number - 1)
                         response.raise_for_status()
                         content = await response.read()
+                        received_bytes(len(content))
                         resp_headers = dict(response.headers) if response.headers else {}
                         return content, response.status, resp_headers
 
@@ -1028,8 +1031,8 @@ class GlossDownloader:
                 all_cookie_domains.add(base_domain)
             if any(domain in base_domain for domain in all_cookie_domains):
                 base_url = f"https://{base_domain}"
-                async with session.get(base_url, headers=headers, timeout=base_timeout):
-                    pass
+                async with recorded_request(session, 'get', base_url, headers=headers, timeout=base_timeout) as response:
+                    observe_http_response(response, base_url)
         except Exception as e:
             # Non-fatal error, just log and continue
             self.logger.debug(f"Initial base URL visit failed: {str(e)}")
@@ -1135,7 +1138,6 @@ class GlossDownloader:
     ) -> Tuple[bool, str, str, str, int]:
         from tenacity import AsyncRetrying
 
-        head = bytearray()
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(max(1, int(self.max_retries))),
             wait=wait_exponential(multiplier=1, min=1, max=10),
@@ -1145,7 +1147,8 @@ class GlossDownloader:
             reraise=True,
         ):
             with attempt:
-                async with session.get(url, headers=headers, timeout=timeout) as response:
+                head = bytearray()
+                async with recorded_request(session, 'get', url, headers=headers, timeout=timeout, retry_index=attempt.retry_state.attempt_number - 1) as response:
                     observe_http_response(response, url, retry_index=attempt.retry_state.attempt_number - 1)
                     response.raise_for_status()
                     resp_headers = dict(response.headers or {})
@@ -1153,6 +1156,7 @@ class GlossDownloader:
                     async with aiofiles.open(tmp_path, 'wb') as f:
                         async for chunk in response.content.iter_chunked(1 << 16):
                             if chunk:
+                                received_bytes(len(chunk))
                                 if len(head) < (1 << 16):
                                     need = (1 << 16) - len(head)
                                     head.extend(chunk[:need])
@@ -1252,7 +1256,8 @@ class GlossDownloader:
             return False, "", "", "Empty URL", retry_count
 
         url = self._normalize_request_url(url)
-        _, route_options = self._resolve_route(url)
+        route, route_options = self._resolve_route(url)
+        resolved_route(route, route_options)
         user_agent = next(self.user_agents)
         headers = self._build_request_headers(url, user_agent, referer)
         cookies = self._resolve_request_cookies(url, route_options=route_options)

@@ -19,10 +19,17 @@ class RepairBackend:
     repair_pdf: Callable
 
 
-def get_backend() -> RepairBackend:
+def get_backend(name: str | None = None) -> RepairBackend:
+    if name not in (None, "rust", "python"):
+        raise ValueError("Repair backend must be rust or python")
+    if name == "python":
+        from . import tounicode
+        return RepairBackend("python", tounicode.analyze_pdf, tounicode.repair_pdf)
     try:
         native = import_module("glossapi_rs_pdfrepair")
     except ImportError:
+        if name == "rust":
+            raise
         from . import tounicode
         return RepairBackend("python", tounicode.analyze_pdf, tounicode.repair_pdf)
 

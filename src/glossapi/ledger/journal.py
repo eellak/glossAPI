@@ -138,6 +138,10 @@ def inventory(root):
     result = {}
     if not Path(root).exists(): return result
     for path in sorted(Path(root).rglob("*")):
+        # Adapter generations already have producer-bound file registrations.
+        # Do not observe them again as unowned compatibility stores.
+        if ".glossapi" in path.relative_to(root).parts:
+            continue
         if not path.is_file() or path.name in ("corpus.sqlite3", "corpus.sqlite3-wal", "corpus.sqlite3-shm") or path.suffix in (".log", ".lock"):
             continue
         result[str(path.absolute())] = {"sha256": file_hash(path), "bytes": path.stat().st_size}
@@ -511,6 +515,8 @@ def accept_worker_observations(receipts):
 
 def observe_http_response(response, requested_url, *, retry_index=None, source_entity_bytes=None):
     """Allowlisted response facts captured before validation/cleanup can hide them."""
+    from ..stages.receipts import response_receipt
+    response_receipt(response, requested_url, retry_index)
     headers = {str(key).lower(): str(value) for key, value in (getattr(response, "headers", {}) or {}).items()
                if str(key).lower() in ("content-type", "content-disposition", "content-length", "content-encoding", "etag", "last-modified", "retry-after")}
     redirects = [{"url": str(getattr(item, "url", "")), "status": getattr(item, "status", None),
@@ -523,6 +529,8 @@ def observe_http_response(response, requested_url, *, retry_index=None, source_e
 
 
 def observe_acquisition(url, path, *, source_observable):
+    from ..stages.receipts import acquired_receipt
+    acquired_receipt(url, Path(path), source_observable)
     journal = _active_journal.get()
     if not isinstance(journal, ResultJournal): return
     path = Path(path).absolute()

@@ -423,6 +423,10 @@ class ExtractPhaseMixin:
                 True is forwarded to each worker for layout-only Docling instrumentation.
 
         """
+        if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+            if str(accel_type).lower() != "cpu" or str(use_gpus).lower() != "single" or batched or ocr_options is not None:
+                raise ValueError("Sequential adapter profile requires CPU, one device, batched=False and no OCR plugin")
+            batched = False
         if page_range is not None:
             if (len(page_range) != 2 or any(type(n) is not int for n in page_range)
                     or not 1 <= page_range[0] <= page_range[1]):

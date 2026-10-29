@@ -741,7 +741,8 @@ class GlossExtract:
         from .pdf_repair.extract import repair_for_extract
         selected, data = repair_for_extract(file_path, Path(output_dir).parent,
                                             enabled=self.repair_fonts,
-                                            deadline=deadline - budget / 2)
+                                            deadline=deadline - budget / 2,
+                                            **({"backend_name": self.repair_backend} if getattr(self, "repair_backend", None) is not None else {}))
         self._font_repair_records[file_path.stem] = data
         self._font_repair_paths[key] = selected
         self._font_repair_paths[str(selected.resolve())] = selected
@@ -893,9 +894,13 @@ class GlossExtract:
                         last_error = "; ".join([getattr(e, "error_message", str(e)) for e in getattr(conv_res, "errors", [])]) or "unknown"
                         break
                 except TimeoutError as te:
+                    observe("chunk_timeout", path=self._original_extract_file(file_path), error=te,
+                        status="failed", page_first=start, page_last=end, inner_attempt=tries)
                     status = "timeout"
                     last_error = str(te)
                 except Exception as e:
+                    observe("chunk_error", path=self._original_extract_file(file_path), error=e,
+                        status="failed", page_first=start, page_last=end, inner_attempt=tries)
                     status = "error"
                     last_error = str(e)
 
@@ -1157,6 +1162,8 @@ class GlossExtract:
                 self._log.warning(f"Failed to record timeout metadata for {filename}: {meta_exc}")
             return False
         except Exception as individual_error:
+            observe("extract_exception", path=self._original_extract_file(Path(file_path)), error=individual_error,
+                status="failed", operation="extract.convert_and_export")
             self._log.error("Failed to process file %s: %s", filename, individual_error, exc_info=True)
         # Record general failure metadata
         try:
@@ -1383,6 +1390,8 @@ class GlossExtract:
         self._apply_thread_caps()
         policy = getattr(self, "batch_policy", "safe") or "safe"
         max_batch_files = max(1, getattr(self, "max_batch_files", 1))
+        if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+            max_batch_files = 1
 
         successful: List[str] = []
         problematic: List[str] = []
@@ -1418,7 +1427,7 @@ class GlossExtract:
                         )
                     except Exception:
                         pass
-                    if self._process_single_document(file_path, output_dir=output_dir, timeout_dir=timeout_dir):
+                    if self._run_sequential_document(file_path, output_dir=output_dir, timeout_dir=timeout_dir):
                         successful.append(Path(file_path).name)
                     else:
                         problematic.append(Path(file_path).name)
@@ -1453,7 +1462,11 @@ class GlossExtract:
         # Process long PDFs individually with chunking
         for file_path in long_files:
             try:
-                ok = self._process_file_chunked(file_path, output_dir=output_dir, timeout_dir=timeout_dir)
+                if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+                    from .stages.compatibility import extract_compatibility_document
+                    ok = extract_compatibility_document(self, file_path, output_dir, timeout_dir)
+                else:
+                    ok = self._process_file_chunked(file_path, output_dir=output_dir, timeout_dir=timeout_dir)
                 if ok:
                     successful.append(Path(file_path).name)
                 else:
@@ -1463,6 +1476,12 @@ class GlossExtract:
                 self._log.error(f"Failed during chunked processing for {Path(file_path).name}: {e}")
 
         return successful, problematic
+
+    def _run_sequential_document(self, file_path, *, output_dir, timeout_dir=None):
+        if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+            from .stages.compatibility import extract_compatibility_document
+            return extract_compatibility_document(self, file_path, output_dir, timeout_dir)
+        return self._process_single_document(file_path, output_dir=output_dir, timeout_dir=timeout_dir)
         
     def extract_path(self, input_doc_paths, output_dir, batch_size: int = 5, *, skip_existing: bool = True):
         """
@@ -1649,6 +1668,17 @@ class GlossExtract:
         partial_success_count = 0
         
         for conv_res in conv_results:
+            # Stage evidence does not alter the compatibility serializer.
+            observed_pages = [int(page.page_no) for page in (getattr(conv_res, "pages", ()) or ()) if getattr(page, "page_no", None) is not None]
+            source_count = self._get_pdf_page_count(Path(conv_res.input.file))
+            selected_range = getattr(self, "page_range", None)
+            selected_pages = list(range(selected_range[0], selected_range[1]+1)) if selected_range else list(range(1, (source_count or 0)+1))
+            observe("legacy_observed", path=self._original_extract_file(Path(conv_res.input.file)),
+                page_coverage={"attempted": selected_pages, "succeeded": observed_pages, "blank": None,
+                    "failed": sorted(set(selected_pages)-set(observed_pages)),
+                    "complete": bool(selected_pages) and sorted(observed_pages) == selected_pages},
+                backend_status=str(getattr(conv_res.status, "value", conv_res.status)),
+                backend_errors=[getattr(error, "error_message", str(error)) for error in (getattr(conv_res, "errors", ()) or ())])
             if getattr(conv_res.status, "value", conv_res.status) == ConversionStatus.SUCCESS.value:
                 success_count += 1
                 doc_filename = conv_res.input.file.stem
@@ -1834,7 +1864,9 @@ class GlossExtract:
         """Export DoclingDocument JSON (compressed) with metadata stamping for Phase-1."""
         try:
             from .ocr.utils.json_io import export_docling_json, _sha256_file  # type: ignore
-        except Exception:
+        except Exception as exc:
+            observe("required_extract_artifact_missing", path=conv_res.input.file, error=exc,
+                required=False, warning=True, artifact_kind="docling_json")
             self._log.warning("glossapi.ocr.utils.json_io not available; skipping JSON export")
             return
         try:
@@ -1846,18 +1878,21 @@ class GlossExtract:
                 pass
             if pdf_path is not None:
                 pdf_path = self._original_extract_file(pdf_path)
-            doc_id = _sha256_file(pdf_path) if (pdf_path and pdf_path.exists()) else ""
+            provenance = getattr(self, "_stage_source_provenance", None)
+            doc_id = provenance["sha256"] if provenance else _sha256_file(pdf_path) if (pdf_path and pdf_path.exists()) else ""
             meta = {
                 "schema_version": 1,
                 "sha256_pdf": doc_id,
                 "page_count": len(getattr(conv_res.document, 'pages', []) or []),
-                "source_pdf_relpath": str(pdf_path) if pdf_path else "",
+                "source_pdf_relpath": provenance["path"] if provenance else str(pdf_path) if pdf_path else "",
             }
             json_dir = output_dir.parent / "json"
             json_dir.mkdir(parents=True, exist_ok=True)
             out_json = json_dir / f"{stem}.docling.json"
             export_docling_json(conv_res.document, out_json, compress="zstd", meta=meta)  # type: ignore
         except Exception as e:
+            observe("required_extract_artifact_missing", path=conv_res.input.file, error=e,
+                required=False, warning=True, artifact_kind="docling_json")
             self._log.warning(f"JSON export failed for {stem}: {e}")
 
     def _emit_formula_index(self, conv_res: ConversionResult, output_dir: Path, stem: str) -> int:

@@ -65,6 +65,7 @@ def run_arm(manifest, data, root, enabled):
              processing_stage="", extract_status="") for row, source in zip(rows, sources)]), metadata)
     os.environ["GLOSSAPI_CONVERSION_LOG_FILE"] = str(root/"conversion.log")
     receipt = dict(mode="whole-corpus", documents=len(rows), ledger_enabled=enabled,
+                   stage_profile=os.environ.get("GLOSSAPI_STAGE_PROFILE", "legacy"),
                    manifest_sha256=sha256(manifest), environment=environment(), stages={}, complete=False)
     write_json(root/"run.json", receipt)
     began = time.perf_counter()
@@ -93,7 +94,12 @@ def run_arm(manifest, data, root, enabled):
         products = {}
         additions = []
         for name, fact in after.items():
-            if name == "corpus.sqlite3":
+            if name == "corpus.sqlite3" or name.startswith(".glossapi/artifacts/"):
+                if name.startswith(".glossapi/artifacts/"):
+                    with sqlite3.connect(f"file:{out/'corpus.sqlite3'}?mode=ro&immutable=1", uri=True) as database:
+                        recorded = database.execute("SELECT sha256,bytes,presence FROM current_file_state WHERE uri=?", ((out/name).as_uri(),)).fetchone()
+                    if recorded != (fact["sha256"], fact["bytes"], "present"):
+                        raise AssertionError(f"Unregistered or changed managed addition: {name}")
                 additions.append(dict(path=name, **fact)); continue
             if name in ("corpus.sqlite3-wal", "corpus.sqlite3-shm"):
                 raise AssertionError("Ledger side files survived wrapper close")
@@ -163,7 +169,12 @@ def main():
     parser.add_argument("manifest"); parser.add_argument("--data", required=True)
     parser.add_argument("--out", required=True); parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--arm", choices=("enabled", "disabled"))
+    parser.add_argument("--stage-profile", choices=("legacy", "sequential-adapters"), default=os.environ.get("GLOSSAPI_STAGE_PROFILE", "legacy"))
     args = parser.parse_args()
+    if args.stage_profile == "sequential-adapters":
+        os.environ["GLOSSAPI_STAGE_PROFILE"] = args.stage_profile
+    else:
+        os.environ.pop("GLOSSAPI_STAGE_PROFILE", None)
     if args.arm:
         result = run_arm(args.manifest, args.data, args.out, args.arm == "enabled")
         return 0 if all(s["status"] == "ok" for s in result["stages"].values()) else 1

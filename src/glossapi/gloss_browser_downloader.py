@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .ledger.journal import observe, observe_store, observe_source_rows, observe_acquisition, observe_http_response
+from .stages.receipts import recorded_request, received_bytes, request_receipt
 
 import asyncio
 import io
@@ -130,10 +131,12 @@ class BrowserGlossDownloader(GlossDownloader):
         return match.group(1)
 
     async def _fetch_bytes(self, session: aiohttp.ClientSession, url: str) -> bytes:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=min(max(self.request_timeout, 60), 180))) as response:
+        async with recorded_request(session, 'get', url, route="source_specific_fetch", timeout=aiohttp.ClientTimeout(total=min(max(self.request_timeout, 60), 180))) as response:
             observe_http_response(response, url)
             response.raise_for_status()
-            return await response.read()
+            body = await response.read()
+            received_bytes(len(body))
+            return body
 
     def _academy_images_to_pdf_bytes(self, image_blobs: list[bytes]) -> bytes:
         if not image_blobs:
@@ -263,10 +266,11 @@ class BrowserGlossDownloader(GlossDownloader):
         connector = self._build_ssl_connector()
         timeout = aiohttp.ClientTimeout(total=min(max(self.request_timeout, 30), 180))
         async with aiohttp.ClientSession(connector=connector) as session:
-            async with session.get(url, headers=request_headers, timeout=timeout) as response:
+            async with recorded_request(session, 'get', url, route="browser_session_refetch", headers=request_headers, timeout=timeout) as response:
                 observe_http_response(response, url)
                 response.raise_for_status()
                 body = await response.read()
+                received_bytes(len(body))
                 response_headers = {str(k): str(v) for k, v in (response.headers or {}).items()}
         return body, response_headers, {"candidate_url": url, "session_reused": True}
 
@@ -334,6 +338,10 @@ class BrowserGlossDownloader(GlossDownloader):
 
                 def _record_response(response: Any) -> None:
                     try:
+                        with request_receipt(response.url, route="browser_candidate_response") as receipt:
+                            if receipt is not None:
+                                receipt["started_at"] = None
+                            observe_http_response(response, response.url)
                         response_headers = {str(k): str(v) for k, v in (response.headers or {}).items()}
                         file_ext = self.infer_file_extension(response.url, response_headers, b"")
                         if file_ext and file_ext != "html" and self.is_supported_format(file_ext):
@@ -346,7 +354,10 @@ class BrowserGlossDownloader(GlossDownloader):
                 try:
                     main_response = None
                     try:
-                        main_response = await page.goto(bootstrap_url, wait_until="networkidle", timeout=timeout_ms)
+                        with request_receipt(bootstrap_url, route="browser_navigation"):
+                            main_response = await page.goto(bootstrap_url, wait_until="networkidle", timeout=timeout_ms)
+                            if main_response is not None:
+                                observe_http_response(main_response, bootstrap_url)
                     except Exception as exc:
                         if not self._should_ignore_navigation_exception(bootstrap_url, exc):
                             raise
@@ -435,6 +446,7 @@ class BrowserGlossDownloader(GlossDownloader):
             )
         except Exception as exc:
             error_msg = f"Browser-routed download failed: {exc}"
+            observe("browser_recovery_failed", path=url, error=exc, status="failed", route="browser")
             self.logger.warning(error_msg)
             return False, "", self._best_effort_url_extension(url), error_msg, retry_count + 1
         return await self._finalize_download_result(

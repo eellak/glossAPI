@@ -42,7 +42,7 @@ def _deadline(seconds: float):
         signal.signal(signal.SIGALRM, old_handler)
 
 
-def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: float):
+def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: float, backend_name: str | None = None):
     """Return (input path, metadata); any pre-pass failure keeps the source.
 
     Reuse is based on PDF mtime; saved extract metadata supplies the original
@@ -91,7 +91,7 @@ def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: flo
                 observe("repair_cache_observed", path=source, repair=data, cache_path=str(target))
                 return target, data
 
-            backend = get_backend()
+            backend = get_backend(backend_name) if backend_name is not None else get_backend()
             data["font_repair_backend"] = backend.name
             report = backend.analyze_pdf(source)
             from dataclasses import asdict, is_dataclass
