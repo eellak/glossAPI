@@ -79,7 +79,7 @@ def test_artifact_matrix_all_four_settings(tmp_path,debug,memory_saving,kind,ret
         assert entry['presence']==('deleted' if expected else 'present')
         assert entry['retention']['consumer_ok_event_ids']
         if expected:
-            assert [item['reason_code'] for item in entry['retention']['deletions']]==['delete_planned','delete_completed']
+            assert [item['reason_code'] for item in entry['retention']['deletions']]==(['delete_completed'] if debug=='off' else ['delete_planned','delete_completed'])
             assert entry['retention']['deletions'][-1]['details']['sha256']==entry['sha256']
 
 

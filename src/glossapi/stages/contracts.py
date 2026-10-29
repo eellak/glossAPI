@@ -93,6 +93,8 @@ class OutputArtifact:
     page_range: tuple[int, int] | None
     retention_class: str
     required: bool
+    sha256: str | None = None
+    bytes: int | None = None
 
 
 @dataclass(frozen=True)

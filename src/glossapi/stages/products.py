@@ -4,6 +4,7 @@ The ledger selects generations. Fixed paths are projections, never checkpoints.
 The generation manifest is committed together with its complete output set.
 """
 from __future__ import annotations
+from .execution import write_text_hashed
 
 from dataclasses import replace
 import json
@@ -137,11 +138,14 @@ def generation_outputs(request, paths, *, decisions=(), reason='legacy_observed'
     files=[]; outputs=[]
     for relative,kind in paths:
         path=checked_path(request.work_directory,relative)
-        files.append({'path':relative,'kind':kind,'sha256':sha256_file(path),'bytes':path.stat().st_size})
-        outputs.append(OutputArtifact(kind,relative,None,'final' if kind in ('sections_parquet','classified_parquet','fully_annotated_parquet','annotated_parquet','metadata_projection','document_jsonl','document_jsonl_shard') else 'intermediate',True))
+        from .execution import produced_hash
+        written=produced_hash(path)
+        digest,size=written if written else (sha256_file(path),path.stat().st_size)
+        files.append({'path':relative,'kind':kind,'sha256':digest,'bytes':size})
+        outputs.append(OutputArtifact(kind,relative,None,'final' if kind in ('sections_parquet','classified_parquet','fully_annotated_parquet','annotated_parquet','metadata_projection','document_jsonl','document_jsonl_shard') else 'intermediate',True,digest,size))
     manifest={'schema_version':1,'operation':request.operation,'inputs':[{'file_id':a.file_id,'sha256':a.sha256,'role':a.kind} for a in request.inputs],
         'files':files,'membership':metrics or {}}
-    (request.work_directory/'generation.json').write_text(json.dumps(manifest,ensure_ascii=False,sort_keys=True)+'\n')
+    write_text_hashed(request.work_directory/'generation.json',json.dumps(manifest,ensure_ascii=False,sort_keys=True)+'\n')
     outputs.append(OutputArtifact('generation_manifest','generation.json',None,'evidence',True))
     return StageResult(request.task_id,request.attempt_id,request.lease_token,'ok',reason,tuple(outputs),tuple(decisions),metrics or {})
 
@@ -158,6 +162,8 @@ def publish_products(corpus,result,workspace,products,*,retire=()):
         source=checked_path(workspace,relative); destination=Path(destination).absolute()
         destination.parent.mkdir(parents=True,exist_ok=True)
         registered=journal.writer.connection.execute('SELECT sha256,bytes FROM files WHERE producer_attempt_id=? AND uri=?',(result.attempt_id,source.as_uri())).fetchone() if journal else None
+        if registered and (source.stat().st_size!=registered['bytes'] or sha256_file(source)!=registered['sha256']):
+            raise ValueError('Product hash changed before final publication')
         if registered and not destination.is_symlink() and destination.is_file() and destination.stat().st_size==registered['bytes'] and sha256_file(destination)==registered['sha256']:
             selected.append((source,destination))
             continue
@@ -165,12 +171,10 @@ def publish_products(corpus,result,workspace,products,*,retire=()):
             temporary=Path(stream.name)
             try:
                 with source.open('rb') as reader: shutil.copyfileobj(reader,stream)
-                stream.flush();os.fsync(stream.fileno())
+                stream.flush()
             except BaseException:
                 temporary.unlink(missing_ok=True);raise
         os.replace(temporary,destination)
-        from .sequential import _fsync_directory
-        _fsync_directory(destination.parent)
         selected.append((source,destination))
     if journal:
         with journal.writer.transaction():

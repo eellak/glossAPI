@@ -59,7 +59,10 @@ def _serve(connection, parent_pid):
                 if any(not artifact.path.is_file() or artifact.path.stat().st_size!=artifact.bytes or sha256_file(artifact.path)!=artifact.sha256 for artifact in request.inputs):
                     raise ValueError('input_hash_changed')
                 method = stage.finalize if aggregate else getattr(stage, '_run_document', stage.run_document)
-                result = method(request, reporter=ReceiptCollector())
+                from .execution import producer_hash_scope,seal_output_hashes
+                with producer_hash_scope():
+                    result = method(request, reporter=ReceiptCollector())
+                    result = seal_output_hashes(result,request.work_directory)
             except Exception as error:
                 result = failed_result(request, 'input_hash_changed' if str(error)=='input_hash_changed' else stage.name+'_exception', error)
             finally:
@@ -71,7 +74,8 @@ def _serve(connection, parent_pid):
             if not any(output.relative_path=='conversion.log' for output in result.outputs):
                 result=replace(result,outputs=(*result.outputs,OutputArtifact('attempt_diagnostic','conversion.log',None,'intermediate',False)))
             from ..ledger.journal import loaded_tools
-            result = replace(result, metrics={**result.metrics, 'tools': loaded_tools(), 'worker_pid': os.getpid()})
+            from .execution import seal_output_hashes
+            result = seal_output_hashes(replace(result, metrics={**result.metrics, 'tools': loaded_tools(), 'worker_pid': os.getpid()}),request.work_directory)
             target = request.work_directory/'worker-result.json'
             try:
                 target.write_text(json.dumps(asdict(result), ensure_ascii=False))

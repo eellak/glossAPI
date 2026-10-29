@@ -199,6 +199,27 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1, debug=
         receipt['retention_deletions']=retained
         receipt['retention_corpus']=str(out)
         receipt['retention_snapshots']=str(root/'retention_snapshots')
+        # Streaming wrapper captures precede the parent run's retention. Bring
+        # temporary reports to the same post-retention point as sequential
+        # captures, only with an exact completed deletion and saved byte proof.
+        from glossapi.stages.retention import retention_facts
+        retired_reports=[]
+        with closing(ledger_connect(f"file:{out/'corpus.sqlite3'}?mode=ro&immutable=1",uri=True)) as database:
+            database.row_factory=sqlite3.Row
+            for stage,state in receipt['stages'].items():
+                fact=state['products'].get('cleaning_report.parquet')
+                if not fact or (out/'cleaning_report.parquet').exists():continue
+                row=database.execute("SELECT * FROM current_file_state WHERE uri=? AND sha256=? AND bytes=? AND kind='temporary_cleaning_report' AND presence='deleted' ORDER BY event_id DESC LIMIT 1",((out/'cleaning_report.parquet').as_uri(),fact['sha256'],fact['bytes'])).fetchone()
+                if row is None:raise AssertionError('Temporary report vanished without exact retention proof')
+                proof=retention_facts(database,row['file_id'])
+                assert proof['consumer_ok_event_ids'] and not proof['outstanding_consumers'] and not proof['pins']
+                assert any(event['reason_code'] in ('delete_completed','delete_recovered') for event in proof['deletions'])
+                saved=root/'snapshots'/stage/'cleaning_report.parquet'
+                if saved.exists():assert sha256(saved)==fact['sha256'] and saved.stat().st_size==fact['bytes']
+                retired_reports.append(dict(stage=stage,file_id=row['file_id'],**fact))
+                del state['products']['cleaning_report.parquet']
+        receipt['intermediate_retention_point']='after completed run retention'
+        receipt['retired_temporary_reports']=retired_reports
     receipt["ledger"] = audit_ledger(out/"corpus.sqlite3", len(rows)) if enabled else None
     write_json(root/"run.json", receipt)
     return receipt

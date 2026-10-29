@@ -15,7 +15,7 @@ import uuid
 
 from .catalogue import EVENT_KINDS, REASON_CODES, STAGES, STATUSES, TERMINAL_STATUSES
 from .encoding import canonical_json, evidence, file_hash, snapshot_hash, typed_value, untyped_value
-from .schema import APPEND_ONLY_TABLES, SCHEMA_SQL, SCHEMA_VERSION, COMPACT_SCHEMA_SQL
+from .schema import APPEND_ONLY_TABLES, SCHEMA_SQL, SCHEMA_VERSION, COMPACT_SCHEMA_SQL, COMPACT_RETENTION_SCHEMA_SQL
 from .compact import connect, encode_json
 from .validation import validate_evidence
 
@@ -86,15 +86,17 @@ def integrity(connection):
 
 def supported_schema(connection):
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if version not in (1, SCHEMA_VERSION):
+    if version not in (1, 2, SCHEMA_VERSION):
         raise LedgerError(f"Unsupported ledger schema {version}")
     rows = connection.execute("SELECT version,migration_sha256 FROM schema_migrations ORDER BY version").fetchall()
     if [r[0] for r in rows] != list(range(1, version + 1)):
         raise LedgerError("Schema migration history disagrees with user_version")
     if rows[0][1] != hashlib.sha256(SCHEMA_SQL.encode()).hexdigest():
         raise LedgerError("Schema migration checksum mismatch")
-    if version == 2 and rows[1][1] != hashlib.sha256(COMPACT_SCHEMA_SQL.encode()).hexdigest():
+    if version >= 2 and rows[1][1] != hashlib.sha256(COMPACT_SCHEMA_SQL.encode()).hexdigest():
         raise LedgerError("Compact schema migration checksum mismatch")
+    if version >= 3 and rows[2][1] != hashlib.sha256(COMPACT_RETENTION_SCHEMA_SQL.encode()).hexdigest():
+        raise LedgerError("Compact retention schema migration checksum mismatch")
 
 
 @contextmanager
@@ -128,7 +130,7 @@ class LedgerWriter:
     All public mutation methods require an explicit transaction.
     """
     def __init__(self, path, *, code_revision="unknown_not_recorded", storage_version=SCHEMA_VERSION):
-        if storage_version not in (1, SCHEMA_VERSION):raise LedgerError("Unsupported creation schema")
+        if storage_version not in (1, 2, SCHEMA_VERSION):raise LedgerError("Unsupported creation schema")
         self.path = Path(path).absolute()
         if str(self.path) in _OPEN_WRITERS:
             raise BlockingIOError("Ledger already has an owning writer")
@@ -162,17 +164,26 @@ class LedgerWriter:
                     self.connection.execute("INSERT INTO schema_migrations VALUES(1,?,?,?)",
                         (utc_now(), hashlib.sha256(SCHEMA_SQL.encode()).hexdigest(), code_revision))
                     self.connection.execute("PRAGMA user_version=1")
-                    if storage_version == 2:
+                    if storage_version >= 2:
                         for statement in statements(COMPACT_SCHEMA_SQL):self.connection.execute(statement)
                         self.connection.execute("INSERT INTO schema_migrations VALUES(2,?,?,?)",
                             (utc_now(),hashlib.sha256(COMPACT_SCHEMA_SQL.encode()).hexdigest(),code_revision))
                         self.connection.execute("PRAGMA user_version=2")
-                self.connection.compact = storage_version == 2
+                    if storage_version >= 3:
+                        for statement in statements(COMPACT_RETENTION_SCHEMA_SQL):self.connection.execute(statement)
+                        self.connection.execute('INSERT INTO path_root VALUES(1,?)',(self.path.parent.as_uri(),))
+                        self.connection.execute("INSERT INTO schema_migrations VALUES(3,?,?,?)",
+                            (utc_now(),hashlib.sha256(COMPACT_RETENTION_SCHEMA_SQL.encode()).hexdigest(),code_revision))
+                        self.connection.execute('PRAGMA user_version=3')
+                self.connection.compact = storage_version >= 2
+                self.connection.storage_version = storage_version
+                if storage_version>=3:self.connection.path_root=self.path.parent.as_uri()
             supported_schema(self.connection)
             integrity(self.connection)
             self.next_event_id = self.connection.execute("SELECT COALESCE(MAX(event_id),0)+1 FROM events").fetchone()[0]
             self.connection.execute("PRAGMA journal_mode=WAL")
-            self.connection.execute("PRAGMA synchronous=FULL")
+            self.connection.execute("PRAGMA synchronous=NORMAL")
+            self._durable_files=set()
         except BaseException:
             self.close()
             raise
@@ -218,12 +229,45 @@ class LedgerWriter:
 
     def close(self):
         if self.connection is not None:
+            if self.connection.in_transaction:self.connection.rollback()
+            if hasattr(self,'_durable_files'):self.durable_barrier()
             self.connection.close()
             self.connection = None
         if getattr(self, "lock", None) is not None:
             os.close(self.lock)
             self.lock = None
             _OPEN_WRITERS.discard(str(self.path))
+
+    def durable_barrier(self):
+        """Flush immutable managed products and their parents before a FULL commit.
+
+        Ordinary WAL commits protect process death. This is the explicit disk
+        boundary used before unlink and at run end. The cache is by immutable
+        registration, never by stat metadata and never used to bypass a hash.
+        """
+        self._owner(transaction=False)
+        if self.connection.in_transaction:
+            raise LedgerError('Durability barrier requires a committed observation')
+        from urllib.parse import unquote, urlsplit
+        directories=set()
+        synchronized=[]
+        for file_id,uri in self.connection.execute("SELECT file_id,uri FROM current_file_state WHERE ownership='managed' AND presence='present'"):
+            if file_id in self._durable_files:continue
+            path=Path(unquote(urlsplit(uri).path))
+            if not path.is_file():continue  # Missing observations are diagnosed by verification/resume.
+            with path.open('rb') as stream:os.fsync(stream.fileno())
+            directories.update(parent for parent in path.parents if parent.is_relative_to(self.path.parent))
+            synchronized.append(file_id)
+        for directory in sorted(directories,key=lambda path:len(path.parts),reverse=True):
+            descriptor=os.open(directory,os.O_RDONLY)
+            try:os.fsync(descriptor)
+            finally:os.close(descriptor)
+        self.connection.execute('PRAGMA synchronous=FULL')
+        try:
+            with self.transaction():
+                self.connection.execute('UPDATE ledger_info SET singleton=singleton WHERE singleton=1')
+        finally:self.connection.execute('PRAGMA synchronous=NORMAL')
+        self._durable_files.update(synchronized)
 
     def __enter__(self): return self
     def __exit__(self, *args): self.close()
@@ -257,10 +301,11 @@ class LedgerWriter:
         validate_evidence(value)
         encoded = canonical_json(value)
         digest = hashlib.sha256(encoded.encode()).hexdigest()
-        existing = self.connection.execute("SELECT kind,json FROM snapshots WHERE sha256=?", (digest,)).fetchone()
-        # Kind is included in the hashed body by callers where semantically needed.
-        if existing is None:
-            self.connection.execute("INSERT INTO snapshots VALUES(?,?,1,?)", (digest, kind, encode_json(encoded) if self.connection.compact else encoded))
+        stored=encode_json(encoded) if self.connection.compact else encoded
+        if getattr(self.connection,'storage_version',0)>=3:
+            stored=self.connection.encode_snapshot(value,lambda common:self.snapshot('shared_config',{'kind':'shared_config','value':common}))
+        # The snapshot key hashes the full logical value, independent of storage.
+        self.connection.execute("INSERT OR IGNORE INTO snapshots VALUES(?,?,1,?)",(digest,kind,stored))
         return digest
 
     def run(self, settings, plan, environment, *, code_revision):
@@ -428,7 +473,7 @@ class LedgerWriter:
                 self.event(run_id, event_kind="artifact", reason_code="corrupt" if changed else "missing", file_id=previous[0], version_id=previous[1],
                     details={"observation": "legacy_location_bytes_replaced" if changed else "location_observed_missing", "observed_sha256":sha256})
         identifier = new_id()
-        self.connection.execute("INSERT INTO files VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", (identifier, version_id, producer_attempt_id, stage, kind, uri, sha256, bytes, ownership, retention_class, page_first, page_last, utc_now()))
+        self.connection.execute("INSERT INTO files(file_id,version_id,producer_attempt_id,stage,kind,uri,sha256,bytes,ownership,retention_class,page_first,page_last,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", (identifier, version_id, producer_attempt_id, stage, kind, uri, sha256, bytes, ownership, retention_class, page_first, page_last, utc_now()))
         self.event(run_id, event_kind="artifact", reason_code=presence, version_id=version_id, file_id=identifier)
         return identifier
 

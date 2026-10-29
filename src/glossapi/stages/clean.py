@@ -4,6 +4,7 @@ The native cleaner runs in process; no interpreter/model startup per document.
 Corpus-level metadata serialization and selection remain compatibility work.
 """
 from __future__ import annotations
+from .execution import write_text_hashed
 
 from dataclasses import replace
 import csv
@@ -118,7 +119,7 @@ class CleanStage:
                         debug_output_path=debug, noise_mod=noise, include_page_metrics=True, include_match_index=True, **options)
                 if recorder.text != output.read_bytes().decode('utf-8'):
                     raise ValueError('OCR producer edit replay does not match cleaned text')
-                (root/'debug.details.json').write_text(json.dumps(details,ensure_ascii=False))
+                write_text_hashed(root/'debug.details.json',json.dumps(details,ensure_ascii=False))
                 metrics = {'ocr_scores': list(noise.score_markdown_directory_ocr_profile(str(source.path.parent), 1,
                     int(request.settings.get('min_repeat_run', 6))))}
                 for row in metrics['ocr_scores']: row['path'] = source.path.name
@@ -137,10 +138,10 @@ class CleanStage:
                 if isinstance(value,dict): return {key:nullable(item) for key,item in value.items()}
                 if isinstance(value,(list,tuple)): return [nullable(item) for item in value]
                 return value
-            (root/'clean.metrics.json').write_text(json.dumps(nullable(metrics), ensure_ascii=False, allow_nan=False))
+            write_text_hashed(root/'clean.metrics.json',json.dumps(nullable(metrics), ensure_ascii=False, allow_nan=False))
             # Payload replacements stay ordinary files; ledger retains hashes/spans.
             if request.settings.get('debug', 'off') == 'on':
-                (root/'edit-replacements.json').write_text(json.dumps(recorder.replacements, ensure_ascii=False))
+                write_text_hashed(root/'edit-replacements.json',json.dumps(recorder.replacements, ensure_ascii=False))
             decision = {'operation': operation, 'raw_file_id': source.file_id, 'raw_hash': source.sha256,
                 'clean_hash': text_hash(output.read_bytes().decode('utf-8')), 'edits': recorder.receipt() if request.settings.get('debug', 'off') == 'on' else recorder.summary(),
                 'edit_detail': 'spans' if request.settings.get('debug', 'off') == 'on' else 'per_rule_summary',

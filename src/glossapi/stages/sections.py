@@ -1,5 +1,6 @@
 """Existing section parser and frozen-order compatibility aggregate serializer."""
 from __future__ import annotations
+from .execution import write_text_hashed
 
 import hashlib
 import json
@@ -65,7 +66,7 @@ class SectionsStage:
             rows=sectioner.rows_for_document(source.path.read_text(encoding='utf-8'),request.settings['filename'])
             parser_hash=hashlib.sha256(Path(__import__('glossapi.gloss_section',fromlist=['__file__']).__file__).read_bytes()).hexdigest()
             keys=[hashlib.sha256(f'{source.sha256}:{parser_hash}:{ordinal}'.encode()).hexdigest() for ordinal in range(len(rows))]
-            (request.work_directory/'rows.json').write_text(json.dumps(rows,ensure_ascii=False))
+            write_text_hashed(request.work_directory/'rows.json',json.dumps(rows,ensure_ascii=False))
             return generation_outputs(request,[('rows.json','section_fragment')],reason='sections_completed' if rows else 'sections_empty',
                 decisions=({'input_file_id':source.file_id,'input_text_sha256':source.sha256,'parser_sha256':parser_hash,
                     'section_keys':keys,'section_count':len(rows),'compatibility_filename':request.settings['filename']},))

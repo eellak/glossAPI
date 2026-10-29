@@ -30,7 +30,7 @@ def start(writer, stage="extract", specification=None):
 def test_schema_pragmas_identity_and_append_only(tmp_path):
     with LedgerWriter(tmp_path / "corpus.sqlite3") as writer:
         assert writer.connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-        assert writer.connection.execute("PRAGMA synchronous").fetchone()[0] == 2
+        assert writer.connection.execute("PRAGMA synchronous").fetchone()[0] == 1
         assert writer.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert writer.connection.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
         assert writer.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION

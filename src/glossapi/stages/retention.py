@@ -6,10 +6,12 @@ immutable: later readers require a new plan, never an amendment to an old edge.
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
 import stat
+import sqlite3
 from urllib.parse import unquote, urlsplit
 
 from .execution import sha256_file
@@ -37,6 +39,16 @@ def file_path(row):
 
 def retention_facts(connection, file_id, *, as_of=9223372036854775807):
     """Ledger-only facts shared by deletion and report --why."""
+    if getattr(connection,'storage_version',0)>=3:
+        compact=connection.execute('SELECT c.*,f.sha256,f.bytes FROM completed_deletions c JOIN files f USING(file_id) WHERE c.file_id=? AND c.event_id<=?',(file_id,as_of)).fetchone()
+        if compact:
+            fields=('file_id','event_id','run_id','reason_code','deletion_reason','last_consumer_stage','recorded_at','sha256','bytes')
+            compact=dict(zip(fields,compact))
+            consumers=[row[0] for row in connection.execute("SELECT DISTINCT e.event_id FROM attempt_inputs i JOIN events e USING(attempt_id) WHERE i.file_id=? AND i.sha256=? AND e.event_kind='lifecycle' AND e.status='ok' AND e.event_id<?",(file_id,compact['sha256'],compact['event_id']))]
+            return dict(policy=compact['deletion_reason'],consumer_ok_event_ids=consumers,
+                outstanding_consumers=[],pins=[],declaration={'compact_completed_delete':True,'deletion_reason':compact['deletion_reason']},
+                deletions=[dict(event_id=compact['event_id'],reason_code=compact['reason_code'],
+                    details={**compact,'history':'compact_completed_delete','deleted_logical_bytes':compact['bytes']})])
     declarations = []
     deletions = []
     for event in connection.execute("SELECT event_id,reason_code,details_json FROM events WHERE file_id=? AND event_kind='retention' AND event_id<=? ORDER BY event_id", (file_id,as_of)):
@@ -128,6 +140,7 @@ class RetentionController:
     def eligibility(self, file_id):
         row = self.connection.execute('SELECT * FROM current_file_state WHERE file_id=?', (file_id,)).fetchone()
         facts = retention_facts(self.connection, file_id)
+        if row['presence']=='deleted':return row,facts,['already_deleted']
         plan = facts['declaration']
         reasons = list(facts['pins'])
         if row['ownership'] != 'managed' or not file_path(row).absolute().is_relative_to(self.root):
@@ -198,6 +211,12 @@ class RetentionController:
             finally:
                 os.close(handle)
             return descriptor, relative.name, identity(after)
+        except FileNotFoundError:
+            # Recovery can observe an unlink whose completion was interrupted.
+            # Flush its nearest existing parent before recording completion.
+            try:os.fsync(descriptor)
+            finally:os.close(descriptor)
+            raise
         except BaseException:
             os.close(descriptor); raise
 
@@ -238,6 +257,7 @@ class RetentionController:
                 with self.writer.transaction():
                     intent = self.writer.event(self.run_id,event_kind='retention',reason_code='delete_planned',
                         file_id=file_id,version_id=row['version_id'],details=self._compact_receipt({**details,'identity':list(identity)}))
+                self.writer.durable_barrier()
                 self.fault('after_intent', file_id)
             # Pins and leases can only change through this writer. Recheck the
             # path identity under the same opened directory immediately before unlink.
@@ -278,6 +298,26 @@ class RetentionController:
             for file_id in details['logical_references']:
                 self.writer.event(self.run_id,event_kind='artifact',reason_code='deleted',file_id=file_id,
                     version_id=self.connection.execute('SELECT version_id FROM files WHERE file_id=?',(file_id,)).fetchone()[0],details={'intent_event_id':intent,'sha256':row['sha256']})
+            if getattr(self.connection,'storage_version',0)>=3 and self.settings['debug']=='off':
+                for alias in details['logical_references']:
+                    pending=getattr(self,'_completed_policy_hashes',set())
+                    for encoded, in self.connection.execute("SELECT details_json FROM retention_events WHERE file_id=? AND reason_code='retention_pinned'",(alias,)):
+                        digest=json.loads(encoded).get('retention_plan_sha256')
+                        if digest:pending.add(digest)
+                    self._completed_policy_hashes=pending
+                    plan=retention_facts(self.connection,alias)['declaration']
+                    deletion_reason=('extreme_after_last_planned_reader' if plan['downloaded_source'] else
+                        'superseded_generation_after_last_consumer' if plan.get('superseded_by') else
+                        'debug_off_after_last_consumer')
+                    consumer=self.connection.execute("SELECT t.stage FROM events e JOIN tasks t USING(task_id) JOIN attempt_inputs i USING(attempt_id) WHERE i.file_id=? AND e.event_kind='lifecycle' AND e.status='ok' ORDER BY e.event_id DESC LIMIT 1",(alias,)).fetchone()
+                    if consumer is None:raise ValueError('Completed deletion lacks an exact successful consumer')
+                    from ..ledger.writer import utc_now
+                    event_id=self.writer.next_event_id;self.writer.next_event_id+=1
+                    self.connection.execute('INSERT INTO completed_deletions VALUES(?,?,?,?,?,?,?)',
+                        (alias,event_id,self.run_id,reason,deletion_reason,consumer[0],utc_now()))
+                    self.connection.execute('DELETE FROM retention_events WHERE file_id=?',(alias,))
+                if not getattr(self.writer,'_batch_active',False):self._prune_completed_policies()
+                return True
             for alias in details['logical_references']:
                 if alias==row['file_id']:continue
                 self.writer.event(self.run_id,event_kind='retention',reason_code=reason,file_id=alias,
@@ -286,6 +326,26 @@ class RetentionController:
             self.writer.event(self.run_id,event_kind='retention',reason_code=reason,file_id=row['file_id'],
                 version_id=row['version_id'],details=self._compact_receipt({**details,'intent_event_id':intent,'deleted_logical_bytes':row['bytes']}))
         return True
+
+    def _prune_completed_policies(self):
+        """Drop only completed policies with no remaining live journal reference."""
+        if getattr(self.connection,'storage_version',0)<3 or self.settings['debug']!='off':return
+        pending=getattr(self,'_completed_policy_hashes',set())
+        if not pending:
+            # A process can die after the completion commit and before pruning.
+            pending={row[0] for row in self.connection.execute("SELECT sha256 FROM snapshots WHERE kind='retention_policy'")}
+        if not pending:return
+        live=set()
+        for encoded, in self.connection.execute("SELECT details_json FROM retention_events WHERE reason_code='retention_pinned'"):
+            digest=json.loads(encoded).get('retention_plan_sha256')
+            if digest:live.add(digest)
+        with nullcontext() if self.connection.in_transaction else self.writer.transaction():
+            for digest in pending-live:
+                try:self.connection.execute("DELETE FROM snapshots WHERE sha256=? AND kind='retention_policy'",(digest,))
+                except sqlite3.IntegrityError:
+                    # A separately registered fact still requires this snapshot.
+                    pass
+        self._completed_policy_hashes=set()
 
     def delete_many(self,file_ids):
         intents=[]
@@ -301,6 +361,7 @@ class RetentionController:
                     intent=self.writer.event(self.run_id,event_kind='retention',reason_code='delete_planned',
                         file_id=file_id,version_id=row['version_id'],details=self._compact_receipt(details))
                     intents.append((file_id,intent))
+            self.writer.durable_barrier()
             batch=intents;intents=[]
             self._directory_syncs={}
             try:
@@ -316,12 +377,18 @@ class RetentionController:
             finally:
                 for descriptor in self._directory_syncs.values():os.close(descriptor)
                 del self._directory_syncs
+            self._prune_completed_policies()
 
     def recover(self):
+        self._prune_completed_policies()
         intents = list(self.connection.execute("""SELECT event_id,file_id FROM events e
             WHERE event_kind='retention' AND reason_code='delete_planned' AND NOT EXISTS
             (SELECT 1 FROM events c WHERE c.file_id=e.file_id AND c.event_id>e.event_id
              AND c.reason_code IN ('delete_completed','delete_recovered','delete_failed'))"""))
+        # The dead writer may have committed its NORMAL intent and died while
+        # flushing consumers, before its FULL barrier. Never infer durability
+        # merely from a visible intent after process death.
+        if intents:self.writer.durable_barrier()
         return sum(self.delete(row[1],recovering=row[0]) for row in intents)
 
     def seal(self, rows):

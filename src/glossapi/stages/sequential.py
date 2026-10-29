@@ -40,7 +40,10 @@ class SequentialStageRunner:
                 self.verify_projection(stage,document,specification,run_id,result)
             return result,workspace
         request, complete = self.prepare(stage, document, specification, **options)
-        result = (stage.finalize if options.get('aggregate') else stage.run_document)(request, reporter=ReceiptCollector())
+        from .execution import producer_hash_scope,seal_output_hashes
+        with producer_hash_scope():
+            result = (stage.finalize if options.get('aggregate') else stage.run_document)(request, reporter=ReceiptCollector())
+            result = seal_output_hashes(result,request.work_directory)
         return complete(result)
 
     def verify_projection(self,stage,document,specification,run_id,result):
@@ -182,16 +185,9 @@ class SequentialStageRunner:
                 path = checked_path(work, output.relative_path)
                 if not path.is_file():
                     raise ValueError("Returned output is absent")
-                with path.open("rb") as stream:
-                    os.fsync(stream.fileno())
-                records.append(dict(kind=output.kind, role=output.relative_path, sha256=sha256_file(path), bytes=path.stat().st_size,
+                records.append(dict(kind=output.kind, role=output.relative_path, sha256=output.sha256 or sha256_file(path), bytes=output.bytes if output.bytes is not None else path.stat().st_size,
                     retention_class=output.retention_class, page_first=output.page_range[0] if output.page_range else None,
                     page_last=output.page_range[1] if output.page_range else None))
-            for directory in sorted((path for path in work.rglob("*") if path.is_dir()), key=lambda path: len(path.parts), reverse=True):
-                if directory.is_symlink():
-                    raise ValueError("Symlink directory in attempt")
-                _fsync_directory(directory)
-            _fsync_directory(work)
             destination = self.root / ".glossapi" / "artifacts" / (version or 'corpus') / stage.name / attempt
             destination.parent.mkdir(parents=True, exist_ok=True)
             if destination.exists():
@@ -210,13 +206,8 @@ class SequentialStageRunner:
                     copied=destination/record['role']
                     if copied.stat().st_size!=record['bytes'] or sha256_file(copied)!=record['sha256']:
                         raise ValueError('Cross-filesystem publication changed bytes')
-                    with copied.open('rb') as stream:os.fsync(stream.fileno())
                 # Keep the guarded scratch copy until the writer has registered
                 # it and can issue ordinary retention receipts after commit.
-            if cross_filesystem:
-                for directory in sorted((path for path in destination.rglob('*') if path.is_dir()),key=lambda path:len(path.parts),reverse=True):_fsync_directory(directory)
-                _fsync_directory(destination)
-            _fsync_directory(destination.parent)
             with self.writer.transaction():
                 if stage.name == "download" and not aggregate and result.status == "ok":
                     acquisition = result.decisions[0]["acquisitions"][-1]

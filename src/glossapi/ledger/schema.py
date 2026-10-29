@@ -1,5 +1,5 @@
 """Normative version-1 DDL from LEDGER_DESIGN section 1 (stdlib only)."""
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 APPEND_ONLY_TABLES = ("events", "source_records", "attempts", "files")
 SCHEMA_SQL = r"""
 CREATE TABLE ledger_info (
@@ -177,4 +177,70 @@ CREATE TRIGGER events_view_insert INSTEAD OF INSERT ON events BEGIN
  NEW.error_type,NEW.traceback,NEW.started_at,NEW.finished_at,NEW.duration_ns,
  NEW.output_manifest_sha256,NEW.details_json,NEW.recorded_at);
 END;
+"""
+
+# New ledgers only. Historical v1/v2 creation scripts and checksums stay frozen.
+COMPACT_RETENTION_SCHEMA_SQL = """
+CREATE TABLE path_root (singleton INTEGER PRIMARY KEY CHECK(singleton=1), uri TEXT NOT NULL);
+CREATE TABLE paths (path_id INTEGER PRIMARY KEY, uri TEXT NOT NULL UNIQUE);
+ALTER TABLE files RENAME TO file_records;
+DROP INDEX files_uri;
+CREATE INDEX files_uri ON file_records(CAST(uri AS INTEGER));
+CREATE VIEW files AS SELECT f.file_id,f.version_id,f.producer_attempt_id,f.stage,f.kind,
+ p.uri,f.sha256,f.bytes,f.ownership,f.retention_class,f.page_first,f.page_last,f.created_at,f.rowid AS rowid
+ FROM file_records f JOIN paths p ON p.path_id=CAST(f.uri AS INTEGER);
+CREATE TRIGGER files_insert INSTEAD OF INSERT ON files BEGIN
+ INSERT OR IGNORE INTO paths(uri) VALUES(NEW.uri);
+ INSERT INTO file_records VALUES(NEW.file_id,NEW.version_id,NEW.producer_attempt_id,
+ NEW.stage,NEW.kind,(SELECT path_id FROM paths WHERE uri=NEW.uri),NEW.sha256,
+ NEW.bytes,NEW.ownership,NEW.retention_class,NEW.page_first,NEW.page_last,NEW.created_at);
+END;
+CREATE TRIGGER files_view_no_update INSTEAD OF UPDATE ON files
+ BEGIN SELECT RAISE(ABORT, 'append-only table'); END;
+CREATE TRIGGER files_view_no_delete INSTEAD OF DELETE ON files
+ BEGIN SELECT RAISE(ABORT, 'append-only table'); END;
+DROP VIEW current_file_state;
+CREATE VIEW current_file_state AS
+ SELECT f.*,e.reason_code AS presence,e.event_id FROM files f
+ LEFT JOIN event_records e ON e.event_id=(SELECT MAX(s.event_id) FROM event_records s
+ WHERE s.file_id=f.file_id AND s.event_kind='artifact');
+CREATE TABLE completed_deletions (
+ file_id BLOB PRIMARY KEY REFERENCES file_records(file_id),
+ event_id INTEGER NOT NULL UNIQUE,
+ run_id BLOB NOT NULL REFERENCES runs(run_id),
+ reason_code TEXT NOT NULL,
+ deletion_reason TEXT NOT NULL,
+ last_consumer_stage TEXT NOT NULL,
+ recorded_at TEXT NOT NULL
+);
+CREATE TRIGGER completed_deletions_no_update BEFORE UPDATE ON completed_deletions
+ BEGIN SELECT RAISE(ABORT, 'append-only table'); END;
+CREATE TRIGGER completed_deletions_no_delete BEFORE DELETE ON completed_deletions
+ BEGIN SELECT RAISE(ABORT, 'append-only table'); END;
+-- Only this transient journal can collapse after a successful durable delete.
+DROP TRIGGER retention_events_no_delete;
+CREATE TRIGGER retention_events_no_delete BEFORE DELETE ON retention_events
+ WHEN NOT EXISTS (SELECT 1 FROM completed_deletions c WHERE c.file_id=OLD.file_id)
+ BEGIN SELECT RAISE(ABORT, 'active retention journal'); END;
+DROP VIEW events;
+CREATE VIEW events AS SELECT * FROM event_records UNION ALL
+ SELECT r.event_id,r.run_id,NULL,f.version_id,NULL,r.file_id,'retention',NULL,
+ r.reason_code,r.message,NULL,NULL,NULL,NULL,NULL,NULL,r.details_json,r.recorded_at
+ FROM retention_events r JOIN file_records f ON f.file_id=r.file_id UNION ALL
+ SELECT c.event_id,c.run_id,NULL,f.version_id,NULL,c.file_id,'retention',NULL,
+ c.reason_code,'',NULL,NULL,NULL,NULL,NULL,NULL,'{}',c.recorded_at
+ FROM completed_deletions c JOIN file_records f ON f.file_id=c.file_id;
+CREATE TRIGGER events_view_no_update INSTEAD OF UPDATE ON events
+ BEGIN SELECT RAISE(ABORT, 'append-only table'); END;
+CREATE TRIGGER events_view_no_delete INSTEAD OF DELETE ON events
+ BEGIN SELECT RAISE(ABORT, 'append-only table'); END;
+CREATE TRIGGER events_view_insert INSTEAD OF INSERT ON events BEGIN
+ INSERT INTO event_records VALUES(NEW.event_id,NEW.run_id,NEW.task_id,NEW.version_id,
+ NEW.attempt_id,NEW.file_id,NEW.event_kind,NEW.status,NEW.reason_code,NEW.message,
+ NEW.error_type,NEW.traceback,NEW.started_at,NEW.finished_at,NEW.duration_ns,
+ NEW.output_manifest_sha256,NEW.details_json,NEW.recorded_at);
+END;
+DROP INDEX source_records_manifest;
+DROP INDEX versions_source_hash;
+DROP INDEX attempts_fingerprint;
 """

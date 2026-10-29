@@ -5,6 +5,8 @@ There is deliberately no pool, scheduler, resume policy or retention here.
 from __future__ import annotations
 
 from dataclasses import replace
+from contextlib import contextmanager
+from contextvars import ContextVar
 import hashlib
 import json
 import multiprocessing
@@ -16,10 +18,57 @@ import traceback
 
 from .contracts import OutputArtifact, StageError, StageResult
 
+_producer_hashes=ContextVar('glossapi_producer_hashes',default=None)
+
+
+@contextmanager
+def producer_hash_scope():
+    token=_producer_hashes.set({})
+    try:yield
+    finally:_producer_hashes.reset(token)
+
+
+def remember_written_hash(path,digest,size):
+    values=_producer_hashes.get()
+    if values is not None:values[str(Path(path).absolute())]=(digest,size)
+    return digest,size
+
+
+def produced_hash(path):
+    values=_producer_hashes.get()
+    return values.get(str(Path(path).absolute())) if values is not None else None
+
+
+def write_text_hashed(path,text,encoding='utf-8'):
+    data=text.encode(encoding)
+    with Path(path).open('wb') as stream:stream.write(data)
+    remember_written_hash(path,hashlib.sha256(data).hexdigest(),len(data))
+    return len(text)
+
 
 def sha256_file(path):
     from ..ledger.encoding import file_hash
     return file_hash(path)
+
+
+def seal_output_hashes(result, root):
+    """Worker-owned byte receipts; no stat identity cache supplies content proof."""
+    outputs=[]
+    for output in result.outputs:
+        path=checked_path(root,output.relative_path)
+        written=produced_hash(path)
+        digest,size=written if written else (output.sha256 or sha256_file(path),path.stat().st_size)
+        outputs.append(replace(output,sha256=digest,bytes=size))
+    return replace(result,outputs=tuple(outputs))
+
+
+def copy_hashed(source, destination):
+    """Hash the bytes being copied, without reading the new product again."""
+    digest=hashlib.sha256();size=0
+    with Path(source).open('rb') as reader, Path(destination).open('wb') as writer:
+        for block in iter(lambda:reader.read(1024*1024),b''):
+            writer.write(block);digest.update(block);size+=len(block)
+    return remember_written_hash(destination,digest.hexdigest(),size)
 
 
 def checked_path(root, relative):
@@ -109,9 +158,11 @@ def _worker(stage, request, connection):
     tempfile.tempdir = str(scratch)
     os.environ["GLOSSAPI_CONVERSION_LOG_FILE"] = str(request.work_directory / "conversion.log")
     try:
-        result = stage._run_document(request, reporter=ReceiptCollector())
+        with producer_hash_scope():
+            result = stage._run_document(request, reporter=ReceiptCollector())
+            result = seal_output_hashes(result,request.work_directory)
         from ..ledger.journal import loaded_tools
-        result = replace(result, metrics={**result.metrics, "tools": loaded_tools()})
+        result = seal_output_hashes(replace(result, metrics={**result.metrics, "tools": loaded_tools()}),request.work_directory)
         # Write the large result to the private directory, not a pipe whose
         # capacity could deadlock join(). The pipe carries one small sentinel.
         from dataclasses import asdict
@@ -234,8 +285,8 @@ def freeze_inputs(request):
     for ordinal, artifact in enumerate(request.inputs):
         path = request.work_directory / "inputs" / str(ordinal) / artifact.path.name
         path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(artifact.path, path)
-        if path.stat().st_size != artifact.bytes or sha256_file(path) != artifact.sha256:
+        digest,size=copy_hashed(artifact.path,path)
+        if size != artifact.bytes or digest != artifact.sha256:
             raise ValueError("input_hash_changed")
         frozen.append(replace(artifact, path=path))
     return replace(request, inputs=tuple(frozen))
