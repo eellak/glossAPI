@@ -23,6 +23,7 @@ class Parser(argparse.ArgumentParser):
 
 
 def parser():
+    from .stages.retention import DEBUG_HELP, MEMORY_SAVING_HELP
     result = Parser(prog="glossapi", description=__doc__)
     commands = result.add_subparsers(dest="command", required=True, parser_class=Parser)
     for name in ("plan", "run", "status", "report"):
@@ -37,8 +38,8 @@ def parser():
             command.add_argument("--device", action="append", default=[])
             command.add_argument("--workers", action="append", default=[])
             command.add_argument("--settings")
-            command.add_argument("--debug", choices=("on", "off"))
-            command.add_argument("--memory-saving", choices=("normal", "extreme"))
+            command.add_argument("--debug", choices=("on", "off"), help="debug = on/off (default off): "+DEBUG_HELP)
+            command.add_argument("--memory-saving", choices=("normal", "extreme"), help="memory_saving = normal/extreme (default normal): "+MEMORY_SAVING_HELP)
             command.add_argument("--disk-budget-bytes", type=int)
             if name == 'run':
                 command.add_argument('--plan')
@@ -203,7 +204,7 @@ def main(argv=None):
     except (ReadRequestError, LedgerError, sqlite3.Error, OSError, ValueError, TypeError, ImportError, RuntimeError) as error:
         code = getattr(error, "code", "unsupported_schema" if isinstance(error, LedgerError) else "read_error")
         envelope["errors"].append(dict(code=code, message=str(error), document_id=None, stage=None, details=getattr(error, "details", {})))
-        exit_code = 3 if code == "policy_conflict" else 2
+        exit_code = 3 if code in ("policy_conflict","disk_guard_unavailable","disk_budget_exceeded","waiting_for_disk") else 2
     # Human mode renders the same object and retains every uncertainty.
     print(json.dumps(envelope, ensure_ascii=False, indent=None if "--json" in argv else 2))
     return exit_code

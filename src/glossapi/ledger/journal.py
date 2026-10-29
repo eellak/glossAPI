@@ -154,6 +154,10 @@ class ResultJournal:
     def __init__(self, writer, corpus, stage, operation, parameters):
         self.writer, self.corpus, self.stage, self.operation = writer, corpus, stage, operation
         self.owner_pid = os.getpid()
+        from ..stages.retention import resolved_settings
+        self.retention_settings = resolved_settings(getattr(corpus, '_retention_settings', {}))
+        if getattr(corpus,'_scheduler_writer',None) is None:
+            self.retention_settings={key:value for key,value in self.retention_settings.items() if key in ('debug','memory_saving','disk_budget_bytes','max_source_bytes','max_attempt_bytes')}
         self.parameters = safe_settings(parameters)
         self.versions = {}
         self.files = {}
@@ -175,7 +179,7 @@ class ResultJournal:
         self.source_manifests = set()
         self.revision = code_revision()
         with writer.transaction():
-            self.run_id = writer.run({"mode": self.mode, "parameters": self.parameters},
+            self.run_id = writer.run({"mode": self.mode, "parameters": self.parameters, **self.retention_settings},
                 {"mode": 'wrapper_products' if self.cutover else "observe_existing_wrapper", "stage": stage, "operation": operation}, loaded_tools(), code_revision=self.revision)
             publication=getattr(corpus,'_scheduler_publication',None)
             if publication:
@@ -208,6 +212,9 @@ class ResultJournal:
                         (document_id, uri, str(ordinal), encoded_metadata)).fetchone() is None:
                     writer.source_record(document_id, self.run_id, uri, metadata, source_row=str(ordinal))
                 size = path.stat().st_size if present else None
+                released = writer.connection.execute("SELECT file_id FROM current_file_state WHERE uri=? AND version_id=? AND presence='deleted' ORDER BY event_id DESC LIMIT 1",(uri,version_id)).fetchone() if not present else None
+                if released:
+                    continue
                 prior = writer.connection.execute("SELECT file_id FROM current_file_state WHERE uri=? AND sha256 IS ? AND bytes IS ? AND version_id=? AND presence=? ORDER BY event_id DESC LIMIT 1",
                     (uri, digest, size, version_id, "present" if present else "missing")).fetchone()
                 file_id = prior[0] if prior else writer.artifact(self.run_id, stage, "initial_input", uri, sha256=digest, bytes=size, version_id=version_id, ownership="initial_external", retention_class="initial", presence="present" if present else "missing")
@@ -530,6 +537,9 @@ def shadow_stage(stage, operation=None):
                 finally:
                     try: journal.finish(result, error)
                     finally: _active_journal.reset(token)
+                    if own_writer and journal.cutover and error is None:
+                        from ..stages.retention import retain_completed_run
+                        retain_completed_run(writer,self.output_dir,journal.run_id,journal.retention_settings,cleanup_paths=getattr(journal,"cleanup_paths",()),observer=getattr(self,"_retention_observer",None))
             finally:
                 if own_writer: writer.close()
         return recorded

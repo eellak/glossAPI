@@ -1052,6 +1052,9 @@ class GlossDownloader:
     def _cleanup_temp_file(self, tmp_path: Optional[Path]) -> None:
         if not tmp_path:
             return
+        from .stages.receipts import _transport_receipts
+        if _transport_receipts.get() is not None:
+            return  # Failed/partial bytes belong to the writer's diagnostic seal.
         try:
             os.remove(tmp_path)
         except Exception:

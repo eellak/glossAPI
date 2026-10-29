@@ -41,7 +41,7 @@ class DownloadStage:
             return StageResult(request.task_id,request.attempt_id,request.lease_token,'ok' if success else 'failed',reason,outputs,decisions,
                 {'wall_ns':time.monotonic_ns()-started,'execution':'controller_async_transport'})
         except Exception as error:
-            return failed_result(request,'download_exception',error)
+            return failed_result(request,getattr(error,'code','download_exception'),error)
 
     def packages(self, specification):
         requirements = [PackageRequirement("download", ("aiohttp>=3.14.5,<4", "aiofiles>=23.0.0", "tenacity>=9.2.1,<10", "pyyaml>=6.0"))]
@@ -89,11 +89,13 @@ class DownloadStage:
             referer = settings.pop("referer", None)
             settings.pop("required_output_kinds", None)
             settings.pop("debug", None); settings.pop("memory_saving", None)
+            for field in ('disk_budget_bytes','max_source_bytes','max_attempt_bytes'):
+                settings.pop(field,None)
             # Configured log destinations are compatibility concerns. A worker
             # writes only inside its attempt, including backend diagnostics.
             settings["progress_log_file"] = str(request.work_directory / "logs" / "download_progress.logs")
             settings["request_log_file"] = str(request.work_directory / "logs" / "download_request.logs")
-            with capture_backend_observations() as observations, capture_transport(mode, settings) as transport:
+            with capture_backend_observations() as observations, capture_transport(mode, {**settings, "max_source_bytes":request.settings.get("max_source_bytes")}) as transport:
                 downloader = downloader_class(output_dir=str(request.work_directory), **settings)
                 rate_limiter = downloader.rate_limiter or RateLimiter(rate_limit=1000000, time_period=1)
                 returned = asyncio.run(downloader.download_file(row_index, url, None, rate_limiter,

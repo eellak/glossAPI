@@ -90,7 +90,7 @@ def audit_stage_storage(database, documents):
             for (stage,kind),group in sorted(groups.items())],
         'event_details_bytes':dict(event_bytes)}
 
-def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1):
+def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1, debug='off'):
     from glossapi import Corpus
     from glossapi.ledger.journal import wrapper_return_receipt
     from .golden import expected
@@ -122,6 +122,10 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1):
     corpus = Corpus(empty, out, section_classifier_model_path=REPO/"src/glossapi/models/section_classifier.joblib",
                     extraction_model_path=REPO/"src/glossapi/models/kmeans_weights.joblib")
     corpus._shadow_ledger_enabled = enabled
+    corpus._retention_settings={'debug':debug,'memory_saving':'normal'}
+    if enabled:
+        from .retention import RetentionSnapshots
+        corpus._retention_observer=RetentionSnapshots(out,root/'retention_snapshots')
     calls = dict(extract=lambda: corpus.extract(input_format="pdf", file_paths=sources, phase1_backend="safe",
         accel_type="CPU", num_threads=1, skip_existing=False, batched=False, repair_fonts=True),
         clean=lambda: corpus.clean(num_threads=1), sections=corpus.section, annotate=corpus.annotate,
@@ -177,7 +181,7 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1):
                 return capture(_stage,lambda:_method(*arguments,**options))
             setattr(corpus,method,wraps(original)(traced))
         result=corpus.run(sources,workers={'extract':workers,'clean':1,'sections':2},
-            stages=STAGES,settings={'cpu_tokens':max(2,workers)})
+            stages=STAGES,settings={'cpu_tokens':max(2,workers),'debug':debug})
         receipt['streaming']=result
         if result['state']!='completed':raise RuntimeError('Streaming run did not complete')
     else:
@@ -185,6 +189,12 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1):
     receipt.update(complete=True, wall_seconds=time.perf_counter()-began,
                    phase_wall_seconds=(result['total_wall_seconds']-sum(capture_overhead)) if streaming else sum(s["wall_seconds"] for s in receipt["stages"].values()),
                    harness_capture_seconds=sum(capture_overhead))
+    if enabled:
+        from .retention import verified_snapshots
+        retained=verified_snapshots(out,root/'retention_snapshots')
+        receipt['retention_deletions']=retained
+        receipt['retention_corpus']=str(out)
+        receipt['retention_snapshots']=str(root/'retention_snapshots')
     receipt["ledger"] = audit_ledger(out/"corpus.sqlite3", len(rows)) if enabled else None
     write_json(root/"run.json", receipt)
     return receipt
@@ -192,11 +202,30 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1):
 
 def compare_arms(left, right):
     differences = []
+    retained={}
+    for label,arm in [('left',left),('right',right)]:
+        if arm.get('retention_deletions'):
+            from .retention import verified_snapshots
+            retained[label]=verified_snapshots(arm['retention_corpus'],arm['retention_snapshots'])
+        else:retained[label]=[]
+    def surface(state,key,stage,label):
+        if key=='products':
+            value=dict(state[key])
+            for item in retained[label]:
+                if list(STAGES).index(stage)>=list(STAGES).index(item['stage']):
+                    fact={'sha256':item['sha256'],'bytes':item['bytes']}
+                    if item['path'] in value and value[item['path']]!=fact:
+                        return value  # Keep the real changed-product difference visible.
+                    value[item['path']]=fact
+            return value
+        if key=='removed_files':return [name for name in state[key] if name not in {item['path'] for item in retained[label]}]
+        return state[key]
     for stage in STAGES:
         a, b = left["stages"][stage], right["stages"][stage]
         for key in ("status", "error", "wrapper_return", "products", "removed_files"):
-            if a[key] != b[key]:
-                differences.append(dict(stage=stage, field=key, disabled=a[key], enabled=b[key]))
+            left_value=surface(a,key,stage,'left');right_value=surface(b,key,stage,'right')
+            if left_value != right_value:
+                differences.append(dict(stage=stage, field=key, disabled=left_value, enabled=right_value))
     return dict(passes=not differences, differences=differences)
 
 
@@ -243,11 +272,12 @@ def main():
     parser.add_argument("--arm", choices=("enabled", "disabled"))
     parser.add_argument('--streaming',action='store_true')
     parser.add_argument('--workers',type=int,default=1)
+    parser.add_argument('--debug',choices=('off','on'),default='off')
     parser.add_argument("--stage-profile", choices=("legacy", "sequential-adapters", "cutover"), default=os.environ.get("GLOSSAPI_STAGE_PROFILE", "cutover"))
     args = parser.parse_args()
     os.environ["GLOSSAPI_STAGE_PROFILE"] = args.stage_profile
     if args.arm:
-        result = run_arm(args.manifest, args.data, args.out, args.arm == "enabled",streaming=args.streaming,workers=args.workers)
+        result = run_arm(args.manifest, args.data, args.out, args.arm == "enabled",streaming=args.streaming,workers=args.workers,debug=args.debug)
         return 0 if all(s["status"] == "ok" for s in result["stages"].values()) else 1
     if args.repeats < 1: parser.error("repeats must be positive")
     paired(args.manifest, args.data, args.out, args.repeats)

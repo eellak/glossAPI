@@ -20,7 +20,7 @@ from .workers import read_result
 async def _acquire(stage,request,limiters,domains):
     from ..gloss_downloader import GlossDownloader,RateLimiter
     options=dict(request.settings)
-    for key in ('url','filename_base','row_index','referer','legacy_outer_retry_count','required_output_kinds','debug','memory_saving','download_mode'):
+    for key in ('url','filename_base','row_index','referer','legacy_outer_retry_count','required_output_kinds','debug','memory_saving','download_mode','disk_budget_bytes','max_source_bytes','max_attempt_bytes'):
         options.pop(key,None)
     options['progress_log_file']=str(request.work_directory/'logs/download_progress.logs')
     options['request_log_file']=str(request.work_directory/'logs/download_request.logs')
@@ -82,8 +82,13 @@ def _serve(connection,parent_pid,capacity):
                 from ..ledger.journal import loaded_tools
                 result=replace(result,metrics={**result.metrics,'tools':loaded_tools(),'worker_pid':os.getpid()})
                 request.work_directory.mkdir(parents=True,exist_ok=True)
-                (request.work_directory/'worker-result.json').write_text(json.dumps(asdict(result),ensure_ascii=False))
-                connection.send((request.task_id,request.attempt_id,request.lease_token))
+                try:
+                    (request.work_directory/'worker-result.json').write_text(json.dumps(asdict(result),ensure_ascii=False))
+                    connection.send((request.task_id,request.attempt_id,request.lease_token))
+                except OSError as error:
+                    import errno
+                    if error.errno!=errno.ENOSPC:raise
+                    connection.send((request.task_id,request.attempt_id,request.lease_token,'disk_budget_exceeded'))
     try:asyncio.run(serve())
     except (EOFError,BrokenPipeError):pass
     finally:connection.close()
@@ -121,12 +126,12 @@ class AsyncAcquisitionPool:
         while self.pipe.poll():
             identity=self.pipe.recv()
             request,_,_,_=self.requests.pop(identity[1])
-            if identity!=(request.task_id,request.attempt_id,request.lease_token):
+            if identity[:3]!=(request.task_id,request.attempt_id,request.lease_token):
                 self.close();raise ValueError('Stale acquisition lease')
-            result=read_result(request.work_directory/'worker-result.json')
-            if (result.task_id,result.attempt_id,result.lease_token)!=identity:
+            result=failed_result(request,'disk_budget_exceeded',OSError(28,'Acquisition scratch quota exhausted')) if len(identity)==4 else read_result(request.work_directory/'worker-result.json')
+            if (result.task_id,result.attempt_id,result.lease_token)!=identity[:3]:
                 self.close();raise ValueError('Stale acquisition receipt')
-            result=replace(result,outputs=(*result.outputs,OutputArtifact('worker_receipt','worker-result.json',None,'evidence',False)))
+            if len(identity)==3:result=replace(result,outputs=(*result.outputs,OutputArtifact('worker_receipt','worker-result.json',None,'evidence',False)))
             completed.append((request,result))
         return completed
 

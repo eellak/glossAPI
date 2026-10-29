@@ -81,6 +81,8 @@ def outputs_in(root, required=()):
 
 
 def failed_result(request, reason, error, *, decisions=(), metrics=None):
+    import errno
+    if isinstance(error,OSError) and error.errno==errno.ENOSPC:reason='disk_budget_exceeded'
     return StageResult(request.task_id, request.attempt_id, request.lease_token, "failed", reason,
         tuple(replace(output, retention_class="failed_attempt", required=False)
               for output in outputs_in(request.work_directory)), tuple(decisions), metrics or {},

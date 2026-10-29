@@ -139,14 +139,15 @@ class CleanStage:
                 return value
             (root/'clean.metrics.json').write_text(json.dumps(nullable(metrics), ensure_ascii=False, allow_nan=False))
             # Payload replacements stay ordinary files; ledger retains hashes/spans.
-            (root/'edit-replacements.json').write_text(json.dumps(recorder.replacements, ensure_ascii=False))
+            if request.settings.get('debug', 'off') == 'on':
+                (root/'edit-replacements.json').write_text(json.dumps(recorder.replacements, ensure_ascii=False))
             decision = {'operation': operation, 'raw_file_id': source.file_id, 'raw_hash': source.sha256,
-                'clean_hash': text_hash(output.read_bytes().decode('utf-8')), 'edits': recorder.receipt(),
-                'edit_summary': recorder.summary(),
+                'clean_hash': text_hash(output.read_bytes().decode('utf-8')), 'edits': recorder.receipt() if request.settings.get('debug', 'off') == 'on' else recorder.summary(),
+                'edit_detail': 'spans' if request.settings.get('debug', 'off') == 'on' else 'per_rule_summary',
                 'measurements': metrics, 'backend_observations': observations}
             outputs = []
             for artifact in outputs_in(root):
-                kind = 'clean_markdown' if artifact.relative_path.startswith('clean_markdown/') else 'clean_metrics' if artifact.relative_path == 'clean.metrics.json' else artifact.kind
+                kind = 'clean_markdown' if artifact.relative_path.startswith('clean_markdown/') else 'clean_metrics' if artifact.relative_path == 'clean.metrics.json' else 'attempt_diagnostic' if artifact.relative_path.startswith('native_evidence/') else artifact.kind
                 outputs.append(replace(artifact, kind=kind, required=kind in ('clean_markdown','clean_metrics')))
             return StageResult(request.task_id, request.attempt_id, request.lease_token, 'ok', 'clean_completed',
                 tuple(outputs), (decision,), {'wall_ns': time.monotonic_ns()-started, 'execution': 'in_process'})

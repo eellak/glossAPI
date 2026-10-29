@@ -32,7 +32,8 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
     """
     from ..ledger.journal import source_key
     began=time.monotonic()
-    settings=settings or {}
+    from .retention import resolved_settings
+    settings=resolved_settings(settings)
     root=Path(corpus.output_dir).resolve()
     sources=list(sources)
     source_rows=[{'source_uri':str(source)} for source in sources]
@@ -70,6 +71,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
             operations,_,run_row=engine._load(run)
             frozen=json.loads(writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(run_row['settings_sha256'],)).fetchone()[0])
             stages=frozen.get('requested_stages',stages)
+            settings=frozen
         else:
             operations=[]
             with writer.transaction():
@@ -136,6 +138,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                             StageSpecification('sections.document',required_output_kinds=('section_fragment',),settings={'filename':filename}),
                             inputs=((parent,'clean_markdown','selected_text'),)))
             run=engine.freeze(operations,settings={**settings,'requested_stages':list(stages)})
+        corpus._retention_settings={**settings,'requested_stages':list(stages)}
         result=engine.execute(run,resume=bool(resume),retry_failed=retry_failed)
         result['wall_seconds']=time.monotonic()-began
         replays={}
@@ -165,7 +168,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                 if operation.document.artifacts:source=operation.document.artifacts[0]
                 else:
                     producer=next(edge[0] for edge in operation.inputs if edge[2]=='source_payload')
-                    source=next(artifact for artifact in engine._outputs(result['attempts'][producer]) if artifact.kind=='download_payload')
+                    source=next(artifact for artifact in engine._outputs(result['attempts'][producer],include_deleted=True) if artifact.kind=='download_payload')
                 selected_sources.append(source.path)
                 source_versions[str(source.path)]=operation.document.version_id
             references=writer.connection.execute('SELECT sha256 FROM attempt_inputs WHERE attempt_id=? ORDER BY rowid',(attempt,)).fetchall()
@@ -192,6 +195,26 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     """Execute document DAG, then declared compatibility publication barriers."""
     settings=settings or {}
     files=list(files)
+    if resume and not retry_failed:
+        writer=corpus._scheduler_writer
+        row=writer.connection.execute("SELECT details_json FROM events WHERE run_id=? AND event_kind='run' ORDER BY event_id DESC LIMIT 1",(resume,)).fetchone()
+        digest=json.loads(row[0]).get('result_sha256') if row else None
+        if digest:
+            from ..ledger.encoding import snapshot_hash
+            from .scheduler import execution_environment
+            run=writer.connection.execute('SELECT * FROM runs WHERE run_id=?',(resume,)).fetchone()
+            if snapshot_hash({'schema_version':1,'kind':'environment',**execution_environment()})!=run['environment_sha256']:
+                raise ValueError('Frozen execution environment changed; create an amended run')
+            saved=json.loads(writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(digest,)).fetchone()[0])
+            for file_id in saved['retained_file_ids']:
+                binding=writer.connection.execute('SELECT uri,sha256,bytes FROM files WHERE file_id=?',(file_id,)).fetchone()
+                path=local_path(binding['uri'])
+                if not path.is_file() or path.stat().st_size!=binding['bytes'] or sha256_file(path)!=binding['sha256']:
+                    raise ValueError('Retained recovery frontier missing or corrupt; reacquire bound ancestors in an amended run')
+            from .retention import RetentionController
+            frozen=json.loads(writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(run['settings_sha256'],)).fetchone()[0])
+            RetentionController(writer,corpus.output_dir,resume,frozen).recover()
+            return saved['result']
     prerequisites={'clean':('extract',),'sections':('clean','extract'),'annotate':('sections','clean','extract'),'export':('clean','extract')}
     stages=tuple(dict.fromkeys([dependency for stage in stages for dependency in (*prerequisites.get(stage,()),stage)]))
     if plan is not None:
@@ -272,6 +295,18 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                 else:
                     publish_barrier(corpus,result['run_id'],stage,calls[stage],retry_failed=retry_failed,
                         empty_export=not result['sources'] and stage=='export')
+    from .retention import retain_completed_run
+    writer=corpus._scheduler_writer
+    # Every wrapper generation is a child of this fixed publication plan.
+    wrapper_runs=[json.loads(row[0])['wrapper_run_id'] for row in writer.connection.execute("SELECT details_json FROM events WHERE run_id=? AND message LIKE 'wrapper:%'",(result['run_id'],))]
+    all_attempts=list(result['attempts'].values())
+    for wrapper in wrapper_runs:
+        all_attempts.extend(row[0] for row in writer.connection.execute('SELECT attempt_id FROM attempts a JOIN tasks t USING(task_id) WHERE t.run_id=?',(wrapper,)))
+    retain_completed_run(writer,corpus.output_dir,result['run_id'],getattr(corpus,'_retention_settings',settings),attempts=all_attempts,observer=getattr(corpus,"_retention_observer",None))
+    from .disk_budget import DiskBudget
+    from .retention import retention_summary
+    result['disk']=DiskBudget(writer,corpus.output_dir,result['run_id'],getattr(corpus,'_retention_settings',settings)).report()
+    result['disk']['deleted_logical_bytes']=retention_summary(writer.connection)['deleted_logical_bytes']
     result['outputs']=[]
     output=Path(corpus.output_dir)/'export.jsonl'
     if output.is_file():
@@ -281,7 +316,9 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     result['counts']={status:counts[status] for status in ('planned','running','ok','skipped','failed')}
     result['state']='completed_with_failures' if counts['failed'] else 'completed'
     with corpus._scheduler_writer.transaction():
-        corpus._scheduler_writer.event(result['run_id'],event_kind='run',reason_code='legacy_observed',details={'state':result['state']})
+        corpus._scheduler_writer.event(result['run_id'],event_kind='run',reason_code='legacy_observed',details={'state':result['state'],'result_sha256':corpus._scheduler_writer.snapshot('retained_run_result',{
+                'result':{key:value for key,value in result.items() if key!='trace'},
+                'retained_file_ids':[row['file_id'] for row in corpus._scheduler_writer.connection.execute("SELECT file_id,uri FROM current_file_state WHERE presence='present' AND (ownership='managed' OR ownership='initial_external')") if local_path(row['uri']).is_file()]})})
     return result
 
 
@@ -314,6 +351,10 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
     if task['status']=='ok':
         for row in writer.connection.execute('SELECT f.uri,i.sha256 FROM attempt_inputs i JOIN files f USING(file_id) WHERE attempt_id=?',(previous['attempt_id'],)):
             path=local_path(row['uri'])
+            state=writer.connection.execute('SELECT file_id,presence FROM current_file_state WHERE uri=? AND sha256=? ORDER BY event_id DESC LIMIT 1',(row['uri'],row['sha256'])).fetchone()
+            if state and state['presence']=='deleted':
+                from .retention import retention_facts
+                if any(value['reason_code'] in ('delete_completed','delete_recovered') for value in retention_facts(writer.connection,state['file_id'])['deletions']):continue
             if not path.is_file() or sha256_file(path)!=row['sha256']:
                 raise ValueError('Committed publication is missing or corrupt')
         return True
@@ -349,9 +390,15 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
             if not path.is_file() or sha256_file(path)!=row['sha256']:
                 raise ValueError('Publication artifact is absent or corrupt')
             writer.input(attempt,row['file_id'],'published:'+str(index),row['sha256'])
+        if stage=='extract':
+            for source in writer.connection.execute("SELECT DISTINCT i.file_id,i.sha256 FROM attempt_inputs i JOIN attempts a USING(attempt_id) JOIN tasks t USING(task_id) JOIN files f USING(file_id) WHERE t.run_id=? AND f.kind IN ('download_payload','source_payload','initial_input')",(wrapper_run,)):
+                writer.input(attempt,source['file_id'],'source_reader:'+source['file_id'],source['sha256'])
         status='ok' if outcome and outcome['status']=='ok' else 'failed'
         writer.finish(run,task['task_id'],attempt,status=status,reason_code=stage+'_completed' if status=='ok' else stage+'_exception',
             details={'wrapper_run_id':wrapper_run,'bound_product_files':len(outputs),'recovered_wrapper_commit':wrapper_ok})
+    if status=='ok' and stage=='extract':
+        from .retention import retire_downloaded_sources
+        retire_downloaded_sources(writer,corpus.output_dir,run,getattr(corpus,'_retention_settings',{}))
     return status=='ok'
 
 

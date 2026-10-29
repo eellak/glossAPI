@@ -3343,8 +3343,10 @@ class CleanPhaseMixin:
         try:
             if report_parquet_path.exists():
                 observe_store(report_parquet_path, kind="clean_report")
-                report_parquet_path.unlink(missing_ok=True)
-                observe("delete_completed", path=report_parquet_path, deletion="legacy_temporary_report_cleanup")
+                from ..stages.retention import defer_owned_cleanup
+                if not defer_owned_cleanup(self,report_parquet_path):
+                    report_parquet_path.unlink(missing_ok=True)
+                    observe("delete_completed", path=report_parquet_path, deletion="legacy_temporary_report_cleanup")
                 self.logger.debug("Deleted temporary cleaning report %s", report_parquet_path)
         except Exception as e:
             observe("delete_failed", path=report_parquet_path, error=e)

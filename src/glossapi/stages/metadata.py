@@ -25,7 +25,7 @@ class MetadataProjectionStage:
 def seal_metadata_projections(journal):
     paths=list((journal.corpus.output_dir/'download_results').glob('*.parquet'))
     report=journal.corpus.output_dir/'cleaning_report.parquet'
-    if report.is_file() and 'clean' in journal.adapter_stages:paths.append(report)
+    if report.is_file() and 'clean' in journal.adapter_stages and report not in getattr(journal,'cleanup_paths',()):paths.append(report)
     for path in sorted(paths):
         from .execution import sha256_file
         digest=sha256_file(path)

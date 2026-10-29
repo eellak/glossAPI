@@ -26,6 +26,7 @@ class SequentialStageRunner:
     def __init__(self, writer, corpus_directory):
         self.writer = writer
         self.root = Path(corpus_directory).resolve()
+        self.pending_scratch=[]
         if writer.path.resolve() != self.root / "corpus.sqlite3":
             raise ValueError("Writer must own this corpus")
 
@@ -33,10 +34,35 @@ class SequentialStageRunner:
         from .replay import replay_result
         replay = replay_result(stage, document, specification)
         if replay is not None:
-            return replay
+            result,workspace=replay
+            run_id=options.get('run_id')
+            if run_id:
+                self.verify_projection(stage,document,specification,run_id,result)
+            return result,workspace
         request, complete = self.prepare(stage, document, specification, **options)
         result = (stage.finalize if options.get('aggregate') else stage.run_document)(request, reporter=ReceiptCollector())
         return complete(result)
+
+    def verify_projection(self,stage,document,specification,run_id,result):
+        """A cache projection is an exact reader of its supplied alias inputs."""
+        from ..ledger.writer import new_id
+        if result.status!='ok':return
+        for artifact in document.artifacts:
+            if artifact.path.stat().st_size!=artifact.bytes or sha256_file(artifact.path)!=artifact.sha256:
+                raise ValueError('Projection input hash changed')
+        source=self.writer.connection.execute("SELECT task_id FROM attempts WHERE attempt_id=? AND EXISTS (SELECT 1 FROM events WHERE attempt_id=? AND event_kind='lifecycle' AND status='ok')",(result.attempt_id,result.attempt_id)).fetchone()
+        if not source:raise ValueError('Projection producer is not successful')
+        with self.writer.transaction():
+            task=self.writer.task(run_id,stage.name,specification.operation+'.compatibility_projection:'+new_id(),
+                {'source_attempt_id':result.attempt_id,'verification':'same document version and exact input hashes'},version_id=document.version_id)
+            self.writer.dependency(task,source[0],'verified_producer')
+            inputs=[{'file_id':artifact.file_id,'sha256':artifact.sha256} for artifact in document.artifacts]
+            attempt=self.writer.attempt(task,worker_id='compatibility-verifier',device_id='cpu',
+                fingerprint={'source_attempt_id':result.attempt_id,'reuse_eligible':False},inputs={'files':inputs},settings={},tools={})
+            for index,artifact in enumerate(document.artifacts):
+                self.writer.input(attempt,artifact.file_id,specification.input_roles[index],artifact.sha256)
+            self.writer.finish(run_id,task,attempt,status='ok',reason_code=stage.name+'_completed',
+                details={'source_attempt_id':result.attempt_id,'verification':'committed result projected without kernel execution'})
 
     async def execute_async(self, stage, document, specification, **options):
         request, complete = self.prepare(stage, document, specification, **options)
@@ -47,9 +73,23 @@ class SequentialStageRunner:
                 planned_task_id=None, fingerprint=None, worker_id=None):
         from ..ledger.journal import code_revision, loaded_tools, safe_settings
         from ..ledger.writer import new_id, utc_now
-        runtime_settings = dict(specification.settings)
-        if runtime_settings.get("memory_saving", "normal") != "normal":
-            raise ValueError("disk_guard_unavailable: extreme mode requires the qualified quota and retention policy")
+        from .retention import resolved_settings
+        run_settings = {}
+        if run_id:
+            import json
+            row = self.writer.connection.execute('SELECT s.json FROM runs r JOIN snapshots s ON s.sha256=r.settings_sha256 WHERE r.run_id=?',(run_id,)).fetchone()
+            run_settings = json.loads(row[0]) if row else {}
+        retention_settings = {key:run_settings[key] for key in ('debug','memory_saving','disk_budget_bytes','max_source_bytes','max_attempt_bytes') if key in run_settings}
+        runtime_settings = {**resolved_settings(retention_settings), **dict(specification.settings)}
+        if runtime_settings['memory_saving'] == 'extreme':
+            from .disk_budget import require_disk_guard
+            require_disk_guard(self.root, runtime_settings)
+            if any(artifact.bytes>runtime_settings['max_source_bytes'] for artifact in document.artifacts if artifact.kind in ('source_payload','download_payload','initial_input')):
+                from .disk_budget import DiskBudgetError
+                raise DiskBudgetError('disk_budget_exceeded','known source exceeds max_source_bytes')
+            if sum(artifact.bytes for artifact in document.artifacts)>runtime_settings['max_attempt_bytes']:
+                from .disk_budget import DiskBudgetError
+                raise DiskBudgetError('disk_budget_exceeded','known inputs exceed max_attempt_bytes')
         if stage.name == "ocr":
             runtime_settings["input_producers"] = {artifact.file_id: self.writer.connection.execute(
                 "SELECT producer_attempt_id FROM files WHERE file_id=?", (artifact.file_id,)).fetchone()[0] for artifact in document.artifacts}
@@ -156,7 +196,26 @@ class SequentialStageRunner:
             destination.parent.mkdir(parents=True, exist_ok=True)
             if destination.exists():
                 raise ValueError("Attempt publication already exists")
-            os.rename(work, destination)
+            cross_filesystem=False
+            try:
+                os.rename(work, destination)
+            except OSError as error:
+                import errno, shutil
+                if error.errno != errno.EXDEV:raise
+                # A hard quota can put scratch on another filesystem. The
+                # reservation includes both copies until the durable publication.
+                cross_filesystem=True
+                shutil.copytree(work,destination)
+                for record in records:
+                    copied=destination/record['role']
+                    if copied.stat().st_size!=record['bytes'] or sha256_file(copied)!=record['sha256']:
+                        raise ValueError('Cross-filesystem publication changed bytes')
+                    with copied.open('rb') as stream:os.fsync(stream.fileno())
+                # Keep the guarded scratch copy until the writer has registered
+                # it and can issue ordinary retention receipts after commit.
+            if cross_filesystem:
+                for directory in sorted((path for path in destination.rglob('*') if path.is_dir()),key=lambda path:len(path.parts),reverse=True):_fsync_directory(directory)
+                _fsync_directory(destination)
             _fsync_directory(destination.parent)
             with self.writer.transaction():
                 if stage.name == "download" and not aggregate and result.status == "ok":
@@ -181,5 +240,29 @@ class SequentialStageRunner:
                     message=result.error.message if result.error else "",
                     duration_ns=time.monotonic_ns()-started_ns, details={"metrics": result.metrics,
                         "error": {"retryable":result.error.retryable} if result.error else None, "profile": "sequential-adapters"})
+                if cross_filesystem:
+                    scratch_files=[]
+                    for record in records:
+                        scratch_files.append(self.writer.artifact(run,stage.name,'scratch_copy',(work/record['role']).as_uri(),
+                            version_id=version,producer_attempt_id=attempt,sha256=record['sha256'],bytes=record['bytes']))
+            if cross_filesystem:
+                self.pending_scratch.append((run,attempt,work,scratch_files,runtime_settings))
+                if not self.writer.connection.in_transaction:self.collect_scratch()
             return result, destination
         return request, complete
+
+    def collect_scratch(self):
+        from .retention import RetentionController
+        if self.writer.connection.in_transaction:return
+        while self.pending_scratch:
+            run,attempt,work,files,settings=self.pending_scratch.pop(0)
+            controller=RetentionController(self.writer,self.root,run,settings)
+            rows=[self.writer.connection.execute('SELECT * FROM files WHERE file_id=?',(file,)).fetchone() for file in files]
+            consumer=controller.seal(rows)
+            for file in files:controller.declare(file,[consumer],superseded_by=attempt)
+            controller.delete_many(files)
+            for directory in sorted((path for path in work.rglob('*') if path.is_dir()),key=lambda path:len(path.parts),reverse=True):
+                try:directory.rmdir()
+                except OSError:pass
+            try:work.rmdir()
+            except OSError:pass

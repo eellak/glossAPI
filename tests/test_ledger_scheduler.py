@@ -401,7 +401,7 @@ def test_one_failed_document_does_not_block_successful_publication(tmp_path,incl
     assert result['state']=='completed_with_failures'
     assert result['document_counts']=={'selected':1+int(include_good),'included':int(include_good),'omitted':1,'failed':1}
     assert (corpus.output_dir/'export.jsonl').is_file()
-    assert (corpus.output_dir/'markdown/good.md').is_file()==include_good
+    assert (corpus.output_dir/'clean_markdown/good.md').is_file()==include_good
     if not include_good:assert (corpus.output_dir/'export.jsonl').read_bytes()==b''
     assert not (corpus.output_dir/'markdown/broken.md').exists()
     import sqlite3

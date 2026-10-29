@@ -26,7 +26,7 @@ def resolved_route(route, options):
 def capture_transport(route, policy):
     from ..ledger.encoding import canonical_json
     state = {"route": route, "policy_hash": hashlib.sha256(canonical_json(policy).encode()).hexdigest(),
-             "requests": [], "acquisitions": []}
+             "requests": [], "acquisitions": [], "source_cap": policy.get("max_source_bytes")}
     token = _transport_receipts.set(state)
     try:
         yield state
@@ -114,7 +114,13 @@ async def recorded_request(session, method, url, *, retry_index=0, route=None, *
 def received_bytes(count):
     receipt = _current_request.get()
     if receipt is not None:
-        receipt["source_entity_bytes"] = (receipt["source_entity_bytes"] or 0) + count
+        amount=(receipt['source_entity_bytes'] or 0)+count
+        state=_transport_receipts.get()
+        cap=state.get('source_cap') if state else None
+        if cap is not None and amount>cap:
+            from .disk_budget import DiskBudgetError
+            raise DiskBudgetError('disk_budget_exceeded','download exceeds max_source_bytes before writing the next chunk')
+        receipt['source_entity_bytes']=amount
 
 
 @contextmanager

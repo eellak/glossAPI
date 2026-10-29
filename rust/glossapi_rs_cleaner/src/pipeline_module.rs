@@ -528,14 +528,11 @@ pub fn run_complete_pipeline(
     // --- Cleanup Main Temporary Directory ---
     if let Some(directory) = evidence_directory {
         let retained = Path::new(directory).join("native_stages");
-        fs::create_dir_all(&retained).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        for entry in walkdir::WalkDir::new(&temp_pipeline_root_dir).into_iter().filter_map(Result::ok) {
-            if entry.path().is_file() {
-                let target = retained.join(entry.path().strip_prefix(&temp_pipeline_root_dir).unwrap());
-                if let Some(parent) = target.parent() { fs::create_dir_all(parent).map_err(|e| PyValueError::new_err(e.to_string()))?; }
-                fs::copy(entry.path(), target).map_err(|e| PyValueError::new_err(e.to_string()))?;
-            }
-        }
+        // Hand ownership to the orchestrator without copying and then deleting
+        // an unregistered native tree. The writer seals every retained file and
+        // applies the run's debug/retention policy after successful consumption.
+        fs::rename(&temp_pipeline_root_dir, &retained)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
     }
 
     println!(

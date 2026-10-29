@@ -14,6 +14,7 @@ from .encoding import canonical_json, snapshot_hash, unpack_evidence
 from .identity import source_key
 from .stores import membership_values
 from .writer import LedgerError, new_id
+from ..stages.retention import retention_facts, retention_summary
 
 STAGE_ORDER = ("download", "extract", "clean", "ocr", "math", "sections", "annotate", "export")
 
@@ -113,8 +114,22 @@ def select_run(connection, run_id=None):
     return rows[0] if rows else None
 
 
+def _run_scope(connection,run):
+    if not run:return set()
+    identifiers={row[0] for row in connection.execute('SELECT run_id FROM runs WHERE rowid<=?',(run['sequence'],))}
+    # Child publication runs are explicitly linked by the parent plan. Their
+    # facts remain part of that plan even though their creation sequence is later.
+    for encoded, in connection.execute("SELECT details_json FROM events WHERE run_id=? AND message LIKE 'wrapper:%'",(run['run_id'],)):
+        child=json.loads(encoded).get('wrapper_run_id')
+        if child:identifiers.add(child)
+    return identifiers
+
+
 def _history(connection, run):
-    return _rows(connection, "SELECT e.*,t.stage,t.operation FROM events e LEFT JOIN tasks t ON t.task_id=e.task_id WHERE e.run_id IN (SELECT run_id FROM runs WHERE rowid<=?) ORDER BY e.event_id", (run["sequence"],)) if run else []
+    identifiers=_run_scope(connection,run)
+    if not identifiers:return []
+    parameters=tuple(sorted(identifiers))
+    return _rows(connection,'SELECT e.*,t.stage,t.operation FROM events e LEFT JOIN tasks t ON t.task_id=e.task_id WHERE e.run_id IN ('+','.join('?' for _ in parameters)+') ORDER BY e.event_id',parameters)
 
 
 def report_why(connection, selector, *, run=None, stage=None):
@@ -127,26 +142,44 @@ def report_why(connection, selector, *, run=None, stage=None):
     version = versions[-1] if versions else None
     version_ids = {v["version_id"] for v in versions}
     records = source_view(connection, document["document_id"])
-    run_ids = {r[0] for r in connection.execute("SELECT run_id FROM runs WHERE rowid<=?", (run["sequence"],))} if run else set()
+    run_ids = _run_scope(connection,run)
     records = [r for r in records if r["run_id"] in run_ids]
     owned_files = [f for f in artifact_view(connection, version_ids) if f["version_id"] in version_ids]
     locations = {r["source_uri"] for r in records} | {f["uri"] for f in owned_files}
     locations |= {_path(uri) for uri in locations}
     stages, conflicts, unknowns, inclusion = [], [], [], []
+    tasks = [task for task in _rows(connection,'SELECT * FROM tasks ORDER BY rowid') if task['run_id'] in run_ids]
+    document_file_ids={file['file_id'] for file in owned_files}
+    bound_tasks={task['task_id'] for task in tasks if task['version_id'] in version_ids}
+    for task_id,file_id in connection.execute('SELECT a.task_id,i.file_id FROM attempt_inputs i JOIN attempts a USING(attempt_id)'):
+        if file_id in document_file_ids:bound_tasks.add(task_id)
+    dependencies=list(connection.execute('SELECT task_id,producer_task_id FROM task_dependencies'))
+    while True:
+        expanded=bound_tasks|{task for task,producer in dependencies if producer in bound_tasks}
+        if expanded==bound_tasks:break
+        bound_tasks=expanded
+    decoded={event['event_id']:evidence(connection,event) for event in history}
+    section_keys={key for event in history if event['version_id'] in version_ids for key in decoded[event['event_id']].get('section_keys',[])}
     relevant_events = []
     for event in history:
-        details = evidence(connection, event)
+        details = decoded[event['event_id']]
+        if event['version_id'] is None and event['task_id'] in bound_tasks:
+            details={**details,'scope':'corpus_operation_with_bound_document_inputs'}
+            if 'lineage' in details:details['lineage']=[item for item in details['lineage'] if item.get('section_key') in section_keys]
+            if 'selected_versions' in details:
+                details['selected_versions']=[item for item in details['selected_versions'] if item.get('version_id') in version_ids]
+                stems={item.get('compatibility_stem') for item in details['selected_versions']}
+                if 'membership' in details:details['membership']=[{**shard,'records':[item for item in shard['records'] if item['filename'] in stems]} for shard in details['membership']]
         exact_owner = event["version_id"] in version_ids if event["version_id"] else False
         path_owner = isinstance(details.get("path"), str) and details["path"] in locations
-        if exact_owner or path_owner:
+        if exact_owner or path_owner or event['task_id'] in bound_tasks:
             relevant_events.append((event, details))
         if event["reason_code"] == "legacy_conflict":
             # Unresolved conflicts have no document owner. Expose the scope
             # honestly so the report cannot hide ambiguous corpus evidence.
             conflicts.append(dict(event_id=event["event_id"], scope="corpus_observation", **details))
-    tasks = _rows(connection, "SELECT * FROM tasks WHERE run_id IN (SELECT run_id FROM runs WHERE rowid<=?) ORDER BY rowid", (run["sequence"],)) if run else []
     for task in tasks:
-        if task["version_id"] not in version_ids or (stage and task["stage"] != stage):
+        if task["task_id"] not in bound_tasks or (stage and task["stage"] != stage):
             continue
         events = [(e, d) for e, d in relevant_events if e["task_id"] == task["task_id"]]
         # Decision hooks belong to the wrapper task but carry exact input
@@ -169,7 +202,7 @@ def report_why(connection, selector, *, run=None, stage=None):
         reasons = [reason_view(e, d)
                    for e, d in events + decisions if e["event_kind"] in ("decision", "lifecycle")]
         stages.append(dict(run_id=task["run_id"], version_id=task["version_id"], stage=task["stage"], operation=task["operation"],
-                           status=state.get("status"), reasons=reasons, attempts=attempts))
+                           status=state.get("status"), reasons=reasons, attempts=attempts,scope="document" if task["version_id"] else "corpus"))
         if state.get("status") == "failed" and any(d.get("backend_status") == "ok" for _, d in decisions):
             conflicts.append(dict(code="shadow_verdict_conflicts_with_success_observation", task_id=task["task_id"],
                                   event_ids=[e["event_id"] for e, _ in decisions], scope="document"))
@@ -190,9 +223,17 @@ def report_why(connection, selector, *, run=None, stage=None):
             sha256=file["sha256"], bytes=file["bytes"], presence=presence[-1]["reason_code"] if presence else None,
             ownership=file["ownership"], page_first=file["page_first"], page_last=file["page_last"],
             legacy_evidence=imported_evidence,
-            retention=dict(policy="legacy_unknown" if file["ownership"] != "managed" else "shadow_observation", consumer_ok_event_ids=[], outstanding_consumers=[], pins=[], deletions=retention)))
+            retention=retention_facts(connection,file['file_id'],as_of=max((event['event_id'] for event in history),default=0))))
     for event, details in relevant_events:
-        if event["reason_code"].startswith("export_"):
+        if details.get('selected_versions'):
+            record_hashes={record['filename']:record['record_sha256'] for shard in details.get('membership',[]) for record in shard['records']}
+            for selected in details['selected_versions']:
+                if selected.get('version_id') in version_ids:
+                    terminal=next((item for item in history if item['attempt_id']==event['attempt_id'] and item['event_kind']=='lifecycle' and item['status']=='ok'),{})
+                    inclusion.append(dict(product='document_jsonl',decision='include' if selected['included'] else 'omit',
+                        reason_code=selected['reason_code'],record_hash=record_hashes.get(selected.get('compatibility_stem')),
+                        manifest_hash=terminal.get('output_manifest_sha256'),event_id=event['event_id']))
+        elif event["reason_code"].startswith("export_"):
             inclusion.append(dict(product=details.get("product", details.get("path")), decision=event["reason_code"], reason_code=event["reason_code"],
                                   record_hash=details.get("record_sha256"), manifest_hash=event["output_manifest_sha256"], event_id=event["event_id"]))
     observations = [dict(event_id=e["event_id"], reason_code=e["reason_code"], details=d) for e, d in relevant_events if e["event_kind"] == "import"]
@@ -208,7 +249,7 @@ def report_why(connection, selector, *, run=None, stage=None):
     if not version or version["source_sha256"] is None:
         unknowns.append(dict(code="legacy_unknown", field="source_sha256", explanation="Original acquired entity bytes were not observed"))
     return dict(document=dict(**document, version_id=version["version_id"] if version else None, versions=versions, source_records=records),
-                stages=stages, files=files, inclusion=inclusion, conflicts=conflicts, unknowns=unknowns, observations=observations)
+                stages=stages, files=files, inclusion=inclusion, conflicts=conflicts, unknowns=unknowns, observations=observations,retention=retention_summary(connection,run))
 
 
 def status_view(connection, *, run=None, stage=None, selector=None):
@@ -289,7 +330,7 @@ def report_view(connection, *, run=None, stage=None):
         document = connection.execute("SELECT d.document_id,d.source_key FROM documents d JOIN document_versions v USING(document_id) WHERE v.version_id=?", (version,)).fetchone()
         rows.append(dict(document_id=document[0], source_key=document[1], version_id=version, stage=observed_stage,
                          operation="legacy.import", status=None, reason_code="legacy_unknown", reasons=reasons, scope="document"))
-    return dict(rows=rows, retention=dict(present_bytes=status["resources"]["present_bytes"], deleted_logical_bytes=None),
+    return dict(rows=rows, retention=retention_summary(connection,run),
                 resources=status["resources"], counts=status["counts"], conflicts=conflicts)
 
 
@@ -308,8 +349,9 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
             include(dependency)
     for stage in requested:
         include(stage)
-    if settings.get("memory_saving") == "extreme" and selected_stages & {"ocr", "math"}:
-        raise ReadRequestError("policy_conflict", "Extreme source retention awaits the last-PDF-consumer policy decision (L1-G01)")
+    from ..stages.retention import resolved_settings, DEBUG_HELP, MEMORY_SAVING_HELP
+    try:settings=resolved_settings(settings)
+    except ValueError as error:raise ReadRequestError('disk_budget_exceeded',str(error)) from error
     if not selectors and connection:
         selectors = [r[0] for r in connection.execute("SELECT document_id FROM documents ORDER BY rowid")]
     documents, inventory, seen = [], [], set()
@@ -364,7 +406,7 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
     barriers = [dict(name=name, scope="corpus", waiting_for="sealed_selection", remaining=len(documents))
                 for name, stage in (("source_manifest", None), ("sections_selection_ids", "sections"), ("annotation_batch", "annotate"), ("export_shards", "export"))
                 if stage is None or stage in pooled_stages]
-    body = dict(source_inventory_hash=source_inventory_hash, settings=settings, documents=documents, barriers=barriers, pools=pools,
+    body = dict(source_inventory_hash=source_inventory_hash, settings=settings, settings_help={"debug":DEBUG_HELP,"memory_saving":MEMORY_SAVING_HELP}, documents=documents, barriers=barriers, pools=pools,
         resource_limits={k: settings.get(k) for k in ("disk_budget_bytes", "max_source_bytes", "max_attempt_bytes")},
         disk=dict(present_bytes=present, pinned_bytes=None, reserved_bytes=None, estimated_peak_bytes=None, unknown_sizes=[dict(document_id=d["document_id"], reason_code="unknown_not_recorded") for d in documents]),
         requirements=[dict(package_group=p, distributions=[], entry_point="glossapi.ocr" if p == "ocr_plugin" else None, installed=None, reason_code="capabilities_not_recorded") for p in sorted({p for d in documents for s in d["steps"] for p in s["packages"]})],

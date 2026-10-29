@@ -476,7 +476,7 @@ class ParquetSchema:
         # Get all parquet files in the directory
         parquet_files = [
             f for f in directory.glob('**/*.parquet')
-            if '.partial.' not in f.name and not f.name.endswith('.partial.parquet')
+            if '.partial.' not in f.name and not f.name.endswith('.partial.parquet') and '.glossapi' not in f.relative_to(directory).parts
         ]
         if not parquet_files:
             logger.debug(f"No parquet files found in {directory}")

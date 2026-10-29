@@ -24,7 +24,7 @@ from glossapi.stages.execution import ReceiptCollector, sha256_file
 def stage_request(root, operation, inputs, **settings):
     return StageRequest(*(str(uuid.uuid4()) for _ in range(5)),operation,
         tuple(ArtifactReference(str(uuid.uuid4()),kind,Path(path),sha256_file(path),Path(path).stat().st_size) for kind,path in inputs),
-        settings,{},'cpu',root/'attempt',time.monotonic_ns()+60_000_000_000)
+        {'debug':'on', **settings},{},'cpu',root/'attempt',time.monotonic_ns()+60_000_000_000)
 
 
 def run_clean(root,text,operation='clean.initial',**settings):

@@ -69,12 +69,19 @@ def _serve(connection, parent_pid):
                         if isinstance(handler,logging.FileHandler) and Path(handler.baseFilename).is_relative_to(request.work_directory):
                             logger.removeHandler(handler);handler.close()
             if not any(output.relative_path=='conversion.log' for output in result.outputs):
-                result=replace(result,outputs=(*result.outputs,OutputArtifact('attempt_diagnostic','conversion.log',None,'evidence',False)))
+                result=replace(result,outputs=(*result.outputs,OutputArtifact('attempt_diagnostic','conversion.log',None,'intermediate',False)))
             from ..ledger.journal import loaded_tools
             result = replace(result, metrics={**result.metrics, 'tools': loaded_tools(), 'worker_pid': os.getpid()})
             target = request.work_directory/'worker-result.json'
-            target.write_text(json.dumps(asdict(result), ensure_ascii=False))
-            connection.send((request.task_id, request.attempt_id, request.lease_token))
+            try:
+                target.write_text(json.dumps(asdict(result), ensure_ascii=False))
+                connection.send((request.task_id, request.attempt_id, request.lease_token))
+            except OSError as error:
+                import errno
+                if error.errno!=errno.ENOSPC:raise
+                # The result channel still has a reserved bounded slot when a
+                # full scratch filesystem cannot hold its JSON receipt.
+                connection.send((request.task_id,request.attempt_id,request.lease_token,'disk_budget_exceeded'))
     except EOFError:
         return
     finally:
@@ -134,14 +141,15 @@ class WarmWorkerPool:
                 except (EOFError, OSError):
                     identity = None
                 if identity is not None:
-                    if identity != (request.task_id, request.attempt_id, request.lease_token):
+                    if identity[:3] != (request.task_id, request.attempt_id, request.lease_token):
                         self._discard(slot)
                         raise ValueError('Stale worker result')
-                    result = read_result(request.work_directory/'worker-result.json')
-                    if (result.task_id, result.attempt_id, result.lease_token) != identity:
+                    result = failed_result(request,'disk_budget_exceeded',OSError(28,'Scratch quota exhausted before result receipt')) if len(identity)==4 else read_result(request.work_directory/'worker-result.json')
+                    if (result.task_id, result.attempt_id, result.lease_token) != identity[:3]:
                         self._discard(slot)
                         raise ValueError('Stale worker receipt')
-                    result = replace(result, outputs=(*result.outputs, OutputArtifact('worker_receipt', 'worker-result.json', None, 'evidence', False)))
+                    if len(identity)==3:
+                        result = replace(result, outputs=(*result.outputs, OutputArtifact('worker_receipt', 'worker-result.json', None, 'evidence', False)))
                     slot['request'] = None
                     completed.append((request, result))
                     continue

@@ -192,8 +192,11 @@ class StreamingScheduler:
                     disk_budget_bytes=self.disk_capacity, retry_limit=self.retry_limit,
                     publication_barriers=list((settings or {}).get('publication_barriers',())))
         settings = {'debug': 'off', 'memory_saving': 'normal', **(settings or {})}
-        if settings['memory_saving'] != 'normal':
-            raise ValueError('disk_guard_unavailable: retention qualification is task seven')
+        from .retention import resolved_settings
+        from .disk_budget import require_disk_guard
+        settings=resolved_settings(settings)
+        require_disk_guard(self.root,settings)
+        self.retention_settings=settings
         with self.writer.transaction():
             run = self.writer.run(settings, plan, execution_environment(), code_revision=code_revision())
             tasks = {}
@@ -240,17 +243,26 @@ class StreamingScheduler:
         tasks = {row['ordinal']:row['task_id'] for row in self.writer.connection.execute('SELECT * FROM tasks WHERE run_id=? ORDER BY ordinal',(run,))}
         return operations, {operation.key:tasks[index] for index,operation in enumerate(operations)}, row
 
-    def _outputs(self, attempt):
+    def _outputs(self, attempt, *, include_deleted=False):
         prefix=(self.root/'.glossapi/artifacts').as_uri()+'/%'
-        rows = self.writer.connection.execute("SELECT * FROM current_file_state WHERE producer_attempt_id=? AND uri LIKE ? AND presence='present' ORDER BY event_id",(attempt,prefix)).fetchall()
+        rows = self.writer.connection.execute("SELECT * FROM current_file_state WHERE producer_attempt_id=? AND uri LIKE ? AND (presence='present' OR (? AND presence='deleted')) ORDER BY event_id",(attempt,prefix,include_deleted)).fetchall()
         return tuple(ArtifactReference(row['file_id'], row['kind'], local_path(row['uri']), row['sha256'], row['bytes'],
             (row['page_first'],row['page_last']) if row['page_first'] else None) for row in rows)
 
     def _verified(self, attempt):
-        outputs = self._outputs(attempt)
-        registered = self.writer.connection.execute('SELECT COUNT(*) FROM files WHERE producer_attempt_id=? AND uri LIKE ?',(attempt,(self.root/'.glossapi/artifacts').as_uri()+'/%')).fetchone()[0]
-        return bool(outputs) and len(outputs)==registered and all(
-            artifact.path.is_file() and artifact.path.stat().st_size==artifact.bytes and sha256_file(artifact.path)==artifact.sha256 for artifact in outputs)
+        rows=self.writer.connection.execute('SELECT * FROM current_file_state WHERE producer_attempt_id=? AND uri LIKE ?',
+            (attempt,(self.root/'.glossapi/artifacts').as_uri()+'/%')).fetchall()
+        if not rows:return False
+        for row in rows:
+            if row['presence']=='deleted':
+                from .retention import retention_facts
+                facts=retention_facts(self.writer.connection,row['file_id'])
+                if not any(event['reason_code'] in ('delete_completed','delete_recovered') for event in facts['deletions']):return False
+            elif row['presence']=='present':
+                path=local_path(row['uri'])
+                if not path.is_file() or path.stat().st_size!=row['bytes'] or sha256_file(path)!=row['sha256']:return False
+            else:return False
+        return True
 
     def _recover(self, run, tasks, operations):
         done = {}
@@ -299,6 +311,11 @@ class StreamingScheduler:
             path=Path(binding['path'])
             if not path.is_file() or sha256_file(path)!=binding['sha256']:
                 raise ValueError('Frozen model/dictionary input changed; create an amended run')
+        from .disk_budget import DiskBudget, require_disk_guard
+        require_disk_guard(self.root,frozen_settings)
+        budget=DiskBudget(self.writer,self.root,run,{**frozen_settings,'disk_budget_bytes':self.disk_capacity})
+        from .retention import RetentionController
+        RetentionController(self.writer,self.root,run,frozen_settings).recover()
         done = self._recover(run,tasks,operations) if resume else {}
         terminal = set(done)
         if resume and not retry_failed:
@@ -329,12 +346,17 @@ class StreamingScheduler:
                             active_cpu-=operation.cpu_tokens
                             active_memory-=operation.memory_bytes
                             active_disk-=operation.reservation_bytes
+                            budget.release(key)
                             self._trace('complete',key=key,attempt_id=request.attempt_id,status=result.status)
                             if result.status=='ok':
                                 done[key]=request.attempt_id
                                 terminal.add(key)
                             elif result.reason_code not in ('worker_lost','worker_process_crashed','extract_timeout') or self.writer.connection.execute('SELECT COUNT(*) FROM attempts WHERE task_id=?',(tasks[key],)).fetchone()[0]>=self.retry_limit:
                                 terminal.add(key)
+                self.runner.collect_scratch()
+                if completions and not frozen_settings.get('publication_barriers'):
+                    from .retention import retire_downloaded_sources
+                    retire_downloaded_sources(self.writer,self.root,run,frozen_settings)
                 queued={key for queue in self.ready.values() for key in queue}
                 active_keys={entry[0] for entry in self.active.values()}
                 # Finite scan pages: no eager Future or subprocess per document.
@@ -395,7 +417,8 @@ class StreamingScheduler:
                             self.memory_capacity is not None and active_memory+operation.memory_bytes>self.memory_capacity):
                             self._wait(run,tasks[operation.key],operation,'waiting_for_device')
                             break
-                        if self.disk_capacity is not None and active_disk+operation.reservation_bytes>self.disk_capacity:
+                        reservation=operation.reservation_bytes or (2*frozen_settings.get('max_attempt_bytes',0) if frozen_settings.get('memory_saving')=='extreme' else 0)
+                        if self.disk_capacity is not None and not budget.can_reserve(reservation):
                             self._wait(run,tasks[operation.key],operation,'waiting_for_disk')
                             break
                         # Require downstream credits. At most queue capacity +
@@ -412,7 +435,7 @@ class StreamingScheduler:
                                 raise ValueError('Producer output role is absent or ambiguous: '+kind)
                             artifacts.extend(matches);roles.append(role)
                         document=replace(operation.document,artifacts=tuple(artifacts))
-                        specification=replace(operation.specification,input_roles=tuple(roles))
+                        specification=replace(operation.specification,input_roles=tuple(roles),settings={**{name:frozen_settings[name] for name in ('debug','memory_saving','disk_budget_bytes','max_source_bytes','max_attempt_bytes') if name in frozen_settings},**operation.specification.settings})
                         fingerprint={'contract_version':self.registry[stage_name]().contract_version,
                             'specification':asdict(specification),'inputs':[{'sha256':a.sha256,'kind':a.kind,'range':a.page_range} for a in artifacts],
                             'code_revision':run_row['code_revision'],'environment_sha256':run_row['environment_sha256'],
@@ -421,6 +444,7 @@ class StreamingScheduler:
                         active_cpu+=operation.cpu_tokens
                         active_memory+=operation.memory_bytes
                         active_disk+=operation.reservation_bytes
+                        if self.disk_capacity is not None:budget.reserve(operation.key,reservation)
                 if pending:
                     # running leases and reservations commit BEFORE dispatch.
                     dispatch=[]
@@ -433,7 +457,7 @@ class StreamingScheduler:
                                 worker_id='warm:'+operation.stage+':'+specification.device_id)
                             self.writer.event(run,event_kind='heartbeat',reason_code='stage_started',task_id=request.task_id,
                                 attempt_id=request.attempt_id,version_id=request.version_id,details={'lease_token':request.lease_token,
-                                'lease_seconds':60,'reservation_bytes':operation.reservation_bytes,'cpu_tokens':operation.cpu_tokens})
+                                'lease_seconds':60,'reservation_bytes':budget.reservations.get(operation.key,operation.reservation_bytes),'cpu_tokens':operation.cpu_tokens})
                             dispatch.append((pool,stage,operation,request,complete))
                     for pool,stage,operation,request,complete in dispatch:
                         self.active[request.attempt_id]=(operation.key,complete,operation)
@@ -464,7 +488,7 @@ class StreamingScheduler:
                 details={'state':'waiting' if state=='completed' and self.writer.connection.execute("SELECT 1 FROM current_task_state WHERE run_id=? AND status='planned'",(run,)).fetchone() else state,
                     'queue_high_water':dict(self.high_water),'result_capacity':2*sum(pool.capacity for pool in self.pools.values())})
         return dict(run_id=run,state=state,counts={status:counts[status] for status in ('planned','running','ok','skipped','failed')},
-                    attempts=done,trace=self.trace,queue_high_water=dict(self.high_water))
+                    attempts=done,trace=self.trace,queue_high_water=dict(self.high_water),disk=budget.report())
 
     def _skip(self,run,task,operation,reason):
         with self.writer.transaction():

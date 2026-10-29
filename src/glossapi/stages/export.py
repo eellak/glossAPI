@@ -88,7 +88,7 @@ class ExportStage:
             paths=[(str(path.relative_to(request.work_directory)),'document_jsonl_shard' if request.settings['sharded'] else 'document_jsonl') for path in produced]
             # The view is private scratch; retain input snapshots and products,
             # not a second complete copy of the same text/metadata payloads.
-            shutil.rmtree(view.output_dir)
+            # The writer seals and retires view copies after aggregate success.
             return generation_outputs(request,paths,reason='export_completed' if included else 'export_empty',
                 decisions=({'selected_versions':selected,'metadata_decisions':metadata_decisions,'membership':membership,'backend_observations':observations,
                     'input_precedence':'legacy metrics then per-page metrics; current fresh math map; canonical text only'},),

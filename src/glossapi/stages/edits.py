@@ -82,8 +82,8 @@ class EditRecorder:
     def summary(self):
         """Debug-off representation for the step-seven retention switch.
 
-        Step five still seals receipt() in full. Keep the ordered stream and
-        composition hashes even when the future policy omits individual spans.
+        Keep ordered stream, composition and per-rule hashes when debug is off.
+        Debug on additionally seals every individual span and replacement body.
         """
         import json
         rules = {}

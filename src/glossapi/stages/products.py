@@ -138,7 +138,7 @@ def generation_outputs(request, paths, *, decisions=(), reason='legacy_observed'
     for relative,kind in paths:
         path=checked_path(request.work_directory,relative)
         files.append({'path':relative,'kind':kind,'sha256':sha256_file(path),'bytes':path.stat().st_size})
-        outputs.append(OutputArtifact(kind,relative,None,'intermediate' if kind in ('annotation_partition','section_fragment','source_snapshot') else 'final',True))
+        outputs.append(OutputArtifact(kind,relative,None,'final' if kind in ('sections_parquet','classified_parquet','fully_annotated_parquet','annotated_parquet','metadata_projection','document_jsonl','document_jsonl_shard') else 'intermediate',True))
     manifest={'schema_version':1,'operation':request.operation,'inputs':[{'file_id':a.file_id,'sha256':a.sha256,'role':a.kind} for a in request.inputs],
         'files':files,'membership':metrics or {}}
     (request.work_directory/'generation.json').write_text(json.dumps(manifest,ensure_ascii=False,sort_keys=True)+'\n')
@@ -157,6 +157,10 @@ def publish_products(corpus,result,workspace,products,*,retire=()):
     for relative,destination in products.items():
         source=checked_path(workspace,relative); destination=Path(destination).absolute()
         destination.parent.mkdir(parents=True,exist_ok=True)
+        registered=journal.writer.connection.execute('SELECT sha256,bytes FROM files WHERE producer_attempt_id=? AND uri=?',(result.attempt_id,source.as_uri())).fetchone() if journal else None
+        if registered and not destination.is_symlink() and destination.is_file() and destination.stat().st_size==registered['bytes'] and sha256_file(destination)==registered['sha256']:
+            selected.append((source,destination))
+            continue
         with tempfile.NamedTemporaryFile(dir=destination.parent,prefix='.'+destination.name+'.',delete=False) as stream:
             temporary=Path(stream.name)
             try:
@@ -183,15 +187,15 @@ def publish_products(corpus,result,workspace,products,*,retire=()):
                     'immutable_uri':source.as_uri(),'sha256':row['sha256'],'producer_attempt_id':result.attempt_id})
                 journal.writer.event(journal.run_id,event_kind='decision',reason_code='legacy_observed',task_id=journal.task_id,
                     attempt_id=journal.attempt_id,details={'evidence_sha256':digest})
-            for destination in retire:
-                destination=Path(destination).absolute()
-                row=journal.writer.connection.execute("SELECT * FROM current_file_state WHERE uri=? AND ownership='managed' AND presence='present' ORDER BY event_id DESC LIMIT 1",(destination.as_uri(),)).fetchone()
-                if row is None: continue
-                if destination.exists():
-                    if sha256_file(destination)!=row['sha256']:raise ValueError('Changed shard mirror cannot be retired')
-                    destination.unlink()
-                journal.writer.event(journal.run_id,event_kind='artifact',reason_code='deleted',file_id=row['file_id'],
-                    version_id=row['version_id'],details={'policy':'superseded_compatibility_shard','replacement_attempt_id':result.attempt_id,
-                        'immutable_generation_retained':True})
+        from .retention import RetentionController
+        controller=RetentionController(journal.writer,corpus.output_dir,journal.run_id,journal.retention_settings)
+        for destination in retire:
+            destination=Path(destination).absolute()
+            row=journal.writer.connection.execute("SELECT * FROM current_file_state WHERE uri=? AND ownership='managed' AND presence='present' ORDER BY event_id DESC LIMIT 1",(destination.as_uri(),)).fetchone()
+            if row is None:continue
+            consumer=controller.seal([row])
+            controller.declare(row['file_id'],[consumer],superseded_by=result.attempt_id)
+            if not controller.delete(row['file_id']):
+                raise ValueError('Superseded shard mirror could not be retired')
     else:
         shutil.rmtree(workspace.parent)

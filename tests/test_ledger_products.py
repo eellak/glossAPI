@@ -135,7 +135,7 @@ def test_shorter_sharded_rerun_retires_only_owned_mirrors(tmp_path,codec):
     assert len(second)==1 and second[0]==first[0]
     assert not first[1].exists() and not first[2].exists() and sentinel.read_text()=='untouched'
     with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as database:
-        assert database.execute("SELECT COUNT(*) FROM events WHERE event_kind='artifact' AND reason_code='deleted'").fetchone()[0]==2
+        assert database.execute("SELECT COUNT(*) FROM events e JOIN files f USING(file_id) WHERE event_kind='artifact' AND reason_code='deleted' AND f.kind='document_jsonl_shard' AND f.uri NOT LIKE '%/.glossapi/%'").fetchone()[0]==2
         for uri, in database.execute("SELECT uri FROM files WHERE kind='document_jsonl_shard' AND uri LIKE '%/.glossapi/%'"):
             from glossapi.stages.products import local_path
             assert local_path(uri).is_file()
@@ -201,8 +201,13 @@ def test_generation_manifest_binds_all_immutable_products(tmp_path):
             manifest=json.loads(local_path(uri).read_text())
             for entry in manifest['files']:
                 path=local_path(uri).parent/entry['path']
-                assert path.stat().st_size==entry['bytes']
-                assert hashlib.sha256(path.read_bytes()).hexdigest()==entry['sha256']
+                presence=database.execute('SELECT presence FROM current_file_state WHERE producer_attempt_id=? AND uri=?',(attempt,path.as_uri())).fetchone()[0]
+                if presence=='deleted':
+                    assert not path.exists()
+                    assert database.execute("SELECT 1 FROM events WHERE event_kind='retention' AND reason_code='delete_completed' AND file_id IN (SELECT file_id FROM files WHERE uri=?)",(path.as_uri(),)).fetchone()
+                else:
+                    assert path.stat().st_size==entry['bytes']
+                    assert hashlib.sha256(path.read_bytes()).hexdigest()==entry['sha256']
                 assert database.execute('SELECT COUNT(*) FROM files WHERE producer_attempt_id=? AND uri=? AND sha256=?',
                     (attempt,path.as_uri(),entry['sha256'])).fetchone()[0]==1
 
