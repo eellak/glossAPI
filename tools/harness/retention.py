@@ -1,4 +1,6 @@
 """Physical snapshots before allowlisted retention, with causal ledger proof."""
+
+from glossapi.ledger.compact import connect as ledger_connect
 from pathlib import Path
 import json
 import os
@@ -42,7 +44,7 @@ def verified_snapshots(corpus,snapshots):
     if not manifest.exists():return []
     from glossapi.stages.retention import retention_facts
     rows=json.loads(manifest.read_text())
-    with sqlite3.connect('file:'+str(corpus/'corpus.sqlite3')+'?mode=ro&immutable=1',uri=True) as database:
+    with ledger_connect('file:'+str(corpus/'corpus.sqlite3')+'?mode=ro&immutable=1',uri=True) as database:
         database.row_factory=sqlite3.Row
         for saved in rows:
             path=Path(saved['snapshot']);assert path.is_relative_to(snapshots)

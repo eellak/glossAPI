@@ -123,9 +123,8 @@ def page_rule_selection(decision: str, *, valid_greek_word_rate: float | None,
 def text_contamination_counts(text: str) -> dict[str, int]:
     """Count BMP PUA and C0/C1 controls except Markdown whitespace (TAB/LF/CR)."""
     return {
-        "pua_char_count": sum("\ue000" <= c <= "\uf8ff" for c in text),
-        "control_char_count": sum((ord(c) < 32 or 127 <= ord(c) <= 159)
-                                  and c not in "\t\n\r" for c in text),
+        "pua_char_count": len(re.findall(r"[\ue000-\uf8ff]", text)),
+        "control_char_count": len(re.findall(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", text)),
     }
 
 

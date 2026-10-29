@@ -332,12 +332,19 @@ class StreamingScheduler:
             for producer,_,_ in operation.inputs:consumers[producer].append(operation)
         tools = loaded_tools()
         active_cpu = active_memory = active_disk = 0
+        admission_changed = True
         try:
             while len(terminal)<len(operations):
                 completions=[]
                 # Drain every pool before admitting any new work.
                 for pool in self.pools.values():
                     completions.extend(pool.poll())
+                if not completions and self.active and not admission_changed:
+                    # Only a completion can free a pool/token/downstream credit.
+                    # Continue polling deadlines and heartbeat IPC, without
+                    # repeatedly scanning the unchanged frozen operation DAG.
+                    time.sleep(.005)
+                    continue
                 if completions:
                     with self.writer.batch():
                         for request,result in completions:
@@ -471,6 +478,7 @@ class StreamingScheduler:
                         reporter=Reporter();reporter.request=request
                         pool.submit(stage,request,reporter=reporter)
                         self._trace('dispatch',key=operation.key,attempt_id=request.attempt_id)
+                admission_changed = bool(pending)
                 if not self.active and not pending:
                     break
                 if not completions and not pending:

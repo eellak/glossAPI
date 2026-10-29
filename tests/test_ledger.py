@@ -14,7 +14,7 @@ import pytest
 
 from glossapi.ledger import LedgerWriter, LedgerError, open_readonly
 from glossapi.ledger.encoding import canonical_json, typed_value, untyped_value
-from glossapi.ledger.schema import APPEND_ONLY_TABLES
+from glossapi.ledger.schema import APPEND_ONLY_TABLES, SCHEMA_VERSION
 
 
 def start(writer, stage="extract", specification=None):
@@ -33,13 +33,13 @@ def test_schema_pragmas_identity_and_append_only(tmp_path):
         assert writer.connection.execute("PRAGMA synchronous").fetchone()[0] == 2
         assert writer.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert writer.connection.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
-        assert writer.connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert writer.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         with writer.transaction():
             run, document, version, task, attempt = start(writer)
             writer.source_record(document, run, "file:///fixture.pdf", {"value": None})
             writer.artifact(run, "extract", "markdown", "file:///fixture.md", sha256="a"*64, bytes=0, version_id=version, producer_attempt_id=attempt)
         for table in APPEND_ONLY_TABLES:
-            for sql in (f"DELETE FROM {table}", f"UPDATE {table} SET rowid=rowid"):
+            for sql in (f"DELETE FROM {table}", f"UPDATE {table} SET {'event_id=event_id' if table=='events' else 'rowid=rowid'}"):
                 with pytest.raises(sqlite3.IntegrityError, match="append-only"):
                     with writer.transaction(): writer.connection.execute(sql)
         with pytest.raises(sqlite3.IntegrityError):
@@ -124,14 +124,14 @@ def test_migration_backup_rollback_and_fail_closed(tmp_path):
         count = writer.connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
         sql="CREATE TABLE migration_probe(value TEXT);\nINSERT INTO nonexistent VALUES(1);\n"
         with pytest.raises(sqlite3.OperationalError):
-            writer.migrate(2,sql,checksum=hashlib.sha256(sql.encode()).hexdigest(),code_revision="test",backup_path=tmp_path/"backup.sqlite3")
-        assert writer.connection.execute("PRAGMA user_version").fetchone()[0] == 1
+            writer.migrate(SCHEMA_VERSION+1,sql,checksum=hashlib.sha256(sql.encode()).hexdigest(),code_revision="test",backup_path=tmp_path/"backup.sqlite3")
+        assert writer.connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert not writer.connection.execute("SELECT name FROM sqlite_master WHERE name='migration_probe'").fetchone()
         assert writer.connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == count
         with open_readonly(tmp_path/"backup.sqlite3") as backup:
             assert backup.execute("SELECT COUNT(*) FROM events").fetchone()[0] == count
         sql="CREATE TABLE migration_probe(value TEXT);\n"
-        writer.migrate(2,sql,checksum=hashlib.sha256(sql.encode()).hexdigest(),code_revision="test",backup_path=tmp_path/"backup2.sqlite3")
+        writer.migrate(SCHEMA_VERSION+1,sql,checksum=hashlib.sha256(sql.encode()).hexdigest(),code_revision="test",backup_path=tmp_path/"backup2.sqlite3")
     with pytest.raises(LedgerError, match="Unsupported"):
         LedgerWriter(path)
     with pytest.raises(LedgerError, match="Unsupported"):

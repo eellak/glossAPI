@@ -1,4 +1,6 @@
 """Read commands never discover legacy stores or open document payloads."""
+
+from glossapi.ledger.compact import connect as ledger_connect
 import json
 import os
 from pathlib import Path
@@ -145,7 +147,7 @@ def test_live_wal_ledger_snapshot_reads_committed_events_without_new_files(tmp_p
 
 def test_unsupported_schema_fails_closed(tmp_path, capsys):
     seed(tmp_path)
-    with sqlite3.connect(tmp_path/"corpus.sqlite3") as connection:
+    with ledger_connect(tmp_path/"corpus.sqlite3") as connection:
         connection.execute("PRAGMA user_version=99")
     code, result = invoke(capsys, "status", "--corpus", str(tmp_path))
     assert code == 2 and result["errors"][0]["code"] == "unsupported_schema"

@@ -1,4 +1,6 @@
 """Real spawned-worker saturation, deadlines, publication and recovery."""
+
+from glossapi.ledger.compact import connect as ledger_connect
 from dataclasses import replace
 import json
 import os
@@ -170,13 +172,13 @@ def test_public_run_projects_streamed_results_without_reextracting(tmp_path):
     assert retired_skiplist.read_text()=='source\n'
     assert (output/'export.jsonl').is_file()
     import sqlite3
-    with sqlite3.connect(output/'corpus.sqlite3') as connection:
+    with ledger_connect(output/'corpus.sqlite3') as connection:
         assert connection.execute("SELECT COUNT(*) FROM attempts a JOIN tasks t USING(task_id) WHERE t.operation='extract.document'").fetchone()[0]==1
         attempts=connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]
     before=(output/'export.jsonl').read_bytes()
     resumed=corpus.run(resume=result['run_id'])
     assert resumed['state']=='completed' and before==(output/'export.jsonl').read_bytes()
-    with sqlite3.connect(output/'corpus.sqlite3') as connection:
+    with ledger_connect(output/'corpus.sqlite3') as connection:
         assert connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0]==attempts
 
 
@@ -279,7 +281,7 @@ if __name__=='__main__':
             deadline=time.monotonic()+15
             while True:
                 if (tmp_path/'run-id').exists():
-                    with sqlite3.connect(tmp_path/'corpus.sqlite3') as connection:
+                    with ledger_connect(tmp_path/'corpus.sqlite3') as connection:
                         committed=[row[0] for row in connection.execute("SELECT attempt_id FROM events WHERE status='ok'")]
                     if len(committed)>=2:break
                 assert time.monotonic()<deadline
@@ -405,7 +407,7 @@ def test_one_failed_document_does_not_block_successful_publication(tmp_path,incl
     if not include_good:assert (corpus.output_dir/'export.jsonl').read_bytes()==b''
     assert not (corpus.output_dir/'markdown/broken.md').exists()
     import sqlite3
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as connection:
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as connection:
         assert connection.execute("SELECT status FROM current_task_state WHERE run_id=? AND operation='export.compatibility_publish'",(result['run_id'],)).fetchone()[0]=='ok'
 
 
@@ -421,7 +423,7 @@ def test_annotation_failure_does_not_block_independent_jsonl_branch(tmp_path,mon
     assert result['state']=='completed_with_failures'
     assert (corpus.output_dir/'export.jsonl').is_file()
     import sqlite3
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as connection:
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as connection:
         outcomes=dict(connection.execute("SELECT stage,status FROM current_task_state WHERE run_id=? AND operation LIKE '%.compatibility_publish'",(result['run_id'],)))
         assert outcomes['annotate']=='failed' and outcomes['export']=='ok'
 

@@ -1,4 +1,6 @@
 """Cutover products: aggregate equivalence, lineage and retired-store authority."""
+
+from glossapi.ledger.compact import connect as ledger_connect
 import hashlib
 import inspect
 import json
@@ -30,7 +32,7 @@ def corpus_fixture(tmp_path,*,enabled=True):
 
 
 def evidence(corpus,stage):
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as database:
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as database:
         return [value for encoded, in database.execute("SELECT json FROM snapshots WHERE kind='stage_evidence' ORDER BY rowid")
             if (value:=unpack_evidence(json.loads(encoded))).get('stage')==stage]
 
@@ -116,7 +118,7 @@ def test_unchanged_text_has_stable_private_keys_and_no_shadow_rows(tmp_path):
     corpus.section();corpus.section()
     rows=[value for value in evidence(corpus,'sections') if 'section_keys' in value]
     assert rows[0]['section_keys']==rows[-1]['section_keys']
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as database:
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as database:
         assert not any('sections_for_annotation' in encoded for encoded, in database.execute("SELECT json FROM snapshots WHERE kind='legacy_store'"))
         assert database.execute('SELECT COUNT(*) FROM task_dependencies').fetchone()[0]>=2
     assert 'section_key' not in pd.read_parquet(corpus.sections_parquet).columns
@@ -134,7 +136,7 @@ def test_shorter_sharded_rerun_retires_only_owned_mirrors(tmp_path,codec):
     second=corpus.jsonl_sharded(destination,shard_size_bytes=1,compression=codec)
     assert len(second)==1 and second[0]==first[0]
     assert not first[1].exists() and not first[2].exists() and sentinel.read_text()=='untouched'
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as database:
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as database:
         assert database.execute("SELECT COUNT(*) FROM events e JOIN files f USING(file_id) WHERE event_kind='artifact' AND reason_code='deleted' AND f.kind='document_jsonl_shard' AND f.uri NOT LIKE '%/.glossapi/%'").fetchone()[0]==2
         for uri, in database.execute("SELECT uri FROM files WHERE kind='document_jsonl_shard' AND uri LIKE '%/.glossapi/%'"):
             from glossapi.stages.products import local_path
@@ -195,7 +197,7 @@ def test_generation_manifest_binds_all_immutable_products(tmp_path):
     from glossapi.ledger.writer import integrity
     corpus=corpus_fixture(tmp_path);corpus.good_files=['alpha']
     corpus.section();corpus.jsonl(corpus.output_dir/'export.jsonl')
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as database:
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as database:
         integrity(database)
         for attempt,uri in database.execute("SELECT producer_attempt_id,uri FROM files WHERE kind='generation_manifest'"):
             manifest=json.loads(local_path(uri).read_text())
@@ -215,7 +217,7 @@ def test_generation_manifest_binds_all_immutable_products(tmp_path):
 def test_corrupt_immutable_metadata_rejects_mirror_consumption(tmp_path):
     from glossapi.stages.products import current_product,local_path
     corpus=corpus_fixture(tmp_path);corpus.jsonl(corpus.output_dir/'first.jsonl')
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as database:
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as database:
         product=current_product(database,corpus.output_dir/'download_results/download_results.parquet')
     local_path(product['immutable_uri']).write_bytes(b'corrupt')
     with pytest.raises(ValueError,match='Metadata projection corrupt'):
@@ -226,7 +228,7 @@ def test_failed_mirror_publication_keeps_prior_generation_selected(tmp_path,monk
     from glossapi.stages.products import current_product
     corpus=corpus_fixture(tmp_path);destination=corpus.output_dir/'export.jsonl'
     corpus.jsonl(destination);original=destination.read_bytes()
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as database:before=current_product(database,destination)
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as database:before=current_product(database,destination)
     (corpus.cleaned_markdown_dir/'alpha.md').write_text('Changed text')
     replace=os.replace
     def fail_publication(source,target):
@@ -235,7 +237,7 @@ def test_failed_mirror_publication_keeps_prior_generation_selected(tmp_path,monk
     monkeypatch.setattr(os,'replace',fail_publication)
     with pytest.raises(OSError,match='deterministic mirror failure'):corpus.jsonl(destination)
     assert destination.read_bytes()==original
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as database:assert current_product(database,destination)==before
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as database:assert current_product(database,destination)==before
 
 
 def test_fresh_section_restores_clean_producer_selection(tmp_path):
@@ -303,7 +305,7 @@ def test_export_keeps_two_metric_inputs_with_one_producer_role_edge(tmp_path):
     publish_metrics(corpus)
     records=[json.loads(line) for line in corpus.jsonl(corpus.output_dir/'export.jsonl').read_text().splitlines()]
     assert next(row for row in records if row['filename']=='alpha')['page_count']==7
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as database:
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as database:
         task=database.execute("SELECT task_id FROM tasks WHERE operation='export.publish'").fetchone()[0]
         assert database.execute("SELECT COUNT(*) FROM task_dependencies WHERE task_id=? AND input_role='metrics_or_math'",(task,)).fetchone()[0]==1
         assert database.execute("SELECT COUNT(*) FROM attempt_inputs i JOIN attempts a ON a.attempt_id=i.attempt_id WHERE a.task_id=? AND i.role='metrics_or_math'",(task,)).fetchone()[0]==2

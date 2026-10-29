@@ -139,14 +139,17 @@ def observe_source_rows(frame, path, *, url_column="url"):
 def inventory(root):
     result = {}
     if not Path(root).exists(): return result
-    for path in sorted(Path(root).rglob("*")):
-        # Adapter generations already have producer-bound file registrations.
-        # Do not observe them again as unowned compatibility stores.
-        if ".glossapi" in path.relative_to(root).parts:
-            continue
-        if not path.is_file() or path.name in ("corpus.sqlite3", "corpus.sqlite3-wal", "corpus.sqlite3-shm") or path.suffix in (".log", ".lock"):
-            continue
-        result[str(path.absolute())] = {"sha256": file_hash(path), "bytes": path.stat().st_size}
+    for directory, directories, names in os.walk(root):
+        directories[:] = sorted(name for name in directories if name != '.glossapi')
+        for name in sorted(names):
+            path = Path(directory) / name
+            # Adapter generations already have producer-bound file registrations.
+            # Do not observe them again as unowned compatibility stores.
+            if ".glossapi" in path.relative_to(root).parts:
+                continue
+            if not path.is_file() or path.name in ("corpus.sqlite3", "corpus.sqlite3-wal", "corpus.sqlite3-shm") or path.suffix in (".log", ".lock"):
+                continue
+            result[str(path.absolute())] = {"sha256": file_hash(path), "bytes": path.stat().st_size}
     return result
 
 

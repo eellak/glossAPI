@@ -5,6 +5,8 @@ worker. Each arm is a fresh process, ONE Corpus, and one call per public phase.
 """
 from __future__ import annotations
 
+from glossapi.ledger.compact import connect as ledger_connect
+
 import argparse
 from contextlib import closing
 import json
@@ -22,12 +24,14 @@ from .common import REPO, STAGES, environment, inventory, load_manifest, sha256,
 
 def audit_ledger(path, documents):
     from glossapi.ledger.writer import integrity
-    with sqlite3.connect(path) as database:
+    with ledger_connect(path) as database:
         integrity(database)
         counts = {name: database.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
                   for name in ("events", "files", "snapshots", "runs", "documents", "tasks", "attempts", "source_records")}
-        kinds = [dict(kind=kind, count=count, json_bytes=size) for kind, count, size in database.execute(
+        kinds = [dict(kind=kind, count=count, stored_json_bytes=size) for kind, count, size in database.execute(
             "SELECT kind,COUNT(*),SUM(LENGTH(CAST(json AS BLOB))) FROM snapshots GROUP BY kind ORDER BY 3 DESC")]
+        for item in kinds:
+            item['json_bytes']=sum(len(encoded.encode('utf-8')) for encoded, in database.execute('SELECT json FROM snapshots WHERE kind=?',(item['kind'],)))
         pages = [dict(name=name, bytes=size) for name, size in database.execute(
             "SELECT name,SUM(pgsize) FROM dbstat GROUP BY name ORDER BY 2 DESC")]
         stores = [json.loads(row[0]) for row in database.execute("SELECT json FROM snapshots WHERE kind='legacy_store'")]
@@ -153,7 +157,7 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1, debug=
         for name, fact in after.items():
             if name == "corpus.sqlite3" or name.startswith(".glossapi/artifacts/"):
                 if name.startswith(".glossapi/artifacts/"):
-                    with closing(sqlite3.connect(f"file:{out/'corpus.sqlite3'}?mode=ro"+('' if streaming else '&immutable=1'), uri=True)) as database:
+                    with closing(ledger_connect(f"file:{out/'corpus.sqlite3'}?mode=ro"+('' if streaming else '&immutable=1'), uri=True)) as database:
                         recorded = database.execute("SELECT sha256,bytes,presence FROM current_file_state WHERE uri=?", ((out/name).as_uri(),)).fetchone()
                     if recorded != (fact["sha256"], fact["bytes"], "present"):
                         raise AssertionError(f"Unregistered or changed managed addition: {name}")

@@ -43,7 +43,20 @@ def retention_facts(connection, file_id, *, as_of=9223372036854775807):
         value = dict(event_id=event[0], reason_code=event[1], details=json.loads(event[2]))
         if 'retention_plan' in value['details']:
             declarations.append(value['details']['retention_plan'])
+        elif 'retention_plan_sha256' in value['details']:
+            policy=connection.execute('SELECT json FROM snapshots WHERE sha256=?',(value['details']['retention_plan_sha256'],)).fetchone()
+            binding=connection.execute('SELECT sha256,bytes FROM files WHERE file_id=?',(file_id,)).fetchone()
+            if policy is None or binding is None:raise ValueError('Missing retention policy binding')
+            plan=json.loads(policy[0])['plan']
+            declarations.append(dict(file_id=file_id,sha256=binding[0],bytes=binding[1],**plan))
         else:
+            if value['details'].get('intent_event_id') and value['reason_code'] in ('delete_completed','delete_recovered'):
+                intent=connection.execute('SELECT details_json FROM events WHERE event_id=?',(value['details']['intent_event_id'],)).fetchone()
+                if intent:value['details']={**json.loads(intent[0]),**value['details']}
+            if value['details'].get('file_binding') == 'registered_file':
+                binding=connection.execute('SELECT sha256,bytes FROM files WHERE file_id=?',(file_id,)).fetchone()
+                value['details'].update(file_id=file_id,sha256=binding[0],bytes=binding[1])
+                value['details'].setdefault('logical_references',[file_id])
             deletions.append(value)
     plan = declarations[-1] if declarations else None
     consumers, outstanding = [], []
@@ -105,8 +118,12 @@ class RetentionController:
                 raise ValueError('Retention consumers are frozen')
             return
         with self.writer.transaction():
+            details={'retention_plan':plan}
+            if self.connection.compact:
+                shared={key:value for key,value in plan.items() if key not in ('file_id','sha256','bytes')}
+                details={'retention_plan_sha256':self.writer.snapshot('retention_policy',{'plan':shared})}
             self.writer.event(self.run_id, event_kind='retention', reason_code='retention_pinned',
-                file_id=file_id, version_id=row['version_id'], details={'retention_plan':plan})
+                file_id=file_id, version_id=row['version_id'], details=details)
 
     def eligibility(self, file_id):
         row = self.connection.execute('SELECT * FROM current_file_state WHERE file_id=?', (file_id,)).fetchone()
@@ -220,7 +237,7 @@ class RetentionController:
             if intent is None:
                 with self.writer.transaction():
                     intent = self.writer.event(self.run_id,event_kind='retention',reason_code='delete_planned',
-                        file_id=file_id,version_id=row['version_id'],details={**details,'identity':list(identity)})
+                        file_id=file_id,version_id=row['version_id'],details=self._compact_receipt({**details,'identity':list(identity)}))
                 self.fault('after_intent', file_id)
             # Pins and leases can only change through this writer. Recheck the
             # path identity under the same opened directory immediately before unlink.
@@ -231,7 +248,10 @@ class RetentionController:
                 raise ValueError('Artifact replaced before unlink')
             free_before = os.statvfs(self.root).f_bavail * os.statvfs(self.root).f_frsize
             os.unlink(name,dir_fd=descriptor)
-            os.fsync(descriptor)
+            if hasattr(self,'_directory_syncs'):
+                directory=os.fstat(descriptor);key=(directory.st_dev,directory.st_ino)
+                if key not in self._directory_syncs:self._directory_syncs[key]=os.dup(descriptor)
+            else:os.fsync(descriptor)
             self.fault('after_unlink', file_id)
             free_after = os.statvfs(self.root).f_bavail * os.statvfs(self.root).f_frsize
             details['observed_free_bytes_change'] = free_after-free_before
@@ -245,6 +265,14 @@ class RetentionController:
         finally:
             if descriptor is not None:os.close(descriptor)
 
+    def _compact_receipt(self,details):
+        if not self.connection.compact:return details
+        result={key:value for key,value in details.items() if key not in ('file_id','sha256','bytes')}
+        if result.get('logical_references')==[details.get('file_id')]:result.pop('logical_references')
+        if 'intent_event_id' in result and 'deleted_logical_bytes' in result:
+            result={key:value for key,value in result.items() if key not in ('policy_sha256','consumer_ok_event_ids','pin_check')}
+        return {'file_binding':'registered_file',**result}
+
     def _complete(self,row,details,reason,intent):
         with self.writer.transaction():
             for file_id in details['logical_references']:
@@ -254,9 +282,9 @@ class RetentionController:
                 if alias==row['file_id']:continue
                 self.writer.event(self.run_id,event_kind='retention',reason_code=reason,file_id=alias,
                     version_id=self.connection.execute('SELECT version_id FROM files WHERE file_id=?',(alias,)).fetchone()[0],
-                    details={**details,'intent_event_id':intent,'shared_path_primary_file_id':row['file_id'],'deleted_logical_bytes':0})
+                    details=self._compact_receipt({**details,'intent_event_id':intent,'shared_path_primary_file_id':row['file_id'],'deleted_logical_bytes':0}))
             self.writer.event(self.run_id,event_kind='retention',reason_code=reason,file_id=row['file_id'],
-                version_id=row['version_id'],details={**details,'intent_event_id':intent,'deleted_logical_bytes':row['bytes']})
+                version_id=row['version_id'],details=self._compact_receipt({**details,'intent_event_id':intent,'deleted_logical_bytes':row['bytes']}))
         return True
 
     def delete_many(self,file_ids):
@@ -271,11 +299,23 @@ class RetentionController:
                     details=dict(file_id=file_id,sha256=row['sha256'],bytes=row['bytes'],
                         policy_sha256=snapshot_hash(facts['declaration']),consumer_ok_event_ids=facts['consumer_ok_event_ids'],pin_check=[])
                     intent=self.writer.event(self.run_id,event_kind='retention',reason_code='delete_planned',
-                        file_id=file_id,version_id=row['version_id'],details=details)
+                        file_id=file_id,version_id=row['version_id'],details=self._compact_receipt(details))
                     intents.append((file_id,intent))
             batch=intents;intents=[]
-            with self.writer.batch():
-                for file_id,intent in batch:self.delete(file_id,recovering=intent)
+            self._directory_syncs={}
+            try:
+                with self.writer.batch():
+                    try:
+                        for file_id,intent in batch:
+                            self.fault('after_intent',file_id)
+                            self.delete(file_id,recovering=intent)
+                    finally:
+                        # Every affected parent reaches stable storage before
+                        # this transaction can commit any deletion completion.
+                        for descriptor in self._directory_syncs.values():os.fsync(descriptor)
+            finally:
+                for descriptor in self._directory_syncs.values():os.close(descriptor)
+                del self._directory_syncs
 
     def recover(self):
         intents = list(self.connection.execute("""SELECT event_id,file_id FROM events e
@@ -354,11 +394,13 @@ def retain_completed_run(writer,root,run_id,settings=None,*,attempts=None,cleanu
         if not retention_facts(writer.connection,row['file_id'])['declaration']:by_stage[row['stage']].append(row)
     for stage,files in by_stage.items():
         sealer=controller.seal(files)
-        for row in files:
-            consumers=[item[0] for item in writer.connection.execute('SELECT DISTINCT a.task_id FROM attempt_inputs i JOIN attempts a USING(attempt_id) WHERE i.file_id=?',(row['file_id'],))]
-            # Raw is a final product when no real text reader selected it.
-            final=row['kind'] in ('clean_markdown','ocr_markdown','math_markdown') or (row['kind']=='raw_markdown' and len(consumers)==1)
-            controller.declare(row['file_id'],consumers,final=final,source=row['kind']=='download_payload')
+        for offset in range(0,len(files),128):
+            with writer.batch():
+                for row in files[offset:offset+128]:
+                    consumers=[item[0] for item in writer.connection.execute('SELECT DISTINCT a.task_id FROM attempt_inputs i JOIN attempts a USING(attempt_id) WHERE i.file_id=?',(row['file_id'],))]
+                    # Raw is a final product when no real text reader selected it.
+                    final=row['kind'] in ('clean_markdown','ocr_markdown','math_markdown') or (row['kind']=='raw_markdown' and len(consumers)==1)
+                    controller.declare(row['file_id'],consumers,final=final,source=row['kind']=='download_payload')
     if observer:observer(controller,candidates)
     controller.delete_many([row['file_id'] for row in candidates])
     return controller

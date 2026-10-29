@@ -15,7 +15,8 @@ import uuid
 
 from .catalogue import EVENT_KINDS, REASON_CODES, STAGES, STATUSES, TERMINAL_STATUSES
 from .encoding import canonical_json, evidence, file_hash, snapshot_hash, typed_value, untyped_value
-from .schema import APPEND_ONLY_TABLES, SCHEMA_SQL, SCHEMA_VERSION
+from .schema import APPEND_ONLY_TABLES, SCHEMA_SQL, SCHEMA_VERSION, COMPACT_SCHEMA_SQL
+from .compact import connect, encode_json
 from .validation import validate_evidence
 
 
@@ -85,13 +86,15 @@ def integrity(connection):
 
 def supported_schema(connection):
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if version != SCHEMA_VERSION:
+    if version not in (1, SCHEMA_VERSION):
         raise LedgerError(f"Unsupported ledger schema {version}")
     rows = connection.execute("SELECT version,migration_sha256 FROM schema_migrations ORDER BY version").fetchall()
     if [r[0] for r in rows] != list(range(1, version + 1)):
         raise LedgerError("Schema migration history disagrees with user_version")
     if rows[0][1] != hashlib.sha256(SCHEMA_SQL.encode()).hexdigest():
         raise LedgerError("Schema migration checksum mismatch")
+    if version == 2 and rows[1][1] != hashlib.sha256(COMPACT_SCHEMA_SQL.encode()).hexdigest():
+        raise LedgerError("Compact schema migration checksum mismatch")
 
 
 @contextmanager
@@ -103,7 +106,7 @@ def open_readonly(path):
     # writer-owned WAL index; never create one as a side effect of reporting.
     if wal.exists() and not path.with_name(path.name + "-shm").exists():
         raise LedgerError("Live WAL has no shared-memory index; retry after writer checkpoint")
-    connection = sqlite3.connect(path.as_uri() + ("?mode=ro" if wal.exists() else "?mode=ro&immutable=1"), uri=True, isolation_level=None)
+    connection = connect(path.as_uri() + ("?mode=ro" if wal.exists() else "?mode=ro&immutable=1"), uri=True, isolation_level=None)
     try:
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=5000")
@@ -124,7 +127,8 @@ class LedgerWriter:
     SQLite connection is intentionally not part of a Corpus (spawn/pickle safe).
     All public mutation methods require an explicit transaction.
     """
-    def __init__(self, path, *, code_revision="unknown_not_recorded"):
+    def __init__(self, path, *, code_revision="unknown_not_recorded", storage_version=SCHEMA_VERSION):
+        if storage_version not in (1, SCHEMA_VERSION):raise LedgerError("Unsupported creation schema")
         self.path = Path(path).absolute()
         if str(self.path) in _OPEN_WRITERS:
             raise BlockingIOError("Ledger already has an owning writer")
@@ -134,7 +138,7 @@ class LedgerWriter:
         try:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _OPEN_WRITERS.add(str(self.path))
-            self.connection = sqlite3.connect(self.path, isolation_level=None)
+            self.connection = connect(self.path, isolation_level=None)
             self.connection.row_factory = sqlite3.Row
             self.connection.execute("PRAGMA foreign_keys=ON")
             self.connection.execute("PRAGMA busy_timeout=5000")
@@ -158,8 +162,15 @@ class LedgerWriter:
                     self.connection.execute("INSERT INTO schema_migrations VALUES(1,?,?,?)",
                         (utc_now(), hashlib.sha256(SCHEMA_SQL.encode()).hexdigest(), code_revision))
                     self.connection.execute("PRAGMA user_version=1")
+                    if storage_version == 2:
+                        for statement in statements(COMPACT_SCHEMA_SQL):self.connection.execute(statement)
+                        self.connection.execute("INSERT INTO schema_migrations VALUES(2,?,?,?)",
+                            (utc_now(),hashlib.sha256(COMPACT_SCHEMA_SQL.encode()).hexdigest(),code_revision))
+                        self.connection.execute("PRAGMA user_version=2")
+                self.connection.compact = storage_version == 2
             supported_schema(self.connection)
             integrity(self.connection)
+            self.next_event_id = self.connection.execute("SELECT COALESCE(MAX(event_id),0)+1 FROM events").fetchone()[0]
             self.connection.execute("PRAGMA journal_mode=WAL")
             self.connection.execute("PRAGMA synchronous=FULL")
         except BaseException:
@@ -226,7 +237,7 @@ class LedgerWriter:
             raise LedgerError("Migration sequence/checksum mismatch")
         if Path(backup_path).exists(): raise LedgerError("Backup already exists")
         integrity(self.connection)
-        backup = sqlite3.connect(backup_path)
+        backup = connect(backup_path)
         try:
             self.connection.backup(backup)
             integrity(backup)
@@ -249,7 +260,7 @@ class LedgerWriter:
         existing = self.connection.execute("SELECT kind,json FROM snapshots WHERE sha256=?", (digest,)).fetchone()
         # Kind is included in the hashed body by callers where semantically needed.
         if existing is None:
-            self.connection.execute("INSERT INTO snapshots VALUES(?,?,1,?)", (digest, kind, encoded))
+            self.connection.execute("INSERT INTO snapshots VALUES(?,?,1,?)", (digest, kind, encode_json(encoded) if self.connection.compact else encoded))
         return digest
 
     def run(self, settings, plan, environment, *, code_revision):
@@ -376,8 +387,23 @@ class LedgerWriter:
         validate_evidence(payload)
         if duration_ns is not None and (type(duration_ns) is not int or duration_ns < 0):
             raise LedgerError("Duration must be nonnegative integer nanoseconds")
+        encoded=encode_json(canonical_json(payload)) if self.connection.compact else canonical_json(payload)
+        if self.connection.compact:
+            identifier=self.next_event_id
+            self.next_event_id+=1
+            if event_kind=='retention' and file_id and all(value is None for value in (
+                    task_id,attempt_id,status,error_type,traceback,started_at,finished_at,duration_ns,output_manifest_sha256)):
+                # All omitted columns are exactly implied by the file binding
+                # and event kind. The public events view reconstructs them.
+                self.connection.execute('INSERT INTO retention_events VALUES(?,?,?,?,?,?,?)',
+                    (identifier,run_id,file_id,reason_code,message,encoded,utc_now()))
+            else:
+                self.connection.execute('INSERT INTO event_records VALUES('+','.join('?' for _ in range(18))+')',
+                    (identifier,run_id,task_id,version_id,attempt_id,file_id,event_kind,status,reason_code,message,
+                     error_type,traceback,started_at,finished_at,duration_ns,output_manifest_sha256,encoded,utc_now()))
+            return identifier
         cursor = self.connection.execute("""INSERT INTO events(run_id,task_id,version_id,attempt_id,file_id,event_kind,status,reason_code,message,error_type,traceback,started_at,finished_at,duration_ns,output_manifest_sha256,details_json,recorded_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (run_id, task_id, version_id, attempt_id, file_id, event_kind, status, reason_code, message, error_type, traceback, started_at, finished_at, duration_ns, output_manifest_sha256, canonical_json(payload), utc_now()))
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (run_id, task_id, version_id, attempt_id, file_id, event_kind, status, reason_code, message, error_type, traceback, started_at, finished_at, duration_ns, output_manifest_sha256, encoded, utc_now()))
         return cursor.lastrowid
 
     def artifact(self, run_id, stage, kind, uri, *, sha256=None, bytes=None, version_id=None, producer_attempt_id=None, ownership="managed", retention_class="intermediate", presence="present", page_first=None, page_last=None):
@@ -425,6 +451,10 @@ class LedgerWriter:
         for output in outputs:
             fields = {key: value for key, value in output.items() if key != 'role'}
             file_id = self.artifact(run_id, task[1], version_id=task[0], producer_attempt_id=attempt_id, **fields)
-            registered.append({"file_id": file_id, **output})
-        manifest = self.snapshot("outputs", {"kind": "outputs", "files": registered})
+            if self.connection.compact:
+                entry={"file_id":file_id,"fields":sorted(key for key in output if key!='role')}
+                if 'role' in output:entry['role']=output['role']
+                registered.append(entry)
+            else:registered.append({"file_id": file_id, **output})
+        manifest = self.snapshot("outputs", {"kind": "outputs", **({"encoding":"registered_files_v1"} if self.connection.compact else {}), "files": registered})
         return self.event(run_id, event_kind="lifecycle", task_id=task_id, version_id=task[0], attempt_id=attempt_id, status=status, reason_code=reason_code, output_manifest_sha256=manifest, details=details, **timing)

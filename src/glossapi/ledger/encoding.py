@@ -1,6 +1,7 @@
 """Canonical JSON and lossless typed source values, without pandas imports."""
 from __future__ import annotations
 
+import os
 import base64
 import datetime
 import decimal
@@ -86,11 +87,24 @@ def evidence(value):
 
 
 def file_hash(path):
+    """Rehash bytes at every boundary, fencing descriptor/path replacement.
+
+    Filesystem timestamps can alias rapid same-size writes. They are never
+    accepted as proof that a previously hashed file remains unchanged.
+    """
+    path = Path(path)
+    identity = lambda value:(value.st_dev,value.st_ino,value.st_size,value.st_mtime_ns,value.st_ctime_ns)
+    before = identity(path.stat())
     digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
+    with path.open("rb") as stream:
+        if identity(os.fstat(stream.fileno())) != before:
+            raise ValueError('File changed before hashing')
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
-    return digest.hexdigest()
+        if identity(os.fstat(stream.fileno())) != before or identity(path.stat()) != before:
+            raise ValueError('File changed while hashing')
+    value=digest.hexdigest()
+    return value
 
 
 def dataframe_records(frame):

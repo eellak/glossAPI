@@ -1,4 +1,6 @@
 """Adapter contracts and real publication, coverage, HTTP and process fences."""
+
+from glossapi.ledger.compact import connect as ledger_connect
 from dataclasses import asdict, replace
 import hashlib
 import json
@@ -423,7 +425,7 @@ def test_compatibility_profile_uses_single_writer_and_keeps_registered_generatio
         return extract_compatibility_document(extractor, file_paths[0], output/"markdown")
     assert extract_one(corpus, [source]) is True
     assert (output/"markdown/source.md").read_text() == "A small text layer"
-    with sqlite3.connect(output/"corpus.sqlite3") as database:
+    with ledger_connect(output/"corpus.sqlite3") as database:
         assert database.execute("SELECT status FROM current_task_state WHERE operation='extract.document'").fetchone()[0] == "ok"
         facts = database.execute("SELECT uri,sha256 FROM files WHERE uri LIKE '%/.glossapi/artifacts/%'").fetchall()
     from urllib.parse import unquote, urlparse

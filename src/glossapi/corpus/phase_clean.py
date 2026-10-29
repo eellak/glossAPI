@@ -2678,7 +2678,7 @@ def _latin_word_shape_rate(text: str) -> float | None:
     """
     ascii_words = re.findall(r"[A-Za-z]+", text)
     words = [word for word in ascii_words if len(word) >= 3]
-    raw_chars = sum(not char.isspace() for char in text)
+    raw_chars = len(re.sub(r"\s", "", text))
     # Do not let a small readable island hide mostly short tokens or raw
     # fragments that the cleaner would delete before measuring Latin share.
     if (len(words) < 20 or len(words) <= len(ascii_words) / 2 or

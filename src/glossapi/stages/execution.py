@@ -18,11 +18,8 @@ from .contracts import OutputArtifact, StageError, StageResult
 
 
 def sha256_file(path):
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    from ..ledger.encoding import file_hash
+    return file_hash(path)
 
 
 def checked_path(root, relative):

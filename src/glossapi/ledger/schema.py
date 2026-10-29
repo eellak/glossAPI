@@ -1,5 +1,5 @@
 """Normative version-1 DDL from LEDGER_DESIGN section 1 (stdlib only)."""
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 APPEND_ONLY_TABLES = ("events", "source_records", "attempts", "files")
 SCHEMA_SQL = r"""
 CREATE TABLE ledger_info (
@@ -132,4 +132,49 @@ CREATE VIEW current_file_state AS
     SELECT MAX(s.event_id) FROM events s
     WHERE s.file_id=f.file_id AND s.event_kind='artifact'
   );
+"""
+
+# Version 2 retains every logical row and the v1 canonical snapshot hash.
+# Physical UUID/hash/JSON encoding is handled by ledger.compact.
+COMPACT_SCHEMA_SQL = """
+DROP INDEX events_task;
+CREATE INDEX events_task ON events(task_id,event_id DESC) WHERE task_id IS NOT NULL;
+DROP INDEX events_attempt;
+CREATE INDEX events_attempt ON events(attempt_id,event_id) WHERE attempt_id IS NOT NULL;
+DROP INDEX events_document;
+CREATE INDEX events_document ON events(version_id,event_id) WHERE version_id IS NOT NULL;
+DROP INDEX events_file;
+CREATE INDEX events_file ON events(file_id,event_id) WHERE file_id IS NOT NULL;
+"""
+
+COMPACT_SCHEMA_SQL += """
+ALTER TABLE events RENAME TO event_records;
+CREATE TABLE retention_events (
+ event_id INTEGER PRIMARY KEY,
+ run_id TEXT NOT NULL REFERENCES runs(run_id),
+ file_id TEXT NOT NULL REFERENCES files(file_id),
+ reason_code TEXT NOT NULL, message TEXT NOT NULL,
+ details_json TEXT NOT NULL, recorded_at TEXT NOT NULL
+);
+CREATE INDEX retention_events_file ON retention_events(file_id,event_id);
+CREATE INDEX retention_events_run ON retention_events(run_id,event_id);
+CREATE INDEX retention_events_reason ON retention_events(reason_code,event_id);
+CREATE VIEW events AS SELECT * FROM event_records UNION ALL
+ SELECT r.event_id,r.run_id,NULL,f.version_id,NULL,r.file_id,'retention',NULL,
+ r.reason_code,r.message,NULL,NULL,NULL,NULL,NULL,NULL,r.details_json,r.recorded_at
+ FROM retention_events r JOIN files f ON f.file_id=r.file_id;
+CREATE TRIGGER retention_events_no_update BEFORE UPDATE ON retention_events
+ BEGIN SELECT RAISE(ABORT, 'append-only table'); END;
+CREATE TRIGGER retention_events_no_delete BEFORE DELETE ON retention_events
+ BEGIN SELECT RAISE(ABORT, 'append-only table'); END;
+CREATE TRIGGER events_view_no_update INSTEAD OF UPDATE ON events
+ BEGIN SELECT RAISE(ABORT, 'append-only table'); END;
+CREATE TRIGGER events_view_no_delete INSTEAD OF DELETE ON events
+ BEGIN SELECT RAISE(ABORT, 'append-only table'); END;
+CREATE TRIGGER events_view_insert INSTEAD OF INSERT ON events BEGIN
+ INSERT INTO event_records VALUES(NEW.event_id,NEW.run_id,NEW.task_id,NEW.version_id,
+ NEW.attempt_id,NEW.file_id,NEW.event_kind,NEW.status,NEW.reason_code,NEW.message,
+ NEW.error_type,NEW.traceback,NEW.started_at,NEW.finished_at,NEW.duration_ns,
+ NEW.output_manifest_sha256,NEW.details_json,NEW.recorded_at);
+END;
 """

@@ -36,6 +36,25 @@ def snapshot(connection, digest):
     if row is None:
         raise LedgerError("Missing evidence snapshot: " + digest)
     value = unpack_evidence(json.loads(row[0]))
+    if value.get('kind')=='outputs' and value.get('encoding')=='registered_files_v1':
+        files=[]
+        for reference in value['files']:
+            rows=_rows(connection,'SELECT * FROM files WHERE file_id=?',(reference['file_id'],))
+            if len(rows)!=1:raise LedgerError('Missing registered output binding')
+            entry={'file_id':reference['file_id']}
+            for key in reference['fields']:
+                if key=='presence':
+                    # The output manifest binds initial registration, not a
+                    # later deletion/missing observation at the same location.
+                    original=connection.execute("SELECT reason_code FROM events WHERE file_id=? AND event_kind='artifact' ORDER BY event_id LIMIT 1",(reference['file_id'],)).fetchone()
+                    if original is None:raise LedgerError('Missing initial output presence')
+                    entry[key]=original[0]
+                elif key in rows[0]:entry[key]=rows[0][key]
+                else:raise LedgerError('Unknown registered output field: '+key)
+            if 'role' in reference:entry['role']=reference['role']
+            files.append(entry)
+        value={key:entry for key,entry in value.items() if key not in ('encoding','files')}
+        value['files']=files
     for field, reference in value.pop("shared_fields", {}).items():
         value[field] = membership_values(connection, reference)
     return value

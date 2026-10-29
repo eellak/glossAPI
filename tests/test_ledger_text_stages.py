@@ -1,4 +1,6 @@
 """Task-four producer evidence, isolation and deterministic plugin/ROI contracts."""
+
+from glossapi.ledger.compact import connect as ledger_connect
 from dataclasses import replace
 import hashlib
 import json
@@ -293,7 +295,7 @@ def test_clean_fact_has_one_home_and_producer_edges(tmp_path,monkeypatch):
     corpus=Corpus(tmp_path/'input',tmp_path/'output')
     (corpus.markdown_dir/'source.md').write_text('Καλημέρα κόσμε\n\nΚαθαρό κείμενο.')
     corpus.clean(num_threads=1)
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as database:
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as database:
         evidence=[unpack_evidence(json.loads(row[0])) for row in database.execute("SELECT json FROM snapshots WHERE kind='stage_evidence'")]
         assert sum(item['operation']=='clean.initial' for item in evidence)==1
         assert sum(item['operation']=='clean.selection' for item in evidence)==1
@@ -392,7 +394,7 @@ def test_canonical_and_chunks_share_version_without_task_identity_collision(tmp_
                     sha256=sha256_file(path),bytes=path.stat().st_size,ownership='initial_external',retention_class='initial')
     corpus.clean(num_threads=1,drop_bad=False)
     assert all((corpus.cleaned_markdown_dir/path.name).is_file() for path in markdown)
-    with sqlite3.connect(corpus.output_dir/'corpus.sqlite3') as database:
+    with ledger_connect(corpus.output_dir/'corpus.sqlite3') as database:
         operations=[row[0] for row in database.execute("SELECT operation FROM tasks WHERE stage='clean' AND version_id=?",(version,))]
         assert sum(operation.split('.artifact:',1)[0]=='clean.initial' for operation in operations)==2
         assert sum(operation.split('.artifact:',1)[0]=='clean.selection' for operation in operations)==2
