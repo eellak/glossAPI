@@ -11,6 +11,8 @@ from .contracts import PackageRequirement, PlannedOperation, StagePlan, StageRes
 from .execution import failed_result, freeze_inputs, outputs_in, run_fenced, sha256_file
 from .receipts import capture_backend_observations
 
+_worker_extractors = {}
+
 
 class ExtractStage:
     name = "extract"
@@ -54,7 +56,15 @@ class ExtractStage:
                 # No silent device substitution; GPU qualification is separate.
                 raise ValueError("Sequential adapter currently qualified on CPU only")
             from ..gloss_extract import GlossExtract
-            extractor = GlossExtract()
+            # Process-local converters/models survive across attempts. Every
+            # semantic option is part of the key; input/workspace paths are not.
+            key = json.dumps(dict(request.settings), sort_keys=True)
+            extractor = _worker_extractors.get(key)
+            if extractor is None:
+                extractor = GlossExtract()
+                _worker_extractors.clear()  # bounded model cache per worker
+                _worker_extractors[key] = extractor
+            extractor.log_file = request.work_directory/'conversion.log'
             extractor.enable_accel(int(request.settings.get("num_threads", 1)), type="CPU")
             extractor.configure_batch_policy("safe" if backend == "safe" else "docling", max_batch_files=1, prefer_safe_backend=backend == "safe")
             extractor.repair_fonts = bool(request.settings.get("repair_fonts", True))

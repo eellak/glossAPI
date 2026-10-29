@@ -232,9 +232,34 @@ def status_view(connection, *, run=None, stage=None, selector=None):
     state = "completed_with_failures" if counts["failed"] else "running" if counts["running"] else "waiting" if counts["planned"] else "completed"
     last_event = connection.execute("SELECT MAX(event_id) FROM events WHERE run_id=?", (run["run_id"],)).fetchone()[0] if run else None
     present = connection.execute("SELECT SUM(bytes) FROM current_file_state WHERE presence='present'").fetchone()[0]
-    return dict(state=state, counts=counts, documents=documents, queues=[], barriers=[], resources=dict(
+    result = dict(state=state, counts=counts, documents=documents, queues=[], barriers=[], resources=dict(
         disk_budget_bytes=None, present_bytes=present or 0, reserved_bytes=None, free_bytes=None), last_event_id=last_event,
         unknowns=["runtime_queues_resources_not_recorded_in_shadow"])
+    plan = snapshot(connection,run['plan_sha256']) if run else {}
+    if plan.get('mode')=='streaming':
+        result['unknowns']=[]
+        for document in documents:
+            document['stale_reason']=None
+            if document['last_heartbeat_at']:
+                from datetime import datetime, timezone
+                age=datetime.now(timezone.utc)-datetime.fromisoformat(document['last_heartbeat_at'].replace('Z','+00:00'))
+                document['heartbeat_age_ns']=int(age.total_seconds()*1e9)
+                if document['status']=='running' and age.total_seconds()>60:
+                    document['stale_reason']='lease_heartbeat_expired'
+        for stage_name,count in plan['workers'].items():
+            selected=[row for row in rows if row['stage']==stage_name]
+            ready=waiting=0
+            for row in selected:
+                if row['status']!='planned':continue
+                pending=connection.execute("SELECT COUNT(*) FROM task_dependencies d JOIN current_task_state p ON p.task_id=d.producer_task_id WHERE d.task_id=? AND p.status NOT IN ('ok','skipped','failed')",(row['task_id'],)).fetchone()[0]
+                if pending:waiting+=1
+                else:ready+=1
+            result['queues'].append(dict(stage=stage_name,device_id='cpu',ready=ready,waiting=waiting,
+                capacity=max(2,2*count),active=sum(row['status']=='running' for row in selected)))
+        result['resources']['disk_budget_bytes']=plan.get('disk_budget_bytes')
+        latest=connection.execute("SELECT details_json FROM events WHERE run_id=? AND event_kind='run' ORDER BY event_id DESC LIMIT 1",(run['run_id'],)).fetchone()
+        if latest:result['state']=json.loads(latest[0]).get('state',state)
+    return result
 
 
 def report_view(connection, *, run=None, stage=None):
@@ -309,7 +334,12 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
         if key in seen:
             continue
         seen.add(key)
-        inventory.append(dict(source_key=key, version=version))
+        source_uri=key.split(':v1:',1)[1]
+        source_path=Path(_path(source_uri)) if source_uri.startswith('file:') else None
+        source_stat=source_path.stat() if source_path is not None and source_path.is_file() else None
+        observation=dict(source_uri=source_uri,bytes=source_stat.st_size if source_stat else None,
+            mtime_ns=source_stat.st_mtime_ns if source_stat else None,stored_sha256=version.get('stored_sha256') if version else None)
+        inventory.append(dict(source_key=key, version=version,observation=observation))
         document_stages = set(selected_stages)
         remote_source = key.startswith("url:v1:")
         if known and not remote_source:
@@ -327,7 +357,7 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
                 input_roles=[dict(producer=s, role="stage_input") for s in dependencies],
                 conditional_on=dict(predicate="selected_adapters_and_verified_inputs_available", input_producer=dependencies, unresolved_fields=["quality", "route", "settings_tool_fingerprint"]),
                 packages=[package], device_id=(devices or {}).get(stage, "cpu")))
-        documents.append(dict(document_id=identifier, source_key=key, version_id=version["version_id"] if version else None, steps=steps))
+        documents.append(dict(document_id=identifier, source_key=key, version_id=version["version_id"] if version else None, steps=steps,source_observation=observation))
     source_inventory_hash = snapshot_hash(dict(records=inventory, manifest=manifest))
     present = connection.execute("SELECT COALESCE(SUM(bytes),0) FROM current_file_state WHERE presence='present'").fetchone()[0] if connection else 0
     pools = [dict(stage=s, device_id=(devices or {}).get(s, "cpu"), workers=(workers or {}).get(s, 1), queue_capacity=max(2, 2*(workers or {}).get(s, 1)), cpu_tokens=1) for s in STAGE_ORDER if s in pooled_stages]

@@ -126,6 +126,10 @@ def _worker(stage, request, connection):
 
 def run_fenced(stage, request, *, reporter):
     """Spawn, terminate/kill the process group, then reap before inspecting files."""
+    from .workers import warm_fenced
+    warm = warm_fenced(stage, request, reporter)
+    if warm is not None:
+        return warm
     request.work_directory.mkdir(parents=True, exist_ok=False)
     remaining = (request.deadline_monotonic_ns - time.monotonic_ns()) / 1e9
     if remaining <= 0:

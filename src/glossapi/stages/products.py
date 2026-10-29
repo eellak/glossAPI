@@ -32,6 +32,23 @@ def local_path(uri):
 def current_product(connection, logical_path):
     """Resolve only a successful committed generation; never trust a mirror."""
     uri = Path(logical_path).absolute().as_uri()
+    journal=active_journal()
+    if journal and journal.writer.connection is connection and not connection.in_transaction:
+        cache=getattr(journal,'product_projection_index',None)
+        if cache is None:
+            cache={'cursor':0,'boundary':None,'products':{}}
+            journal.product_projection_index=cache
+        if cache['cursor']:
+            boundary=connection.execute('SELECT details_json FROM events WHERE event_id=?',(cache['cursor'],)).fetchone()
+            if boundary is None or boundary[0]!=cache['boundary']:
+                cache.update(cursor=0,boundary=None,products={})
+        for event_id,encoded in connection.execute("SELECT event_id,details_json FROM events WHERE event_id>? AND reason_code='legacy_observed' AND event_kind='decision' ORDER BY event_id",(cache['cursor'],)):
+            digest=json.loads(encoded).get('evidence_sha256')
+            row=connection.execute("SELECT json FROM snapshots WHERE sha256=? AND kind='product_projection'",(digest,)).fetchone()
+            if row:
+                value=json.loads(row[0]);cache['products'][value['product_uri']]=value
+            cache.update(cursor=event_id,boundary=encoded)
+        return cache['products'].get(uri)
     for encoded, in connection.execute("SELECT details_json FROM events WHERE reason_code='legacy_observed' AND event_kind='decision' ORDER BY event_id DESC"):
         digest=json.loads(encoded).get('evidence_sha256')
         row=connection.execute("SELECT json FROM snapshots WHERE sha256=? AND kind='product_projection'",(digest,)).fetchone()

@@ -98,7 +98,8 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
                     if not destination.is_file() or output.relative_path.startswith(("inputs/", "logs/")):
                         continue
                     # Compatibility receipts can deliberately re-spell source paths.
-                    journal.writer.artifact(journal.run_id, "extract", output.kind, destination.as_uri(),
+                    producer_run=journal.writer.connection.execute('SELECT t.run_id FROM attempts a JOIN tasks t ON t.task_id=a.task_id WHERE a.attempt_id=?',(result.attempt_id,)).fetchone()[0]
+                    journal.writer.artifact(producer_run, "extract", output.kind, destination.as_uri(),
                         version_id=version, producer_attempt_id=result.attempt_id, sha256=sha256_file(destination),
                         bytes=destination.stat().st_size, ownership="managed", retention_class=output.retention_class)
         if not isinstance(journal, ResultJournal) or result.status != 'ok':
@@ -176,7 +177,8 @@ def materialize_stage_outputs(corpus, result, workspace, paths):
             if fact is None:
                 raise ValueError('Cannot materialize unregistered stage output')
             with journal.writer.transaction():
-                journal.writer.artifact(journal.run_id, fact['stage'], fact['kind'], destination.as_uri(),
+                producer_run=journal.writer.connection.execute('SELECT t.run_id FROM attempts a JOIN tasks t ON t.task_id=a.task_id WHERE a.attempt_id=?',(result.attempt_id,)).fetchone()[0]
+                journal.writer.artifact(producer_run, fact['stage'], fact['kind'], destination.as_uri(),
                     version_id=fact['version_id'], producer_attempt_id=result.attempt_id,
                     sha256=fact['sha256'], bytes=fact['bytes'], ownership='managed', retention_class=fact['retention_class'])
     if not isinstance(journal, ResultJournal):

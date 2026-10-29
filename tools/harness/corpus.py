@@ -6,6 +6,7 @@ worker. Each arm is a fresh process, ONE Corpus, and one call per public phase.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import json
 import os
 from pathlib import Path
@@ -89,7 +90,7 @@ def audit_stage_storage(database, documents):
             for (stage,kind),group in sorted(groups.items())],
         'event_details_bytes':dict(event_bytes)}
 
-def run_arm(manifest, data, root, enabled):
+def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1):
     from glossapi import Corpus
     from glossapi.ledger.journal import wrapper_return_receipt
     from .golden import expected
@@ -125,12 +126,15 @@ def run_arm(manifest, data, root, enabled):
         accel_type="CPU", num_threads=1, skip_existing=False, batched=False, repair_fonts=True),
         clean=lambda: corpus.clean(num_threads=1), sections=corpus.section, annotate=corpus.annotate,
         export=lambda: corpus.jsonl(out/"export.jsonl"))
-    for stage in STAGES:
+    capture_overhead=[]
+    def capture(stage,call):
+        capture_began=time.perf_counter()
         before = inventory(out)
         status, error, returned = "ok", None, None
+        value=None
         started = time.perf_counter()
         try:
-            value = calls[stage]()
+            value = call()
             returned = ({"type": "path", "relative_to_output": str(value.relative_to(out))}
                         if isinstance(value, Path) else wrapper_return_receipt(value))
             required = expected(corpus, stage)
@@ -145,12 +149,13 @@ def run_arm(manifest, data, root, enabled):
         for name, fact in after.items():
             if name == "corpus.sqlite3" or name.startswith(".glossapi/artifacts/"):
                 if name.startswith(".glossapi/artifacts/"):
-                    with sqlite3.connect(f"file:{out/'corpus.sqlite3'}?mode=ro&immutable=1", uri=True) as database:
+                    with closing(sqlite3.connect(f"file:{out/'corpus.sqlite3'}?mode=ro"+('' if streaming else '&immutable=1'), uri=True)) as database:
                         recorded = database.execute("SELECT sha256,bytes,presence FROM current_file_state WHERE uri=?", ((out/name).as_uri(),)).fetchone()
                     if recorded != (fact["sha256"], fact["bytes"], "present"):
                         raise AssertionError(f"Unregistered or changed managed addition: {name}")
                 additions.append(dict(path=name, **fact)); continue
             if name in ("corpus.sqlite3-wal", "corpus.sqlite3-shm"):
+                if streaming:continue
                 raise AssertionError("Ledger side files survived wrapper close")
             products[name] = fact
             if before.get(name) != fact:
@@ -160,8 +165,26 @@ def run_arm(manifest, data, root, enabled):
         receipt["stages"][stage] = dict(status=status, error=error, wall_seconds=wall,
             wrapper_return=returned, products=products, removed_files=sorted(set(before)-set(after)), ledger_additions=additions)
         write_json(root/"run.json", receipt)
+        capture_overhead.append(time.perf_counter()-capture_began-wall)
+        if error and streaming:raise RuntimeError(error)
+        return value
+    if streaming:
+        if not enabled:raise ValueError('Streaming execution requires the ledger')
+        from functools import wraps
+        for stage,method in [('extract','extract'),('clean','clean'),('sections','section'),('annotate','annotate'),('export','jsonl')]:
+            original=getattr(corpus,method)
+            def traced(*arguments,_stage=stage,_method=original,**options):
+                return capture(_stage,lambda:_method(*arguments,**options))
+            setattr(corpus,method,wraps(original)(traced))
+        result=corpus.run(sources,workers={'extract':workers,'clean':1,'sections':2},
+            stages=STAGES,settings={'cpu_tokens':max(2,workers)})
+        receipt['streaming']=result
+        if result['state']!='completed':raise RuntimeError('Streaming run did not complete')
+    else:
+        for stage in STAGES:capture(stage,calls[stage])
     receipt.update(complete=True, wall_seconds=time.perf_counter()-began,
-                   phase_wall_seconds=sum(s["wall_seconds"] for s in receipt["stages"].values()))
+                   phase_wall_seconds=(result['total_wall_seconds']-sum(capture_overhead)) if streaming else sum(s["wall_seconds"] for s in receipt["stages"].values()),
+                   harness_capture_seconds=sum(capture_overhead))
     receipt["ledger"] = audit_ledger(out/"corpus.sqlite3", len(rows)) if enabled else None
     write_json(root/"run.json", receipt)
     return receipt
@@ -218,11 +241,13 @@ def main():
     parser.add_argument("manifest"); parser.add_argument("--data", required=True)
     parser.add_argument("--out", required=True); parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--arm", choices=("enabled", "disabled"))
+    parser.add_argument('--streaming',action='store_true')
+    parser.add_argument('--workers',type=int,default=1)
     parser.add_argument("--stage-profile", choices=("legacy", "sequential-adapters", "cutover"), default=os.environ.get("GLOSSAPI_STAGE_PROFILE", "cutover"))
     args = parser.parse_args()
     os.environ["GLOSSAPI_STAGE_PROFILE"] = args.stage_profile
     if args.arm:
-        result = run_arm(args.manifest, args.data, args.out, args.arm == "enabled")
+        result = run_arm(args.manifest, args.data, args.out, args.arm == "enabled",streaming=args.streaming,workers=args.workers)
         return 0 if all(s["status"] == "ok" for s in result["stages"].values()) else 1
     if args.repeats < 1: parser.error("repeats must be positive")
     paired(args.manifest, args.data, args.out, args.repeats)

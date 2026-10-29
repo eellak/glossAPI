@@ -25,11 +25,11 @@ class Parser(argparse.ArgumentParser):
 def parser():
     result = Parser(prog="glossapi", description=__doc__)
     commands = result.add_subparsers(dest="command", required=True, parser_class=Parser)
-    for name in ("plan", "status", "report"):
+    for name in ("plan", "run", "status", "report"):
         command = commands.add_parser(name)
         command.add_argument("--corpus", default=".")
         command.add_argument("--json", action="store_true")
-        if name == "plan":
+        if name in ("plan", "run"):
             sources = command.add_mutually_exclusive_group()
             sources.add_argument("--files", nargs="+", action="extend", default=[])
             sources.add_argument("--manifest")
@@ -40,6 +40,11 @@ def parser():
             command.add_argument("--debug", choices=("on", "off"))
             command.add_argument("--memory-saving", choices=("normal", "extreme"))
             command.add_argument("--disk-budget-bytes", type=int)
+            if name == 'run':
+                command.add_argument('--plan')
+                command.add_argument('--resume')
+                command.add_argument('--retry-failed', action='store_true')
+                command.add_argument('--trust-legacy-outputs', action='store_true')
         else:
             command.add_argument("--run")
             command.add_argument("--stage", choices=sorted(STAGES))
@@ -110,7 +115,7 @@ def main(argv=None):
         args = parser().parse_args(argv)
         envelope["command"] = args.command
         database = Path(args.corpus).absolute() / "corpus.sqlite3"
-        if not database.is_file() and args.command != "plan":
+        if not database.is_file() and args.command not in ("plan", "run"):
             raise ReadRequestError("ledger_not_initialized", "Corpus has no ledger")
         if args.command == "report":
             if args.why and args.format != "json":
@@ -125,7 +130,7 @@ def main(argv=None):
                 envelope["corpus_id"] = connection.execute("SELECT corpus_id FROM ledger_info").fetchone()[0]
                 run = select_run(connection, getattr(args, "run", None))
                 envelope["run_id"] = run["run_id"] if run else None
-            if args.command == "plan":
+            if args.command in ("plan", "run"):
                 settings = _json_file(args.settings) if args.settings else {}
                 if not isinstance(settings, dict):
                     raise ReadRequestError("invalid_settings", "Settings must be a JSON object")
@@ -149,7 +154,8 @@ def main(argv=None):
                         selectors.append(selector)
                 data = plan_view(connection, selectors=selectors, stages=args.stages.split(",") if args.stages else None,
                     settings=settings, devices=_assignments(args.device), workers=_assignments(args.workers, integer=True), manifest=manifest)
-                envelope["warnings"].append(dict(code="shadow_mode", message="Plan is descriptive; execution and cache reuse await stage adapters"))
+                if args.command == 'plan':
+                    envelope["warnings"].append(dict(code="conditional_plan", message="Run revalidates inputs and capabilities before dispatch"))
             elif args.command == "status":
                 data = status_view(connection, run=run, stage=args.stage, selector=args.file)
                 exit_code = 1 if data["counts"]["failed"] else 0
@@ -159,7 +165,42 @@ def main(argv=None):
         if args.command == "report" and args.output:
             # Export after the short read transaction closes.
             envelope["data"] = _export(args.output, data, args.format)
-    except (ReadRequestError, LedgerError, sqlite3.Error, OSError, ValueError, TypeError, ImportError) as error:
+        if args.command == 'run':
+            if args.resume and (args.files or args.manifest or args.plan or args.stages or args.device or args.workers or args.settings or args.debug or args.memory_saving or args.disk_budget_bytes is not None):
+                raise ReadRequestError('invalid_request','Resume restores the frozen plan; overrides are forbidden')
+            if args.plan and (args.files or args.manifest or args.stages or args.device or args.workers or args.settings or args.debug or args.memory_saving):
+                raise ReadRequestError('invalid_request','A supplied plan cannot be combined with planning overrides')
+            requested=_json_file(args.plan) if args.plan else data
+            if not args.resume:
+                for document in requested.get('data',requested)['documents']:
+                    if any(step['device_id']!='cpu' for step in document['steps']):
+                        raise ReadRequestError('invalid_request','Requested device has not been qualified')
+            root=Path(args.corpus).absolute()
+            root.mkdir(parents=True,exist_ok=True)
+            if not args.resume:
+                from .ledger.importer import import_corpus
+                from .ledger.journal import code_revision
+                import_corpus(root,trust_legacy_outputs=args.trust_legacy_outputs,code_revision=code_revision())
+            from . import Corpus
+            corpus=Corpus(root,root)
+            # Backends and libraries may print; JSON stdout remains one object.
+            from contextlib import redirect_stdout
+            with redirect_stdout(sys.stderr):
+                saved_stdout=os.dup(1)
+                try:
+                    sys.stdout.flush()
+                    os.dup2(2,1)
+                    outcome=corpus.run(resume=args.resume,retry_failed=args.retry_failed,
+                        **({'plan':requested} if not args.resume else {}))
+                finally:
+                    os.dup2(saved_stdout,1)
+                    os.close(saved_stdout)
+            envelope['data']=outcome
+            envelope['run_id']=outcome['run_id']
+            with open_readonly(database) as connection:
+                envelope['corpus_id']=connection.execute('SELECT corpus_id FROM ledger_info').fetchone()[0]
+            exit_code=3 if outcome['state']=='waiting' else 1 if outcome['state'] in ('completed_with_failures','cancelled') else 0
+    except (ReadRequestError, LedgerError, sqlite3.Error, OSError, ValueError, TypeError, ImportError, RuntimeError) as error:
         code = getattr(error, "code", "unsupported_schema" if isinstance(error, LedgerError) else "read_error")
         envelope["errors"].append(dict(code=code, message=str(error), document_id=None, stage=None, details=getattr(error, "details", {})))
         exit_code = 3 if code == "policy_conflict" else 2

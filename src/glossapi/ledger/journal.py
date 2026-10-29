@@ -177,6 +177,10 @@ class ResultJournal:
         with writer.transaction():
             self.run_id = writer.run({"mode": self.mode, "parameters": self.parameters},
                 {"mode": 'wrapper_products' if self.cutover else "observe_existing_wrapper", "stage": stage, "operation": operation}, loaded_tools(), code_revision=self.revision)
+            publication=getattr(corpus,'_scheduler_publication',None)
+            if publication:
+                writer.event(publication['run_id'],event_kind='run',reason_code='legacy_observed',message='wrapper:'+stage,
+                    details={'wrapper_run_id':self.run_id,'publication_task_id':publication['task_id']})
             observed_inputs = []
             candidates = parameters.get("file_paths")
             if not candidates:
@@ -189,8 +193,12 @@ class ResultJournal:
                 path = Path(candidate).absolute()
                 present = path.is_file()
                 uri = path.as_uri(); digest = file_hash(path) if present else None
-                document_id = writer.document(source_key(uri))
-                version_id = writer.version(document_id, source_sha256=digest, stored_sha256=digest)
+                version_id = getattr(corpus,'_streaming_source_versions',{}).get(str(path))
+                if version_id:
+                    document_id=writer.connection.execute('SELECT document_id FROM document_versions WHERE version_id=?',(version_id,)).fetchone()[0]
+                else:
+                    document_id = writer.document(source_key(uri))
+                    version_id = writer.version(document_id, source_sha256=digest, stored_sha256=digest)
                 self.versions[str(path)] = version_id
                 metadata = {"path": str(path), "naming_policy": "local_path:v1", "provenance": "local_input_observed"}
                 encoded_metadata = canonical_json({"schema_version": 1, "fields": typed_value(metadata)})
@@ -435,9 +443,18 @@ class ResultJournal:
             status = "failed" if error is not None or self.failures else "skipped" if self.skips and not self.successes else "ok"
             reason = self.stage + "_exception" if error is not None else self.failures[0] if self.failures else self.skips[0] if status == "skipped" else self.stage + "_completed"
             if self.cutover and error is None:
+                section_aggregate_published = False
                 for adapter_attempt in self.adapter_attempts:
-                    outcome=self.writer.connection.execute("SELECT status,reason_code FROM events WHERE attempt_id=? AND event_kind='lifecycle' AND status IN ('ok','skipped','failed') ORDER BY event_id DESC LIMIT 1",(adapter_attempt,)).fetchone()
+                    outcome=self.writer.connection.execute("SELECT e.status,e.reason_code,t.operation FROM events e JOIN attempts a ON a.attempt_id=e.attempt_id JOIN tasks t ON t.task_id=a.task_id WHERE e.attempt_id=? AND e.event_kind='lifecycle' AND e.status IN ('ok','skipped','failed') ORDER BY e.event_id DESC LIMIT 1",(adapter_attempt,)).fetchone()
                     if outcome and outcome['status']=='failed':status,reason='failed',outcome['reason_code'];break
+                    if outcome and outcome['status']=='ok' and outcome['operation']=='sections.publish':
+                        section_aggregate_published = True
+                if status=='skipped' and self.stage=='sections' and section_aggregate_published:
+                    # Omitted documents remain explicit skipped decisions. The
+                    # committed aggregate proves successful section publication,
+                    # including when its document fragments were replayed and
+                    # therefore emitted no fresh backend success observation.
+                    status,reason='ok','sections_completed'
             trace = "".join(traceback_module.format_exception(type(error), error, error.__traceback__)) if error else None
             for source_path, (document_task, version_id) in self.document_tasks.items():
                 outcomes = self.document_outcomes.get(source_path, [])
@@ -471,9 +488,11 @@ def shadow_stage(stage, operation=None):
         @wraps(function)
         def recorded(self, *args, **kwargs):
             from ..stages.profile import _public_adapter_scope
+            from ..stages.workers import warm_worker_scope
             profile_token = _public_adapter_scope.set(adapters_enabled(self))
             try:
-                return invoke(self, *args, **kwargs)
+                with warm_worker_scope():
+                    return invoke(self, *args, **kwargs)
             finally:
                 _public_adapter_scope.reset(profile_token)
 
@@ -491,8 +510,9 @@ def shadow_stage(stage, operation=None):
                     from ..stages.caller_kernel import execute_caller_kernel
                     return execute_caller_kernel(self,stage,operation or f'{stage}.{function.__name__}',lambda:function(self,*args,**kwargs))
                 return function(self, *args, **kwargs)
-            own_writer = parent is None or parent.corpus.output_dir != self.output_dir
-            writer = LedgerWriter(Path(self.output_dir) / "corpus.sqlite3", code_revision=code_revision()) if own_writer else parent.writer
+            provided_writer=getattr(self,'_scheduler_writer',None)
+            own_writer = provided_writer is None and (parent is None or parent.corpus.output_dir != self.output_dir)
+            writer = provided_writer or (LedgerWriter(Path(self.output_dir) / "corpus.sqlite3", code_revision=code_revision()) if own_writer else parent.writer)
             try:
                 journal = ResultJournal(writer, self, stage, operation or f"{stage}.{function.__name__}", parameters)
                 token = _active_journal.set(journal)

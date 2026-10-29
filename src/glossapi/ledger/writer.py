@@ -176,7 +176,17 @@ class LedgerWriter:
     def transaction(self):
         self._owner(transaction=False)
         if self.connection.in_transaction:
-            raise LedgerError("Nested observation transactions are not allowed")
+            if not getattr(self, '_batch_active', False):
+                raise LedgerError("Nested observation transactions are not allowed")
+            self.connection.execute('SAVEPOINT observation')
+            try:
+                yield self
+                self.connection.execute('RELEASE observation')
+            except BaseException:
+                self.connection.execute('ROLLBACK TO observation')
+                self.connection.execute('RELEASE observation')
+                raise
+            return
         self.connection.execute("BEGIN IMMEDIATE")
         try:
             yield self
@@ -184,6 +194,16 @@ class LedgerWriter:
         except BaseException:
             self.connection.rollback()
             raise
+
+    @contextmanager
+    def batch(self):
+        """Bounded scheduler dispatch/result batches share one durable commit."""
+        with self.transaction():
+            self._batch_active = True
+            try:
+                yield self
+            finally:
+                self._batch_active = False
 
     def close(self):
         if self.connection is not None:

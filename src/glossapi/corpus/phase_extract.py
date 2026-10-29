@@ -573,7 +573,7 @@ class ExtractPhaseMixin:
         skip_mgr = _SkiplistManager(skiplist_path, self.logger)
         # The benchmark supplies its own input-bound resume selection. Stale
         # production skip/state entries must not suppress its incomplete rows.
-        skipped_stems = set() if _stability_benchmark is not None else skip_mgr.load()
+        skipped_stems = set() if _stability_benchmark is not None or getattr(self, '_scheduler_writer', None) is not None else skip_mgr.load()
         if skipped_stems:
             before = len(input_files)
             for excluded in input_files:

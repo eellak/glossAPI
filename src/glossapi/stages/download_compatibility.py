@@ -19,6 +19,31 @@ def install_download_adapter(corpus,downloader,configuration,download_mode):
     kernel=downloader.download_file
     lock=asyncio.Lock()
     async def acquire(row_index,url,semaphore,rate_limiter,retry_count=0,filename_base=None,referer=None):
+        projection=getattr(corpus,'_streaming_download_replays',None)
+        if projection is not None:
+            # Publication consumes the acquisition already committed by the
+            # frozen DAG. It must never open a second network attempt.
+            fact=projection.get((url,filename_base))
+            if fact is None:
+                raise ValueError('Download projection differs from the frozen source manifest')
+            journal=active_journal()
+            journal.adapter_stages.add('download');journal.adapter_attempts.add(fact['attempt_id'])
+            reference=fact['receipt']
+            if reference is None:
+                return False,'','',fact['message'] or fact['reason_code'],retry_count
+            from .execution import sha256_file
+            from .workers import read_result
+            if not reference.path.is_file() or reference.path.stat().st_size!=reference.bytes or sha256_file(reference.path)!=reference.sha256:
+                raise ValueError('Committed acquisition receipt is missing or corrupt')
+            result=read_result(reference.path)
+            if not result.decisions:
+                return False,'','',result.error.message if result.error else result.reason_code,retry_count
+            receipt=result.decisions[0]
+            if result.status=='ok':
+                from .compatibility import materialize_stage_outputs
+                paths={a.relative_path:corpus.output_dir/a.relative_path for a in result.outputs if a.kind=='download_payload'}
+                materialize_stage_outputs(corpus,result,reference.path.parent,paths)
+            return result.status=='ok',receipt['assigned_filename'],receipt['file_ext'],receipt['backend_message'],receipt['legacy_outer_retry_count']
         settings={**configuration,'download_mode':download_mode,'url':url,'row_index':int(row_index),
             'legacy_outer_retry_count':int(retry_count),'filename_base':filename_base,'referer':referer}
         settings.pop('input_parquet',None)

@@ -54,6 +54,10 @@ class Corpus(
         corpus.annotate()  # Classify sections using ML
     """
 
+    def run(self, files=(), **options):
+        from ..stages.run import run_corpus
+        return run_corpus(self, files, **options)
+
     
     def __init__(
         self, 

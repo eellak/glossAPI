@@ -30,6 +30,10 @@ class SequentialStageRunner:
             raise ValueError("Writer must own this corpus")
 
     def execute(self, stage, document, specification, **options):
+        from .replay import replay_result
+        replay = replay_result(stage, document, specification)
+        if replay is not None:
+            return replay
         request, complete = self.prepare(stage, document, specification, **options)
         result = (stage.finalize if options.get('aggregate') else stage.run_document)(request, reporter=ReceiptCollector())
         return complete(result)
@@ -39,7 +43,8 @@ class SequentialStageRunner:
         result = await stage.run_document_async(request, reporter=ReceiptCollector())
         return complete(result)
 
-    def prepare(self, stage, document, specification, *, timeout_seconds=600, tools=None, run_id=None, aggregate=False):
+    def prepare(self, stage, document, specification, *, timeout_seconds=600, tools=None, run_id=None, aggregate=False,
+                planned_task_id=None, fingerprint=None, worker_id=None):
         from ..ledger.journal import code_revision, loaded_tools, safe_settings
         from ..ledger.writer import new_id, utc_now
         runtime_settings = dict(specification.settings)
@@ -50,7 +55,7 @@ class SequentialStageRunner:
                 "SELECT producer_attempt_id FROM files WHERE file_id=?", (artifact.file_id,)).fetchone()[0] for artifact in document.artifacts}
         runtime_settings["required_output_kinds"] = list(specification.required_output_kinds)
         settings = safe_settings(runtime_settings)
-        if run_id and not aggregate and document.artifacts and self.writer.connection.execute(
+        if run_id and not planned_task_id and not aggregate and document.artifacts and self.writer.connection.execute(
                 "SELECT 1 FROM tasks WHERE run_id=? AND scope_key=? AND stage=? AND operation=?",
                 (run_id,document.version_id,stage.name,specification.operation)).fetchone():
             # A canonical text and its chunks can share one document version.
@@ -67,7 +72,7 @@ class SequentialStageRunner:
                 raise ValueError("Snapshot document identity is not registered")
             if aggregate:
                 version = None
-            elif stage.name == "download":
+            elif stage.name == "download" and not planned_task_id:
                 # Reacquisition is a new observation, never a mutation of a
                 # filled version. Its hashes are filled in the success commit.
                 version = new_id()
@@ -84,8 +89,13 @@ class SequentialStageRunner:
             from ..ledger.encoding import snapshot_hash
             scope = 'corpus:' + self.writer.snapshot('inputs', {'kind':'inputs', 'files':[
                 asdict(artifact) | {'path':str(artifact.path)} for artifact in document.artifacts]}) if aggregate else None
-            task = self.writer.task(run, stage.name, specification.operation, specification_receipt, version_id=version, scope_key=scope)
-            self.writer.event(run, event_kind="lifecycle", reason_code="stage_planned", status="planned", task_id=task, version_id=version)
+            task = planned_task_id or self.writer.task(run, stage.name, specification.operation, specification_receipt, version_id=version, scope_key=scope)
+            if planned_task_id:
+                bound_task = self.writer.connection.execute('SELECT run_id,version_id,stage,operation FROM tasks WHERE task_id=?',(task,)).fetchone()
+                if tuple(bound_task) != (run,version,stage.name,specification.operation):
+                    raise ValueError('Frozen task does not match dispatch')
+            else:
+                self.writer.event(run, event_kind="lifecycle", reason_code="stage_planned", status="planned", task_id=task, version_id=version)
             bound_inputs = []
             producer_roles = set()
             for ordinal, artifact in enumerate(document.artifacts):
@@ -97,12 +107,13 @@ class SequentialStageRunner:
                     input_role=specification.input_roles[ordinal] if ordinal < len(specification.input_roles) else artifact.kind
                     # Several distinct files can satisfy one role from the same
                     # producer. Keep every file binding, but one DAG edge.
-                    if (producer_task,input_role) not in producer_roles:
+                    if (producer_task,input_role) not in producer_roles and not self.writer.connection.execute(
+                            'SELECT 1 FROM task_dependencies WHERE task_id=? AND producer_task_id=? AND input_role=?',(task,producer_task,input_role)).fetchone():
                         self.writer.dependency(task,producer_task,input_role)
                         producer_roles.add((producer_task,input_role))
                 bound_inputs.append({"file_id": artifact.file_id, "sha256": artifact.sha256, "role": specification.input_roles[ordinal] if ordinal < len(specification.input_roles) else artifact.kind})
-            attempt = self.writer.attempt(task, worker_id=f"sequential:{os.getpid()}", device_id=specification.device_id,
-                fingerprint={"contract_version": stage.contract_version, "specification": specification_receipt, "inputs": bound_inputs,
+            attempt = self.writer.attempt(task, worker_id=worker_id or f"sequential:{os.getpid()}", device_id=specification.device_id,
+                fingerprint=fingerprint or {"contract_version": stage.contract_version, "specification": specification_receipt, "inputs": bound_inputs,
                     "tools": tools, "code_revision": revision, "reuse_eligible": False, "reason": "sequential qualification; no cache authority"},
                 inputs={"files": bound_inputs}, settings=settings, tools=tools)
             for artifact in bound_inputs:
@@ -117,6 +128,9 @@ class SequentialStageRunner:
             expected = (task, attempt, lease)
             if (result.task_id, result.attempt_id, result.lease_token) != expected:
                 raise ValueError("Stale worker result; attempt left interrupted, outputs untrusted")
+            current = self.writer.connection.execute("SELECT a.lease_token FROM attempts a WHERE a.attempt_id=? AND NOT EXISTS (SELECT 1 FROM events e WHERE e.attempt_id=a.attempt_id AND e.event_kind='lifecycle' AND e.status IN ('ok','failed','skipped'))",(attempt,)).fetchone()
+            if current is None or current[0] != lease:
+                raise ValueError('Expired worker lease; outputs untrusted')
             records = []
             kinds = {output.kind for output in result.outputs}
             if result.status == "ok" and not set(specification.required_output_kinds) <= kinds:
