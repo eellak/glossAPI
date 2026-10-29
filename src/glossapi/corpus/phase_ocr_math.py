@@ -1,6 +1,8 @@
 """OCR and math enrichment helpers split from Corpus."""
 from __future__ import annotations
 
+from ..stages.profile import adapters_enabled
+
 from ..ledger.journal import worker_observation_scope
 
 from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows, accept_worker_observations
@@ -463,7 +465,7 @@ class OcrMathPhaseMixin:
             batch_size: batch size for recognizer
             dpi_base: base DPI for crops; actual DPI adapts per ROI size
         """
-        adapter_profile = os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters"
+        adapter_profile = adapters_enabled()
         from ..ocr import math as _math_pkg  # type: ignore
 
         try:
@@ -637,7 +639,7 @@ class OcrMathPhaseMixin:
                     except Exception:
                         pass
 
-                if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+                if adapters_enabled():
                     from ..stages.compatibility import math_compatibility_document
                     stats = math_compatibility_document(self, pdfp, jp, device=device,
                         batch_size=int(batch_size),dpi_base=int(dpi_base),targets=picks)
@@ -714,7 +716,7 @@ class OcrMathPhaseMixin:
         for mpath in metrics_files:
             stem = mpath.name.replace(".per_page.metrics.json", "")
             try:
-                if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+                if adapters_enabled():
                     from ..stages.compatibility import math_triage_compatibility_document
                     summary,rec=math_triage_compatibility_document(self,mpath)
                 else:

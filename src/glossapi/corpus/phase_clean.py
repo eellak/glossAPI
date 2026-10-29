@@ -10,6 +10,8 @@ main pipeline can stay focused on span ownership and mode selection.
 """
 from __future__ import annotations
 
+from ..stages.profile import adapters_enabled
+
 from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
 
 import importlib
@@ -3104,7 +3106,7 @@ class CleanPhaseMixin:
         self.logger.info("Using compiled glossapi_rs_cleaner extension for fast cleaning")
 
         import os
-        adapter_profile = os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters"
+        adapter_profile = adapters_enabled()
         frozen_input = None
 
         # Ensure cleaned directory exists and is empty (idempotent runs)
@@ -3703,7 +3705,7 @@ class CleanPhaseMixin:
         """
         from glossapi.parquet_schema import ParquetSchema
 
-        adapter_profile = os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters"
+        adapter_profile = adapters_enabled()
         adapter_ocr_scores = None
         if input_dir is None:
             input_dir = self.markdown_dir

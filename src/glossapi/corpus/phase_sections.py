@@ -1,6 +1,7 @@
 """Section extraction helpers split from Corpus."""
 from __future__ import annotations
 
+from ..stages.profile import adapters_enabled
 from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
 
 import json
@@ -36,6 +37,10 @@ class SectionPhaseMixin:
 
         Uses files marked with 'good' extraction quality (if available) or all markdown files.
         """
+        if adapters_enabled(self):
+            from ..stages.sections import restore_clean_selection
+            restore_clean_selection(self)
+
         self.logger.info("Extracting sections from markdown files...")
 
         # Create output directory
@@ -114,11 +119,15 @@ class SectionPhaseMixin:
         # Extract sections - pass list of good filenames to the sectioner
         # We will pass the original markdown directory and the list of good filenames 
         # rather than creating a separate directory
-        self.sectioner.to_parquet(
-            input_dir=str(self.markdown_dir),  # Use the markdown directory directly
-            output_dir=str(self.sections_dir),
-            filenames_to_process=good_filenames  # Pass the list of good filenames
-        )
+        if adapters_enabled(self):
+            from ..stages.sections import section_products
+            section_products(self, good_filenames)
+        else:
+            self.sectioner.to_parquet(
+                input_dir=str(self.markdown_dir),  # Use the markdown directory directly
+                output_dir=str(self.sections_dir),
+                filenames_to_process=good_filenames  # Pass the list of good filenames
+            )
 
         self.logger.info(f"Finished sectioning {len(good_filenames)} good quality files")
         self.logger.info(f"Section extraction complete. Parquet file saved to {self.sections_parquet}")

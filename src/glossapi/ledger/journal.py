@@ -5,6 +5,8 @@ Hooks carry structured results; no exception tracing or log parsing is used.
 """
 from __future__ import annotations
 
+from ..stages.profile import adapters_enabled
+
 from contextvars import ContextVar
 from functools import wraps
 import hashlib
@@ -160,14 +162,21 @@ class ResultJournal:
         self.failures, self.skips, self.successes = [], [], []
         self.adapter_stages = set()
         self.adapter_attempts = set()
-        self.adapter_profile = os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters"
+        self.adapter_profile = adapters_enabled()
+        from ..stages.profile import caller_kernel_override
+        self.caller_override = caller_kernel_override(corpus,stage)
+        self.cutover = self.adapter_profile and getattr(corpus, '_stage_adapters_default', False) and os.environ.get('GLOSSAPI_STAGE_PROFILE') != 'sequential-adapters' and not self.caller_override
+        self.mode = 'sequential_cutover' if self.cutover else 'shadow'
+        if self.cutover:
+            from ..stages.metadata import restore_metadata_projections
+            restore_metadata_projections(self)
         self.started_at, self.started_ns = utc_now(), time.monotonic_ns()
         self.before = inventory(corpus.output_dir)
         self.source_manifests = set()
         self.revision = code_revision()
         with writer.transaction():
-            self.run_id = writer.run({"mode": "shadow", "parameters": self.parameters},
-                {"mode": "observe_existing_wrapper", "stage": stage, "operation": operation}, loaded_tools(), code_revision=self.revision)
+            self.run_id = writer.run({"mode": self.mode, "parameters": self.parameters},
+                {"mode": 'wrapper_products' if self.cutover else "observe_existing_wrapper", "stage": stage, "operation": operation}, loaded_tools(), code_revision=self.revision)
             observed_inputs = []
             candidates = parameters.get("file_paths")
             if not candidates:
@@ -196,12 +205,12 @@ class ResultJournal:
                 file_id = prior[0] if prior else writer.artifact(self.run_id, stage, "initial_input", uri, sha256=digest, bytes=size, version_id=version_id, ownership="initial_external", retention_class="initial", presence="present" if present else "missing")
                 if digest is not None:
                     observed_inputs.append({"file_id": file_id, "role": f"source_observation:{ordinal}", "sha256": digest})
-                if str(path) not in self.document_tasks and not (self.adapter_profile and stage in ("clean", "ocr", "math")):
+                if str(path) not in self.document_tasks and not self.adapter_profile:
                     document_task = writer.task(self.run_id, stage, operation + ".document_observation", {"compatibility_profile": "legacy_shadow", "reuse_eligible": False}, version_id=version_id, ordinal=ordinal + 1)
                     self.document_tasks[str(path)] = (document_task, version_id)
                     writer.event(self.run_id, event_kind="lifecycle", reason_code="stage_planned", status="planned", task_id=document_task, version_id=version_id)
             source_inventory_hash = writer.snapshot("inputs", {"kind": "inputs", "files": observed_inputs})
-            self.task_id = writer.task(self.run_id, stage, operation, {"compatibility_profile": "legacy_shadow", "required_output_kinds": [], "parameters": self.parameters, "source_inventory_sha256": source_inventory_hash}, scope_key="corpus:" + source_inventory_hash)
+            self.task_id = writer.task(self.run_id, stage, operation, {"compatibility_profile": 'sequential_cutover' if self.cutover else "legacy_shadow", "required_output_kinds": [], "parameters": self.parameters, "source_inventory_sha256": source_inventory_hash}, scope_key="corpus:" + source_inventory_hash)
             self.attempt_id = writer.attempt(self.task_id, worker_id=f"orchestrator:{os.getpid()}", device_id=str(parameters.get("accel_type", "unknown_not_recorded")),
                 fingerprint={"reuse_eligible": False, "provenance": "shadow_observation", "code_revision": self.revision, "source_inventory_sha256": source_inventory_hash}, inputs={"files": observed_inputs}, settings=self.parameters, tools=loaded_tools())
             for input_reference in observed_inputs:
@@ -237,6 +246,8 @@ class ResultJournal:
         return file_id
 
     def observe(self, reason_code, *, path=None, error=None, status=None, message="", **details):
+        if self.cutover and status == 'pending' and error is None:
+            return  # Native progress is not a failed contractual attempt.
         if (self.adapter_profile and self.stage in self.adapter_stages
                 and reason_code.startswith(self.stage + "_") and error is None
                 and reason_code not in ("math_json_missing", "math_pdf_missing")):
@@ -286,6 +297,10 @@ class ResultJournal:
                 if child.is_file(): self.store(child, kind=kind, preexisting=preexisting, register=register)
             return
         if not path.is_file(): return
+        if self.cutover and path.parent == self.corpus.output_dir/'download_results' and path.suffix == '.parquet':
+            from ..stages.products import current_product
+            if not preexisting or current_product(self.writer.connection,path):
+                return  # Producer generation owns the serialized values.
         if self.adapter_profile and self.stage in ("clean", "ocr", "math") and path.suffix == ".parquet" and not preexisting and not getattr(self,"finishing",False):
             return  # Final compatibility values are recorded after their producer facts.
         receipt = {"sha256": file_hash(path), "bytes": path.stat().st_size}
@@ -297,7 +312,7 @@ class ResultJournal:
         if self.adapter_profile and kind == "clean_report" and "clean" in self.adapter_stages:
             return
         if self.adapter_profile and self.writer.connection.execute(
-                "SELECT 1 FROM files WHERE uri=? AND sha256=? AND producer_attempt_id IS NOT NULL AND version_id IS NOT NULL LIMIT 1",
+                "SELECT 1 FROM files WHERE uri=? AND sha256=? AND producer_attempt_id IS NOT NULL LIMIT 1",
                 (uri, receipt["sha256"])).fetchone():
             return
         read_error = None
@@ -401,6 +416,9 @@ class ResultJournal:
                 self.writer.source_record(document_id, self.run_id, uri, values, source_kind=kind, manifest_sha256=manifest, source_row=str(ordinal))
 
     def finish(self, result, error):
+        if self.cutover and error is None:
+            from ..stages.metadata import seal_metadata_projections
+            seal_metadata_projections(self)
         self.finishing = True
         after = inventory(self.corpus.output_dir)
         for name, receipt in after.items():
@@ -416,6 +434,10 @@ class ResultJournal:
                         details={"observation": "absent_after_wrapper", "policy_deletion": "unknown_not_recorded"})
             status = "failed" if error is not None or self.failures else "skipped" if self.skips and not self.successes else "ok"
             reason = self.stage + "_exception" if error is not None else self.failures[0] if self.failures else self.skips[0] if status == "skipped" else self.stage + "_completed"
+            if self.cutover and error is None:
+                for adapter_attempt in self.adapter_attempts:
+                    outcome=self.writer.connection.execute("SELECT status,reason_code FROM events WHERE attempt_id=? AND event_kind='lifecycle' AND status IN ('ok','skipped','failed') ORDER BY event_id DESC LIMIT 1",(adapter_attempt,)).fetchone()
+                    if outcome and outcome['status']=='failed':status,reason='failed',outcome['reason_code'];break
             trace = "".join(traceback_module.format_exception(type(error), error, error.__traceback__)) if error else None
             for source_path, (document_task, version_id) in self.document_tasks.items():
                 outcomes = self.document_outcomes.get(source_path, [])
@@ -430,15 +452,15 @@ class ResultJournal:
                              "measurement_basis": "legacy_branch_observation", "duration_unavailable_reason": "per_document_timing_not_reported"})
             outputs = [{"kind": str(Path(name).relative_to(self.corpus.output_dir.absolute())) if Path(name).is_relative_to(self.corpus.output_dir.absolute()) else name, "uri": Path(name).as_uri(), **receipt} for name, receipt in after.items() if self.before.get(name) != receipt and not (
                 self.adapter_profile and self.writer.connection.execute(
-                    "SELECT 1 FROM files WHERE uri=? AND sha256=? AND producer_attempt_id IS NOT NULL AND version_id IS NOT NULL LIMIT 1",
+                    "SELECT 1 FROM files WHERE uri=? AND sha256=? AND producer_attempt_id IS NOT NULL LIMIT 1",
                     (Path(name).as_uri(),receipt["sha256"])).fetchone())]
             self.writer.finish(self.run_id, self.task_id, self.attempt_id, status=status, reason_code=reason, outputs=outputs,
                 started_at=self.started_at, finished_at=utc_now(), duration_ns=time.monotonic_ns()-self.started_ns,
                 error_type=type(error).__module__ + "." + type(error).__name__ if error else None, traceback=trace, message=str(error) if error else "Legacy wrapper observation",
-                details={"wrapper_return": wrapper_return_receipt(result), "wrapper_raised": error is not None, "mode": "shadow", "reuse_eligible": False,
+                details={"wrapper_return": wrapper_return_receipt(result), "wrapper_raised": error is not None, "mode": self.mode, "reuse_eligible": False,
                          "tools_sha256": self.writer.snapshot("tools", {"kind": "tools", **loaded_tools()}),
                          "observed_files": [{"file_id": file_id} for file_id, _, _ in self.files.values()],
-                         "unavailable": ["native_rule_spans", "unreported_worker_substeps", "unreported_model_identity"],
+                         "unavailable": ['unknown_required_tool_identities_prevent_reuse'] if self.cutover else ["native_rule_spans", "unreported_worker_substeps", "unreported_model_identity"],
                          "measurement_basis": "wrapper_and_observation_wall_monotonic_ns", "cpu_ns": None, "peak_rss_bytes": None})
 
 
@@ -448,6 +470,14 @@ def shadow_stage(stage, operation=None):
         signature = inspect.signature(function)
         @wraps(function)
         def recorded(self, *args, **kwargs):
+            from ..stages.profile import _public_adapter_scope
+            profile_token = _public_adapter_scope.set(adapters_enabled(self))
+            try:
+                return invoke(self, *args, **kwargs)
+            finally:
+                _public_adapter_scope.reset(profile_token)
+
+        def invoke(self, *args, **kwargs):
             bound = signature.bind(self, *args, **kwargs)
             bound.apply_defaults()
             parameters = dict(bound.arguments)
@@ -456,6 +486,10 @@ def shadow_stage(stage, operation=None):
             # Existing spawned backend workers send their results to the parent.
             # Never open a second writable ledger for the same corpus there.
             if not getattr(self, "_shadow_ledger_enabled", False) or isinstance(parent, WorkerObservations):
+                from ..stages.profile import caller_kernel_override
+                if not isinstance(parent,WorkerObservations) and caller_kernel_override(self,stage):
+                    from ..stages.caller_kernel import execute_caller_kernel
+                    return execute_caller_kernel(self,stage,operation or f'{stage}.{function.__name__}',lambda:function(self,*args,**kwargs))
                 return function(self, *args, **kwargs)
             own_writer = parent is None or parent.corpus.output_dir != self.output_dir
             writer = LedgerWriter(Path(self.output_dir) / "corpus.sqlite3", code_revision=code_revision()) if own_writer else parent.writer
@@ -464,7 +498,11 @@ def shadow_stage(stage, operation=None):
                 token = _active_journal.set(journal)
                 result, error = None, None
                 try:
-                    result = function(self, *args, **kwargs)
+                    if journal.caller_override:
+                        from ..stages.caller_kernel import execute_caller_kernel
+                        result=execute_caller_kernel(self,stage,operation or f'{stage}.{function.__name__}',lambda:function(self,*args,**kwargs))
+                    else:
+                        result = function(self, *args, **kwargs)
                     return result
                 except BaseException as caught:
                     error = caught

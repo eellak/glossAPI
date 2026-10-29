@@ -142,6 +142,7 @@ class CleanStage:
             (root/'edit-replacements.json').write_text(json.dumps(recorder.replacements, ensure_ascii=False))
             decision = {'operation': operation, 'raw_file_id': source.file_id, 'raw_hash': source.sha256,
                 'clean_hash': text_hash(output.read_bytes().decode('utf-8')), 'edits': recorder.receipt(),
+                'edit_summary': recorder.summary(),
                 'measurements': metrics, 'backend_observations': observations}
             outputs = []
             for artifact in outputs_in(root):

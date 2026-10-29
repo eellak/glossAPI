@@ -79,6 +79,22 @@ class EditRecorder:
             'offset_unit': 'unicode_codepoint', 'coordinate_basis': 'ordered_current_surface',
             'edits': self.edits, 'composition_map': [list(piece) for piece in self.pieces]}
 
+    def summary(self):
+        """Debug-off representation for the step-seven retention switch.
+
+        Step five still seals receipt() in full. Keep the ordered stream and
+        composition hashes even when the future policy omits individual spans.
+        """
+        import json
+        rules = {}
+        for edit in self.edits:
+            rules.setdefault(edit['rule_id'], []).append(edit)
+        digest = lambda value: hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
+        return {'input_hash': self.initial_hash, 'output_hash': text_hash(self.text),
+            'offset_unit': 'unicode_codepoint', 'edit_count':len(self.edits),
+            'ordered_edits_sha256':digest(self.edits),'composition_sha256':digest(self.receipt()['composition_map']),
+            'rules':{rule:{'count':len(edits),'ordered_edits_sha256':digest(edits)} for rule,edits in rules.items()}}
+
 
 def replay_edits(text, receipt, replacements):
     if text_hash(text) != receipt['input_hash']:

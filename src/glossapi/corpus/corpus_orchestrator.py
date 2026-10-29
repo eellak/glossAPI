@@ -177,6 +177,31 @@ class Corpus(
         
         self._load_metadata()
         self._shadow_ledger_enabled = True
+        self._stage_adapters_default = True
+
+    def process_all(self, input_format: str = "pdf", fully_annotate: bool = True, annotation_type: str = "auto", download_first: bool = False) -> None:
+        """
+        Run the complete processing pipeline: extract, section, and annotate.
+
+        Args:
+            input_format: Input format (default: "pdf")
+            fully_annotate: Whether to perform full annotation after classification (default: True)
+            annotation_type: Annotation method to use (default: "auto")
+            download_first: Whether to run the downloader before extraction (default: False)
+        """
+        if download_first:
+            try:
+                self.download()
+                self.logger.info("Download step completed, proceeding with extraction...")
+            except Exception as e:
+                self.logger.error(f"Error during download step: {e}")
+                self.logger.warning("Continuing with extraction of already downloaded files...")
+
+        self.extract(input_format=input_format)
+        self.section()
+        self.annotate(fully_annotate=fully_annotate, annotation_type=annotation_type)
+
+        self.logger.info("Complete processing pipeline finished successfully.")
 
     def _get_cached_metadata_parquet(self) -> Optional[Path]:
         """Return cached metadata parquet path if it still exists."""

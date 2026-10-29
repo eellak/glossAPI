@@ -1,6 +1,8 @@
 """OCR remediation through Docling's external OCR engine entry points."""
 from __future__ import annotations
 
+from ...stages.profile import adapters_enabled
+
 from ...ledger.journal import observe
 
 from glossapi.optional_dependencies import optional_dependencies
@@ -50,10 +52,10 @@ def run_plugin_ocr(
     page_ranges: list[str] | None = None,
 ) -> None:
     import os
-    if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters" and not getattr(context, "_inside_ocr_stage", False):
+    require_ocr_options(request.ocr_options)
+    if adapters_enabled() and not getattr(context, "_inside_ocr_stage", False):
         from ...stages.compatibility import ocr_compatibility_documents
         return ocr_compatibility_documents(context, filenames, request=request, page_ranges=page_ranges)
-    require_ocr_options(request.ocr_options)
     if request.max_pages is not None and request.max_pages < 1:
         raise ValueError("max_pages must be positive")
     selected = {}

@@ -114,7 +114,7 @@ def run_arm(manifest, data, root, enabled):
              processing_stage="", extract_status="") for row, source in zip(rows, sources)]), metadata)
     os.environ["GLOSSAPI_CONVERSION_LOG_FILE"] = str(root/"conversion.log")
     receipt = dict(mode="whole-corpus", documents=len(rows), ledger_enabled=enabled,
-                   stage_profile=os.environ.get("GLOSSAPI_STAGE_PROFILE", "legacy"),
+                   stage_profile=os.environ.get("GLOSSAPI_STAGE_PROFILE", "cutover"),
                    manifest_sha256=sha256(manifest), environment=environment(), stages={}, complete=False)
     write_json(root/"run.json", receipt)
     began = time.perf_counter()
@@ -218,12 +218,9 @@ def main():
     parser.add_argument("manifest"); parser.add_argument("--data", required=True)
     parser.add_argument("--out", required=True); parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--arm", choices=("enabled", "disabled"))
-    parser.add_argument("--stage-profile", choices=("legacy", "sequential-adapters"), default=os.environ.get("GLOSSAPI_STAGE_PROFILE", "legacy"))
+    parser.add_argument("--stage-profile", choices=("legacy", "sequential-adapters", "cutover"), default=os.environ.get("GLOSSAPI_STAGE_PROFILE", "cutover"))
     args = parser.parse_args()
-    if args.stage_profile == "sequential-adapters":
-        os.environ["GLOSSAPI_STAGE_PROFILE"] = args.stage_profile
-    else:
-        os.environ.pop("GLOSSAPI_STAGE_PROFILE", None)
+    os.environ["GLOSSAPI_STAGE_PROFILE"] = args.stage_profile
     if args.arm:
         result = run_arm(args.manifest, args.data, args.out, args.arm == "enabled")
         return 0 if all(s["status"] == "ok" for s in result["stages"].values()) else 1

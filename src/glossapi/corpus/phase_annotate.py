@@ -1,6 +1,7 @@
 """Annotation helpers split from Corpus."""
 from __future__ import annotations
 
+from ..stages.profile import adapters_enabled
 from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
 
 import json
@@ -41,6 +42,10 @@ class AnnotatePhaseMixin:
                            - 'chapter': Use chapter-based annotation with chapter numbers
             fully_annotate: Whether to perform full annotation of sections (default: True)
         """
+        if adapters_enabled(self) and not getattr(self, '_inside_product_stage', False):
+            from ..stages.annotate import annotate_products
+            return annotate_products(self, annotation_type, fully_annotate)
+
         if self.classifier is None:
             from ..gloss_section_classifier import GlossSectionClassifier
             self.classifier = GlossSectionClassifier()

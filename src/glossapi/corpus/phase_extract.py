@@ -1,6 +1,8 @@
 """Phase-1 extraction helpers split from Corpus."""
 from __future__ import annotations
 
+from ..stages.profile import adapters_enabled
+
 from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows, accept_worker_observations
 
 from glossapi.optional_dependencies import optional_dependencies
@@ -423,7 +425,7 @@ class ExtractPhaseMixin:
                 True is forwarded to each worker for layout-only Docling instrumentation.
 
         """
-        if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+        if os.environ.get('GLOSSAPI_STAGE_PROFILE') == 'sequential-adapters':
             if str(accel_type).lower() != "cpu" or str(use_gpus).lower() != "single" or batched or ocr_options is not None:
                 raise ValueError("Sequential adapter profile requires CPU, one device, batched=False and no OCR plugin")
             batched = False

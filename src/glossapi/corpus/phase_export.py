@@ -1,6 +1,7 @@
 """Export helpers split from Corpus."""
 from __future__ import annotations
 
+from ..stages.profile import adapters_enabled
 from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
 
 import hashlib
@@ -398,10 +399,12 @@ class ExportPhaseMixin:
                 metrics_dir / f"{stem}.per_page.metrics.json",
             ]
             data = None
+            selected_candidate = None
             for candidate in candidates:
                 if candidate.exists():
                     try:
                         data = json.loads(candidate.read_text(encoding="utf-8"))
+                        selected_candidate = candidate
                         break
                     except Exception:
                         continue
@@ -422,6 +425,11 @@ class ExportPhaseMixin:
                     page_count = int(page_count)
             except Exception:
                 page_count = None
+            observe('legacy_observed', path=selected_candidate, export_metrics_choice={
+                'precedence': ['metrics', 'per_page_metrics'],
+                'input_sha256': hashlib.sha256(selected_candidate.read_bytes()).hexdigest(),
+                'page_count': page_count, 'formula_total': formula_total, 'code_total': code_total,
+                'method': 'legacy_export_counter_selection', 'measurement_method': 'unknown_if_not_reported_by_metrics'})
             return page_count, formula_total, code_total
 
         def _load_math_accepts(stem: str) -> tuple[bool, int]:
@@ -630,6 +638,14 @@ class ExportPhaseMixin:
             source_metadata_path: Optional parquet file that holds the source metadata.
         """
 
+        if adapters_enabled(self) and not getattr(self, '_inside_product_stage', False):
+            from ..stages.export import export_products
+            options = locals().copy()
+            options.pop('self')
+            options.pop('export_products')
+            output = options.pop('output_path')
+            return export_products(self, output, options, sharded=False)
+
         if source_metadata_key and source_metadata_path is None:
             raise ValueError("source_metadata_path must be provided when source_metadata_key is set")
         if source_metadata_key and source_metadata_fields is None:
@@ -681,6 +697,14 @@ class ExportPhaseMixin:
         source_metadata_path: Optional[Union[str, Path]] = None,
     ) -> List[Path]:
         """Export sharded JSONL files with optional compression."""
+
+        if adapters_enabled(self) and not getattr(self, '_inside_product_stage', False):
+            from ..stages.export import export_products
+            options = locals().copy()
+            options.pop('self')
+            options.pop('export_products')
+            output = options.pop('output_dir')
+            return export_products(self, output, options, sharded=True)
 
         if shard_size_bytes <= 0:
             raise ValueError("shard_size_bytes must be positive")
@@ -738,27 +762,3 @@ class ExportPhaseMixin:
             observe_store(published, kind="document_jsonl_shard")
         observe("export_completed" if shard_paths else "export_empty", status="ok", shards=[str(p) for p in shard_paths])
         return shard_paths
-
-    def process_all(self, input_format: str = "pdf", fully_annotate: bool = True, annotation_type: str = "auto", download_first: bool = False) -> None:
-        """
-        Run the complete processing pipeline: extract, section, and annotate.
-
-        Args:
-            input_format: Input format (default: "pdf")
-            fully_annotate: Whether to perform full annotation after classification (default: True)
-            annotation_type: Annotation method to use (default: "auto")
-            download_first: Whether to run the downloader before extraction (default: False)
-        """
-        if download_first:
-            try:
-                self.download()
-                self.logger.info("Download step completed, proceeding with extraction...")
-            except Exception as e:
-                self.logger.error(f"Error during download step: {e}")
-                self.logger.warning("Continuing with extraction of already downloaded files...")
-
-        self.extract(input_format=input_format)
-        self.section()
-        self.annotate(fully_annotate=fully_annotate, annotation_type=annotation_type)
-
-        self.logger.info("Complete processing pipeline finished successfully.")

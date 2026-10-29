@@ -38,7 +38,21 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
         journal = _active_journal.get()
         if isinstance(journal, ResultJournal):
             from .sequential import SequentialStageRunner
-            version = journal.versions[str(source)]
+            version = journal.versions.get(str(source))
+            if version is None:
+                # The legacy facade can stage a symlink/copy into downloads.
+                # Bind a resolved alias explicitly; never match a basename.
+                aliases={value for path,value in journal.versions.items() if Path(path).resolve()==source.resolve()}
+                with journal.writer.transaction():
+                    if len(aliases)==1:
+                        version=next(iter(aliases))
+                    else:
+                        from ..ledger.journal import source_key
+                        identity=journal.writer.document(source_key(source.as_uri()))
+                        version=journal.writer.version(identity,source_sha256=reference.sha256,stored_sha256=reference.sha256)
+                    journal.versions[str(source)]=version
+                    journal.writer.artifact(journal.run_id,'extract','initial_input',source.as_uri(),version_id=version,
+                        sha256=reference.sha256,bytes=reference.bytes,ownership='initial_external',retention_class='initial')
             file_id = journal.writer.connection.execute("SELECT file_id FROM current_file_state WHERE uri=? AND version_id=? AND sha256=? AND presence='present' ORDER BY event_id DESC LIMIT 1",
                 (source.as_uri(), version, reference.sha256)).fetchone()[0]
             document_id = journal.writer.connection.execute("SELECT document_id FROM document_versions WHERE version_id=?", (version,)).fetchone()[0]
@@ -47,6 +61,8 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
             result, workspace = SequentialStageRunner(journal.writer, journal.corpus.output_dir).execute(
                 ExtractStage(), snapshot, StageSpecification("extract.document", ("source_payload",), ("raw_markdown",), settings=settings),
                 timeout_seconds=extractor._calculate_text_timeout(file_path=source), run_id=journal.run_id)
+            journal.adapter_stages.add('extract')
+            journal.adapter_attempts.add(result.attempt_id)
         else:
             result = ExtractStage().run_document(request, reporter=ReceiptCollector())
             workspace = request.work_directory
@@ -85,8 +101,9 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
                     journal.writer.artifact(journal.run_id, "extract", output.kind, destination.as_uri(),
                         version_id=version, producer_attempt_id=result.attempt_id, sha256=sha256_file(destination),
                         bytes=destination.stat().st_size, ownership="managed", retention_class=output.retention_class)
-        for decision in result.decisions:
-            accept_worker_observations(decision.get("backend_observations", ()))
+        if not isinstance(journal, ResultJournal) or result.status != 'ok':
+            for decision in result.decisions:
+                accept_worker_observations(decision.get("backend_observations", ()))
         observe(result.reason_code, path=source, status=result.status, adapter_contract_version=1,
             adapter_metrics=result.metrics, decisions=result.decisions,
             error=None, adapter_error=asdict(result.error) if result.error else None)

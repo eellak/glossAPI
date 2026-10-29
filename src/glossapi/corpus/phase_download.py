@@ -267,6 +267,10 @@ class DownloadPhaseMixin:
             downloader_kwargs["default_download_route"] = default_download_route
 
         downloader = downloader_cls(**downloader_kwargs)
+        from ..stages.profile import adapters_enabled
+        if adapters_enabled(self):
+            from ..stages.download_compatibility import install_download_adapter
+            install_download_adapter(self,downloader,{k:v for k,v in downloader_kwargs.items() if k!='output_dir'},download_mode)
 
         # Download files
         self.logger.info(f"Downloading files from URLs in {input_parquet}...")

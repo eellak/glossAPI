@@ -14,6 +14,35 @@ class DownloadStage:
     name = "download"
     contract_version = 1
 
+    async def run_document_async(self,request,*,reporter):
+        """Use the controller's exact injected transport, limiter and naming state."""
+        import copy
+        request.work_directory.mkdir(parents=True,exist_ok=True)
+        started=time.monotonic_ns()
+        try:
+            private=copy.copy(self.downloader)
+            private.output_dir=request.work_directory
+            private.downloads_dir=request.work_directory/'downloads'
+            private.downloads_dir.mkdir()
+            method=self.kernel.__func__.__get__(private,type(private)) if hasattr(self.kernel,'__func__') else self.kernel
+            from ..ledger.journal import safe_settings
+            with capture_backend_observations() as observations,capture_transport(request.settings['download_mode'],safe_settings(dict(request.settings))) as transport:
+                returned=await asyncio.wait_for(method(row_index=request.settings['row_index'],url=request.settings['url'],
+                    semaphore=None,rate_limiter=self.rate_limiter,retry_count=request.settings['legacy_outer_retry_count'],
+                    filename_base=request.settings['filename_base'],referer=request.settings.get('referer')),
+                    timeout=max(0,(request.deadline_monotonic_ns-time.monotonic_ns())/1e9))
+            success,filename,extension,message,retry_count=returned
+            outputs=outputs_in(request.work_directory,('download_payload',))
+            if success and not any(output.kind=='download_payload' for output in outputs):raise ValueError('Transport success has no private payload')
+            reason='download_completed' if success else next((item['reason_code'] for item in reversed(observations) if item.get('status')=='failed'),'download_retry_exhausted')
+            decisions=({'http':{'requests':transport['requests']},'acquisitions':transport['acquisitions'],
+                'assigned_filename':filename,'file_ext':extension,'backend_message':message,'legacy_outer_retry_count':retry_count,
+                'backend_observations':observations},)
+            return StageResult(request.task_id,request.attempt_id,request.lease_token,'ok' if success else 'failed',reason,outputs,decisions,
+                {'wall_ns':time.monotonic_ns()-started,'execution':'controller_async_transport'})
+        except Exception as error:
+            return failed_result(request,'download_exception',error)
+
     def packages(self, specification):
         requirements = [PackageRequirement("download", ("aiohttp>=3.14.5,<4", "aiofiles>=23.0.0", "tenacity>=9.2.1,<10", "pyyaml>=6.0"))]
         if specification.settings.get("download_mode", "standard") not in ("standard", "http", "default") or specification.settings.get("download_policy") or specification.settings.get("download_policy_file"):

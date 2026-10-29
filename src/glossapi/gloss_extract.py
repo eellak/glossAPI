@@ -1,3 +1,4 @@
+from .stages.profile import adapters_enabled
 from .ledger.journal import observe, observe_store, observe_source_rows
 from typing import Dict, Set, List, Optional, Iterable, Tuple, Any, Union, Callable
 import importlib
@@ -1390,7 +1391,7 @@ class GlossExtract:
         self._apply_thread_caps()
         policy = getattr(self, "batch_policy", "safe") or "safe"
         max_batch_files = max(1, getattr(self, "max_batch_files", 1))
-        if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+        if adapters_enabled():
             max_batch_files = 1
 
         successful: List[str] = []
@@ -1462,7 +1463,7 @@ class GlossExtract:
         # Process long PDFs individually with chunking
         for file_path in long_files:
             try:
-                if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+                if adapters_enabled():
                     from .stages.compatibility import extract_compatibility_document
                     ok = extract_compatibility_document(self, file_path, output_dir, timeout_dir)
                 else:
@@ -1478,7 +1479,7 @@ class GlossExtract:
         return successful, problematic
 
     def _run_sequential_document(self, file_path, *, output_dir, timeout_dir=None):
-        if os.environ.get("GLOSSAPI_STAGE_PROFILE") == "sequential-adapters":
+        if adapters_enabled():
             from .stages.compatibility import extract_compatibility_document
             return extract_compatibility_document(self, file_path, output_dir, timeout_dir)
         return self._process_single_document(file_path, output_dir=output_dir, timeout_dir=timeout_dir)
