@@ -96,10 +96,18 @@ def supported_schema(connection):
 
 @contextmanager
 def open_readonly(path):
-    connection = sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro", uri=True, isolation_level=None)
+    path = Path(path).absolute()
+    wal = path.with_name(path.name + "-wal")
+    # SQLite normally creates WAL/SHM sidecars even for mode=ro. A closed,
+    # checkpointed ledger needs neither. A live ledger must already have its
+    # writer-owned WAL index; never create one as a side effect of reporting.
+    if wal.exists() and not path.with_name(path.name + "-shm").exists():
+        raise LedgerError("Live WAL has no shared-memory index; retry after writer checkpoint")
+    connection = sqlite3.connect(path.as_uri() + ("?mode=ro" if wal.exists() else "?mode=ro&immutable=1"), uri=True, isolation_level=None)
     try:
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=5000")
+        connection.execute("PRAGMA query_only=ON")
         supported_schema(connection)
         connection.execute("BEGIN")
         yield connection
@@ -258,13 +266,14 @@ class LedgerWriter:
         validate_hash(source_sha256, nullable=True); validate_hash(stored_sha256, nullable=True)
         self.connection.execute("UPDATE document_versions SET source_sha256=?,stored_sha256=? WHERE version_id=?", (source_sha256, stored_sha256, version_id))
 
-    def source_record(self, document_id, run_id, source_uri, metadata, *, source_kind="local_path", manifest_sha256=None, source_row=None, url_index=None):
+    def source_record(self, document_id, run_id, source_uri, metadata, *, source_kind="local_path", manifest_sha256=None, source_row=None, url_index=None, source_record_id=None):
         self._owner(); validate_id(document_id); validate_id(run_id)
         validate_hash(manifest_sha256, nullable=True)
         if source_row is not None and not isinstance(source_row, str): raise LedgerError("source_row must be text")
         if url_index is not None and (type(url_index) is not int or url_index < 0): raise LedgerError("url_index must be a nonnegative integer")
         encoded = canonical_json({"schema_version": 1, "fields": typed_value(metadata)})
-        identifier = snapshot_hash([document_id, run_id, source_uri, source_kind, manifest_sha256, source_row, url_index, encoded])
+        identifier = source_record_id or snapshot_hash([document_id, run_id, source_uri, source_kind, manifest_sha256, source_row, url_index, encoded])
+        validate_hash(identifier)
         self.connection.execute("INSERT INTO source_records VALUES(?,?,?,?,?,?,?,?,?)", (identifier, document_id, run_id, source_uri, source_kind, manifest_sha256, source_row, url_index, encoded))
         return identifier
 

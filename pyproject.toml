@@ -58,6 +58,9 @@ annotate = [
 font-repair = ["pypdf>=6.0.0", "fonttools>=4.0.0"]
 docs = ["mkdocs>=1.5", "mkdocs-material>=9.5"]
 
+[project.scripts]
+glossapi = "glossapi.cli:main"
+
 [dependency-groups]
 test = [
     "pytest>=9.2.0,<10",

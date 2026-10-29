@@ -1,0 +1,573 @@
+{
+  "schema_version": 1,
+  "input_enumeration": [
+    "zeta.md",
+    "alpha.md",
+    "beta.md",
+    "orphan__p0001-0002.md"
+  ],
+  "texts": {
+    "zeta.md": "# Ζήτα\n\nΠρώτη παράγραφος.\n\n## Μέθοδος\n\nΔεύτερη παράγραφος.",
+    "alpha.md": "# Άλφα\n\nΈνα μικρό κείμενο.",
+    "beta.md": "# Βήτα\n\nΚείμενο με πίνακα.\n\n| Α | Β |\n| --- | --- |\n| 1 | 2 |",
+    "orphan__p0001-0002.md": "# Μόνο τμήμα\n\nΧωρίς κανονικό γονικό αρχείο."
+  },
+  "shard_size_bytes": 550,
+  "compression": "none",
+  "scenarios": {
+    "selected_good_files": {
+      "section_schema": "id: int64\nrow_id: string\nfilename: string\nhas_table: bool\nhas_list: bool\nhas_other: bool\nhas_text: bool\nheader: string\nplace: string\nsection: string\njson_section: string\nsection_length: int64\nsection_propo: int64",
+      "section_rows": [
+        {
+          "id": 1,
+          "row_id": "row_1",
+          "filename": "zeta",
+          "has_table": false,
+          "has_list": false,
+          "has_other": true,
+          "has_text": true,
+          "header": "Ζήτα",
+          "place": "0.00-0.43",
+          "section": "\nΠρώτη παράγραφος.\n",
+          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Πρώτη παράγραφος.\"\n  },\n  {\n    \"text\": \"\"\n  }\n]",
+          "section_length": 1,
+          "section_propo": 500
+        },
+        {
+          "id": 2,
+          "row_id": "row_2",
+          "filename": "zeta",
+          "has_table": false,
+          "has_list": false,
+          "has_other": true,
+          "has_text": true,
+          "header": "Μέθοδος",
+          "place": "0.57-0.86",
+          "section": "\nΔεύτερη παράγραφος.",
+          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Δεύτερη παράγραφος.\"\n  }\n]",
+          "section_length": 1,
+          "section_propo": 500
+        },
+        {
+          "id": 3,
+          "row_id": "row_3",
+          "filename": "beta",
+          "has_table": true,
+          "has_list": false,
+          "has_other": true,
+          "has_text": true,
+          "header": "Βήτα",
+          "place": "0.00-0.86",
+          "section": "\nΚείμενο με πίνακα.\n\n| Α | Β |\n| --- | --- |\n| 1 | 2 |",
+          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Κείμενο με πίνακα.\"\n  },\n  {\n    \"text\": \"\"\n  },\n  {\n    \"table\": \"| Α | Β |\\n| --- | --- |\\n| 1 | 2 |\"\n  }\n]",
+          "section_length": 4,
+          "section_propo": 1000
+        }
+      ],
+      "row_groups": [
+        2,
+        1
+      ],
+      "shards": [
+        {
+          "name": "train-000000.jsonl",
+          "bytes": 405,
+          "sha256": "99798e8a71eda2ae2fadae9c5adc6ec3e04f422109555fce1c782476f3b50a04",
+          "filenames": [
+            "alpha"
+          ],
+          "doc_ids": [
+            "9c020ca42406b71a255299a982cb14710450fd186d15d3f154edf185480df7b6"
+          ],
+          "records": [
+            {
+              "document": "# Άλφα\n\nΈνα μικρό κείμενο.",
+              "doc_id": "9c020ca42406b71a255299a982cb14710450fd186d15d3f154edf185480df7b6",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 1
+              },
+              "filename": "alpha",
+              "url": "https://fixture.invalid/alpha",
+              "filter": "bad",
+              "ocr_success": false,
+              "extraction": "bad",
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        },
+        {
+          "name": "train-000001.jsonl",
+          "bytes": 444,
+          "sha256": "8223b1a60345dd277df0b72db1341056c7a9caea9594851f43467fcb4a0d2ef5",
+          "filenames": [
+            "beta"
+          ],
+          "doc_ids": [
+            "2e6a7e745c5d844bbb6804921d1f81ead237ca861ebd9379d4c24a279012c523"
+          ],
+          "records": [
+            {
+              "document": "# Βήτα\n\nΚείμενο με πίνακα.\n\n| Α | Β |\n| --- | --- |\n| 1 | 2 |",
+              "doc_id": "2e6a7e745c5d844bbb6804921d1f81ead237ca861ebd9379d4c24a279012c523",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 2
+              },
+              "filename": "beta",
+              "url": "https://fixture.invalid/beta",
+              "filter": "bad",
+              "ocr_success": false,
+              "extraction": "bad",
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        },
+        {
+          "name": "train-000002.jsonl",
+          "bytes": 451,
+          "sha256": "a2f5d7b753da144ce4d3d69adc0a0dc66bd2152b2d25cfb2ef064fd4f788d4f4",
+          "filenames": [
+            "orphan"
+          ],
+          "doc_ids": [
+            "c74e2bf501220c09e9d72ef5aa84c6592e9be2536d1d4c2c0c1f8a098cf7e11f"
+          ],
+          "records": [
+            {
+              "document": "# Μόνο τμήμα\n\nΧωρίς κανονικό γονικό αρχείο.",
+              "doc_id": "c74e2bf501220c09e9d72ef5aa84c6592e9be2536d1d4c2c0c1f8a098cf7e11f",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 3
+              },
+              "filename": "orphan",
+              "url": "https://fixture.invalid/orphan__p0001-0002",
+              "filter": "bad",
+              "ocr_success": false,
+              "extraction": "bad",
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        },
+        {
+          "name": "train-000003.jsonl",
+          "bytes": 463,
+          "sha256": "7b7574b29d11a1dceeac7a544280c0998b0895a521916ecbf6628fe8f50aee22",
+          "filenames": [
+            "zeta"
+          ],
+          "doc_ids": [
+            "94943d000210e7a5a43527f56f77a7ef8c2135bc0a92984531b0df65707a9f04"
+          ],
+          "records": [
+            {
+              "document": "# Ζήτα\n\nΠρώτη παράγραφος.\n\n## Μέθοδος\n\nΔεύτερη παράγραφος.",
+              "doc_id": "94943d000210e7a5a43527f56f77a7ef8c2135bc0a92984531b0df65707a9f04",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 0
+              },
+              "filename": "zeta",
+              "url": "https://fixture.invalid/zeta",
+              "filter": "bad",
+              "ocr_success": false,
+              "extraction": "bad",
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        }
+      ],
+      "omitted_export_stems": [
+        "orphan"
+      ]
+    },
+    "metadata_selection": {
+      "section_schema": "id: int64\nrow_id: string\nfilename: string\nhas_table: bool\nhas_list: bool\nhas_other: bool\nhas_text: bool\nheader: string\nplace: string\nsection: string\njson_section: string\nsection_length: int64\nsection_propo: int64",
+      "section_rows": [
+        {
+          "id": 1,
+          "row_id": "row_1",
+          "filename": "alpha",
+          "has_table": false,
+          "has_list": false,
+          "has_other": true,
+          "has_text": true,
+          "header": "Άλφα",
+          "place": "0.00-0.67",
+          "section": "\nΈνα μικρό κείμενο.",
+          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Ένα μικρό κείμενο.\"\n  }\n]",
+          "section_length": 1,
+          "section_propo": 1000
+        }
+      ],
+      "row_groups": [
+        1
+      ],
+      "shards": [
+        {
+          "name": "train-000000.jsonl",
+          "bytes": 452,
+          "sha256": "a35c778869a40a7c494c8bc1332969528465c80891e3d6d6e6ccf34690b208be",
+          "filenames": [
+            "alpha"
+          ],
+          "doc_ids": [
+            "9c020ca42406b71a255299a982cb14710450fd186d15d3f154edf185480df7b6"
+          ],
+          "records": [
+            {
+              "document": "# Άλφα\n\nΈνα μικρό κείμενο.",
+              "doc_id": "9c020ca42406b71a255299a982cb14710450fd186d15d3f154edf185480df7b6",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 1
+              },
+              "filename": "alpha",
+              "url": "https://fixture.invalid/alpha",
+              "filter": "ok",
+              "ocr_success": false,
+              "extraction": "bad",
+              "processing_stage": "download,extract,section",
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        },
+        {
+          "name": "train-000001.jsonl",
+          "bytes": 470,
+          "sha256": "31f04889c96840deebe687d6e09788ec94ab749dcfae2cdf8a30c90fced80191",
+          "filenames": [
+            "beta"
+          ],
+          "doc_ids": [
+            "2e6a7e745c5d844bbb6804921d1f81ead237ca861ebd9379d4c24a279012c523"
+          ],
+          "records": [
+            {
+              "document": "# Βήτα\n\nΚείμενο με πίνακα.\n\n| Α | Β |\n| --- | --- |\n| 1 | 2 |",
+              "doc_id": "2e6a7e745c5d844bbb6804921d1f81ead237ca861ebd9379d4c24a279012c523",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 2
+              },
+              "filename": "beta",
+              "url": "https://fixture.invalid/beta",
+              "filter": "bad",
+              "ocr_success": false,
+              "extraction": "bad",
+              "processing_stage": null,
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        },
+        {
+          "name": "train-000002.jsonl",
+          "bytes": 477,
+          "sha256": "730da747dd10336990a710f956696c6ba7a7dfd9cd0c972a59580602aaf27931",
+          "filenames": [
+            "orphan"
+          ],
+          "doc_ids": [
+            "c74e2bf501220c09e9d72ef5aa84c6592e9be2536d1d4c2c0c1f8a098cf7e11f"
+          ],
+          "records": [
+            {
+              "document": "# Μόνο τμήμα\n\nΧωρίς κανονικό γονικό αρχείο.",
+              "doc_id": "c74e2bf501220c09e9d72ef5aa84c6592e9be2536d1d4c2c0c1f8a098cf7e11f",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 3
+              },
+              "filename": "orphan",
+              "url": "https://fixture.invalid/orphan__p0001-0002",
+              "filter": "bad",
+              "ocr_success": false,
+              "extraction": "bad",
+              "processing_stage": null,
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        },
+        {
+          "name": "train-000003.jsonl",
+          "bytes": 489,
+          "sha256": "f553bbdb67074b07854206760c4d45efb605ab5951736f6f0e53cfe153c09c16",
+          "filenames": [
+            "zeta"
+          ],
+          "doc_ids": [
+            "94943d000210e7a5a43527f56f77a7ef8c2135bc0a92984531b0df65707a9f04"
+          ],
+          "records": [
+            {
+              "document": "# Ζήτα\n\nΠρώτη παράγραφος.\n\n## Μέθοδος\n\nΔεύτερη παράγραφος.",
+              "doc_id": "94943d000210e7a5a43527f56f77a7ef8c2135bc0a92984531b0df65707a9f04",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 0
+              },
+              "filename": "zeta",
+              "url": "https://fixture.invalid/zeta",
+              "filter": "bad",
+              "ocr_success": false,
+              "extraction": "bad",
+              "processing_stage": null,
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        }
+      ],
+      "omitted_export_stems": [
+        "orphan"
+      ]
+    },
+    "zero_accepted_fallback": {
+      "section_schema": "id: int64\nrow_id: string\nfilename: string\nhas_table: bool\nhas_list: bool\nhas_other: bool\nhas_text: bool\nheader: string\nplace: string\nsection: string\njson_section: string\nsection_length: int64\nsection_propo: int64",
+      "section_rows": [
+        {
+          "id": 1,
+          "row_id": "row_1",
+          "filename": "zeta",
+          "has_table": false,
+          "has_list": false,
+          "has_other": true,
+          "has_text": true,
+          "header": "Ζήτα",
+          "place": "0.00-0.43",
+          "section": "\nΠρώτη παράγραφος.\n",
+          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Πρώτη παράγραφος.\"\n  },\n  {\n    \"text\": \"\"\n  }\n]",
+          "section_length": 1,
+          "section_propo": 500
+        },
+        {
+          "id": 2,
+          "row_id": "row_2",
+          "filename": "zeta",
+          "has_table": false,
+          "has_list": false,
+          "has_other": true,
+          "has_text": true,
+          "header": "Μέθοδος",
+          "place": "0.57-0.86",
+          "section": "\nΔεύτερη παράγραφος.",
+          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Δεύτερη παράγραφος.\"\n  }\n]",
+          "section_length": 1,
+          "section_propo": 500
+        },
+        {
+          "id": 3,
+          "row_id": "row_3",
+          "filename": "alpha",
+          "has_table": false,
+          "has_list": false,
+          "has_other": true,
+          "has_text": true,
+          "header": "Άλφα",
+          "place": "0.00-0.67",
+          "section": "\nΈνα μικρό κείμενο.",
+          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Ένα μικρό κείμενο.\"\n  }\n]",
+          "section_length": 1,
+          "section_propo": 1000
+        },
+        {
+          "id": 4,
+          "row_id": "row_4",
+          "filename": "beta",
+          "has_table": true,
+          "has_list": false,
+          "has_other": true,
+          "has_text": true,
+          "header": "Βήτα",
+          "place": "0.00-0.86",
+          "section": "\nΚείμενο με πίνακα.\n\n| Α | Β |\n| --- | --- |\n| 1 | 2 |",
+          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Κείμενο με πίνακα.\"\n  },\n  {\n    \"text\": \"\"\n  },\n  {\n    \"table\": \"| Α | Β |\\n| --- | --- |\\n| 1 | 2 |\"\n  }\n]",
+          "section_length": 4,
+          "section_propo": 1000
+        },
+        {
+          "id": 5,
+          "row_id": "row_5",
+          "filename": "orphan__p0001-0002",
+          "has_table": false,
+          "has_list": false,
+          "has_other": false,
+          "has_text": true,
+          "header": "Μόνο τμήμα",
+          "place": "0.00-0.67",
+          "section": "\nΧωρίς κανονικό γονικό αρχείο.",
+          "json_section": "[\n  {\n    \"text\": \"\\nΧωρίς κανονικό γονικό αρχείο.\"\n  }\n]",
+          "section_length": 1,
+          "section_propo": 1000
+        }
+      ],
+      "row_groups": [
+        2,
+        1,
+        1,
+        1
+      ],
+      "shards": [
+        {
+          "name": "train-000000.jsonl",
+          "bytes": 405,
+          "sha256": "99798e8a71eda2ae2fadae9c5adc6ec3e04f422109555fce1c782476f3b50a04",
+          "filenames": [
+            "alpha"
+          ],
+          "doc_ids": [
+            "9c020ca42406b71a255299a982cb14710450fd186d15d3f154edf185480df7b6"
+          ],
+          "records": [
+            {
+              "document": "# Άλφα\n\nΈνα μικρό κείμενο.",
+              "doc_id": "9c020ca42406b71a255299a982cb14710450fd186d15d3f154edf185480df7b6",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 1
+              },
+              "filename": "alpha",
+              "url": "https://fixture.invalid/alpha",
+              "filter": "bad",
+              "ocr_success": false,
+              "extraction": "bad",
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        },
+        {
+          "name": "train-000001.jsonl",
+          "bytes": 444,
+          "sha256": "8223b1a60345dd277df0b72db1341056c7a9caea9594851f43467fcb4a0d2ef5",
+          "filenames": [
+            "beta"
+          ],
+          "doc_ids": [
+            "2e6a7e745c5d844bbb6804921d1f81ead237ca861ebd9379d4c24a279012c523"
+          ],
+          "records": [
+            {
+              "document": "# Βήτα\n\nΚείμενο με πίνακα.\n\n| Α | Β |\n| --- | --- |\n| 1 | 2 |",
+              "doc_id": "2e6a7e745c5d844bbb6804921d1f81ead237ca861ebd9379d4c24a279012c523",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 2
+              },
+              "filename": "beta",
+              "url": "https://fixture.invalid/beta",
+              "filter": "bad",
+              "ocr_success": false,
+              "extraction": "bad",
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        },
+        {
+          "name": "train-000002.jsonl",
+          "bytes": 451,
+          "sha256": "a2f5d7b753da144ce4d3d69adc0a0dc66bd2152b2d25cfb2ef064fd4f788d4f4",
+          "filenames": [
+            "orphan"
+          ],
+          "doc_ids": [
+            "c74e2bf501220c09e9d72ef5aa84c6592e9be2536d1d4c2c0c1f8a098cf7e11f"
+          ],
+          "records": [
+            {
+              "document": "# Μόνο τμήμα\n\nΧωρίς κανονικό γονικό αρχείο.",
+              "doc_id": "c74e2bf501220c09e9d72ef5aa84c6592e9be2536d1d4c2c0c1f8a098cf7e11f",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 3
+              },
+              "filename": "orphan",
+              "url": "https://fixture.invalid/orphan__p0001-0002",
+              "filter": "bad",
+              "ocr_success": false,
+              "extraction": "bad",
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        },
+        {
+          "name": "train-000003.jsonl",
+          "bytes": 463,
+          "sha256": "7b7574b29d11a1dceeac7a544280c0998b0895a521916ecbf6628fe8f50aee22",
+          "filenames": [
+            "zeta"
+          ],
+          "doc_ids": [
+            "94943d000210e7a5a43527f56f77a7ef8c2135bc0a92984531b0df65707a9f04"
+          ],
+          "records": [
+            {
+              "document": "# Ζήτα\n\nΠρώτη παράγραφος.\n\n## Μέθοδος\n\nΔεύτερη παράγραφος.",
+              "doc_id": "94943d000210e7a5a43527f56f77a7ef8c2135bc0a92984531b0df65707a9f04",
+              "chunk_id": 0,
+              "metadata": {
+                "marker": 0
+              },
+              "filename": "zeta",
+              "url": "https://fixture.invalid/zeta",
+              "filter": "bad",
+              "ocr_success": false,
+              "extraction": "bad",
+              "filetype": "pdf",
+              "formula_total": 0,
+              "code_total": 0,
+              "math_enriched": false,
+              "math_accepted": 0
+            }
+          ]
+        }
+      ],
+      "omitted_export_stems": [
+        "orphan"
+      ]
+    }
+  }
+}
