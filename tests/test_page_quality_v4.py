@@ -9,7 +9,7 @@ from test_page_quality import COMMON_GREEK
 
 
 BASE = dict(chars=300, greek_chars=200, latin_chars=10, other_chars=0,
-            valid_greek_word_rate=None, image_area_ratio=1, words=60)
+            valid_greek_word_rate=None, image_area_ratio=1, words=60, junk_token_share=0)
 
 
 @pytest.fixture
@@ -40,9 +40,10 @@ def scanner_layer_pdf(tmp_path):
     ({"chars": 2000}, (True, "image_dominant_unknown_validity")),
     ({"image_area_ratio": .5}, (True, "image_dominant_unknown_validity")),
     ({"valid_greek_word_rate": .399}, (True, "image_dominant_bad_text")),
-    ({"valid_greek_word_rate": .4}, (False, "text_layer")),
+    ({"valid_greek_word_rate": .4}, (True, "image_dominant_bad_text")),
+    ({"valid_greek_word_rate": .9}, (False, "text_layer")),
     ({"valid_greek_word_rate": 1, "chars": 49}, (True, "scanned_page")),
-    ({"valid_greek_word_rate": .4, "chars": 50}, (False, "text_layer")),
+    ({"valid_greek_word_rate": .9, "chars": 50}, (False, "text_layer")),
     ({"valid_greek_word_rate": 1, "pua_char_count": 1}, (True, "image_dominant_contaminated_text")),
     ({"valid_greek_word_rate": 1, "control_char_count": 1}, (True, "image_dominant_contaminated_text")),
     ({"valid_greek_word_rate": .6, "min_valid_word_rate": .7}, (True, "image_dominant_bad_text")),
@@ -54,7 +55,8 @@ def test_v4_image_quality(changes, expected):
     assert page_rule_selection("scanned_page" if expected[1] == "scanned_page" else "image_dominant_sparse_text", **{
         k: v for k, v in values.items() if k in {
             'valid_greek_word_rate', 'words', 'pua_char_count', 'control_char_count',
-            'image_area_ratio', 'min_valid_word_rate'}}) == expected[0]
+            'image_area_ratio', 'min_valid_word_rate', 'greek_chars', 'latin_chars',
+            'junk_token_share'}}) == expected[0]
 
 
 @pytest.mark.parametrize("rate", [None, 0, .39, .4, .49, .5, 1])

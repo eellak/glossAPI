@@ -123,7 +123,9 @@ class ExtractStage:
                         "dictionary_sha256": dictionary_hash,
                         "dictionary_identity": report.dictionary_identity,
                         "effective_settings": {**options, "rule_profile": report.rule_profile,
-                                               "fold_validity": report.fold_validity},
+                                               "fold_validity": report.fold_validity,
+                                               "image_dominant_min_valid_word_rate": report.image_dominant_min_valid_word_rate,
+                                               "image_dominant_max_junk_share": report.image_dominant_max_junk_share},
                         "report": pack_evidence(report.to_dict())},)
                     return StageResult(request.task_id, request.attempt_id, request.lease_token, "ok", "extract_completed",
                         outputs_in(root, required), decisions, {"wall_ns": time.monotonic_ns()-started})

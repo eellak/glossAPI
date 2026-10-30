@@ -15,6 +15,7 @@ from functools import lru_cache
 import gzip
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -47,6 +48,13 @@ class PageQuality:
     control_char_count: int = 0
     rule_profile: str = "v4"
     validity_not_applicable: bool = False
+    junk_token_count: int = 0
+    junk_token_total: int = 0
+    junk_token_share: float | None = None
+    junk_token_categories: dict | None = None
+    image_dominant_min_valid_word_rate: float = 0.9
+    image_dominant_max_junk_share: float = 0.1
+    greek_image_bar_applies: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,8 @@ class PageQualityReport:
     fold_validity: bool = False
     rule_profile: str = "v4"
     dictionary_identity: dict | None = None
+    image_dominant_min_valid_word_rate: float = 0.9
+    image_dominant_max_junk_share: float = 0.1
 
     def to_dict(self) -> dict:
         """Return a JSON-compatible copy, retaining null unknown rates."""
@@ -130,6 +140,47 @@ def _page_text_stats(text: str, dictionary: frozenset[str] | None,
     return stats
 
 
+def junk_token_stats(text: str, dictionary: frozenset[str] | None,
+                     fold_validity: bool = False) -> dict:
+    """Measure junk once per letter-bearing alphanumeric run (not page numbers).
+
+    A token is junk if it mixes letter scripts, mixes Greek/Latin letters with
+    digits, is an unknown word of <=3 letters, or an unknown Latin fragment of
+    <=4 letters. Categories may overlap; the numerator is their union. Lookup
+    uses the validity dictionary and normalization. No dictionary/no tokens is
+    unknown, never a measured zero. NFC plus attached marks preserves polytonic
+    tokens; the legacy validity denominator is unchanged.
+    """
+    tokens = re.findall(r'[^\W_]+(?:[\u0300-\u036f]+[^\W_]*)*',
+                        unicodedata.normalize('NFC', text))
+    tokens = [t for t in tokens if any(c.isalpha() for c in t)]
+    counts = dict(short_non_dictionary=0, latin_fragment=0,
+                  mixed_script=0, digit_fragment=0)
+    junk = 0
+    for token in tokens:
+        letters = [c for c in token if c.isalpha()]
+        greek = any(_is_greek(c) for c in letters)
+        scripts = {unicodedata.name(c, '').split(' ')[0] for c in letters}
+        latin = 'LATIN' in scripts
+        key = fold_validity_word(token) if fold_validity else token.casefold()
+        unknown = dictionary is not None and key not in dictionary
+        flags = (len(letters) <= 3 and unknown,
+                 latin and not greek and len(letters) <= 4 and unknown,
+                 len(scripts) > 1,
+                 any(c.isdigit() for c in token) and (greek or latin))
+        for name, flag in zip(counts, flags):
+            counts[name] += flag
+        junk += any(flags)
+    return dict(junk_token_count=junk, junk_token_total=len(tokens),
+                junk_token_share=junk / len(tokens) if tokens and dictionary is not None else None,
+                junk_token_categories=counts)
+
+
+def _validate_image_text_bar(validity: float, junk: float) -> None:
+    if not all(math.isfinite(v) and 0 <= v <= 1 for v in (validity, junk)):
+        raise ValueError('image-dominant validity and junk thresholds must be finite rates in [0, 1]')
+
+
 def page_rule_selection(decision: str, *, valid_greek_word_rate: float | None,
                         words: int, pua_char_count: int = 0,
                         control_char_count: int = 0,
@@ -137,11 +188,18 @@ def page_rule_selection(decision: str, *, valid_greek_word_rate: float | None,
                         image_area_ratio: float | None = None,
                         image_dominant_ratio: float = 0.5,
                         min_valid_word_rate: float = 0.4,
-                        validity_not_applicable: bool = False) -> bool:
+                        validity_not_applicable: bool = False,
+                        greek_chars: int = 0, latin_chars: int = 0,
+                        min_greek_share: float = 0.5,
+                        junk_token_share: float | None = None,
+                        image_dominant_min_valid_word_rate: float = 0.9,
+                        image_dominant_max_junk_share: float = 0.1) -> bool:
     """Select existing decision labels; useful for archived-sidecar replay too.
 
     v4 additionally requires image_area_ratio, and trusts image-dominant text
-    only with measured validity >= min_valid_word_rate and no contamination.
+    only with measured validity and no contamination. Greek-dominant image
+    layers require validity >= image_dominant_min_valid_word_rate AND junk
+    share < image_dominant_max_junk_share. Unknown junk cannot certify a layer.
     A recorded validity_not_applicable exception replays the v3 selection.
     v3 keeps scans and any PUA/control contamination. Garbage candidates need
     known validity < 0.5 or at most 10 words. Unknown validity is not zero.
@@ -151,9 +209,17 @@ def page_rule_selection(decision: str, *, valid_greek_word_rate: float | None,
     if rule_profile not in ("v2", "v3", "v4"):
         raise ValueError("rule_profile must be 'v2', 'v3' or 'v4'")
     if rule_profile == "v4":
+        _validate_image_text_bar(image_dominant_min_valid_word_rate, image_dominant_max_junk_share)
         if image_area_ratio is None:
             raise ValueError("image_area_ratio is required for rule_profile='v4'")
         if image_area_ratio >= image_dominant_ratio and not validity_not_applicable:
+            letters = greek_chars + latin_chars
+            if letters and greek_chars / letters > min_greek_share:
+                return (decision == "scanned_page" or valid_greek_word_rate is None
+                        or not valid_greek_word_rate >= image_dominant_min_valid_word_rate
+                        or junk_token_share is None
+                        or not junk_token_share < image_dominant_max_junk_share
+                        or pua_char_count > 0 or control_char_count > 0)
             return (decision == "scanned_page" or valid_greek_word_rate is None
                     or not valid_greek_word_rate >= min_valid_word_rate
                     or pua_char_count > 0 or control_char_count > 0)
@@ -204,11 +270,15 @@ def page_ocr_decision(*, chars: int, greek_chars: int, latin_chars: int,
                       image_dominant_min_chars: int = 600,
                       words: int | None = None,
                       rule_profile: str = "v4",
-                      candidate_decision: str | None = None) -> tuple[bool, str]:
+                      candidate_decision: str | None = None,
+                      junk_token_share: float | None = None,
+                      image_dominant_min_valid_word_rate: float = 0.9,
+                      image_dominant_max_junk_share: float = 0.1) -> tuple[bool, str]:
     """Classify pages with v4, or unchanged selectable legacy v2/v3 routing.
 
     v4 trusts an image-dominant text layer only with known validity at least
-    min_valid_word_rate and no PUA/control contamination. Density does not
+    the configured image validity bar and junk below its configured maximum
+    for Greek-dominant pages, and no PUA/control contamination. Density does not
     establish quality. The existing chars < min_chars scan gate is retained:
     a valid short caption does not certify the raster body. Below the image
     threshold it delegates to v3. Clean Latin-majority layers with at least
@@ -234,6 +304,7 @@ def page_ocr_decision(*, chars: int, greek_chars: int, latin_chars: int,
     if rule_profile not in ("v2", "v3", "v4"):
         raise ValueError("rule_profile must be 'v2', 'v3' or 'v4'")
     if rule_profile == "v4":
+        _validate_image_text_bar(image_dominant_min_valid_word_rate, image_dominant_max_junk_share)
         if words is None:
             raise ValueError("words is required for rule_profile='v4'")
         if image_area_ratio >= image_dominant_ratio:
@@ -263,7 +334,11 @@ def page_ocr_decision(*, chars: int, greek_chars: int, latin_chars: int,
                 control_char_count=control_char_count, rule_profile="v4",
                 image_area_ratio=image_area_ratio,
                 image_dominant_ratio=image_dominant_ratio,
-                min_valid_word_rate=min_valid_word_rate)
+                min_valid_word_rate=min_valid_word_rate,
+                greek_chars=greek_chars, latin_chars=latin_chars,
+                min_greek_share=min_greek_share, junk_token_share=junk_token_share,
+                image_dominant_min_valid_word_rate=image_dominant_min_valid_word_rate,
+                image_dominant_max_junk_share=image_dominant_max_junk_share)
             if pua_char_count or control_char_count:
                 return needs, "image_dominant_contaminated_text"
             if valid_greek_word_rate is None:
@@ -370,6 +445,8 @@ def page_quality(pdf_path: str | Path, *,
                  image_dominant_ratio: float = 0.5,
                  image_dominant_min_chars: int = 600,
                  min_valid_word_rate: float = 0.4,
+                 image_dominant_min_valid_word_rate: float = 0.9,
+                 image_dominant_max_junk_share: float = 0.1,
                  fold_validity: bool = False,
                  rule_profile: str = "v4") -> PageQualityReport:
     """Inspect every page once, closing all native handles; never render pages.
@@ -390,6 +467,8 @@ def page_quality(pdf_path: str | Path, *,
     """
     if rule_profile not in ("v2", "v3", "v4"):
         raise ValueError("rule_profile must be 'v2', 'v3' or 'v4'")
+    if rule_profile == "v4":
+        _validate_image_text_bar(image_dominant_min_valid_word_rate, image_dominant_max_junk_share)
     started = time.perf_counter()
     path = Path(pdf_path)
     identity = None
@@ -437,6 +516,10 @@ def page_quality(pdf_path: str | Path, *,
                 other = stats["chars"] - stats["greek_chars"] - stats["latin_chars"] - sum(c.isspace() for c in text)
                 values = {key: stats[key] for key in ("chars", "greek_chars", "latin_chars", "words")}
                 values.update(**text_contamination_counts(text, all_pua=rule_profile == "v4" and ratio >= image_dominant_ratio), other_chars=other, valid_greek_word_rate=stats["dictionary_valid_rate"], image_area_ratio=ratio)
+                greek_image = (rule_profile == "v4" and ratio >= image_dominant_ratio
+                               and stats["greek_chars"] > stats["latin_chars"])
+                junk = junk_token_stats(text, dictionary if use_dictionary else None,
+                                        fold_validity) if greek_image else {}
                 candidate = None
                 if fold_validity and rule_profile in ("v3", "v4"):
                     legacy_rate = _text_stats(text, legacy_dictionary if use_dictionary else None)["dictionary_valid_rate"]
@@ -454,6 +537,9 @@ def page_quality(pdf_path: str | Path, *,
                     min_valid_word_rate=min_valid_word_rate,
                     rule_profile=rule_profile,
                     candidate_decision=candidate,
+                    junk_token_share=junk.get("junk_token_share"),
+                    image_dominant_min_valid_word_rate=image_dominant_min_valid_word_rate,
+                    image_dominant_max_junk_share=image_dominant_max_junk_share,
                 )
                 not_applicable = rule_profile == "v4" and _validity_not_applicable(
                     **{key: values[key] for key in ("chars", "greek_chars", "latin_chars",
@@ -462,7 +548,10 @@ def page_quality(pdf_path: str | Path, *,
                     image_dominant_min_chars=image_dominant_min_chars)
                 pages.append(PageQuality(page=index + 1, **values, page_needs_ocr=needs, decision=reason,
                                          min_image_dpi=dpi, rule_profile=rule_profile,
-                                         validity_not_applicable=not_applicable))
+                                         validity_not_applicable=not_applicable, **junk,
+                                         greek_image_bar_applies=greek_image,
+                                         image_dominant_min_valid_word_rate=image_dominant_min_valid_word_rate,
+                                         image_dominant_max_junk_share=image_dominant_max_junk_share))
             finally:
                 page.close()
     selected = [p.page for p in pages if p.page_needs_ocr]
@@ -471,7 +560,9 @@ def page_quality(pdf_path: str | Path, *,
                                len(selected) / len(pages) if pages else 0.0,
                                dictionary is not None, time.perf_counter() - started,
                                fold_validity=fold_validity, rule_profile=rule_profile,
-                               dictionary_identity=identity)
+                               dictionary_identity=identity,
+                               image_dominant_min_valid_word_rate=image_dominant_min_valid_word_rate,
+                               image_dominant_max_junk_share=image_dominant_max_junk_share)
     if output_dir is not None:
         write_page_quality(report, output_dir)
     return report

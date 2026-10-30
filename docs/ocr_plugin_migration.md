@@ -45,7 +45,20 @@ glossapi run --files /absolute/path/book.pdf --stages ocr,export --device ocr=cp
 `glossapi run` inserts page-quality inspection and feeds only `page_needs_ocr`
 pages to OCR. Default routing profile **v4** trusts an image-dominant existing
 text layer (image coverage at least 0.5) only with measured Greek word validity
-at least 0.4 and no PUA/control contamination. Unknown validity routes to OCR.
+at least 0.9 and junk-token share strictly below 0.10 on Greek-dominant pages,
+with no PUA/control contamination. Unknown validity routes to OCR; known validity
+with unknown junk share cannot qualify the Greek layer. The independent settings
+`image_dominant_min_valid_word_rate` and `image_dominant_max_junk_share` configure
+this bar and are recorded on every page and in the extraction ledger. Non-image
+and Latin routing retain their previous settings and rules.
+
+Junk is the union of unknown words of up to three letters, unknown Latin fragments
+of up to four letters, tokens mixing letter scripts, and Greek/Latin tokens with
+digit intrusions. The denominator is alphanumeric runs containing letters;
+standalone numbers do not count. Dictionary normalization follows validity lookup.
+Each page records counts, category counts, nullable share, and whether the bar
+applies. The batch CLI accepts `--image-dominant-min-valid-word-rate` and
+`--image-dominant-max-junk-share`.
 The existing scan gate (fewer than 50 extracted characters) remains in force;
 a short valid caption cannot certify the raster body.
 Clean Latin-majority layers (Greek share <= 0.5 of Greek + Latin letters) retain
