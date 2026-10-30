@@ -206,7 +206,9 @@ def test_generation_manifest_binds_all_immutable_products(tmp_path):
                 presence=database.execute('SELECT presence FROM current_file_state WHERE producer_attempt_id=? AND uri=?',(attempt,path.as_uri())).fetchone()[0]
                 if presence=='deleted':
                     assert not path.exists()
-                    assert database.execute("SELECT 1 FROM events WHERE event_kind='retention' AND reason_code='delete_completed' AND file_id IN (SELECT file_id FROM files WHERE uri=?)",(path.as_uri(),)).fetchone()
+                    from glossapi.stages.retention import retention_facts
+                    file_id=database.execute('SELECT file_id FROM files WHERE producer_attempt_id=? AND uri=?',(attempt,path.as_uri())).fetchone()[0]
+                    assert any(event['reason_code']=='delete_completed' for event in retention_facts(database,file_id)['deletions'])
                 else:
                     assert path.stat().st_size==entry['bytes']
                     assert hashlib.sha256(path.read_bytes()).hexdigest()==entry['sha256']

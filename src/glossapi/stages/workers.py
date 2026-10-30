@@ -78,8 +78,12 @@ def _serve(connection, parent_pid):
             result = seal_output_hashes(replace(result, metrics={**result.metrics, 'tools': loaded_tools(), 'worker_pid': os.getpid()}),request.work_directory)
             target = request.work_directory/'worker-result.json'
             try:
-                target.write_text(json.dumps(asdict(result), ensure_ascii=False))
-                connection.send((request.task_id, request.attempt_id, request.lease_token))
+                from .execution import write_text_hashed, sha256_file
+                encoded = json.dumps(asdict(result), ensure_ascii=False)
+                write_text_hashed(target,encoded)
+                import hashlib
+                data = encoded.encode('utf-8')
+                connection.send((request.task_id, request.attempt_id, request.lease_token, 'receipt', hashlib.sha256(data).hexdigest(), len(data)))
             except OSError as error:
                 import errno
                 if error.errno!=errno.ENOSPC:raise
@@ -152,8 +156,9 @@ class WarmWorkerPool:
                     if (result.task_id, result.attempt_id, result.lease_token) != identity[:3]:
                         self._discard(slot)
                         raise ValueError('Stale worker receipt')
-                    if len(identity)==3:
-                        result = replace(result, outputs=(*result.outputs, OutputArtifact('worker_receipt', 'worker-result.json', None, 'evidence', False)))
+                    if len(identity)!=4:
+                        digest,size = identity[4:6] if len(identity)==6 else (None,None)
+                        result = replace(result, outputs=(*result.outputs, OutputArtifact('worker_receipt', 'worker-result.json', None, 'evidence', False, digest, size)))
                     slot['request'] = None
                     completed.append((request, result))
                     continue

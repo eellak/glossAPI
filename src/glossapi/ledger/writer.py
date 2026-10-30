@@ -136,6 +136,12 @@ class LedgerWriter:
             raise BlockingIOError("Ledger already has an owning writer")
         self.owner = (os.getpid(), threading.get_ident())
         self.connection = None
+        self.control_cache = None
+        self._file_catalog = None
+        self._run_plans = {}
+        self._planned_reader_maps = {}
+        self.snapshot_cache = set()
+        self.produced_files = {}
         self.lock = os.open(self.path.parent, os.O_RDONLY)
         try:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -180,10 +186,27 @@ class LedgerWriter:
                 if storage_version>=3:self.connection.path_root=self.path.parent.as_uri()
             supported_schema(self.connection)
             integrity(self.connection)
-            self.next_event_id = self.connection.execute("SELECT COALESCE(MAX(event_id),0)+1 FROM events").fetchone()[0]
+            # The scheduler's indexed control projection is process local. Old
+            # creation scripts/checksums and read-only historical reports stay exact.
+            self.connection.execute(f"CREATE TEMP VIEW current_task_state AS SELECT t.*,e.status,e.reason_code,e.event_id FROM tasks t LEFT JOIN {self.connection.event_table} e ON e.event_id=(SELECT MAX(s.event_id) FROM {self.connection.event_table} s WHERE s.task_id=t.task_id AND s.event_kind='lifecycle')")
+            self.connection.execute('CREATE INDEX IF NOT EXISTS snapshots_kind ON snapshots(kind)')
+            self.connection.execute('CREATE INDEX IF NOT EXISTS tasks_run_operation ON tasks(run_id,operation)')
+            self.connection.execute('CREATE INDEX IF NOT EXISTS tasks_stage_operation ON tasks(stage,operation)')
+            self.connection.execute(f"CREATE INDEX IF NOT EXISTS events_decision_task ON {self.connection.event_table}(event_kind,task_id,event_id) WHERE event_kind='decision'")
+            file_table='file_records' if self.connection.storage_version>=3 else 'files'
+            self.connection.execute(f'CREATE INDEX IF NOT EXISTS files_stage_kind ON {file_table}(stage,kind)')
+            if self.connection.storage_version>=3:
+                self.connection.execute('CREATE INDEX IF NOT EXISTS source_records_manifest_lookup ON source_records(manifest_sha256)')
+            event_tables=[self.connection.event_table]
+            if self.connection.compact:event_tables.append('retention_events')
+            if self.connection.storage_version>=3:event_tables.append('completed_deletions')
+            self.next_event_id=1+max(self.connection.execute(
+                f'SELECT COALESCE(MAX(event_id),0) FROM {table}').fetchone()[0] for table in event_tables)
             self.connection.execute("PRAGMA journal_mode=WAL")
             self.connection.execute("PRAGMA synchronous=NORMAL")
             self._durable_files=set()
+            self.file_catalog()
+            self.connection.owner_writer=self
         except BaseException:
             self.close()
             raise
@@ -205,6 +228,11 @@ class LedgerWriter:
                 yield self
                 self.connection.execute('RELEASE observation')
             except BaseException:
+                self.control_cache = None
+                self._file_catalog = None
+                self._run_plans.clear()
+                self._planned_reader_maps.clear()
+                self.snapshot_cache.clear()
                 self.connection.execute('ROLLBACK TO observation')
                 self.connection.execute('RELEASE observation')
                 raise
@@ -215,6 +243,11 @@ class LedgerWriter:
             self.connection.commit()
         except BaseException:
             self.connection.rollback()
+            self.control_cache = None
+            self._file_catalog = None
+            self._run_plans.clear()
+            self._planned_reader_maps.clear()
+            self.snapshot_cache.clear()
             raise
 
     @contextmanager
@@ -229,7 +262,9 @@ class LedgerWriter:
 
     def close(self):
         if self.connection is not None:
-            if self.connection.in_transaction:self.connection.rollback()
+            if self.connection.in_transaction:
+                self.connection.rollback()
+                self._file_catalog = None
             if hasattr(self,'_durable_files'):self.durable_barrier()
             self.connection.close()
             self.connection = None
@@ -251,7 +286,9 @@ class LedgerWriter:
         from urllib.parse import unquote, urlsplit
         directories=set()
         synchronized=[]
-        for file_id,uri in self.connection.execute("SELECT file_id,uri FROM current_file_state WHERE ownership='managed' AND presence='present'"):
+        for row in self.file_catalog().values():
+            if row['ownership']!='managed' or row['presence']!='present':continue
+            file_id,uri=row['file_id'],row['uri']
             if file_id in self._durable_files:continue
             path=Path(unquote(urlsplit(uri).path))
             if not path.is_file():continue  # Missing observations are diagnosed by verification/resume.
@@ -295,17 +332,111 @@ class LedgerWriter:
             integrity(self.connection)
             self.connection.execute(f"PRAGMA user_version={version}")
 
+    def file_catalog(self):
+        """Version-bound file facts, rebuilt only at open/resume or rollback.
+
+        This is control state, not filesystem byte verification. Publication,
+        source deletion and audit still perform their required content checks.
+        """
+        self._owner(transaction=False)
+        if self._file_catalog is None:
+            self._file_catalog={row['file_id']:dict(row) for row in self.connection.execute('SELECT * FROM current_file_state')}
+        return self._file_catalog
+
+    def _file_presence(self, file_id, presence, event_id):
+        row=self.file_catalog()[file_id]
+        row.update(presence=presence,event_id=event_id)
+
+    def control(self):
+        """Reconstruct once at start/resume, then advance with appended facts.
+
+        A rolled-back observation discards this cache before another write.
+        Workers never own this state or use it as persistent authority.
+        """
+        if self.control_cache is None:
+            tasks={row['task_id']:dict(row) for row in self.connection.execute('SELECT * FROM tasks')}
+            attempts={row['attempt_id']:dict(row) for row in self.connection.execute('SELECT * FROM attempts')}
+            latest={};numbers={};status={};reasons={};task_events={};attempt_events={}
+            for identifier,row in attempts.items():
+                task=row['task_id'];number=row['attempt_number']
+                if number>numbers.get(task,0):numbers[task]=number;latest[task]=identifier
+            for event_id,task_id,identifier,value,reason,message in self.connection.execute(f"SELECT event_id,task_id,attempt_id,status,reason_code,message FROM {self.connection.event_table} WHERE event_kind='lifecycle' ORDER BY event_id"):
+                event=dict(event_id=event_id,status=value,reason_code=reason,message=message)
+                task_events[task_id]=event
+                if identifier:
+                    status[identifier]=value;reasons[identifier]=reason;attempt_events[identifier]=event
+            self.control_cache=dict(tasks=tasks,attempts=attempts,latest=latest,numbers=numbers,status=status,reasons=reasons,task_events=task_events,attempt_events=attempt_events)
+        return self.control_cache
+
+    def task_state(self, task_id):
+        control=self.control();task=control['tasks'].get(task_id)
+        if task is None:return None
+        return {**task,**control['task_events'].get(task_id,dict(status=None,reason_code=None,event_id=None,message=''))}
+
+    def task_states(self, run_id):
+        return [self.task_state(identifier) for identifier,task in self.control()['tasks'].items() if task['run_id']==run_id]
+
+    def latest_attempt(self, task_id):
+        control=self.control();identifier=control['latest'].get(task_id)
+        if identifier is None:return None
+        return {**control['attempts'][identifier],**control['attempt_events'].get(identifier,dict(status=None,reason_code=None,message=''))}
+
+    def _record_lifecycle(self, task_id, attempt_id, status, reason_code, message, event_id):
+        control=self.control();event=dict(status=status,reason_code=reason_code,message=message,event_id=event_id)
+        control['task_events'][task_id]=event
+        if attempt_id:
+            control['status'][attempt_id]=status;control['reasons'][attempt_id]=reason_code
+            control['attempt_events'][attempt_id]=event
+
+    def planned_readers(self, run_id, file):
+        """Frozen output-kind and explicit file readers, never late guesses."""
+        if run_id not in self._planned_reader_maps:
+            plan=self._run_plans.get(run_id)
+            if plan is None:
+                stored=self.connection.execute('SELECT s.json FROM runs r JOIN snapshots s ON s.sha256=r.plan_sha256 WHERE r.run_id=?',(run_id,)).fetchone()
+                if stored is None:raise LedgerError('Unknown reader plan')
+                plan=json.loads(stored[0]);self._run_plans[run_id]=plan
+            tasks={row['ordinal']:identifier for identifier,row in self.control()['tasks'].items() if row['run_id']==run_id}
+            operations=plan.get('operations',())
+            keys={operation.get('key'):tasks[index] for index,operation in enumerate(operations) if index in tasks}
+            outputs={};files={}
+            for index,operation in enumerate(operations):
+                if index not in tasks:continue
+                reader=tasks[index]
+                for parent,kind,_ in operation.get('inputs',()):
+                    if parent not in keys:raise LedgerError('Frozen reader producer is missing')
+                    outputs.setdefault((keys[parent],kind),set()).add(reader)
+                for artifact in operation.get('document',{}).get('artifacts',()):
+                    files.setdefault(artifact['file_id'],set()).add(reader)
+            self._planned_reader_maps[run_id]=(outputs,files)
+        outputs,files=self._planned_reader_maps[run_id]
+        producer=self.control()['attempts'].get(file['producer_attempt_id'])
+        return (outputs.get((producer['task_id'],file['kind']),set()) if producer else set()) | files.get(file['file_id'],set())
+
+    def reader_state(self, task_id):
+        state=self.task_state(task_id)
+        return (state['status'],state['reason_code']) if state else (None,None)
+
+    def accepts_result(self, attempt_id, lease_token):
+        state=self.control()
+        attempt=state['attempts'].get(attempt_id)
+        return bool(attempt and attempt['lease_token']==lease_token
+            and state['status'].get(attempt_id) not in TERMINAL_STATUSES)
+
     def snapshot(self, kind, value):
         self._owner()
         value = evidence(value)
         validate_evidence(value)
         encoded = canonical_json(value)
         digest = hashlib.sha256(encoded.encode()).hexdigest()
+        if digest in self.snapshot_cache:
+            return digest
         stored=encode_json(encoded) if self.connection.compact else encoded
         if getattr(self.connection,'storage_version',0)>=3:
             stored=self.connection.encode_snapshot(value,lambda common:self.snapshot('shared_config',{'kind':'shared_config','value':common}))
         # The snapshot key hashes the full logical value, independent of storage.
         self.connection.execute("INSERT OR IGNORE INTO snapshots VALUES(?,?,1,?)",(digest,kind,stored))
+        self.snapshot_cache.add(digest)
         return digest
 
     def run(self, settings, plan, environment, *, code_revision):
@@ -314,6 +445,7 @@ class LedgerWriter:
         hashes = [self.snapshot(kind, {"kind": kind, **value}) for kind, value in
                   (("settings", settings), ("plan", plan), ("environment", environment))]
         self.connection.execute("INSERT INTO runs VALUES(?,?,?,?,?,?)", (run_id, utc_now(), *hashes, code_revision))
+        self._run_plans[run_id]=json.loads(canonical_json(evidence({"kind":"plan",**plan})))
         return run_id
 
     def document(self, source_key):
@@ -367,7 +499,10 @@ class LedgerWriter:
                 raise LedgerError("Aggregate task manifest is not registered")
         elif scope_key is not None and scope_key != version_id:
             raise LedgerError("Document task scope must equal its version ID")
+        control=self.control()
         self.connection.execute("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?)", (identifier, run_id, version_id, scope_key or version_id, stage, operation, ordinal, specification_hash))
+        control['tasks'][identifier]=dict(task_id=identifier,run_id=run_id,version_id=version_id,stage=stage,
+            operation=operation,scope_key=scope_key or version_id,ordinal=ordinal,specification_sha256=specification_hash)
         return identifier
 
     def dependency(self, task_id, producer_task_id, input_role):
@@ -381,14 +516,22 @@ class LedgerWriter:
 
     def attempt(self, task_id, *, worker_id, device_id, fingerprint, inputs, settings, tools):
         self._owner(); validate_id(task_id)
-        if self.connection.execute("""SELECT 1 FROM attempts a WHERE task_id=? AND NOT EXISTS
-          (SELECT 1 FROM events e WHERE e.attempt_id=a.attempt_id AND e.event_kind='lifecycle' AND e.status IN ('ok','skipped','failed'))""", (task_id,)).fetchone():
+        control=self.control()
+        previous=control['latest'].get(task_id)
+        if previous and control['status'].get(previous) not in TERMINAL_STATUSES:
             raise LedgerError("Task already has an active attempt")
-        number = self.connection.execute("SELECT COALESCE(MAX(attempt_number),0)+1 FROM attempts WHERE task_id=?", (task_id,)).fetchone()[0]
+        number=control['numbers'].get(task_id,0)+1
         identifier = new_id()
         hashes = [self.snapshot(kind, {"kind": kind, **value}) for kind, value in
                   (("fingerprint", fingerprint), ("inputs", inputs), ("settings", settings), ("tools", tools))]
-        self.connection.execute("INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?,?,?)", (identifier, task_id, number, worker_id, device_id, new_id(), *hashes, utc_now()))
+        lease=new_id()
+        created_at=utc_now()
+        self.connection.execute("INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?,?,?)", (identifier, task_id, number, worker_id, device_id, lease, *hashes, created_at))
+        control['attempts'][identifier]=dict(attempt_id=identifier,task_id=task_id,attempt_number=number,
+            worker_id=worker_id,device_id=device_id,lease_token=lease,fingerprint_sha256=hashes[0],
+            input_manifest_sha256=hashes[1],settings_sha256=hashes[2],tools_sha256=hashes[3],created_at=created_at)
+        control['latest'][task_id]=identifier
+        control['numbers'][task_id]=number
         return identifier
 
     def input(self, attempt_id, file_id, role, sha256):
@@ -406,11 +549,11 @@ class LedgerWriter:
         validate_hash(output_manifest_sha256, nullable=True)
         validate_time(started_at); validate_time(finished_at)
         if attempt_id:
-            attempt_task = self.connection.execute("SELECT task_id FROM attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
-            if attempt_task is None or task_id != attempt_task[0]: raise LedgerError("Attempt/task mismatch")
+            attempt_task = self.control()['attempts'].get(attempt_id)
+            if attempt_task is None or task_id != attempt_task['task_id']: raise LedgerError("Attempt/task mismatch")
         if task_id:
-            task = self.connection.execute("SELECT run_id,version_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-            if task is None or task[0] != run_id or task[1] != version_id: raise LedgerError("Task/run/version mismatch")
+            task = self.control()['tasks'].get(task_id)
+            if task is None or task['run_id'] != run_id or task['version_id'] != version_id: raise LedgerError("Task/run/version mismatch")
         if file_id:
             artifact = self.connection.execute("SELECT version_id,producer_attempt_id FROM files WHERE file_id=?", (file_id,)).fetchone()
             if artifact is None or artifact[0] != version_id: raise LedgerError("File/version mismatch")
@@ -425,8 +568,8 @@ class LedgerWriter:
             if status in ("running", *TERMINAL_STATUSES) and not attempt_id:
                 raise LedgerError("Running/terminal lifecycle requires an attempt")
             if attempt_id:
-                last = self.connection.execute("SELECT status FROM events WHERE attempt_id=? AND event_kind='lifecycle' ORDER BY event_id DESC LIMIT 1", (attempt_id,)).fetchone()
-                if last and last[0] in TERMINAL_STATUSES: raise LedgerError("Attempt is already terminal")
+                last = self.control()['status'].get(attempt_id)
+                if last in TERMINAL_STATUSES: raise LedgerError("Attempt is already terminal")
                 if status == "planned" and last: raise LedgerError("Cannot regress an attempt to planned")
         payload = evidence(details or {})
         validate_evidence(payload)
@@ -446,9 +589,13 @@ class LedgerWriter:
                 self.connection.execute('INSERT INTO event_records VALUES('+','.join('?' for _ in range(18))+')',
                     (identifier,run_id,task_id,version_id,attempt_id,file_id,event_kind,status,reason_code,message,
                      error_type,traceback,started_at,finished_at,duration_ns,output_manifest_sha256,encoded,utc_now()))
+            if event_kind=='lifecycle':self._record_lifecycle(task_id,attempt_id,status,reason_code,message,identifier)
+            if event_kind=='artifact':self._file_presence(file_id,reason_code,identifier)
             return identifier
         cursor = self.connection.execute("""INSERT INTO events(run_id,task_id,version_id,attempt_id,file_id,event_kind,status,reason_code,message,error_type,traceback,started_at,finished_at,duration_ns,output_manifest_sha256,details_json,recorded_at)
           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (run_id, task_id, version_id, attempt_id, file_id, event_kind, status, reason_code, message, error_type, traceback, started_at, finished_at, duration_ns, output_manifest_sha256, encoded, utc_now()))
+        if event_kind=='lifecycle':self._record_lifecycle(task_id,attempt_id,status,reason_code,message,cursor.lastrowid)
+        if event_kind=='artifact':self._file_presence(file_id,reason_code,cursor.lastrowid)
         return cursor.lastrowid
 
     def artifact(self, run_id, stage, kind, uri, *, sha256=None, bytes=None, version_id=None, producer_attempt_id=None, ownership="managed", retention_class="intermediate", presence="present", page_first=None, page_last=None):
@@ -472,8 +619,12 @@ class LedgerWriter:
             if previous[3] == "present" and (changed or absent):
                 self.event(run_id, event_kind="artifact", reason_code="corrupt" if changed else "missing", file_id=previous[0], version_id=previous[1],
                     details={"observation": "legacy_location_bytes_replaced" if changed else "location_observed_missing", "observed_sha256":sha256})
+        catalog=self.file_catalog()
         identifier = new_id()
         self.connection.execute("INSERT INTO files(file_id,version_id,producer_attempt_id,stage,kind,uri,sha256,bytes,ownership,retention_class,page_first,page_last,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", (identifier, version_id, producer_attempt_id, stage, kind, uri, sha256, bytes, ownership, retention_class, page_first, page_last, utc_now()))
+        catalog[identifier]=dict(file_id=identifier,version_id=version_id,producer_attempt_id=producer_attempt_id,
+            stage=stage,kind=kind,uri=uri,sha256=sha256,bytes=bytes,ownership=ownership,
+            retention_class=retention_class,page_first=page_first,page_last=page_last,presence=None,event_id=None)
         self.event(run_id, event_kind="artifact", reason_code=presence, version_id=version_id, file_id=identifier)
         return identifier
 
@@ -493,13 +644,16 @@ class LedgerWriter:
         roles = [(output.get('role', output['kind']), output.get('page_first'), output.get('page_last')) for output in outputs]
         if len(roles) != len(set(roles)): raise LedgerError("Duplicate output role/range")
         registered = []
+        produced = []
         for output in outputs:
             fields = {key: value for key, value in output.items() if key != 'role'}
             file_id = self.artifact(run_id, task[1], version_id=task[0], producer_attempt_id=attempt_id, **fields)
+            produced.append({"file_id":file_id, **fields})
             if self.connection.compact:
                 entry={"file_id":file_id,"fields":sorted(key for key in output if key!='role')}
                 if 'role' in output:entry['role']=output['role']
                 registered.append(entry)
             else:registered.append({"file_id": file_id, **output})
+        self.produced_files[attempt_id] = produced
         manifest = self.snapshot("outputs", {"kind": "outputs", **({"encoding":"registered_files_v1"} if self.connection.compact else {}), "files": registered})
         return self.event(run_id, event_kind="lifecycle", task_id=task_id, version_id=task[0], attempt_id=attempt_id, status=status, reason_code=reason_code, output_manifest_sha256=manifest, details=details, **timing)

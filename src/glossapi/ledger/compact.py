@@ -79,6 +79,10 @@ class LedgerConnection(sqlite3.Connection):
         self.compact=self.storage_version>=2
         if self.storage_version>=3:
             self.path_root=super().execute('SELECT uri FROM path_root').fetchone()[0]
+    @property
+    def event_table(self):
+        return 'event_records' if self.compact else 'events'
+
     def decode(self,value):
         if isinstance(value,bytes) and value.startswith(_TREE_FRAME):
             framed=json.loads(zlib.decompress(value[len(_TREE_FRAME):]))

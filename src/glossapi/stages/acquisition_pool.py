@@ -49,11 +49,14 @@ async def _acquire(stage,request,limiters,domains):
     stage.downloader=downloader
     stage.kernel=downloader.download_file
     stage.rate_limiter=limiter
-    try:
-        async with semaphore:
-            return await stage.run_document_async(request,reporter=ReceiptCollector())
-    finally:
-        for handler in handlers:handler.close()
+    from .execution import producer_hash_scope, seal_output_hashes
+    with producer_hash_scope():
+        try:
+            async with semaphore:
+                result=await stage.run_document_async(request,reporter=ReceiptCollector())
+        finally:
+            for handler in handlers:handler.close()
+        return seal_output_hashes(result,request.work_directory)
 
 
 def _serve(connection,parent_pid,capacity):
@@ -83,8 +86,15 @@ def _serve(connection,parent_pid,capacity):
                 result=replace(result,metrics={**result.metrics,'tools':loaded_tools(),'worker_pid':os.getpid()})
                 request.work_directory.mkdir(parents=True,exist_ok=True)
                 try:
-                    (request.work_directory/'worker-result.json').write_text(json.dumps(asdict(result),ensure_ascii=False))
-                    connection.send((request.task_id,request.attempt_id,request.lease_token))
+                    from .execution import producer_hash_scope, seal_output_hashes, write_text_hashed
+                    import hashlib
+                    with producer_hash_scope():
+                        result=seal_output_hashes(result,request.work_directory)
+                    encoded=json.dumps(asdict(result),ensure_ascii=False)
+                    write_text_hashed(request.work_directory/'worker-result.json',encoded)
+                    data=encoded.encode('utf-8')
+                    connection.send((request.task_id,request.attempt_id,request.lease_token,
+                        'receipt',hashlib.sha256(data).hexdigest(),len(data)))
                 except OSError as error:
                     import errno
                     if error.errno!=errno.ENOSPC:raise
@@ -131,7 +141,9 @@ class AsyncAcquisitionPool:
             result=failed_result(request,'disk_budget_exceeded',OSError(28,'Acquisition scratch quota exhausted')) if len(identity)==4 else read_result(request.work_directory/'worker-result.json')
             if (result.task_id,result.attempt_id,result.lease_token)!=identity[:3]:
                 self.close();raise ValueError('Stale acquisition receipt')
-            if len(identity)==3:result=replace(result,outputs=(*result.outputs,OutputArtifact('worker_receipt','worker-result.json',None,'evidence',False)))
+            if len(identity)!=4:
+                digest,size=identity[4:6] if len(identity)==6 else (None,None)
+                result=replace(result,outputs=(*result.outputs,OutputArtifact('worker_receipt','worker-result.json',None,'evidence',False,digest,size)))
             completed.append((request,result))
         return completed
 

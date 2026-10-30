@@ -20,10 +20,7 @@ def restore_clean_selection(corpus):
     journal=active_journal()
     if not journal or not journal.cutover:return
     selected={};surfaces={}
-    for encoded,settings in journal.writer.connection.execute("SELECT e.details_json,c.json FROM events e JOIN tasks t ON t.task_id=e.task_id "
-            "JOIN attempts a ON a.attempt_id=e.attempt_id JOIN snapshots c ON c.sha256=a.settings_sha256 "
-            "WHERE t.stage='clean' AND t.operation LIKE 'clean.selection%' AND e.event_kind='decision' "
-            "AND EXISTS (SELECT 1 FROM events done WHERE done.attempt_id=a.attempt_id AND done.event_kind='lifecycle' AND done.status='ok') ORDER BY e.event_id"):
+    for encoded,settings in journal.writer.connection.execute(f"SELECT e.details_json,c.json FROM {journal.writer.connection.event_table} e JOIN tasks t ON t.task_id=e.task_id JOIN attempts a ON a.attempt_id=e.attempt_id JOIN snapshots c ON c.sha256=a.settings_sha256 WHERE t.stage='clean' AND t.operation LIKE 'clean.selection%' AND e.event_kind='decision' AND EXISTS (SELECT 1 FROM {journal.writer.connection.event_table} done WHERE done.attempt_id=a.attempt_id AND done.event_kind='lifecycle' AND done.status='ok') ORDER BY e.event_id"):
         digest=json.loads(encoded).get('evidence_sha256')
         row=journal.writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(digest,)).fetchone()
         if row is None:continue

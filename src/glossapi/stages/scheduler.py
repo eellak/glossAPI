@@ -120,6 +120,11 @@ class StreamingScheduler:
         self.high_water = Counter()
         self.cancelled = False
         self.wait_reasons=set()
+        self.output_references = {}
+        self.results = {}
+        self.attempt_counts = Counter()
+        self.package_availability = {}
+        self.task_status = {}
 
     def _wait(self,run,task,operation,reason):
         if (task,reason) in self.wait_reasons:
@@ -130,6 +135,16 @@ class StreamingScheduler:
         self.wait_reasons.add((task,reason))
 
     def _missing_package(self,operation):
+        import importlib.metadata
+        import re
+        key = (operation.stage, snapshot_hash(asdict(operation.specification)))
+        if key in self.package_availability:
+            return self.package_availability[key]
+        missing = self._check_package(operation)
+        self.package_availability[key] = missing
+        return missing
+
+    def _check_package(self, operation):
         import importlib.metadata
         import re
         stage=self.registry[operation.stage]()
@@ -244,6 +259,8 @@ class StreamingScheduler:
         return operations, {operation.key:tasks[index] for index,operation in enumerate(operations)}, row
 
     def _outputs(self, attempt, *, include_deleted=False):
+        if attempt in self.output_references:
+            return self.output_references[attempt]
         prefix=(self.root/'.glossapi/artifacts').as_uri()+'/%'
         rows = self.writer.connection.execute("SELECT * FROM current_file_state WHERE producer_attempt_id=? AND uri LIKE ? AND (presence='present' OR (? AND presence='deleted')) ORDER BY event_id",(attempt,prefix,include_deleted)).fetchall()
         return tuple(ArtifactReference(row['file_id'], row['kind'], local_path(row['uri']), row['sha256'], row['bytes'],
@@ -269,7 +286,7 @@ class StreamingScheduler:
         with self.writer.batch():
             for operation in operations:
                 task = tasks[operation.key]
-                row = self.writer.connection.execute("SELECT a.*,e.status,e.reason_code FROM attempts a LEFT JOIN events e ON e.event_id=(SELECT MAX(event_id) FROM events WHERE attempt_id=a.attempt_id AND event_kind='lifecycle') WHERE a.task_id=? ORDER BY a.attempt_number DESC LIMIT 1",(task,)).fetchone()
+                row = self.writer.connection.execute(f"SELECT a.*,e.status,e.reason_code FROM attempts a LEFT JOIN {self.writer.connection.event_table} e ON e.event_id=(SELECT MAX(event_id) FROM {self.writer.connection.event_table} WHERE attempt_id=a.attempt_id AND event_kind='lifecycle') WHERE a.task_id=? ORDER BY a.attempt_number DESC LIMIT 1",(task,)).fetchone()
                 if row is None:
                     continue
                 if row['status'] == 'running' or row['status'] is None:
@@ -318,6 +335,14 @@ class StreamingScheduler:
         RetentionController(self.writer,self.root,run,frozen_settings).recover()
         done = self._recover(run,tasks,operations) if resume else {}
         terminal = set(done)
+        for operation in operations:
+            self.attempt_counts[operation.key] = self.writer.connection.execute(
+                'SELECT COUNT(*) FROM attempts WHERE task_id=?', (tasks[operation.key],)).fetchone()[0] if resume else 0
+            self.task_status[operation.key] = self.writer.connection.execute(
+                'SELECT status FROM current_task_state WHERE task_id=?', (tasks[operation.key],)).fetchone()[0] if resume else 'planned'
+        for attempt in done.values():
+            self.output_references[attempt] = self._outputs(attempt, include_deleted=True)
+
         if resume and not retry_failed:
             for operation in operations:
                 state=self.writer.connection.execute('SELECT status,reason_code FROM current_task_state WHERE task_id=?',(tasks[operation.key],)).fetchone()
@@ -333,6 +358,7 @@ class StreamingScheduler:
         tools = loaded_tools()
         active_cpu = active_memory = active_disk = 0
         admission_changed = True
+        scratch_frontier = []
         try:
             while len(terminal)<len(operations):
                 completions=[]
@@ -349,17 +375,31 @@ class StreamingScheduler:
                     with self.writer.batch():
                         for request,result in completions:
                             key,complete,operation = self.active.pop(request.attempt_id)
-                            complete(result)
+                            _, destination = complete(result)
+                            self.task_status[key] = result.status
+                            self.results[request.attempt_id] = result
+                            self.output_references[request.attempt_id] = tuple(
+                                ArtifactReference(row['file_id'], row['kind'], local_path(row['uri']), row['sha256'], row['bytes'],
+                                    (row.get('page_first'),row.get('page_last')) if row.get('page_first') else None)
+                                for row in self.writer.produced_files[request.attempt_id]
+                                if local_path(row['uri']).is_relative_to(destination))
                             active_cpu-=operation.cpu_tokens
                             active_memory-=operation.memory_bytes
                             active_disk-=operation.reservation_bytes
                             budget.release(key)
                             self._trace('complete',key=key,attempt_id=request.attempt_id,status=result.status)
                             if result.status=='ok':
+                                scratch_frontier.append(request.attempt_id)
                                 done[key]=request.attempt_id
                                 terminal.add(key)
-                            elif result.reason_code not in ('worker_lost','worker_process_crashed','extract_timeout') or self.writer.connection.execute('SELECT COUNT(*) FROM attempts WHERE task_id=?',(tasks[key],)).fetchone()[0]>=self.retry_limit:
+                            elif result.reason_code not in ('worker_lost','worker_process_crashed','extract_timeout') or self.attempt_counts[key]>=self.retry_limit:
                                 terminal.add(key)
+                if len(scratch_frontier)>=64:
+                    from .retention import retire_completed_scratch
+                    retire_completed_scratch(self.writer,self.root,run,frozen_settings,scratch_frontier,
+                        protected={(done[parent],kind) for child in operations if child.key not in done
+                            for parent,kind,_ in child.inputs if parent in done})
+                    scratch_frontier.clear()
                 self.runner.collect_scratch()
                 if completions and not frozen_settings.get('publication_barriers'):
                     from .retention import retire_downloaded_sources
@@ -465,6 +505,8 @@ class StreamingScheduler:
                             self.writer.event(run,event_kind='heartbeat',reason_code='stage_started',task_id=request.task_id,
                                 attempt_id=request.attempt_id,version_id=request.version_id,details={'lease_token':request.lease_token,
                                 'lease_seconds':60,'reservation_bytes':budget.reservations.get(operation.key,operation.reservation_bytes),'cpu_tokens':operation.cpu_tokens})
+                            self.task_status[operation.key] = 'running'
+                            self.attempt_counts[operation.key] += 1
                             dispatch.append((pool,stage,operation,request,complete))
                     for pool,stage,operation,request,complete in dispatch:
                         self.active[request.attempt_id]=(operation.key,complete,operation)
@@ -489,22 +531,30 @@ class StreamingScheduler:
             for pool in self.pools.values():
                 pool.close()
             # Active attempts remain unfinished; recovery records interruption.
-        counts=Counter(row[0] for row in self.writer.connection.execute('SELECT status FROM current_task_state WHERE run_id=? AND ordinal<?',(run,len(operations))))
+        if scratch_frontier:
+            from .retention import retire_completed_scratch
+            retire_completed_scratch(self.writer,self.root,run,frozen_settings,scratch_frontier,
+                protected={(done[parent],kind) for child in operations if child.key not in done
+                    for parent,kind,_ in child.inputs if parent in done})
+        counts=Counter(self.task_status.values())
         state='cancelled' if self.cancelled else 'waiting' if counts['planned'] or counts['running'] else 'completed_with_failures' if counts['failed'] else 'completed'
         with self.writer.transaction():
             self.writer.event(run,event_kind='run',reason_code='operator_cancelled' if self.cancelled else 'legacy_observed',
-                details={'state':'waiting' if state=='completed' and self.writer.connection.execute("SELECT 1 FROM current_task_state WHERE run_id=? AND status='planned'",(run,)).fetchone() else state,
+                details={'state':'waiting' if state=='completed' and any(task['status']=='planned' for task in self.writer.task_states(run)) else state,
                     'queue_high_water':dict(self.high_water),'result_capacity':2*sum(pool.capacity for pool in self.pools.values())})
         return dict(run_id=run,state=state,counts={status:counts[status] for status in ('planned','running','ok','skipped','failed')},
                     attempts=done,trace=self.trace,queue_high_water=dict(self.high_water),disk=budget.report())
 
     def _skip(self,run,task,operation,reason):
+        self.task_status[operation.key] = 'skipped'
         with self.writer.transaction():
             attempt=self.writer.attempt(task,worker_id='orchestrator',device_id=operation.specification.device_id,
                 fingerprint={'reuse_eligible':False},inputs={'files':[]},settings={},tools={})
             self.writer.finish(run,task,attempt,status='skipped',reason_code=reason)
 
     def result(self,attempt):
+        if attempt in self.results:
+            return self.results[attempt]
         receipt=next(artifact for artifact in self._outputs(attempt) if artifact.kind=='worker_receipt')
         result=read_result(receipt.path)
         return replace(result,outputs=(*result.outputs,__import__('glossapi.stages.contracts',fromlist=['OutputArtifact']).OutputArtifact('worker_receipt','worker-result.json',None,'evidence',False)))

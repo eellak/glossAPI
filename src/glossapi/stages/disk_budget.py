@@ -50,9 +50,11 @@ class DiskBudget:
     def present_bytes(self):
         # Count pathname copies conservatively, while duplicate observations of
         # one pathname do not reserve its bytes several times.
-        return self.writer.connection.execute("""SELECT COALESCE(SUM(bytes),0) FROM
-            (SELECT uri,MAX(bytes) bytes FROM current_file_state WHERE presence='present'
-             AND ownership='managed' GROUP BY uri)""").fetchone()[0]
+        by_path={}
+        for row in self.writer.file_catalog().values():
+            if row['presence']=='present' and row['ownership']=='managed':
+                by_path[row['uri']]=max(by_path.get(row['uri'],0),row['bytes'] or 0)
+        return sum(by_path.values())
 
     def can_reserve(self, amount):
         present=self.present_bytes()

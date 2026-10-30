@@ -13,7 +13,7 @@ from pathlib import Path
 import time
 
 from .contracts import PackageRequirement, PlannedOperation, StagePlan, StageResult, StageSpecification, OutputArtifact
-from .execution import failed_result, freeze_inputs, outputs_in, sha256_file
+from .execution import failed_result, freeze_inputs, outputs_in, sha256_file, remember_written_hash
 from .edits import EditRecorder, text_hash, capture_ocr_edits
 from .receipts import capture_backend_observations
 
@@ -92,7 +92,11 @@ class CleanStage:
                     raise ValueError('Native edit replay does not match stage-one text')
                 # The table removal decision/report and both surfaces are captured
                 # by the native producer before it removes its temporary directory.
-                recorder.transform('native_table_report_removal', output.read_bytes().decode('utf-8'),
+                import hashlib
+                output_bytes = output.read_bytes()
+                output_digest = hashlib.sha256(output_bytes).hexdigest()
+                remember_written_hash(output,output_digest,len(output_bytes))
+                recorder.transform('native_table_report_removal', output_bytes.decode('utf-8'),
                     reason='batch_remove_tables_from_files; captured detailed_table_report.csv')
                 table_report = evidence_dir/'native_stages/stage2_detailed_table_report.csv'
                 with table_report.open(newline='') as stream:
@@ -104,7 +108,7 @@ class CleanStage:
                     raise ValueError('Fresh required noise metrics missing')
                 scores[0] = list(scores[0]); scores[0][0] = source.path.name
                 metrics = {'native_report': metric, 'noise_score': scores[0], 'native_table_decisions':table_decisions,
-                    'native_report_surface_sha256':sha256_file(output),'noise_surface_sha256':sha256_file(source.path if operation=='clean.score_after_ocr' else output)}
+                    'native_report_surface_sha256':output_digest,'noise_surface_sha256':source.sha256 if operation=='clean.score_after_ocr' else output_digest}
             elif operation in ('clean.ocr_artifacts', 'clean.content_debug'):
                 recorder.transform('python_universal_newlines',raw.replace('\r\n','\n').replace('\r','\n'))
                 from ..corpus.phase_clean import _process_combined_ocr_document, DEFAULT_OCR_WORD_REPEAT_WINDOW
@@ -143,7 +147,7 @@ class CleanStage:
             if request.settings.get('debug', 'off') == 'on':
                 write_text_hashed(root/'edit-replacements.json',json.dumps(recorder.replacements, ensure_ascii=False))
             decision = {'operation': operation, 'raw_file_id': source.file_id, 'raw_hash': source.sha256,
-                'clean_hash': text_hash(output.read_bytes().decode('utf-8')), 'edits': recorder.receipt() if request.settings.get('debug', 'off') == 'on' else recorder.summary(),
+                'clean_hash': output_digest if operation in ('clean.initial','clean.score_after_ocr') else text_hash(output.read_bytes().decode('utf-8')), 'edits': recorder.receipt() if request.settings.get('debug', 'off') == 'on' else recorder.summary(),
                 'edit_detail': 'spans' if request.settings.get('debug', 'off') == 'on' else 'per_rule_summary',
                 'measurements': metrics, 'backend_observations': observations}
             outputs = []

@@ -414,6 +414,7 @@ def test_full_run_resumes_retention_without_repeating_committed_work(tmp_path,bo
     source=simple_pdf(tmp_path/'source.pdf')
     corpus=Corpus(tmp_path/'empty',tmp_path/'output');saved={}
     def interrupt_collection(controller,rows):
+        if not (corpus.output_dir/'export.jsonl').exists():return
         saved['run_id']=controller.run_id
         saved['export']=(corpus.output_dir/'export.jsonl').read_bytes()
         if boundary=='after_sealing':raise RuntimeError('retention process interrupted')

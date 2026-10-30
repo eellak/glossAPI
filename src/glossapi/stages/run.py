@@ -150,9 +150,8 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
         completed_versions={version for version,keys in per_version.items() if all(key in result['attempts'] for key in keys)}
         for ordinal,operation in enumerate(operations):
             if operation.stage=='download':
-                task=writer.connection.execute('SELECT task_id FROM tasks WHERE run_id=? AND ordinal=?',
-                    (run,ordinal)).fetchone()[0]
-                latest=writer.connection.execute('SELECT a.attempt_id,e.status,e.reason_code,e.message FROM attempts a JOIN events e ON e.event_id=(SELECT MAX(event_id) FROM events WHERE attempt_id=a.attempt_id AND event_kind=\'lifecycle\') WHERE a.task_id=? ORDER BY a.attempt_number DESC LIMIT 1',(task,)).fetchone()
+                task=next(task['task_id'] for task in writer.task_states(run) if task['ordinal']==ordinal)
+                latest=writer.latest_attempt(task)
                 if latest:
                     receipts=[artifact for artifact in engine._outputs(latest['attempt_id']) if artifact.kind=='worker_receipt']
                     download_replays[(operation.document.source_uri,operation.specification.settings['filename_base'])]={
@@ -178,7 +177,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
             # receipts are read for one projection at a time, never prefetched.
             replays.setdefault(key,[]).append((operation.document.version_id,dict(operation.specification.settings),receipt,receipt.path.parent))
         result['sources']=[str(path) for path in selected_sources]
-        failed_versions={row[0] for row in writer.connection.execute("SELECT DISTINCT version_id FROM current_task_state WHERE run_id=? AND status='failed' AND version_id IS NOT NULL",(run,))}
+        failed_versions={task['version_id'] for task in writer.task_states(run) if task['status']=='failed' and task['version_id'] is not None}
         result['document_counts']={'selected':len(per_version),'included':len(completed_versions),
             'omitted':len(per_version)-len(completed_versions),'failed':len(failed_versions)}
         result['plan_hash']=writer.connection.execute('SELECT plan_sha256 FROM runs WHERE run_id=?',(run,)).fetchone()[0]
@@ -197,7 +196,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     files=list(files)
     if resume and not retry_failed:
         writer=corpus._scheduler_writer
-        row=writer.connection.execute("SELECT details_json FROM events WHERE run_id=? AND event_kind='run' ORDER BY event_id DESC LIMIT 1",(resume,)).fetchone()
+        row=writer.connection.execute(f"SELECT details_json FROM {writer.connection.event_table} WHERE run_id=? AND event_kind='run' ORDER BY event_id DESC LIMIT 1",(resume,)).fetchone()
         digest=json.loads(row[0]).get('result_sha256') if row else None
         if digest:
             from ..ledger.encoding import snapshot_hash
@@ -290,19 +289,32 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     with committed_results(replays):
         for stage in ('download','extract','clean','sections','annotate','export'):
             if stage in stages or (stage=='download' and corpus._streaming_download_manifest):
+                published=False
                 if not result['sources'] and stage not in ('download','export'):
                     skip_barrier(corpus,result['run_id'],stage)
                 else:
-                    publish_barrier(corpus,result['run_id'],stage,calls[stage],retry_failed=retry_failed,
+                    published=publish_barrier(corpus,result['run_id'],stage,calls[stage],retry_failed=retry_failed,
                         empty_export=not result['sources'] and stage=='export')
+                # The next compatibility reader has now consumed these private
+                # producer records. Retire at that frontier, not at run close.
+                released_stage = {'clean':'extract','sections':'clean','annotate':'sections'}.get(stage)
+                if released_stage and published:
+                    from .retention import retain_completed_run
+                    attempts = [attempt for key,attempt in result['attempts'].items()
+                        if key.endswith(':'+released_stage)]
+                    retain_completed_run(corpus._scheduler_writer,corpus.output_dir,result['run_id'],
+                        getattr(corpus,'_retention_settings',settings),attempts=attempts,
+                        observer=getattr(corpus,'_retention_observer',None))
     from .retention import retain_completed_run
     writer=corpus._scheduler_writer
     # Every wrapper generation is a child of this fixed publication plan.
-    wrapper_runs=[json.loads(row[0])['wrapper_run_id'] for row in writer.connection.execute("SELECT details_json FROM events WHERE run_id=? AND message LIKE 'wrapper:%'",(result['run_id'],))]
+    wrapper_runs=[json.loads(row[0])['wrapper_run_id'] for row in writer.connection.execute(f"SELECT details_json FROM {writer.connection.event_table} WHERE run_id=? AND event_kind='run' AND message LIKE 'wrapper:%'",(result['run_id'],))]
     all_attempts=list(result['attempts'].values())
     for wrapper in wrapper_runs:
         all_attempts.extend(row[0] for row in writer.connection.execute('SELECT attempt_id FROM attempts a JOIN tasks t USING(task_id) WHERE t.run_id=?',(wrapper,)))
-    retain_completed_run(writer,corpus.output_dir,result['run_id'],getattr(corpus,'_retention_settings',settings),attempts=all_attempts,observer=getattr(corpus,"_retention_observer",None))
+    publication_states=[task['status'] for task in writer.task_states(result['run_id']) if task['operation'].endswith('.compatibility_publish')]
+    if all(status=='ok' for status in publication_states):
+        retain_completed_run(writer,corpus.output_dir,result['run_id'],getattr(corpus,'_retention_settings',settings),attempts=all_attempts,observer=getattr(corpus,"_retention_observer",None))
     from .disk_budget import DiskBudget
     from .retention import retention_summary
     result['disk']=DiskBudget(writer,corpus.output_dir,result['run_id'],getattr(corpus,'_retention_settings',settings)).report()
@@ -312,19 +324,20 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     if output.is_file():
         result['outputs'].append({'kind':'jsonl','path':str(output),'sha256':sha256_file(output),'bytes':output.stat().st_size})
     from collections import Counter
-    counts=Counter(row[0] for row in corpus._scheduler_writer.connection.execute('SELECT status FROM current_task_state WHERE run_id=?',(result['run_id'],)))
+    counts=Counter(task['status'] for task in writer.task_states(result['run_id']))
     result['counts']={status:counts[status] for status in ('planned','running','ok','skipped','failed')}
     result['state']='completed_with_failures' if counts['failed'] else 'completed'
     with corpus._scheduler_writer.transaction():
         corpus._scheduler_writer.event(result['run_id'],event_kind='run',reason_code='legacy_observed',details={'state':result['state'],'result_sha256':corpus._scheduler_writer.snapshot('retained_run_result',{
                 'result':{key:value for key,value in result.items() if key!='trace'},
-                'retained_file_ids':[row['file_id'] for row in corpus._scheduler_writer.connection.execute("SELECT file_id,uri FROM current_file_state WHERE presence='present' AND (ownership='managed' OR ownership='initial_external')") if local_path(row['uri']).is_file()]})})
+                'retained_file_ids':[row['file_id'] for row in writer.file_catalog().values() if row['presence']=='present'
+                    and row['ownership'] in ('managed','initial_external') and local_path(row['uri']).is_file()]})})
     return result
 
 
 def skip_barrier(corpus,run,stage):
     writer=corpus._scheduler_writer
-    task=writer.connection.execute('SELECT * FROM current_task_state WHERE run_id=? AND operation=?',(run,stage+'.compatibility_publish')).fetchone()
+    task=next((task for task in writer.task_states(run) if task['operation']==stage+'.compatibility_publish'),None)
     if task['status'] in ('ok','skipped','failed'):return
     with writer.transaction():
         attempt=writer.attempt(task['task_id'],worker_id='single-publisher',device_id='cpu',fingerprint={'reuse_eligible':False},inputs={'files':[]},settings={},tools={})
@@ -334,20 +347,21 @@ def skip_barrier(corpus,run,stage):
 def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=False):
     """Recover a wrapper commit even if death precedes its barrier commit."""
     writer=corpus._scheduler_writer
-    task=writer.connection.execute('SELECT * FROM current_task_state WHERE run_id=? AND operation=?',(run,stage+'.compatibility_publish')).fetchone()
+    task=next((task for task in writer.task_states(run) if task['operation']==stage+'.compatibility_publish'),None)
     if task is None:
         raise ValueError('Publication barrier is absent from the frozen plan')
     if task['status'] in ('failed','skipped') and not retry_failed:return False
-    unavailable=writer.connection.execute("SELECT 1 FROM task_dependencies d JOIN current_task_state p ON p.task_id=d.producer_task_id WHERE d.task_id=? AND p.operation LIKE '%.compatibility_publish' AND p.stage<>'download' AND p.status<>'ok'",(task['task_id'],)).fetchone()
+    parents=[writer.task_state(row[0]) for row in writer.connection.execute('SELECT producer_task_id FROM task_dependencies WHERE task_id=?',(task['task_id'],))]
+    unavailable=any(parent['operation'].endswith('.compatibility_publish') and parent['stage']!='download' and parent['status']!='ok' for parent in parents)
     if unavailable and not empty_export:
         skip_barrier(corpus,run,stage);return False
-    previous=writer.connection.execute('SELECT * FROM attempts WHERE task_id=? ORDER BY attempt_number DESC LIMIT 1',(task['task_id'],)).fetchone()
-    wrapper=writer.connection.execute("SELECT details_json FROM events WHERE run_id=? AND message=? ORDER BY event_id DESC LIMIT 1",(run,'wrapper:'+stage)).fetchone()
+    previous=writer.latest_attempt(task['task_id'])
+    wrapper=writer.connection.execute(f"SELECT details_json FROM {writer.connection.event_table} WHERE run_id=? AND event_kind='run' AND message=? ORDER BY event_id DESC LIMIT 1",(run,'wrapper:'+stage)).fetchone()
     wrapper_run=json.loads(wrapper[0])['wrapper_run_id'] if wrapper else None
     wrapper_ok=False
     if wrapper_run:
-        wrapper_ok=bool(writer.connection.execute("SELECT 1 FROM events e JOIN tasks t ON t.task_id=e.task_id WHERE e.run_id=? AND t.scope_key LIKE 'corpus:%' AND e.event_kind='lifecycle' AND e.status='ok' AND t.operation IN (?,?) LIMIT 1",
-            (wrapper_run,stage+'.wrapper',stage+'.clean' if stage=='clean' else stage+'.jsonl' if stage=='export' else stage+'.extract')).fetchone())
+        wrapper_operations=(stage+'.wrapper',stage+'.clean' if stage=='clean' else stage+'.jsonl' if stage=='export' else stage+'.extract')
+        wrapper_ok=any(task['scope_key'].startswith('corpus:') and task['status']=='ok' and task['operation'] in wrapper_operations for task in writer.task_states(wrapper_run))
     if task['status']=='ok':
         for row in writer.connection.execute('SELECT f.uri,i.sha256 FROM attempt_inputs i JOIN files f USING(file_id) WHERE attempt_id=?',(previous['attempt_id'],)):
             path=local_path(row['uri'])
@@ -377,18 +391,18 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
             return False
         finally:
             corpus._scheduler_publication=None
-        wrapper=writer.connection.execute("SELECT details_json FROM events WHERE run_id=? AND message=? ORDER BY event_id DESC LIMIT 1",(run,'wrapper:'+stage)).fetchone()
+        wrapper=writer.connection.execute(f"SELECT details_json FROM {writer.connection.event_table} WHERE run_id=? AND event_kind='run' AND message=? ORDER BY event_id DESC LIMIT 1",(run,'wrapper:'+stage)).fetchone()
         wrapper_run=json.loads(wrapper[0])['wrapper_run_id']
     else:
         attempt=previous['attempt_id']
     outputs=writer.connection.execute("SELECT f.* FROM files f JOIN attempts a ON a.attempt_id=f.producer_attempt_id JOIN tasks t ON t.task_id=a.task_id WHERE t.run_id=? AND f.uri LIKE ?",(wrapper_run,(Path(corpus.output_dir).resolve()/'.glossapi/artifacts').as_uri()+'/%')).fetchall()
     wrapper_operation={'download':'download.wrapper','extract':'extract.wrapper','clean':'clean.clean','sections':'sections.wrapper','annotate':'annotate.wrapper','export':'export.jsonl'}[stage]
-    outcome=writer.connection.execute('SELECT status,reason_code FROM current_task_state WHERE run_id=? AND operation=?',(wrapper_run,wrapper_operation)).fetchone()
+    outcome=next((task for task in writer.task_states(wrapper_run) if task['operation']==wrapper_operation),None)
     with writer.transaction():
         for index,row in enumerate(outputs):
             path=local_path(row['uri'])
-            if not path.is_file() or sha256_file(path)!=row['sha256']:
-                raise ValueError('Publication artifact is absent or corrupt')
+            if not path.is_file():
+                raise ValueError('Publication artifact is absent')
             writer.input(attempt,row['file_id'],'published:'+str(index),row['sha256'])
         if stage=='extract':
             for source in writer.connection.execute("SELECT DISTINCT i.file_id,i.sha256 FROM attempt_inputs i JOIN attempts a USING(attempt_id) JOIN tasks t USING(task_id) JOIN files f USING(file_id) WHERE t.run_id=? AND f.kind IN ('download_payload','source_payload','initial_input')",(wrapper_run,)):

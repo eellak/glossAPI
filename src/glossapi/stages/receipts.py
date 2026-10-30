@@ -94,8 +94,9 @@ def acquired_receipt(url, path, source_observable):
     state = _transport_receipts.get()
     if state is None:
         return
-    from .execution import sha256_file
+    from .execution import sha256_file, remember_written_hash
     digest, size = sha256_file(path), path.stat().st_size
+    remember_written_hash(path, digest, size)
     state["acquisitions"].append({"requested_url": url, "stored_sha256": digest, "stored_bytes": size,
         "source_sha256": digest if source_observable else None, "source_entity_bytes": size if source_observable else None,
         "wire_bytes": None, "source_hash_unavailable_reason": None if source_observable else "original_entity_not_observable",

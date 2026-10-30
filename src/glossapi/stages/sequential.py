@@ -48,28 +48,24 @@ class SequentialStageRunner:
 
     def verify_projection(self,stage,document,specification,run_id,result):
         """A cache projection is an exact reader of its supplied alias inputs."""
-        from ..ledger.writer import new_id
-        if result.status!='ok':return
-        for artifact in document.artifacts:
-            if artifact.path.stat().st_size!=artifact.bytes or sha256_file(artifact.path)!=artifact.sha256:
-                raise ValueError('Projection input hash changed')
-        source=self.writer.connection.execute("SELECT task_id FROM attempts WHERE attempt_id=? AND EXISTS (SELECT 1 FROM events WHERE attempt_id=? AND event_kind='lifecycle' AND status='ok')",(result.attempt_id,result.attempt_id)).fetchone()
-        if not source:raise ValueError('Projection producer is not successful')
+        from .products import active_journal
+        journal = active_journal()
+        if result.status != 'ok' or journal is None:
+            return
+        # This wrapper consumes an alias of a committed producer. Bind those
+        # inputs on the existing wrapper attempt, without a replay-only task.
         with self.writer.transaction():
-            task=self.writer.task(run_id,stage.name,specification.operation+'.compatibility_projection:'+new_id(),
-                {'source_attempt_id':result.attempt_id,'verification':'same document version and exact input hashes'},version_id=document.version_id)
-            self.writer.dependency(task,source[0],'verified_producer')
-            inputs=[{'file_id':artifact.file_id,'sha256':artifact.sha256} for artifact in document.artifacts]
-            attempt=self.writer.attempt(task,worker_id='compatibility-verifier',device_id='cpu',
-                fingerprint={'source_attempt_id':result.attempt_id,'reuse_eligible':False},inputs={'files':inputs},settings={},tools={})
-            for index,artifact in enumerate(document.artifacts):
-                self.writer.input(attempt,artifact.file_id,specification.input_roles[index],artifact.sha256)
-            self.writer.finish(run_id,task,attempt,status='ok',reason_code=stage.name+'_completed',
-                details={'source_attempt_id':result.attempt_id,'verification':'committed result projected without kernel execution'})
+            for artifact in document.artifacts:
+                self.writer.connection.execute(
+                    'INSERT OR IGNORE INTO attempt_inputs VALUES(?,?,?,?)',
+                    (journal.attempt_id, artifact.file_id, 'projection:'+artifact.file_id, artifact.sha256))
 
     async def execute_async(self, stage, document, specification, **options):
         request, complete = self.prepare(stage, document, specification, **options)
-        result = await stage.run_document_async(request, reporter=ReceiptCollector())
+        from .execution import producer_hash_scope, seal_output_hashes
+        with producer_hash_scope():
+            result = await stage.run_document_async(request, reporter=ReceiptCollector())
+            result = seal_output_hashes(result, request.work_directory)
         return complete(result)
 
     def prepare(self, stage, document, specification, *, timeout_seconds=600, tools=None, run_id=None, aggregate=False,
@@ -161,7 +157,7 @@ class SequentialStageRunner:
                 inputs={"files": bound_inputs}, settings=settings, tools=tools)
             for artifact in bound_inputs:
                 self.writer.input(attempt, artifact["file_id"], artifact["role"], artifact["sha256"])
-            lease = self.writer.connection.execute("SELECT lease_token FROM attempts WHERE attempt_id=?", (attempt,)).fetchone()[0]
+            lease = self.writer.control()['attempts'][attempt]['lease_token']
             self.writer.event(run, event_kind="lifecycle", reason_code="stage_started", status="running", task_id=task,
                 version_id=version, attempt_id=attempt, started_at=started_at)
         work = self.root / ".glossapi" / "staging" / attempt
@@ -171,8 +167,7 @@ class SequentialStageRunner:
             expected = (task, attempt, lease)
             if (result.task_id, result.attempt_id, result.lease_token) != expected:
                 raise ValueError("Stale worker result; attempt left interrupted, outputs untrusted")
-            current = self.writer.connection.execute("SELECT a.lease_token FROM attempts a WHERE a.attempt_id=? AND NOT EXISTS (SELECT 1 FROM events e WHERE e.attempt_id=a.attempt_id AND e.event_kind='lifecycle' AND e.status IN ('ok','failed','skipped'))",(attempt,)).fetchone()
-            if current is None or current[0] != lease:
+            if not self.writer.accepts_result(attempt, lease):
                 raise ValueError('Expired worker lease; outputs untrusted')
             records = []
             kinds = {output.kind for output in result.outputs}

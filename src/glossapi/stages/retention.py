@@ -39,19 +39,37 @@ def file_path(row):
 
 def retention_facts(connection, file_id, *, as_of=9223372036854775807):
     """Ledger-only facts shared by deletion and report --why."""
+    # Bulk private releases keep one stage summary and the existing indexed
+    # artifact presence facts, rather than another per-file retention history.
+    released = connection.execute(f"SELECT event_id,details_json FROM {connection.event_table} WHERE file_id=? AND event_kind='artifact' AND reason_code='deleted' ORDER BY event_id DESC LIMIT 1", (file_id,)).fetchone()
+    if released and released[0] <= as_of:
+        detail = json.loads(released[1])
+        if detail.get('private_release_intent'):
+            intent = connection.execute(f'SELECT details_json FROM {connection.event_table} WHERE event_id=?', (detail['private_release_intent'],)).fetchone()
+            summary = json.loads(intent[0])
+            binding = connection.execute('SELECT sha256,bytes FROM files WHERE file_id=?', (file_id,)).fetchone()
+            consumers = [row[0] for row in connection.execute(f"SELECT DISTINCT e.event_id FROM attempt_inputs i JOIN {connection.event_table} e USING(attempt_id) WHERE i.file_id=? AND i.sha256=? AND e.event_kind='lifecycle' AND e.status='ok' AND e.event_id<?", (file_id,binding[0],released[0]))]
+            return dict(policy='private_scratch_after_last_planned_reader', consumer_ok_event_ids=consumers,
+                outstanding_consumers=[], pins=[], declaration={'private_release_summary':True},
+                deletions=[dict(event_id=released[0],reason_code='delete_completed',details={
+                    'file_id':file_id,'sha256':binding[0],'bytes':binding[1],
+                    'deleted_logical_bytes':binding[1], 'summary':summary,
+                    'history':'private_stage_summary'})])
     if getattr(connection,'storage_version',0)>=3:
         compact=connection.execute('SELECT c.*,f.sha256,f.bytes FROM completed_deletions c JOIN files f USING(file_id) WHERE c.file_id=? AND c.event_id<=?',(file_id,as_of)).fetchone()
         if compact:
             fields=('file_id','event_id','run_id','reason_code','deletion_reason','last_consumer_stage','recorded_at','sha256','bytes')
             compact=dict(zip(fields,compact))
-            consumers=[row[0] for row in connection.execute("SELECT DISTINCT e.event_id FROM attempt_inputs i JOIN events e USING(attempt_id) WHERE i.file_id=? AND i.sha256=? AND e.event_kind='lifecycle' AND e.status='ok' AND e.event_id<?",(file_id,compact['sha256'],compact['event_id']))]
+            consumers=[row[0] for row in connection.execute(f"SELECT DISTINCT e.event_id FROM attempt_inputs i JOIN {connection.event_table} e USING(attempt_id) WHERE i.file_id=? AND i.sha256=? AND e.event_kind='lifecycle' AND e.status='ok' AND e.event_id<?",(file_id,compact['sha256'],compact['event_id']))]
             return dict(policy=compact['deletion_reason'],consumer_ok_event_ids=consumers,
                 outstanding_consumers=[],pins=[],declaration={'compact_completed_delete':True,'deletion_reason':compact['deletion_reason']},
                 deletions=[dict(event_id=compact['event_id'],reason_code=compact['reason_code'],
                     details={**compact,'history':'compact_completed_delete','deleted_logical_bytes':compact['bytes']})])
+    retention_table = 'retention_events' if connection.compact else 'events'
+    retention_filter = '' if connection.compact else " AND event_kind='retention'"
     declarations = []
     deletions = []
-    for event in connection.execute("SELECT event_id,reason_code,details_json FROM events WHERE file_id=? AND event_kind='retention' AND event_id<=? ORDER BY event_id", (file_id,as_of)):
+    for event in connection.execute(f"SELECT event_id,reason_code,details_json FROM {retention_table} WHERE file_id=? AND event_id<=?{retention_filter} ORDER BY event_id", (file_id,as_of)):
         value = dict(event_id=event[0], reason_code=event[1], details=json.loads(event[2]))
         if 'retention_plan' in value['details']:
             declarations.append(value['details']['retention_plan'])
@@ -63,7 +81,7 @@ def retention_facts(connection, file_id, *, as_of=9223372036854775807):
             declarations.append(dict(file_id=file_id,sha256=binding[0],bytes=binding[1],**plan))
         else:
             if value['details'].get('intent_event_id') and value['reason_code'] in ('delete_completed','delete_recovered'):
-                intent=connection.execute('SELECT details_json FROM events WHERE event_id=?',(value['details']['intent_event_id'],)).fetchone()
+                intent=connection.execute(f'SELECT details_json FROM {retention_table} WHERE event_id=?',(value['details']['intent_event_id'],)).fetchone()
                 if intent:value['details']={**json.loads(intent[0]),**value['details']}
             if value['details'].get('file_binding') == 'registered_file':
                 binding=connection.execute('SELECT sha256,bytes FROM files WHERE file_id=?',(file_id,)).fetchone()
@@ -74,10 +92,7 @@ def retention_facts(connection, file_id, *, as_of=9223372036854775807):
     consumers, outstanding = [], []
     if plan:
         for task in plan['consumer_task_ids']:
-            fact = connection.execute("""SELECT e.event_id,e.attempt_id FROM events e
-                JOIN attempt_inputs i ON i.attempt_id=e.attempt_id
-                WHERE e.task_id=? AND e.event_kind='lifecycle' AND e.status='ok'
-                AND i.file_id=? AND i.sha256=? AND e.event_id<=? ORDER BY e.event_id DESC LIMIT 1""",
+            fact = connection.execute(f"SELECT e.event_id,e.attempt_id FROM {connection.event_table} e\n                JOIN attempt_inputs i ON i.attempt_id=e.attempt_id\n                WHERE e.task_id=? AND e.event_kind='lifecycle' AND e.status='ok'\n                AND i.file_id=? AND i.sha256=? AND e.event_id<=? ORDER BY e.event_id DESC LIMIT 1",
                 (task, file_id, plan['sha256'],as_of)).fetchone()
             if fact:
                 consumers.append(fact[0])
@@ -122,8 +137,8 @@ class RetentionController:
                 raise ValueError('Unknown planned consumer')
         if not set(waived)<=set(consumers):raise ValueError('Only a declared edge can be waived')
         for task in waived:
-            state=self.connection.execute('SELECT status,reason_code FROM current_task_state WHERE task_id=?',(task,)).fetchone()
-            if tuple(state)!=('skipped','not_in_plan'):raise ValueError('Only explicitly unselected edges can be waived')
+            state=self.writer.task_state(task)
+            if (state['status'],state['reason_code'])!=('skipped','not_in_plan'):raise ValueError('Only explicitly unselected edges can be waived')
         previous = retention_facts(self.connection, file_id)['declaration']
         if previous:
             if previous != plan:
@@ -148,7 +163,7 @@ class RetentionController:
         if not plan:
             return row, facts, reasons
         superseded=plan.get('superseded_by')
-        if superseded and not self.connection.execute("SELECT 1 FROM events WHERE attempt_id=? AND event_kind='lifecycle' AND status='ok'",(superseded,)).fetchone():
+        if superseded and self.writer.control()['status'].get(superseded)!='ok':
             reasons.append('replacement_not_successful')
         if not superseded and (plan['final'] or row['retention_class'] == 'final'):
             reasons.append('final_product')
@@ -167,13 +182,12 @@ class RetentionController:
             reasons.append('outstanding_consumers')
         if not facts['consumer_ok_event_ids']:
             reasons.append('no_successful_consumer')
-        if self.connection.execute("""SELECT 1 FROM attempt_inputs i JOIN current_task_state t
-            ON t.task_id=(SELECT task_id FROM attempts WHERE attempt_id=i.attempt_id)
-            WHERE i.file_id=? AND t.status='running' LIMIT 1""", (file_id,)).fetchone():
+        readers=self.connection.execute('SELECT attempt_id FROM attempt_inputs WHERE file_id=?',(file_id,))
+        if any(self.writer.task_state(self.writer.control()['attempts'][reader[0]]['task_id'])['status']=='running' for reader in readers):
             reasons.append('active_reader')
         # Partial extract success is a historical fact, never release authority.
         for task in plan['consumer_task_ids']:
-            for details, in self.connection.execute("SELECT details_json FROM events WHERE task_id=? AND event_kind='decision'", (task,)):
+            for details, in self.connection.execute(f"SELECT details_json FROM {self.connection.event_table} WHERE task_id=? AND event_kind='decision'", (task,)):
                 digest=json.loads(details).get('evidence_sha256')
                 stored=self.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(digest,)).fetchone()
                 if not stored:continue
@@ -233,7 +247,8 @@ class RetentionController:
         path=file_path(row)
         if path.exists() and not path.is_symlink() and path.stat().st_nlink>1:
             identity=path.stat()
-            for shared in self.connection.execute("SELECT * FROM current_file_state WHERE presence='present' AND uri<>?",(row['uri'],)):
+            for shared in self.writer.file_catalog().values():
+                if shared['presence']!='present' or shared['uri']==row['uri']:continue
                 candidate=file_path(shared)
                 try:other=candidate.lstat()
                 except OSError:continue
@@ -309,7 +324,7 @@ class RetentionController:
                     deletion_reason=('extreme_after_last_planned_reader' if plan['downloaded_source'] else
                         'superseded_generation_after_last_consumer' if plan.get('superseded_by') else
                         'debug_off_after_last_consumer')
-                    consumer=self.connection.execute("SELECT t.stage FROM events e JOIN tasks t USING(task_id) JOIN attempt_inputs i USING(attempt_id) WHERE i.file_id=? AND e.event_kind='lifecycle' AND e.status='ok' ORDER BY e.event_id DESC LIMIT 1",(alias,)).fetchone()
+                    consumer=self.connection.execute(f"SELECT t.stage FROM {self.connection.event_table} e JOIN tasks t USING(task_id) JOIN attempt_inputs i USING(attempt_id) WHERE i.file_id=? AND e.event_kind='lifecycle' AND e.status='ok' ORDER BY e.event_id DESC LIMIT 1",(alias,)).fetchone()
                     if consumer is None:raise ValueError('Completed deletion lacks an exact successful consumer')
                     from ..ledger.writer import utc_now
                     event_id=self.writer.next_event_id;self.writer.next_event_id+=1
@@ -380,10 +395,13 @@ class RetentionController:
             self._prune_completed_policies()
 
     def recover(self):
+        recover_private_releases(self)
         self._prune_completed_policies()
-        intents = list(self.connection.execute("""SELECT event_id,file_id FROM events e
-            WHERE event_kind='retention' AND reason_code='delete_planned' AND NOT EXISTS
-            (SELECT 1 FROM events c WHERE c.file_id=e.file_id AND c.event_id>e.event_id
+        table = 'retention_events' if self.connection.compact else 'events'
+        retention_filter = '' if self.connection.compact else " AND e.event_kind='retention'"
+        intents = list(self.connection.execute(f"""SELECT event_id,file_id FROM {table} e
+            WHERE reason_code='delete_planned' AND file_id IS NOT NULL {retention_filter} AND NOT EXISTS
+            (SELECT 1 FROM {table} c WHERE c.file_id=e.file_id AND c.event_id>e.event_id
              AND c.reason_code IN ('delete_completed','delete_recovered','delete_failed'))"""))
         # The dead writer may have committed its NORMAL intent and died while
         # flushing consumers, before its FULL barrier. Never infer durability
@@ -445,17 +463,27 @@ def retain_completed_run(writer,root,run_id,settings=None,*,attempts=None,cleanu
         if row['kind']=='download_payload' and not writer.connection.execute('SELECT 1 FROM attempt_inputs WHERE file_id=?',(row['file_id'],)).fetchone():continue
         # Worker receipts are recovery frontiers and must remain replayable.
         if row['kind'] in ('worker_receipt','generation_manifest','ocr_native','ocr_page_state'):continue
-        producer=writer.connection.execute("SELECT status FROM current_task_state WHERE task_id=(SELECT task_id FROM attempts WHERE attempt_id=?)",(row['producer_attempt_id'],)).fetchone()
-        if not producer or producer[0]!='ok':continue
+        producer=writer.control()['attempts'].get(row['producer_attempt_id'])
+        if not producer or writer.task_state(producer['task_id'])['status']!='ok':continue
         if row['stage']=='extract':
             from ..ledger.encoding import unpack_evidence
             partial=False
-            for detail, in writer.connection.execute("SELECT details_json FROM events WHERE attempt_id=? AND event_kind='decision'",(row['producer_attempt_id'],)):
+            for detail, in writer.connection.execute(f"SELECT details_json FROM {writer.connection.event_table} WHERE attempt_id=? AND event_kind='decision'",(row['producer_attempt_id'],)):
                 digest=json.loads(detail).get('evidence_sha256')
                 stored=writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(digest,)).fetchone()
                 if stored and unpack_evidence(json.loads(stored[0])).get('coverage_allows_source_release') is False:partial=True
             if partial:continue
         candidates.append(row)
+    private_candidates = [row for row in candidates if file_path(row).is_relative_to(private)
+        and row['retention_class']=='intermediate' and row['kind']!='download_payload'
+        and not (controller.settings['memory_saving']=='extreme' and row['kind']=='source_snapshot')]
+    # Freeze future publication readers: only unconsumed snapshots/diagnostics
+    # can retire during the DAG. Other outputs reach this function after their
+    # compatibility publication frontier is complete.
+    if private_candidates:
+        release_private_scratch(controller, private_candidates)
+        released = {row['file_id'] for row in private_candidates}
+        candidates = [row for row in candidates if row['file_id'] not in released]
     by_stage=defaultdict(list)
     for row in candidates:
         if not retention_facts(writer.connection,row['file_id'])['declaration']:by_stage[row['stage']].append(row)
@@ -487,20 +515,35 @@ def defer_owned_cleanup(corpus,path):
 
 def retention_summary(connection,run=None):
     groups={}
-    for kind,presence,size in connection.execute("SELECT kind,presence,COALESCE(SUM(bytes),0) FROM current_file_state GROUP BY kind,presence"):
-        group=groups.setdefault(kind,dict(present=0,deleted=0,missing=0,corrupt=0,pinned=0))
-        group[presence]=size
-    for kind,size in connection.execute("SELECT kind,COALESCE(SUM(bytes),0) FROM current_file_state WHERE presence='present' AND (ownership<>'managed' OR retention_class IN ('initial','final','evidence','recovery')) GROUP BY kind"):
-        groups[kind]['pinned']=size
+    owner=getattr(connection,'owner_writer',None)
+    deleted_paths={}
+    if owner is not None:
+        for row in owner.file_catalog().values():
+            group=groups.setdefault(row['kind'],dict(present=0,deleted=0,missing=0,corrupt=0,pinned=0))
+            size=row['bytes'] or 0
+            group[row['presence']]=group.get(row['presence'],0)+size
+            if row['presence']=='present' and (row['ownership']!='managed' or row['retention_class'] in ('initial','final','evidence','recovery')):
+                group['pinned']+=size
+            if row['presence']=='deleted':
+                deleted_paths[row['uri']]=max(deleted_paths.get(row['uri'],0),size)
+        deleted=sum(deleted_paths.values())
+    else:
+        # Read-only reports reconstruct from the ledger; running control uses
+        # the owner's append-driven catalog instead of repeated SQL censuses.
+        for kind,presence,size in connection.execute("SELECT kind,presence,COALESCE(SUM(bytes),0) FROM current_file_state GROUP BY kind,presence"):
+            group=groups.setdefault(kind,dict(present=0,deleted=0,missing=0,corrupt=0,pinned=0))
+            group[presence]=size
+        for kind,size in connection.execute("SELECT kind,COALESCE(SUM(bytes),0) FROM current_file_state WHERE presence='present' AND (ownership<>'managed' OR retention_class IN ('initial','final','evidence','recovery')) GROUP BY kind"):
+            groups[kind]['pinned']=size
+        deleted=connection.execute("SELECT COALESCE(SUM(bytes),0) FROM (SELECT uri,MAX(bytes) bytes FROM current_file_state WHERE presence='deleted' GROUP BY uri)").fetchone()[0]
     settings={};resources=dict(present_bytes=None,reserved_bytes=None,free_bytes=None)
     if run:
         stored=connection.execute('SELECT json FROM snapshots WHERE sha256=?',(run['settings_sha256'],)).fetchone()
         if stored:settings=json.loads(stored[0])
-        latest=connection.execute("SELECT details_json FROM events WHERE run_id=? AND event_kind='run' ORDER BY event_id DESC LIMIT 1",(run['run_id'],)).fetchone()
+        latest=connection.execute(f"SELECT details_json FROM {connection.event_table} WHERE run_id=? AND event_kind='run' ORDER BY event_id DESC LIMIT 1",(run['run_id'],)).fetchone()
         reference=json.loads(latest[0]).get('result_sha256') if latest else None
         recorded=connection.execute('SELECT json FROM snapshots WHERE sha256=?',(reference,)).fetchone()
         if recorded:resources=json.loads(recorded[0])['result'].get('disk',resources)
-    deleted=connection.execute("SELECT COALESCE(SUM(bytes),0) FROM (SELECT uri,MAX(bytes) bytes FROM current_file_state WHERE presence='deleted' GROUP BY uri)").fetchone()[0]
     return dict(settings={key:settings.get(key,default) for key,default in [('debug','off'),('memory_saving','normal')]},
         source_exception=MEMORY_SAVING_HELP,by_kind_bytes=groups,deleted_logical_bytes=deleted,resources=resources,
         disk_budget_bytes=settings.get('disk_budget_bytes'),free_space_basis='last recorded statvfs resource observation; report does not scan payloads')
@@ -517,9 +560,9 @@ def retire_downloaded_sources(writer,root,run_id,settings):
     run=writer.connection.execute('SELECT plan_sha256 FROM runs WHERE run_id=?',(run_id,)).fetchone()
     plan=json.loads(writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',run).fetchone()[0])
     operations=plan.get('operations',[])
-    tasks={row['ordinal']:row for row in writer.connection.execute('SELECT * FROM current_task_state WHERE run_id=?',(run_id,))}
+    tasks={row['ordinal']:row for row in writer.task_states(run_id)}
     versions={value['document']['version_id'] for value in operations if value['stage']=='download'}
-    publication=writer.connection.execute("SELECT * FROM current_task_state WHERE run_id=? AND operation='extract.compatibility_publish'",(run_id,)).fetchone()
+    publication=next((task for task in writer.task_states(run_id) if task['operation']=='extract.compatibility_publish'),None)
     if publication and publication['status']!='ok':return
     # The original payload and byte-identical staging snapshots are one source
     # footprint; extreme must not leave a hidden whole-PDF copy behind.
@@ -541,8 +584,8 @@ def retire_downloaded_sources(writer,root,run_id,settings):
         # Verify source-hash bindings and full coverage on the real readers.
         valid=True
         for task in readers:
-            if not writer.connection.execute("SELECT 1 FROM attempt_inputs i JOIN attempts a USING(attempt_id) JOIN events e USING(attempt_id) WHERE a.task_id=? AND i.sha256=? AND e.event_kind='lifecycle' AND e.status='ok'",(task,digest)).fetchone():valid=False
-            for detail, in writer.connection.execute("SELECT details_json FROM events WHERE task_id=? AND event_kind='decision'",(task,)):
+            if not writer.connection.execute(f"SELECT 1 FROM attempt_inputs i JOIN attempts a USING(attempt_id) JOIN {writer.connection.event_table} e USING(attempt_id) WHERE a.task_id=? AND i.sha256=? AND e.event_kind='lifecycle' AND e.status='ok'",(task,digest)).fetchone():valid=False
+            for detail, in writer.connection.execute(f"SELECT details_json FROM {writer.connection.event_table} WHERE task_id=? AND event_kind='decision'",(task,)):
                 reference=json.loads(detail).get('evidence_sha256')
                 stored=writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(reference,)).fetchone()
                 if stored:
@@ -559,3 +602,107 @@ def retire_downloaded_sources(writer,root,run_id,settings):
             exact=[task for task in readers if writer.connection.execute("SELECT 1 FROM attempt_inputs i JOIN attempts a USING(attempt_id) WHERE a.task_id=? AND i.file_id=? AND i.sha256=?",(task,row['file_id'],digest)).fetchone()]
             controller.declare(row['file_id'],[*exact,sealer],source=True)
         controller.delete_many([row['file_id'] for row in rows])
+
+
+def _unlink_private_file(controller, row, intent):
+    """Unlink only a producer-owned, unexposed regular private file; no rehash."""
+    path = file_path(row)
+    private = controller.root/'.glossapi/artifacts'
+    if (row['ownership']!='managed' or not row['producer_attempt_id']
+            or row['retention_class']!='intermediate' or not path.is_relative_to(private)
+            or row['kind']=='download_payload'):
+        raise ValueError('Bulk release requires unexposed producer-owned scratch')
+    relative=path.relative_to(controller.root)
+    descriptor=os.open(controller.root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    try:
+        try:
+            for component in relative.parts[:-1]:
+                child=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=descriptor)
+                os.close(descriptor);descriptor=child
+            info=os.stat(relative.name,dir_fd=descriptor,follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1:
+                raise ValueError('Private scratch identity is ambiguous')
+            os.unlink(relative.name,dir_fd=descriptor)
+            os.fsync(descriptor)
+            controller.fault('after_unlink',row['file_id'])
+        except FileNotFoundError:
+            os.fsync(descriptor)
+        controller.writer.event(controller.run_id,event_kind='artifact',reason_code='deleted',
+            file_id=row['file_id'],version_id=row['version_id'],
+            details={'private_release_intent':intent})
+    finally:
+        os.close(descriptor)
+
+
+def _finish_private_release(controller, intent, detail):
+    connection=controller.connection
+    manifest=json.loads(connection.execute('SELECT json FROM snapshots WHERE sha256=?',
+        (detail['manifest_sha256'],)).fetchone()[0])
+    for offset in range(0,len(manifest['file_ids']),128):
+        with controller.writer.batch():
+            for file_id in manifest['file_ids'][offset:offset+128]:
+                row=connection.execute('SELECT * FROM current_file_state WHERE file_id=?',(file_id,)).fetchone()
+                if row['presence']=='deleted':continue
+                _unlink_private_file(controller,row,intent)
+    with controller.writer.transaction():
+        controller.writer.event(controller.run_id,event_kind='retention',reason_code='delete_completed',
+            message='private_stage_release',details={**detail,'intent_event_id':intent})
+
+
+def release_private_scratch(controller, rows):
+    """Group release after the producer/last planned reader; retain all hashes."""
+    if controller.settings['debug']=='on':return
+    by_stage=defaultdict(list)
+    for row in rows:
+        producer=controller.writer.control()['status'].get(row['producer_attempt_id'])=='ok'
+        readers=controller.connection.execute('SELECT attempt_id FROM attempt_inputs WHERE file_id=?',(row['file_id'],))
+        unfinished=any(controller.writer.task_state(controller.writer.control()['attempts'][reader[0]]['task_id'])['status'] not in (None,'ok') for reader in readers)
+        ready=True
+        for reader in controller.writer.planned_readers(controller.run_id,row):
+            status,reason=controller.writer.reader_state(reader)
+            if status=='skipped' and reason=='not_in_plan':continue
+            if status!='ok':ready=False;break
+            exact=controller.connection.execute(f"SELECT 1 FROM attempt_inputs i JOIN attempts a USING(attempt_id) JOIN {controller.connection.event_table} e USING(attempt_id) WHERE a.task_id=? AND i.file_id=? AND i.sha256=? AND e.event_kind='lifecycle' AND e.status='ok' LIMIT 1",(reader,row['file_id'],row['sha256'])).fetchone()
+            if not exact:ready=False;break
+        if producer and not unfinished and ready:
+            by_stage[row['stage']].append(row)
+    for stage,files in by_stage.items():
+        with controller.writer.transaction():
+            manifest=controller.writer.snapshot('private_release_manifest',{'file_ids':[row['file_id'] for row in files],
+                'planned_reader_task_ids':sorted({reader for row in files for reader in controller.writer.planned_readers(controller.run_id,row)})})
+            detail={'stage':stage,'file_count':len(files),'bytes':sum(row['bytes'] for row in files),
+                'manifest_sha256':manifest,'policy':'private_scratch_after_last_planned_reader',
+                'producer_attempt_ids':sorted({row['producer_attempt_id'] for row in files})}
+            intent=controller.writer.event(controller.run_id,event_kind='retention',reason_code='delete_planned',
+                message='private_stage_release',details=detail)
+        controller.writer.durable_barrier()
+        controller.fault('after_intent', files[0]['file_id'])
+        _finish_private_release(controller,intent,detail)
+
+
+def recover_private_releases(controller):
+    connection=controller.connection
+    rows=connection.execute(f"SELECT event_id,details_json FROM {connection.event_table} e WHERE run_id=? AND event_kind='retention' AND reason_code='delete_planned' AND message='private_stage_release'", (controller.run_id,)).fetchall()
+    if rows:controller.writer.durable_barrier()
+    # details_json can be compressed physically, so match completion links using
+    # the decoded public row values rather than SQLite JSON extraction.
+    for intent,encoded in rows:
+        detail=json.loads(encoded)
+        completed=False
+        for value, in connection.execute(f"SELECT details_json FROM {connection.event_table} WHERE run_id=? AND reason_code='delete_completed' AND message='private_stage_release' AND event_id>?",(controller.run_id,intent)):
+            if json.loads(value).get('intent_event_id')==intent:completed=True;break
+        if not completed:_finish_private_release(controller,intent,detail)
+
+
+def retire_completed_scratch(writer, root, run, settings, attempts, *, protected=()):
+    """During the DAG, only outputs with no planned publication reader retire."""
+    if settings.get('debug','off')=='on':return
+    rows=[]
+    for attempt in attempts:
+        for row in writer.connection.execute("SELECT * FROM current_file_state WHERE producer_attempt_id=? AND presence='present' AND retention_class='intermediate'",(attempt,)):
+            if (attempt,row['kind']) in protected:continue
+            if row['kind'] not in ('source_snapshot','attempt_diagnostic'):continue
+            if settings.get('memory_saving')=='extreme' and row['kind']=='source_snapshot':continue
+            if not file_path(row).is_relative_to(Path(root).resolve()/'.glossapi/artifacts'):continue
+            rows.append(row)
+    release_private_scratch(RetentionController(writer,root,run,settings),rows)

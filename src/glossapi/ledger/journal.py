@@ -136,7 +136,7 @@ def observe_source_rows(frame, path, *, url_column="url"):
     if journal is not None and journal.owner_pid == os.getpid(): journal.source_rows(frame, Path(path), url_column=url_column)
 
 
-def inventory(root):
+def inventory(root, produced=()):
     result = {}
     if not Path(root).exists(): return result
     for directory, directories, names in os.walk(root):
@@ -148,6 +148,8 @@ def inventory(root):
             if ".glossapi" in path.relative_to(root).parts:
                 continue
             if not path.is_file() or path.name in ("corpus.sqlite3", "corpus.sqlite3-wal", "corpus.sqlite3-shm") or path.suffix in (".log", ".lock"):
+                continue
+            if str(path.absolute()) in produced:
                 continue
             result[str(path.absolute())] = {"sha256": file_hash(path), "bytes": path.stat().st_size}
     return result
@@ -178,7 +180,9 @@ class ResultJournal:
             from ..stages.metadata import restore_metadata_projections
             restore_metadata_projections(self)
         self.started_at, self.started_ns = utc_now(), time.monotonic_ns()
-        self.before = inventory(corpus.output_dir)
+        # Producer-bound products already have their immutable byte receipts.
+        # Inventory still observes unknown/external files in shadow mode.
+        self.before = self.inventory()
         self.source_manifests = set()
         self.revision = code_revision()
         with writer.transaction():
@@ -199,7 +203,12 @@ class ResultJournal:
             for ordinal, candidate in enumerate(candidates):
                 path = Path(candidate).absolute()
                 present = path.is_file()
-                uri = path.as_uri(); digest = file_hash(path) if present else None
+                uri = path.as_uri()
+                streaming = getattr(corpus, '_streaming_source_versions', {}).get(str(path))
+                bound = writer.connection.execute(
+                    "SELECT sha256,bytes FROM files WHERE uri=? AND version_id=? ORDER BY rowid DESC LIMIT 1",
+                    (uri, streaming)).fetchone() if streaming else None
+                digest = bound['sha256'] if bound else file_hash(path) if present else None
                 version_id = getattr(corpus,'_streaming_source_versions',{}).get(str(path))
                 if version_id:
                     document_id=writer.connection.execute('SELECT document_id FROM document_versions WHERE version_id=?',(version_id,)).fetchone()[0]
@@ -244,6 +253,14 @@ class ResultJournal:
         original_frame = getattr(corpus, "_shadow_original_source_frame", None)
         if original_frame is not None and corpus.metadata_path is not None:
             self.source_rows(original_frame, Path(corpus.metadata_path), url_column=corpus.url_column)
+
+    def inventory(self):
+        produced = set()
+        if self.cutover:
+            from ..stages.scheduler import local_path
+            produced = {str(local_path(row['uri'])) for row in self.writer.file_catalog().values()
+                if row['producer_attempt_id'] is not None}
+        return inventory(self.corpus.output_dir, produced)
 
     def _register(self, path, receipt, *, producer, kind=None):
         version_id = self.versions.get(str(path.absolute()))
@@ -333,6 +350,10 @@ class ResultJournal:
                 "SELECT 1 FROM files WHERE uri=? AND sha256=? AND producer_attempt_id IS NOT NULL LIMIT 1",
                 (uri, receipt["sha256"])).fetchone():
             return
+        if self.cutover and self.writer.connection.execute(
+                'SELECT 1 FROM files WHERE uri=? AND producer_attempt_id IS NOT NULL LIMIT 1',
+                (path.absolute().as_uri(),)).fetchone():
+            return
         read_error = None
         try:
             decoded = read_store(path, payload_evidence, kind=kind)
@@ -359,7 +380,7 @@ class ResultJournal:
                 "math.triage": {"formula_total","formula_avg_pp","formula_p90_pp","pages_with_formula","pages_total","phase_recommended"}}
             fields_by_operation["clean.score_after_ocr"]=fields_by_operation["clean.initial"]
             for stage,operation,attempt_id,encoded in self.writer.connection.execute(
-                    "SELECT t.stage,t.operation,a.attempt_id,s.json FROM attempts a JOIN tasks t ON t.task_id=a.task_id JOIN snapshots s ON s.sha256=a.settings_sha256 WHERE t.stage IN ('clean','ocr','math') AND EXISTS (SELECT 1 FROM events e WHERE e.attempt_id=a.attempt_id AND e.event_kind='lifecycle' AND e.status='ok') ORDER BY a.rowid"):
+                    f"SELECT t.stage,t.operation,a.attempt_id,s.json FROM attempts a JOIN tasks t ON t.task_id=a.task_id JOIN snapshots s ON s.sha256=a.settings_sha256 WHERE t.stage IN ('clean','ocr','math') AND EXISTS (SELECT 1 FROM {self.writer.connection.event_table} e WHERE e.attempt_id=a.attempt_id AND e.event_kind='lifecycle' AND e.status='ok') ORDER BY a.rowid"):
                 filename=json.loads(encoded).get("compatibility_filename")
                 if filename:
                     for field in fields_by_operation.get(operation.split(".artifact:",1)[0],fields_by_stage[stage]): owners[(filename,field)]=attempt_id
@@ -438,7 +459,7 @@ class ResultJournal:
             from ..stages.metadata import seal_metadata_projections
             seal_metadata_projections(self)
         self.finishing = True
-        after = inventory(self.corpus.output_dir)
+        after = self.inventory()
         for name, receipt in after.items():
             if self.before.get(name) != receipt:
                 # Terminal output registration below owns this file fact. Early
@@ -455,7 +476,9 @@ class ResultJournal:
             if self.cutover and error is None:
                 section_aggregate_published = False
                 for adapter_attempt in self.adapter_attempts:
-                    outcome=self.writer.connection.execute("SELECT e.status,e.reason_code,t.operation FROM events e JOIN attempts a ON a.attempt_id=e.attempt_id JOIN tasks t ON t.task_id=a.task_id WHERE e.attempt_id=? AND e.event_kind='lifecycle' AND e.status IN ('ok','skipped','failed') ORDER BY e.event_id DESC LIMIT 1",(adapter_attempt,)).fetchone()
+                    control=self.writer.control();adapter=control['attempts'].get(adapter_attempt)
+                    outcome={**control['attempt_events'].get(adapter_attempt,{}),'operation':control['tasks'][adapter['task_id']]['operation']} if adapter else None
+                    if outcome and outcome.get('status') not in ('ok','skipped','failed'):outcome=None
                     if outcome and outcome['status']=='failed':status,reason='failed',outcome['reason_code'];break
                     if outcome and outcome['status']=='ok' and outcome['operation']=='sections.publish':
                         section_aggregate_published = True

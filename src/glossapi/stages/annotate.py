@@ -106,8 +106,7 @@ def annotate_products(corpus,annotation_type,fully_annotate):
         producer=journal.writer.connection.execute('SELECT producer_attempt_id FROM files WHERE uri=? AND sha256=? ORDER BY rowid DESC LIMIT 1',
             (section_input.as_uri(),sha256_file(section_input))).fetchone()
         if producer:
-            for encoded, in journal.writer.connection.execute("SELECT e.details_json FROM attempt_inputs i JOIN files f ON f.file_id=i.file_id "
-                    "JOIN events e ON e.attempt_id=f.producer_attempt_id WHERE i.attempt_id=? AND e.event_kind='decision'",(producer[0],)):
+            for encoded, in journal.writer.connection.execute(f"SELECT e.details_json FROM attempt_inputs i JOIN files f ON f.file_id=i.file_id JOIN {journal.writer.connection.event_table} e ON e.attempt_id=f.producer_attempt_id WHERE i.attempt_id=? AND e.event_kind='decision'",(producer[0],)):
                 digest=__import__('json').loads(encoded).get('evidence_sha256')
                 row=journal.writer.connection.execute("SELECT json FROM snapshots WHERE sha256=? AND kind='stage_evidence'",(digest,)).fetchone()
                 if row is None:continue

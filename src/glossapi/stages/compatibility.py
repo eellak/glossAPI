@@ -30,7 +30,11 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
         if signature[1] or signature[-1] is not None:
             raise ValueError("OCR plugin extraction belongs to its separate stage adapter")
         settings.update(images_scale=signature[4], formula_enrichment=signature[5], code_enrichment=signature[6], use_cls=signature[7])
-    reference = ArtifactReference(str(uuid.uuid4()), "source_payload", source, sha256_file(source), source.stat().st_size)
+    from .products import producer_binding
+    journal = _active_journal.get()
+    binding = producer_binding(journal if isinstance(journal, ResultJournal) else None, source)
+    reference = ArtifactReference(str(uuid.uuid4()), "source_payload", source,
+        binding['sha256'] if binding else sha256_file(source), source.stat().st_size)
     with tempfile.TemporaryDirectory(prefix="glossapi-sequential-") as temporary:
         identifiers = [str(uuid.uuid4()) for _ in range(5)]
         request = StageRequest(*identifiers, "extract.document", (reference,), settings, {}, "cpu", Path(temporary)/"attempt",
@@ -68,6 +72,7 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
             workspace = request.work_directory
         # Compatibility products use their original path spellings. This only
         # changes location references in the old serializer's chunk receipts.
+        mirror_hashes = {}
         for output in result.outputs:
             relative = output.relative_path
             if relative.startswith(("logs/", "inputs/")) or output.kind in ("attempt_diagnostic", "worker_receipt"):
@@ -87,21 +92,29 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
             destination = output_dir.parent / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             if output.kind == "chunk_manifest" or (output.kind == "extract_sidecar" and payload.get("chunk_manifest_path")):
-                destination.write_text(serialized_payload)
+                from .execution import write_text_hashed
+                import hashlib
+                write_text_hashed(destination, serialized_payload)
+                data = serialized_payload.encode('utf-8')
+                mirror_hashes[relative] = (hashlib.sha256(data).hexdigest(), len(data))
             else:
-                shutil.copy2(path, destination)
+                from .execution import copy_hashed
+                digest, size = copy_hashed(path, destination)
+                if output.sha256 and (digest, size) != (output.sha256, output.bytes):
+                    raise ValueError('Product changed during final publication')
+                mirror_hashes[relative] = (digest, size)
         if isinstance(journal, ResultJournal):
             with journal.writer.transaction():
                 for output in result.outputs:
                     path = workspace/output.relative_path
                     destination = output_dir.parent/output.relative_path
-                    if not destination.is_file() or output.relative_path.startswith(("inputs/", "logs/")):
+                    if output.relative_path not in mirror_hashes:
                         continue
                     # Compatibility receipts can deliberately re-spell source paths.
                     producer_run=journal.writer.connection.execute('SELECT t.run_id FROM attempts a JOIN tasks t ON t.task_id=a.task_id WHERE a.attempt_id=?',(result.attempt_id,)).fetchone()[0]
                     journal.writer.artifact(producer_run, "extract", output.kind, destination.as_uri(),
-                        version_id=version, producer_attempt_id=result.attempt_id, sha256=sha256_file(destination),
-                        bytes=destination.stat().st_size, ownership="managed", retention_class=output.retention_class)
+                        version_id=version, producer_attempt_id=result.attempt_id, sha256=mirror_hashes[output.relative_path][0],
+                        bytes=mirror_hashes[output.relative_path][1], ownership="managed", retention_class=output.retention_class)
         if not isinstance(journal, ResultJournal) or result.status != 'ok':
             for decision in result.decisions:
                 accept_worker_observations(decision.get("backend_observations", ()))
@@ -125,7 +138,9 @@ def execute_compatibility_stage(corpus, stage, inputs, specification, *, timeout
         with journal.writer.transaction():
             for role, path in inputs:
                 path = Path(path).absolute()
-                digest = sha256_file(path)
+                from .products import producer_binding
+                binding = producer_binding(journal, path)
+                digest = binding['sha256'] if binding else sha256_file(path)
                 fact = journal.writer.connection.execute(
                     "SELECT * FROM current_file_state WHERE uri=? AND sha256=? AND version_id IS NOT NULL AND presence='present' ORDER BY event_id DESC LIMIT 1",
                     (path.as_uri(), digest)).fetchone()
@@ -170,12 +185,15 @@ def materialize_stage_outputs(corpus, result, workspace, paths):
         path = checked_path(workspace, relative)
         destination = Path(destination).absolute()
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, destination)
+        from .execution import copy_hashed
+        digest, size = copy_hashed(path, destination)
         if isinstance(journal, ResultJournal):
             fact = journal.writer.connection.execute('SELECT * FROM files WHERE producer_attempt_id=? AND uri=?',
                 (result.attempt_id, path.as_uri())).fetchone()
             if fact is None:
                 raise ValueError('Cannot materialize unregistered stage output')
+            if (digest,size)!=(fact['sha256'],fact['bytes']):
+                raise ValueError('Product changed during final publication')
             with journal.writer.transaction():
                 producer_run=journal.writer.connection.execute('SELECT t.run_id FROM attempts a JOIN tasks t ON t.task_id=a.task_id WHERE a.attempt_id=?',(result.attempt_id,)).fetchone()[0]
                 journal.writer.artifact(producer_run, fact['stage'], fact['kind'], destination.as_uri(),
@@ -296,7 +314,7 @@ def ocr_compatibility_documents(context, filenames, *, request, page_ranges=None
                 (state.absolute().as_uri(),sha256_file(state))).fetchone()
             if fact and fact[0]:
                 rows=[]
-                for event in journal.writer.connection.execute("SELECT details_json FROM events WHERE attempt_id=? AND event_kind='decision'",(fact[0],)):
+                for event in journal.writer.connection.execute(f"SELECT details_json FROM {journal.writer.connection.event_table} WHERE attempt_id=? AND event_kind='decision'",(fact[0],)):
                     digest=json.loads(event[0]).get('evidence_sha256')
                     if digest:
                         row=journal.writer.connection.execute("SELECT json FROM snapshots WHERE sha256=? AND kind='stage_evidence'",(digest,)).fetchone()

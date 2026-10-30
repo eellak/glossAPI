@@ -40,17 +40,17 @@ def current_product(connection, logical_path):
             cache={'cursor':0,'boundary':None,'products':{}}
             journal.product_projection_index=cache
         if cache['cursor']:
-            boundary=connection.execute('SELECT details_json FROM events WHERE event_id=?',(cache['cursor'],)).fetchone()
+            boundary=connection.execute(f'SELECT details_json FROM {connection.event_table} WHERE event_id=?',(cache['cursor'],)).fetchone()
             if boundary is None or boundary[0]!=cache['boundary']:
                 cache.update(cursor=0,boundary=None,products={})
-        for event_id,encoded in connection.execute("SELECT event_id,details_json FROM events WHERE event_id>? AND reason_code='legacy_observed' AND event_kind='decision' ORDER BY event_id",(cache['cursor'],)):
+        for event_id,encoded in connection.execute(f"SELECT event_id,details_json FROM {connection.event_table} WHERE event_id>? AND reason_code='legacy_observed' AND event_kind='decision' ORDER BY event_id",(cache['cursor'],)):
             digest=json.loads(encoded).get('evidence_sha256')
             row=connection.execute("SELECT json FROM snapshots WHERE sha256=? AND kind='product_projection'",(digest,)).fetchone()
             if row:
                 value=json.loads(row[0]);cache['products'][value['product_uri']]=value
             cache.update(cursor=event_id,boundary=encoded)
         return cache['products'].get(uri)
-    for encoded, in connection.execute("SELECT details_json FROM events WHERE reason_code='legacy_observed' AND event_kind='decision' ORDER BY event_id DESC"):
+    for encoded, in connection.execute(f"SELECT details_json FROM {connection.event_table} WHERE reason_code='legacy_observed' AND event_kind='decision' ORDER BY event_id DESC"):
         digest=json.loads(encoded).get('evidence_sha256')
         row=connection.execute("SELECT json FROM snapshots WHERE sha256=? AND kind='product_projection'",(digest,)).fetchone()
         if row is None: continue
@@ -75,9 +75,24 @@ def resolved_input(corpus, path):
     if not value:
         return path
     selected = local_path(value['immutable_uri'])
-    if not selected.is_file() or sha256_file(selected) != value['sha256']:
+    if not selected.is_file() or (journal is None and sha256_file(selected) != value['sha256']):
         raise ValueError('Committed product is missing or corrupt: '+str(path))
     return selected
+
+
+def producer_binding(journal, path):
+    """Trust a committed producer receipt within its owning execution scope.
+
+    External inputs are hashed by callers; real workers verify every consumed
+    input, and the final mirror publisher checks the copied bytes once.
+    """
+    if journal is None:
+        return None
+    if Path(path).suffix=='.parquet':
+        return None
+    return journal.writer.connection.execute(
+        "SELECT * FROM current_file_state WHERE uri=? AND producer_attempt_id IS NOT NULL AND presence='present' ORDER BY event_id DESC LIMIT 1",
+        (Path(path).absolute().as_uri(),)).fetchone()
 
 
 def execute_aggregate(corpus, stage, inputs, specification):
@@ -85,7 +100,8 @@ def execute_aggregate(corpus, stage, inputs, specification):
     references = []
     for role, given in inputs:
         path = Path(given).absolute()
-        digest = sha256_file(path)
+        binding = producer_binding(journal, path)
+        digest = binding['sha256'] if binding else sha256_file(path)
         file_id = None
         if journal:
             row = journal.writer.connection.execute("SELECT file_id,version_id FROM current_file_state WHERE uri=? AND sha256=? AND presence='present' ORDER BY event_id DESC LIMIT 1", (path.as_uri(),digest)).fetchone()
@@ -162,16 +178,17 @@ def publish_products(corpus,result,workspace,products,*,retire=()):
         source=checked_path(workspace,relative); destination=Path(destination).absolute()
         destination.parent.mkdir(parents=True,exist_ok=True)
         registered=journal.writer.connection.execute('SELECT sha256,bytes FROM files WHERE producer_attempt_id=? AND uri=?',(result.attempt_id,source.as_uri())).fetchone() if journal else None
-        if registered and (source.stat().st_size!=registered['bytes'] or sha256_file(source)!=registered['sha256']):
-            raise ValueError('Product hash changed before final publication')
-        if registered and not destination.is_symlink() and destination.is_file() and destination.stat().st_size==registered['bytes'] and sha256_file(destination)==registered['sha256']:
-            selected.append((source,destination))
-            continue
         with tempfile.NamedTemporaryFile(dir=destination.parent,prefix='.'+destination.name+'.',delete=False) as stream:
             temporary=Path(stream.name)
             try:
-                with source.open('rb') as reader: shutil.copyfileobj(reader,stream)
+                import hashlib
+                digest = hashlib.sha256(); size = 0
+                with source.open('rb') as reader:
+                    for block in iter(lambda:reader.read(1024*1024), b''):
+                        stream.write(block); digest.update(block); size += len(block)
                 stream.flush()
+                if registered and (digest.hexdigest(),size)!=(registered['sha256'],registered['bytes']):
+                    raise ValueError('Product hash changed before final publication')
             except BaseException:
                 temporary.unlink(missing_ok=True);raise
         os.replace(temporary,destination)

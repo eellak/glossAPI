@@ -380,7 +380,7 @@ def test_warm_worker_never_appends_to_published_attempt_logs(tmp_path):
         operations=[operation for operation in graph(writer,tmp_path,3) if operation.stage=='extract']
         operations=[replace(operation,specification=replace(operation.specification,settings={'warn':True})) for operation in operations]
         engine=scheduler(writer,tmp_path,workers={'extract':1})
-        result=engine.execute(engine.freeze(operations))
+        result=engine.execute(engine.freeze(operations, settings={'debug':'on'}))
         assert result['state']=='completed'
         for index in range(3):
             attempt=result['attempts'][f'produce:{index}']

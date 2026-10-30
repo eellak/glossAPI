@@ -58,6 +58,7 @@ def seal_output_hashes(result, root):
         path=checked_path(root,output.relative_path)
         written=produced_hash(path)
         digest,size=written if written else (output.sha256 or sha256_file(path),path.stat().st_size)
+        remember_written_hash(path,digest,size)
         outputs.append(replace(output,sha256=digest,bytes=size))
     return replace(result,outputs=tuple(outputs))
 
@@ -167,9 +168,10 @@ def _worker(stage, request, connection):
         # capacity could deadlock join(). The pipe carries one small sentinel.
         from dataclasses import asdict
         target = request.work_directory / "worker-result.json"
-        with target.open("w", encoding="utf-8") as stream:
-            json.dump(asdict(result), stream, ensure_ascii=False)
-        connection.send(True)
+        encoded = json.dumps(asdict(result), ensure_ascii=False)
+        write_text_hashed(target, encoded)
+        data = encoded.encode('utf-8')
+        connection.send((hashlib.sha256(data).hexdigest(), len(data)))
     finally:
         connection.close()
 
@@ -211,7 +213,8 @@ def run_fenced(stage, request, *, reporter):
         value["decisions"] = tuple(value["decisions"])
         value["error"] = StageError(**value["error"]) if value["error"] else None
         result = StageResult(**value)
-        result = replace(result, outputs=(*result.outputs, OutputArtifact("worker_receipt", "worker-result.json", None, "evidence", False)))
+        digest, size = received
+        result = replace(result, outputs=(*result.outputs, OutputArtifact("worker_receipt", "worker-result.json", None, "evidence", False, digest, size)))
         if (result.task_id, result.attempt_id, result.lease_token) != (request.task_id, request.attempt_id, request.lease_token):
             raise ValueError("Stale worker result")
         for decision in result.decisions:
