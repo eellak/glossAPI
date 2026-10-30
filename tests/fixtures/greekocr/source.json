@@ -1,0 +1,27 @@
+{
+  "source": "Homer, Iliad 1.1-6, ancient Greek original, public domain; manually transcribed for this fixture",
+  "font": "Times New Roman regular",
+  "font_sha256": "f3b4ffff71c2a0c7227d37497683b2498fb2d0a4e8beae26f022e3ccfcaabfa3",
+  "dpi": 300,
+  "image_size": [
+    1500,
+    2000
+  ],
+  "page_size_points": [
+    360,
+    480
+  ],
+  "appearance": "off-white paper, dark grey ink, 0.35px blur; no hidden text layer",
+  "pages": [
+    [
+      "Μῆνιν ἄειδε, θεά, Πηληϊάδεω Ἀχιλῆος",
+      "οὐλομένην, ἣ μυρί᾽ Ἀχαιοῖς ἄλγε᾽ ἔθηκε,",
+      "πολλὰς δ᾽ ἰφθίμους ψυχὰς Ἄϊδι προΐαψεν"
+    ],
+    [
+      "ἡρώων, αὐτοὺς δὲ ἑλώρια τεῦχε κύνεσσιν",
+      "οἰωνοῖσί τε πᾶσι, Διὸς δ᾽ ἐτελείετο βουλή,",
+      "ἐξ οὗ δὴ τὰ πρῶτα διαστήτην ἐρίσαντε"
+    ]
+  ]
+}

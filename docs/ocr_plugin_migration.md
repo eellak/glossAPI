@@ -1,51 +1,102 @@
-# OCR plugin migration — 28 October 2026
+# Greek OCR default
 
-DeepSeek OCR, its `deepseek` install extra, runtime setup, CLI scripts and serving
-controls have been removed. The in-repository C1 OCR plugin and its codec are also
-removed. Install and configure the toolkit's `greekocr` package instead; GlossAPI
-no longer ships an OCR engine or OCR weights. The unused bundled RapidOCR ONNX
-models and ONNX Runtime provider diagnostics have been removed.
+`python install_glossapi.py ocr --device cpu` installs the external
+`greek-ocr-toolkit[docling]` plugin, Docling and the pinned inference dependencies.
+Select `mps` on Apple Silicon for MPS recognition plus CoreML detection, or
+`cuda126` / `cuda132` on Linux (including aarch64) for CUDA recognition plus CPU
+detection. The installer pins the matching Torch/torchvision pair before resolving
+OCR. Standard `onnxruntime` supplies detection; there is no CUDA detector backend.
+The device names select wheel sources; available wheels and actual accelerator
+execution still require qualification on the target machine.
 
-External engines register under Docling's **`docling`** entry-point group. The
-toolkit registers:
+The sole toolkit source pin is `src/glossapi/ocr_package.txt`. Both the installer
+and the dynamic `glossapi[ocr]` wheel extra read that file. Its public GitHub URL
+is marked **PENDING-PUBLIC-SHA** until the coordinator publishes the reviewed
+release. Replace that one requirement line with the public SHA, then rerun the
+CPU smoke. No mirror or glossAPI-side model downloader is used.
 
-```toml
-[project.entry-points."docling"]
-glossapi = "greekocr.deploy.docling_plugin.docling_plugin"
+For development before publication:
+
+```sh
+python install_glossapi.py ocr --device cpu \
+  --ocr-toolkit-source 'git+file:///Users/foivoskarounos-zamparloukos/Projects/greek-ocr-toolkit-main-next@138cff524'
+# On our Linux machines, use file:///absolute/path/to/commit-bound-archive instead.
+# GLOSSAPI_OCR_TOOLKIT_SOURCE supplies the same override without a CLI argument.
 ```
 
-The entry-point module supplies `ocr_engines()`; Docling loads the engine with
-`allow_external_plugins=True`. Obtain configured options from the installed
-plugin, including its model/checkpoint and routing configuration, then pass them:
+The override changes the install command, while wheel metadata retains the public
+source pin. The Mac qualification used a code-only `git archive` because the full
+tracked tree alone exceeds its 2 GB experiment limit; see the integration notes.
+
+After extraction and cleaning:
 
 ```python
-# plugin_options is an options instance configured using the external package.
-corpus.ocr(mode="ocr_bad", ocr_options=plugin_options, device="cpu")
-# Or opt into OCR during sequential layout extraction:
-corpus.extract(phase1_backend="docling", accel_type="CPU",
-               batched=False, ocr_options=plugin_options)
+corpus.ocr(mode='ocr_bad')
+# Existing callers can still supply an external plugin's configured ocr_options.
 ```
 
-The full-pipeline checkpoint CLI accepts `--ocr-engine KIND` and
-`--ocr-options '{"lang":["el"]}'`. `KIND` is the engine kind registered by the
-installed plugin; the JSON object supplies that plugin's option fields. The CLI
-loads external plugins and validates their options before changing outputs or
-starting extraction. Use `--skip-ocr` when no OCR engine is needed.
+Or plan and run the routed OCR DAG:
 
-Without options, OCR remediation reports how to install/configure a plugin.
-The old `ocr_engine`, `ocr_checkpoint`, `ocr_codec` and related C1 extraction
-arguments are replaced by `ocr_options`. DeepSeek-only inference, repair, runtime
-and scheduling arguments have no replacement in GlossAPI; configure the external
-engine through its own options. OCR remediation currently runs sequentially on
-`device`; `use_gpus`/`devices` control the separate math enrichment path.
+```sh
+glossapi plan --files /absolute/path/book.pdf --stages ocr,export --json
+glossapi run --files /absolute/path/book.pdf --stages ocr,export --device ocr=cpu
+```
 
-`ocr_pages`, inclusive physical page ranges, cleaner routing decisions, skip-list
-and completed-file filtering remain backend-independent. Partial OCR retains
-native Markdown and previously replaced pages. Math enrichment remains available
-through the Docling layout package, including `mode="math_only"` without an OCR
-plugin. Select `mode="ocr_bad"` for OCR alone; `ocr_bad_then_math` also enriches
-non-OCR documents with existing JSON.
+`glossapi run` inserts page-quality inspection and feeds only `page_needs_ocr`
+pages to OCR. Good native pages retain their text. It publishes OCR results before
+export and fails explicitly when a selected page is unsupported. Omitting OCR
+from `--stages` keeps the existing text-layer pipeline. A missing or mismatched
+OCR package leaves the DAG waiting with an `install_glossapi.py ocr` hint; another
+OCR engine is never silently selected.
 
-The external toolkit's version compatibility and real-model output quality are
-qualified by the OCR integration task; removing the old engines does not establish
-that compatibility.
+Defaults: `paddle_small_heuristics_r8`, detector `small`, preset `clean_scan`,
+recognition `x1`, model repository `fffoivos/greek-ocr`, revision
+`2a6b019be728e5be70cdbd981414c630b63fca08`, manifest SHA256
+`85d455d2cae2b756ab17e7114a3de13d7d41426d1fa5093028a179cf0c7d1345`.
+The three preset names currently have identical rules; no per-page preset
+selection is inferred. Explicit plugin options remain available, including
+segmenter/rules, seeds, preset, local `release_dir` and devices. Options are
+recorded in the ledger. Physical page routing and the runtime call-log destination
+are supplied by glossAPI.
+
+The scheduler assigns CUDA/MPS recognition, otherwise CPU. It reserves CPU tokens
+for the detector/correction work alongside any accelerator and admits one OCR
+operation per accelerator at a time. Both recognition and detector devices are
+recorded. CLI planning uses a hardware hint without importing Torch; execution
+validates the selected backend without changing to another engine.
+
+`GLOSSAPI_CACHE_DIR` (default `$XDG_CACHE_HOME/glossapi`, or
+`~/.cache/glossapi`) owns the cache root. For explicit operation settings,
+`ocr.cache_root` overrides it. GlossAPI sets `GREEKOCR_CACHE_DIR` for the plugin,
+which alone acquires and verifies the model and official upstream detector.
+The actual plugin acquisition receipt supplies repository, requested revision,
+resolved commit and manifest hash to the ledger. `release_dir` remains an explicit
+local override. Prewarm both plugin HF caches and Docling layout/table assets
+before offline use; a sealed recognition directory alone is insufficient.
+
+`settings.ocr.options` accepts plugin fields for `glossapi run`; `settings.ocr`
+also accepts `device_id`, `cache_root`, `num_threads`, `max_pages` and
+`timeout_seconds`. `--device ocr=cuda:N` selects a device pool for a saved plan.
+Explicit device options must agree with their pool. Model/seed overrides are
+recorded; they do not inherit the default model's qualification.
+
+Run the synthetic CPU fixture with `GREEKOCR_CACHE_DIR` and `OCR_LAYOUT_DIR`
+pointing at warm caches:
+
+```sh
+python -m pytest tests/fixtures/greekocr/test_smoke.py -q
+GLOSSAPI_OCR_INTEGRATION=1 python -m pytest \
+  tests/test_greekocr_default.py::test_real_default_stage_cpu_and_provenance -q
+```
+
+The latter test blocks Python socket access and checks the actual stage's model
+provenance. The optional mixed native/scan public-run test additionally requires
+`GLOSSAPI_OCR_RUN_INTEGRATION=1` and current ledger-aware native extensions.
+`tests/test_greekocr_cohort.py` compares independent direct segmentation and
+recognition against the routed plugin on at most two needs-OCR pages from an
+explicit owned cohort PDF. It is a correctness test, with no speed claims.
+The 72-page owner-private equality check stays with the Mac coordinator/OCR session.
+
+DeepSeek and the old bundled C1/RapidOCR engines remain removed. Printed upright
+Greek/Latin text is the qualified input scope; handwriting, whole-page rotation,
+vertical text and general non-text rejection are outside that scope.

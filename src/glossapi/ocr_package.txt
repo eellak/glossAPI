@@ -1,0 +1,19 @@
+# Coordinator replaces the next line after public release, removing its pending marker.
+greek-ocr-toolkit[docling] @ git+https://github.com/fffoivos/greek-ocr-toolkit@138cff524c1fe19e04237140c44dc2eaca5b5e5f # PENDING-PUBLIC-SHA
+torch==2.14.1
+torchvision==0.29.1
+docling==2.81.0
+docling-core==2.70.2
+numpy==2.5.3; python_version >= "3.12"
+numpy==2.4.6; python_version < "3.12"
+Pillow==12.3.0
+scipy==1.18.1; python_version >= "3.12"
+scipy==1.17.1; python_version < "3.12"
+pypdfium2==4.30.0
+huggingface-hub==0.36.2
+pyclipper==1.4.0
+shapely==2.1.2
+safetensors==0.8.0
+onnxruntime==1.31.0
+opencv-python-headless==5.0.0.93
+onnx==1.23.2; sys_platform == "darwin"

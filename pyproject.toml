@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "glossapi"
 version = "0.1.4"
+dynamic = ["optional-dependencies"]
 description = "Academic document processing pipeline with Rust-powered markdown cleaning"
 authors = [
     {name = "GlossAPI Team", email = "glossapi.team@eellak.gr"}
@@ -31,33 +32,6 @@ classifiers = [
     "Programming Language :: Rust",
 ]
 
-[project.optional-dependencies]
-download = [
-    "aiohttp>=3.14.5,<4",
-    "aiofiles>=23.0.0",
-    "tenacity>=9.2.1,<10",
-    "pyyaml>=6.0",
-]
-browser = [
-    "glossapi[download]",
-    "playwright>=1.64.1,<2",
-    "Pillow>=10",
-]
-layout = [
-    "docling==2.81.0",
-]
-# Compatibility alias for existing installer profiles.
-docling = ["glossapi[layout]"]
-annotate = [
-    # Existing serialized section classifier requires this version.
-    "scikit-learn==1.6.1",
-    "joblib>=1.0.0",
-    "dask[dataframe]>=2022.1.0",
-]
-# Explicit diagnostic reference; native repair is included in the core wheel.
-font-repair = ["pypdf>=6.0.0", "fonttools>=4.0.0"]
-docs = ["mkdocs>=1.5", "mkdocs-material>=9.5"]
-
 [project.scripts]
 glossapi = "glossapi.cli:main"
 
@@ -79,12 +53,13 @@ where = ["src"]
 include = ["glossapi", "glossapi.*"]
 
 [tool.setuptools.package-data]
-glossapi = ["models/**/*"]
+glossapi = ["models/**/*", "ocr_package.txt"]
 
 [tool.pytest.ini_options]
 markers = [
     "linux_dev_node: Linux-only deployment resource gate; run on the dev node",
     "slow: explicit local CPU cohort integration run",
+    "greekocr_integration: real CPU/GPU conversion with pinned warm model caches",
 ]
 
 # Bundle the three core extensions so `uv pip install .` needs no second installer.
@@ -105,3 +80,14 @@ target = "glossapi_rs_pdfrepair"
 path = "rust/glossapi_rs_pdfrepair/Cargo.toml"
 binding = "PyO3"
 py-limited-api = "auto"
+
+# One source of OCR pins, shared by wheel metadata and the package installer.
+[tool.setuptools.dynamic.optional-dependencies]
+download = {file = ["dependency_setup/extra-download.txt"]}
+browser = {file = ["dependency_setup/extra-browser.txt"]}
+layout = {file = ["dependency_setup/extra-layout.txt"]}
+docling = {file = ["dependency_setup/extra-docling.txt"]}
+annotate = {file = ["dependency_setup/extra-annotate.txt"]}
+font-repair = {file = ["dependency_setup/extra-font-repair.txt"]}
+docs = {file = ["dependency_setup/extra-docs.txt"]}
+ocr = {file = ["src/glossapi/ocr_package.txt"]}

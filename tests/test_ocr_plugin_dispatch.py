@@ -34,10 +34,10 @@ def test_missing_plugin_has_install_error_and_preserves_pending_state(tmp_path, 
     assert not (tmp_path / 'markdown/source.md').exists()
 
 
-def test_installed_plugin_requires_explicit_configuration(tmp_path, monkeypatch):
+def test_unrelated_plugin_is_never_selected_as_default(tmp_path, monkeypatch):
     corpus, _ = make_corpus(tmp_path, monkeypatch)
-    monkeypatch.setattr(dispatch, 'entry_points', lambda **kw: [SimpleNamespace(name='glossapi')])
-    with pytest.raises(ValueError, match='Configure an installed OCR plugin'):
+    monkeypatch.setattr(dispatch, 'entry_points', lambda **kw: [SimpleNamespace(name='unrelated')])
+    with pytest.raises(RuntimeError, match='install_glossapi.py ocr'):
         corpus.ocr(mode='ocr_bad')
 
 

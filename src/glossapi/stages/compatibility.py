@@ -301,8 +301,12 @@ def ocr_compatibility_documents(context, filenames, *, request, page_ranges=None
             if path.is_file(): inputs.append(('docling_json',path)); break
         ranges=[list(map(int,spec.rsplit(':',2)[1:])) for spec in page_ranges or [] if spec.rsplit(':',2)[0]==name]
         options=request.ocr_options
-        serialized = options.model_dump(mode='json') if hasattr(options,'model_dump') else {'kind':getattr(options,'kind',None),'options_unavailable_reason':'options_do_not_expose_json'}
-        settings={'page_ranges':ranges,'max_pages':request.max_pages,'options':serialized}
+        from ..ocr.defaults import serialize_options, default_values, select_device
+        device = getattr(options,'device',None) or select_device(request.device)
+        serialized = serialize_options(options) if options is not None else default_values(device)
+        settings={'page_ranges':ranges,'max_pages':request.max_pages,'options':serialized,
+            'entry_point_name':'glossapi' if options is None or getattr(options,'kind',None)=='glossapi' else None,
+            'cache_root':str(getattr(context,'_ocr_cache_root', '')) or None}
         # Existing adapter state is reusable only with its recorded source binding.
         from ..ledger.journal import _active_journal, ResultJournal
         journal=_active_journal.get()
@@ -324,7 +328,7 @@ def ocr_compatibility_documents(context, filenames, *, request, page_ranges=None
                     evidence=unpack_evidence(json.loads(row[0])); binding=evidence.get('inputs',{}).get('source_payload',{})
                     if binding.get('sha256')==sha256_file(source): settings['prior_state_source_sha256']=binding['sha256']
         result,workspace=execute_compatibility_stage(context,OcrStage(options),inputs,
-            StageSpecification('ocr.document',tuple(kind for kind,path in inputs),('ocr_markdown','ocr_metrics'),request.device or 'cpu',settings))
+            StageSpecification('ocr.document',tuple(kind for kind,path in inputs),('ocr_markdown','ocr_metrics'),device,settings))
         paths={output.relative_path:context.output_dir/output.relative_path for output in result.outputs
             if not output.relative_path.startswith('inputs/') and output.kind not in ('worker_receipt','source_snapshot')}
         materialize_stage_outputs(context,result,workspace,paths)

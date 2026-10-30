@@ -27,6 +27,7 @@ def execution_environment():
     import importlib.util
     root=Path(__file__).resolve().parents[1]
     files={str(path.relative_to(root)):sha256_file(path) for path in sorted(root.rglob('*.py'))}
+    files['ocr_package.txt']=sha256_file(root/'ocr_package.txt')
     native={}
     for name in ('glossapi_rs_cleaner','glossapi_rs_noise','glossapi_rs_pdfrepair'):
         specification=importlib.util.find_spec(name)
@@ -131,7 +132,8 @@ class StreamingScheduler:
             return
         with self.writer.transaction():
             self.writer.event(run,event_kind='lifecycle',reason_code=reason,status='planned',task_id=task,
-                version_id=operation.document.version_id)
+                version_id=operation.document.version_id,
+                message='Run python install_glossapi.py ocr with the selected --device' if reason=='waiting_for_package' and operation.stage=='ocr' else '')
         self.wait_reasons.add((task,reason))
 
     def _missing_package(self,operation):
@@ -152,6 +154,18 @@ class StreamingScheduler:
             return False
         for requirement in stage.packages(operation.specification):
             for distribution in requirement.distributions:
+                if operation.stage == 'ocr':
+                    try:
+                        from packaging.requirements import Requirement
+                        pin=Requirement(distribution)
+                        if pin.marker and not pin.marker.evaluate():
+                            continue
+                        installed=importlib.metadata.version(pin.name)
+                    except (ImportError,importlib.metadata.PackageNotFoundError):
+                        return True
+                    if pin.specifier and installed not in pin.specifier:
+                        return True
+                    continue
                 try:importlib.metadata.version(re.split(r'[<>=!~ ]',distribution,1)[0])
                 except importlib.metadata.PackageNotFoundError:return True
             if requirement.entry_point_group and not any(
@@ -172,8 +186,8 @@ class StreamingScheduler:
         for operation in operations:
             if operation.stage not in self.registry:
                 raise ValueError('Unsupported stage: '+operation.stage)
-            if operation.specification.device_id != 'cpu':
-                raise ValueError('Device is not qualified: '+operation.specification.device_id)
+            from ..ocr.defaults import validate_device
+            validate_device(operation.stage,operation.specification.device_id,operation.specification.settings)
             if operation.stage=='download' and operation.specification.settings.get('download_mode','standard') not in (
                     'standard','default','http','browser','browser_protected','auto','browser_fallback'):
                 raise ValueError('Unsupported download mode')
@@ -234,7 +248,8 @@ class StreamingScheduler:
                     scope_key='corpus:'+self.writer.snapshot('inputs',{'run_id':run}),ordinal=len(operations)+index)
                 self.writer.event(run,event_kind='lifecycle',reason_code='waiting_for_corpus_seal',status='planned',task_id=barrier)
                 if stage=='export':
-                    producers=[self.writer.connection.execute('SELECT task_id FROM tasks WHERE run_id=? AND operation=?',(run,'clean.compatibility_publish')).fetchone()[0]] if 'clean' in plan['publication_barriers'] else list(tasks.values())
+                    required='ocr' if 'ocr' in plan['publication_barriers'] else 'clean'
+                    producers=[self.writer.connection.execute('SELECT task_id FROM tasks WHERE run_id=? AND operation=?',(run,required+'.compatibility_publish')).fetchone()[0]] if required in plan['publication_barriers'] else list(tasks.values())
                 else:producers=[previous] if previous else list(tasks.values())
                 for producer in producers:
                     self.writer.dependency(barrier,producer,'corpus_seal')
@@ -464,6 +479,13 @@ class StreamingScheduler:
                             self.memory_capacity is not None and active_memory+operation.memory_bytes>self.memory_capacity):
                             self._wait(run,tasks[operation.key],operation,'waiting_for_device')
                             break
+                        from ..ocr.defaults import accelerator_claims
+                        claims=accelerator_claims(operation.stage,device,operation.specification.settings)
+                        occupied=set().union(*(accelerator_claims(op.stage,op.specification.device_id,op.specification.settings)
+                            for op in [*(entry[2] for entry in self.active.values()),*(item[1] for item in pending)]))
+                        if claims & occupied:
+                            self._wait(run,tasks[operation.key],operation,'waiting_for_device')
+                            break
                         reservation=operation.reservation_bytes or (2*frozen_settings.get('max_attempt_bytes',0) if frozen_settings.get('memory_saving')=='extreme' else 0)
                         if self.disk_capacity is not None and not budget.can_reserve(reservation):
                             self._wait(run,tasks[operation.key],operation,'waiting_for_disk')
@@ -504,7 +526,9 @@ class StreamingScheduler:
                                 worker_id='warm:'+operation.stage+':'+specification.device_id)
                             self.writer.event(run,event_kind='heartbeat',reason_code='stage_started',task_id=request.task_id,
                                 attempt_id=request.attempt_id,version_id=request.version_id,details={'lease_token':request.lease_token,
-                                'lease_seconds':60,'reservation_bytes':budget.reservations.get(operation.key,operation.reservation_bytes),'cpu_tokens':operation.cpu_tokens})
+                                'lease_seconds':60,'reservation_bytes':budget.reservations.get(operation.key,operation.reservation_bytes),'cpu_tokens':operation.cpu_tokens,
+                                'accelerator_devices':sorted(accelerator_claims(operation.stage,specification.device_id,specification.settings)),
+                                'detector_device':specification.settings.get('options',{}).get('detector_device') if operation.stage=='ocr' else None})
                             self.task_status[operation.key] = 'running'
                             self.attempt_counts[operation.key] += 1
                             dispatch.append((pool,stage,operation,request,complete))
@@ -543,7 +567,9 @@ class StreamingScheduler:
                 details={'state':'waiting' if state=='completed' and any(task['status']=='planned' for task in self.writer.task_states(run)) else state,
                     'queue_high_water':dict(self.high_water),'result_capacity':2*sum(pool.capacity for pool in self.pools.values())})
         return dict(run_id=run,state=state,counts={status:counts[status] for status in ('planned','running','ok','skipped','failed')},
-                    attempts=done,trace=self.trace,queue_high_water=dict(self.high_water),disk=budget.report())
+                    attempts=done,trace=self.trace,queue_high_water=dict(self.high_water),disk=budget.report(),
+                    install_hints=['Run python install_glossapi.py ocr with the selected --device'] if any(
+                        (tasks[operation.key],'waiting_for_package') in self.wait_reasons for operation in operations if operation.stage=='ocr') else [])
 
     def _skip(self,run,task,operation,reason):
         self.task_status[operation.key] = 'skipped'

@@ -24,6 +24,7 @@ class OcrRequest:
     reprocess_completed: bool
     content_debug: bool
     page_routing: str = "flagged"
+    num_threads: int = 1
 
 
 def _resolve_mode(

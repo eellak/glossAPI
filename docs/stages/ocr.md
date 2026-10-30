@@ -1,9 +1,11 @@
 # OCR remediation
 
 Run extraction and cleaning first, then call
-`corpus.ocr(mode="ocr_bad", ocr_options=plugin_options, device="cpu")`, where
-`plugin_options` is configured by the external OCR package. An absent plugin
-produces an explicit install/configuration error; no built-in OCR fallback is used.
+`corpus.ocr(mode="ocr_bad")`. The default is the pinned external Greek R8+x1
+plugin. Install it with `python install_glossapi.py ocr --device cpu` (or
+`mps` / `cuda126` / `cuda132`). Explicit `ocr_options` still select a configured
+plugin; there is no silent engine fallback. `glossapi run --stages ocr,export`
+also supports this default and routes only pages flagged by page quality.
 
 The toolkit registers `glossapi = "greekocr.deploy.docling_plugin.docling_plugin"`
 in the Docling `docling` entry-point group. Docling loads `ocr_engines()` with

@@ -1,0 +1,4 @@
+aiohttp>=3.14.5,<4
+aiofiles>=23.0.0
+tenacity>=9.2.1,<10
+pyyaml>=6.0

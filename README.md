@@ -43,9 +43,10 @@ PY
 ## Automated Environment Profiles
 
 Use `dependency_setup/setup_glossapi.sh --mode docling` for layout and math enrichment.
-For selective OCR, install the toolkit's `greekocr` package separately and pass
-its configured `ocr_options` to `Corpus.ocr()`. See [OCR plugin migration](docs/ocr_plugin_migration.md).
-The phase installer (`python install_glossapi.py`) can install the Docling dependency group.
+For selective Greek OCR, run `python install_glossapi.py ocr --device cpu`
+(or `mps`, `cuda126`, `cuda132`), then `corpus.ocr(mode='ocr_bad')`.
+`glossapi run --stages ocr,export` also uses the pinned Greek R8+x1 model by default.
+See [OCR setup, development override and qualification](docs/ocr_plugin_migration.md).
 
 ## Browser-Gated Download Mode
 

@@ -174,8 +174,9 @@ def main(argv=None):
             requested=_json_file(args.plan) if args.plan else data
             if not args.resume:
                 for document in requested.get('data',requested)['documents']:
-                    if any(step['device_id']!='cpu' for step in document['steps']):
-                        raise ReadRequestError('invalid_request','Requested device has not been qualified')
+                    from .ocr.defaults import validate_device
+                    for step in document['steps']:
+                        validate_device(step['stage'],step['device_id'],requested.get('data',requested).get('settings',{}).get(step['stage'],{}))
             root=Path(args.corpus).absolute()
             root.mkdir(parents=True,exist_ok=True)
             if not args.resume:

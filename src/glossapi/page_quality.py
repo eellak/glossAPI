@@ -240,11 +240,15 @@ def _image_coverage(page: pdfium.PdfPage, dpi_probe: bool) -> tuple[float, float
     image_area = 0.0
     dpis: list[float] = []
     for obj in page.get_objects(filter=[pdfium.raw.FPDF_PAGEOBJ_IMAGE]):
-        left, bottom, right, top = obj.get_bounds()
+        # PDFium 4.x exposes the same bounds operation as get_pos().
+        # Keep the OCR inference pin (4.30) usable for raster-page routing.
+        bounds = getattr(obj, 'get_bounds', None) or obj.get_pos
+        left, bottom, right, top = bounds()
         w, h = max(0.0, right - left), max(0.0, top - bottom)
         image_area += w * h
         if dpi_probe and w and h:
-            px, py = obj.get_px_size()
+            pixel_size = getattr(obj, 'get_px_size', None) or obj.get_size
+            px, py = pixel_size()
             dpis.append(min(px * 72 / w, py * 72 / h))
     return min(1.0, image_area / area) if area > 0 else 0.0, min(dpis) if dpis else None
 
