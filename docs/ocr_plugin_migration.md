@@ -10,17 +10,17 @@ The device names select wheel sources; available wheels and actual accelerator
 execution still require qualification on the target machine.
 
 The sole toolkit source pin is `src/glossapi/ocr_package.txt`. Both the installer
-and the dynamic `glossapi[ocr]` wheel extra read that file. Its public GitHub URL
-is marked **PENDING-PUBLIC-SHA** until the coordinator publishes the reviewed
-release. Replace that one requirement line with the public SHA, then rerun the
-CPU smoke. No mirror or glossAPI-side model downloader is used.
+and the dynamic `glossapi[ocr]` wheel extra read that file. It pins public commit
+`bb5aa6f` on the toolkit's `dev/glossapi-ocr-default` branch: a code-only snapshot
+of the reviewed release `138cff524` (identical `greekocr/`, `pyproject.toml` and
+`README.md`). To move to a new toolkit release, replace that one requirement line,
+then rerun the CPU smoke. No mirror or glossAPI-side model downloader is used.
 
-For development before publication:
+To test an unpublished toolkit checkout:
 
 ```sh
 python install_glossapi.py ocr --device cpu \
-  --ocr-toolkit-source 'git+file:///Users/foivoskarounos-zamparloukos/Projects/greek-ocr-toolkit-main-next@138cff524'
-# On our Linux machines, use file:///absolute/path/to/commit-bound-archive instead.
+  --ocr-toolkit-source 'git+file:///absolute/path/to/greek-ocr-toolkit@<commit>'
 # GLOSSAPI_OCR_TOOLKIT_SOURCE supplies the same override without a CLI argument.
 ```
 

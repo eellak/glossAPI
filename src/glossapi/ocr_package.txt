@@ -1,5 +1,5 @@
-# Coordinator replaces the next line after public release, removing its pending marker.
-greek-ocr-toolkit[docling] @ git+https://github.com/fffoivos/greek-ocr-toolkit@138cff524c1fe19e04237140c44dc2eaca5b5e5f # PENDING-PUBLIC-SHA
+# The single Greek OCR toolkit pin (public GitHub commit). Change only this line to move toolkit releases.
+greek-ocr-toolkit[docling] @ git+https://github.com/fffoivos/greek-ocr-toolkit@bb5aa6fadf933a00a8cba50bc560ce723a157962
 torch==2.14.1
 torchvision==0.29.1
 docling==2.81.0
