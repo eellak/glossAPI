@@ -9,6 +9,14 @@ parquet) keeps only the scheme, host, port and path of a URL:
   caller declared that field public (``settings['url_policy']``);
 - network-path (``//host/...``) and relative references get the same treatment.
 
+Path contract: the path is recorded by default (``url_policy.path='keep'``)
+because provenance needs it. A source whose path embeds a token must declare
+``url_policy={'path': 'redact'}``; its persisted spelling then keeps only the
+scheme, host and port plus ``PLACEHOLDER`` for the path, and its identity is
+keyed. Secret components of the raw URLs a process holds in memory are also
+registered with a process-local known-secret scrubber (``register_secrets``)
+that every log record and error/traceback boundary applies.
+
 ``persisted_url`` is the one function that does this; ``scrub_text`` finds
 URLs and references in free text and applies it, and ``scrub`` walks JSON-like
 values. Raw URLs stay in process memory for transport only.
@@ -57,16 +65,18 @@ _SIGNATURE_FIELDS = frozenset(("sig", "signature", "x_amz_signature", "x_amz_cre
 # ------------------------------------------------------------------ policy ---
 
 class UrlPolicy:
-    """Caller declarations: public query/fragment fields and extra secret headers."""
-    __slots__ = ("public_fields", "secret_headers")
+    """Caller declarations: public query/fragment fields, extra secret headers and
+    the path rule (``'keep'``, the default, or ``'redact'``)."""
+    __slots__ = ("public_fields", "secret_headers", "path")
 
-    def __init__(self, public_fields=(), secret_headers=()):
+    def __init__(self, public_fields=(), secret_headers=(), path="keep"):
         self.public_fields = frozenset(_field_name(name) for name in public_fields)
         self.secret_headers = DEFAULT_SECRET_HEADERS | frozenset(str(name).strip().lower() for name in secret_headers)
+        self.path = path
 
     def declared(self):
         return {"public_query_fields": sorted(self.public_fields),
-                "secret_headers": sorted(self.secret_headers - DEFAULT_SECRET_HEADERS)}
+                "secret_headers": sorted(self.secret_headers - DEFAULT_SECRET_HEADERS), "path": self.path}
 
 
 DEFAULT_POLICY = UrlPolicy()
@@ -85,12 +95,14 @@ def parse_policy(value):
         return DEFAULT_POLICY
     if isinstance(value, UrlPolicy):
         return value
-    if not isinstance(value, dict) or set(value) - {"public_query_fields", "secret_headers"}:
-        raise ValueError("url_policy accepts only public_query_fields and secret_headers")
+    if not isinstance(value, dict) or set(value) - {"public_query_fields", "secret_headers", "path"}:
+        raise ValueError("url_policy accepts only public_query_fields, secret_headers and path")
     fields, headers = value.get("public_query_fields", ()), value.get("secret_headers", ())
     if isinstance(fields, str) or isinstance(headers, str) or not all(isinstance(item, str) and item for item in [*fields, *headers]):
         raise ValueError("url_policy fields must be lists of non-empty names")
-    return UrlPolicy(fields, headers)
+    if value.get("path", "keep") not in ("keep", "redact"):
+        raise ValueError("url_policy path must be 'keep' or 'redact'")
+    return UrlPolicy(fields, headers, value.get("path", "keep"))
 
 
 def current_policy():
@@ -123,9 +135,11 @@ def _fields(text, policy):
     return "".join(parts)
 
 
-def _tail(tail, policy):
+def _tail(tail, policy, *, network=True):
     path, hash_mark, fragment = tail.partition("#")
     path, question, query = path.partition("?")
+    if network and policy.path == "redact" and path not in ("", "/") and path != "/" + PLACEHOLDER:
+        path = ("/" if path.startswith("/") else "") + PLACEHOLDER
     if query:
         query = _fields(query, policy)
     if fragment:
@@ -153,16 +167,18 @@ def persisted_url(url, policy=None):
     Absolute, network-path (``//host``) and relative references are handled.
     Idempotent. A string without userinfo, query or fragment is returned as is.
     """
-    if not isinstance(url, str) or not url or ("@" not in url and "?" not in url and "#" not in url):
-        return url
     policy = policy or _policy_var.get()
+    if not isinstance(url, str) or not url or ("@" not in url and "?" not in url and "#" not in url
+                                               and (policy.path != "redact" or "/" not in url)):
+        return url
     scheme, colon, rest = url.partition(":")
     if colon and _SCHEME.fullmatch(scheme):
         if rest.startswith("//"):
             authority, tail = _authority_and_tail(rest[2:])
-            result = scheme + "://" + authority + _tail(tail, policy)
+            # Path redaction concerns network sources, never local file paths.
+            result = scheme + "://" + authority + _tail(tail, policy, network=bool(authority) and scheme.lower() != "file")
         else:
-            result = scheme + ":" + _tail(rest, policy)  # opaque URI (magnet:?xt=...)
+            result = scheme + ":" + _tail(rest, policy, network=False)  # opaque URI (magnet:?xt=...)
     elif url.startswith("//"):
         authority, tail = _authority_and_tail(url[2:])
         result = "//" + authority + _tail(tail, policy)
@@ -317,6 +333,141 @@ def needs_scrub(encoded):
     return isinstance(encoded, str) and scrub_text(encoded) != encoded
 
 
+# --------------------------------------------------------- known secrets ---
+
+# Secret components of raw URLs (and secret header values) held in this
+# process's memory. Exact strings, process-local, never persisted. Values
+# shorter than MIN_SECRET_LENGTH rely on the pattern rules only: replacing
+# short common strings everywhere would destroy evidence (line numbers, ids).
+MIN_SECRET_LENGTH = 8
+_known_secrets = set()
+_known_lock = threading.Lock()
+_known_pattern = None
+
+
+def _registrable(value):
+    """Long enough, not a redaction marker, and safe inside an encoded JSON string."""
+    return (isinstance(value, str) and len(value) >= MIN_SECRET_LENGTH and PLACEHOLDER not in value
+            and HEADER_REDACTED not in value and '"' not in value and "\\" not in value)
+
+
+def _add_secret(value, found):
+    from urllib.parse import unquote, unquote_plus
+    if not isinstance(value, str):
+        return
+    for variant in {value, unquote(value), unquote_plus(value)}:
+        if _registrable(variant):
+            found.add(variant)
+
+
+def url_secrets(url, policy=None):
+    """The secret components of one raw URL under ``policy``: userinfo, every
+    non-public query and fragment value, and the path when it is redacted."""
+    policy = policy or _policy_var.get()
+    found = set()
+    if not isinstance(url, str):
+        return found
+    scheme, colon, rest = url.partition(":")
+    if colon and _SCHEME.fullmatch(scheme) and rest.startswith("//"):
+        rest = rest[2:]
+    elif url.startswith("//"):
+        rest = url[2:]
+    else:
+        rest = url if not (colon and _SCHEME.fullmatch(scheme)) else "/" + rest
+    end = len(rest)
+    for character in "/?#":
+        position = rest.find(character)
+        if position != -1:
+            end = min(end, position)
+    authority, tail = rest[:end], rest[end:]
+    if "@" in authority:
+        userinfo = authority.rpartition("@")[0]
+        _add_secret(userinfo, found)
+        _add_secret(userinfo.partition(":")[2], found)
+    path, _, fragment = tail.partition("#")
+    path, _, query = path.partition("?")
+    if policy.path == "redact" and path not in ("", "/"):
+        _add_secret(path, found)
+        for segment in path.split("/"):
+            _add_secret(segment, found)
+    for part in [*re.split(r"[&;]", query), *re.split(r"[&;]", fragment)]:
+        name, equals, value = part.partition("=")
+        if not equals:
+            name, value = "", part
+        if value and _field_name(name) not in policy.public_fields:
+            _add_secret(value, found)
+    return found
+
+
+def register_secrets(values):
+    """Register exact secret strings with the process-local scrubber."""
+    global _known_pattern
+    values = {value for value in values if _registrable(value)}
+    with _known_lock:
+        if values - _known_secrets:
+            _known_secrets.update(values)
+            _known_pattern = None
+
+
+def register_url(url, policy=None):
+    """Register the secret components of a raw transport URL."""
+    register_secrets(url_secrets(url, policy))
+
+
+def register_setting_secrets(settings):
+    """Register secret values held under credential keys of a settings mapping."""
+    from .journal import credential_key
+    found = set()
+    def walk(value, secret):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                walk(item, secret or credential_key(key) or str(key).strip().lower() in _policy_var.get().secret_headers)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                walk(item, secret)
+        elif secret and isinstance(value, str):
+            _add_secret(value, found)
+            for piece in re.split(r"[\s;,=]+", value):
+                _add_secret(piece, found)
+    walk(settings, False)
+    register_secrets(found)
+
+
+def scrub_known(text):
+    """Replace every registered secret string in ``text`` by ``PLACEHOLDER``."""
+    global _known_pattern
+    if not isinstance(text, str) or not _known_secrets:
+        return text
+    pattern = _known_pattern
+    if pattern is None:
+        with _known_lock:
+            if _known_pattern is None:
+                _known_pattern = re.compile("|".join(re.escape(value) for value in sorted(_known_secrets, key=len, reverse=True)))
+            pattern = _known_pattern
+    return pattern.sub(PLACEHOLDER, text)
+
+
+def scrub_known_value(value):
+    if isinstance(value, str):
+        return scrub_known(value)
+    if isinstance(value, dict):
+        return {scrub_known(key) if isinstance(key, str) else key: scrub_known_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [scrub_known_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(scrub_known_value(item) for item in value)
+    return value
+
+
+def scrub_error_text(text, policy=None):
+    """Error/traceback boundary: pattern rules plus the known-secret scrubber."""
+    return scrub_known(scrub_text(text, policy))
+
+
+def has_known_secrets():
+    return bool(_known_secrets)
+
+
 # --------------------------------------------------------------- logging ---
 
 class CredentialLogFilter(logging.Filter):
@@ -331,7 +482,7 @@ class CredentialLogFilter(logging.Filter):
             message = record.getMessage()
         except Exception:
             message = str(record.msg)
-        cleaned = scrub_text(message)
+        cleaned = scrub_error_text(message)
         if cleaned != message or record.args:
             record.msg, record.args = cleaned, ()
         if record.exc_info:
@@ -339,9 +490,9 @@ class CredentialLogFilter(logging.Filter):
                 record.exc_text = logging.Formatter().formatException(record.exc_info)
             record.exc_info = None
         if record.exc_text:
-            record.exc_text = scrub_text(record.exc_text)
+            record.exc_text = scrub_error_text(record.exc_text)
         if record.stack_info:
-            record.stack_info = scrub_text(record.stack_info)
+            record.stack_info = scrub_error_text(record.stack_info)
         return True
 
 
@@ -363,6 +514,7 @@ def protect_logger(logger):
 # -------------------------------------------------------------- identity ---
 
 KEY_RELATIVE_PATH = Path(".glossapi") / "keys" / "resource-identity.key"
+_key_cache = {}
 _active_roots = []
 _roots_lock = threading.Lock()
 
@@ -397,6 +549,14 @@ def identity_key(root, *, create=True):
     """
     from .writer import LedgerError
     path = identity_key_path(root)
+    cached = _key_cache.get(str(path))
+    if cached is not None:
+        try:
+            status = path.stat()
+            if (status.st_mtime_ns, status.st_ino, status.st_mode) == cached[0]:
+                return cached[1]
+        except OSError:
+            pass
     if not path.exists():
         if not create:
             return None
@@ -417,6 +577,8 @@ def identity_key(root, *, create=True):
     value = path.read_text().strip()
     if not re.fullmatch(r"[0-9a-f]{64}", value):
         raise LedgerError("Resource identity key is malformed: " + str(path))
+    status = path.stat()
+    _key_cache[str(path)] = ((status.st_mtime_ns, status.st_ino, status.st_mode), bytes.fromhex(value))
     return bytes.fromhex(value)
 
 

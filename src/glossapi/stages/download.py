@@ -26,7 +26,9 @@ class DownloadStage:
             private.downloads_dir.mkdir()
             method=self.kernel.__func__.__get__(private,type(private)) if hasattr(self.kernel,'__func__') else self.kernel
             from ..ledger.journal import safe_settings
-            from ..ledger.urls import url_policy
+            from ..ledger.urls import register_setting_secrets, register_url, url_policy
+            with url_policy(request.settings.get('url_policy')):
+                register_url(request.settings.get('url'));register_setting_secrets(request.settings)
             with url_policy(request.settings.get('url_policy')),capture_backend_observations() as observations,capture_transport(request.settings['download_mode'],safe_settings(dict(request.settings))) as transport:
                 returned=await asyncio.wait_for(method(row_index=request.settings['row_index'],url=request.settings['url'],
                     semaphore=None,rate_limiter=self.rate_limiter,retry_count=request.settings['legacy_outer_retry_count'],
@@ -66,9 +68,12 @@ class DownloadStage:
         return run_fenced(self, request, reporter=reporter)
 
     def _run_document(self, request, *, reporter):
-        from ..ledger.urls import url_policy
-        # Receipts and logs of this attempt use the run's declared URL policy.
+        from ..ledger.urls import register_setting_secrets, register_url, url_policy
+        # Receipts and logs of this attempt use the run's declared URL policy;
+        # the raw URL's secret components join this process's known secrets.
         with url_policy(request.settings.get("url_policy")):
+            register_url(request.settings.get("url"))
+            register_setting_secrets(request.settings)
             return self._run_document_with_policy(request, reporter=reporter)
 
     def _run_document_with_policy(self, request, *, reporter):

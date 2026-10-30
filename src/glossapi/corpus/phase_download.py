@@ -37,6 +37,7 @@ class DownloadPhaseMixin:
         *,
         parallelize_by: Optional[str] = None,
         links_column: Optional[str] = None,
+        credentials: Optional[Iterable[Any]] = None,
         **kwargs
     ) -> pd.DataFrame:
         """
@@ -52,10 +53,30 @@ class DownloadPhaseMixin:
             verbose: Whether to enable verbose logging (overrides instance setting if provided)
             **kwargs: Additional parameters to override default downloader config
 
+            credentials: Raw source URLs (or ``{"url", "source_id"}`` rows) for input rows
+                recorded in their persisted form; bound by resource identity, in memory only.
+
+        Recorded results (``download_results*.parquet``, the partial checkpoint and
+        their registered copies) hold only persisted URLs plus ``resource_identity``;
+        a resume matches previous rows by resource identity (CP-LEDGER cycle 2, LG3).
+
         Returns:
             pd.DataFrame: DataFrame with download results
         """
-        from ..gloss_downloader import GlossDownloader
+        from ..ledger.urls import pop_identity_root, push_identity_root, url_policy
+        root = Path(self.output_dir).absolute()
+        push_identity_root(root)
+        try:
+            # ``url_policy`` (public_query_fields, secret_headers, path) as for Corpus.run.
+            with url_policy(kwargs.pop('url_policy', None)):
+                return self._download_legacy(input_parquet, url_column, verbose, parallelize_by, links_column, credentials, kwargs)
+        finally:
+            pop_identity_root(root)
+
+    def _download_legacy(self, input_parquet, url_column, verbose, parallelize_by, links_column, credentials, kwargs):
+        from ..gloss_downloader import (GlossDownloader, RESOURCE_IDENTITY_COLUMN, frame_identities,
+                                        persisted_download_frame)
+        from ..ledger.urls import is_keyed_key, register_setting_secrets, register_url, was_redacted
         BrowserGlossDownloader = None
 
         # If input_parquet not specified, find parquet files in input_dir
@@ -78,6 +99,41 @@ class DownloadPhaseMixin:
         if links_column:
             url_column = links_column
 
+        # Raw transport URLs stay in memory: their secret components join the
+        # known-secret scrubber, and rows recorded in persisted form are bound
+        # to resupplied URLs by resource identity before any request.
+        register_setting_secrets({**dict(self.downloader_config), **kwargs})
+        def _urls(value):
+            if isinstance(value, str):
+                return [value]
+            if isinstance(value, (list, tuple, np.ndarray)):
+                return [item for item in value if isinstance(item, str)]
+            return []
+        if url_column in input_df.columns:
+            for value in input_df[url_column].tolist():
+                for url in _urls(value):
+                    register_url(url)
+        replay = getattr(self, '_streaming_download_replays', None) is not None
+        if url_column in input_df.columns and not replay:
+            from ..stages.run import _transport_urls
+            bindings = _transport_urls(list(credentials or ()), {})
+            recorded = input_df[RESOURCE_IDENTITY_COLUMN].tolist() if RESOURCE_IDENTITY_COLUMN in input_df.columns else [None] * len(input_df)
+            urls, unresolved = [], []
+            for value, identity in zip(input_df[url_column].tolist(), recorded):
+                keyed = isinstance(identity, str) and is_keyed_key(identity)
+                if isinstance(value, str) and (keyed or was_redacted(value)):
+                    raw = bindings.get(identity) if isinstance(identity, str) else None
+                    if raw is None:
+                        unresolved.append(value)
+                    value = raw or value
+                urls.append(value)
+            if unresolved:
+                from ..stages.scheduler import CREDENTIALS_NOT_PERSISTED
+                raise ValueError(CREDENTIALS_NOT_PERSISTED + ' (input rows in persisted form: ' + ', '.join(sorted(set(unresolved))[:5]) + ')')
+            if credentials:
+                input_df = input_df.copy()
+                input_df[url_column] = urls
+
         # Look for existing download results file by the specific input filename first
         input_filename = Path(input_parquet).name
         download_results_dir = Path(self.output_dir) / "download_results"
@@ -87,6 +143,7 @@ class DownloadPhaseMixin:
         existing_results = None
         existing_results_path = None
         found_existing = False
+        input_frame = input_df if url_column in input_df.columns and credentials else None
 
         # Check for specific download results file
         if os.path.exists(specific_results_path):
@@ -130,12 +187,18 @@ class DownloadPhaseMixin:
                 existing_filenames = existing_results['filename'].dropna().tolist()
                 self.logger.info(f"Found {len(existing_filenames)} existing filenames to avoid")
 
-            # Build the set of successful URLs from checkpoint/results
+            # Previously successful rows, matched by resource identity (older
+            # raw-URL results compute it from their URL; persisted ones record it).
             successful_urls = []
+            successful_identities = set()
             if 'download_success' in existing_results.columns:
-                successful_urls = existing_results[
-                    existing_results['download_success'] == True
-                ][url_column].dropna().astype(str).tolist()
+                done = existing_results[existing_results['download_success'] == True]
+                successful_urls = done[url_column].dropna().astype(str).tolist()
+                successful_identities = {identity for identity in frame_identities(done, url_column) if identity}
+            def _pending(frame):
+                identities = frame_identities(frame, url_column)
+                return [not ((identity in successful_identities) if identity else (str(url) in successful_urls))
+                        for identity, url in zip(identities, frame[url_column].tolist())]
 
             if successful_urls:
                 self.logger.info(f"Found {len(successful_urls)} previously successful downloads")
@@ -161,8 +224,8 @@ class DownloadPhaseMixin:
                         dl_tmp = GlossDownloader(url_column=url_column, output_dir=str(self.output_dir))
                         expanded_df = dl_tmp._expand_and_mark_duplicates(input_df.copy())  # type: ignore[attr-defined]
                         # Keep URL and provenance columns if present
-                        keep_cols = [url_column] + [c for c in ("source_row", "url_index", "collection_slug") if c in expanded_df.columns]
-                        remaining_df = expanded_df[~expanded_df[url_column].isin(successful_urls)][keep_cols]
+                        keep_cols = [url_column] + [c for c in ("source_row", "url_index", "collection_slug", "source_id", RESOURCE_IDENTITY_COLUMN) if c in expanded_df.columns]
+                        remaining_df = expanded_df[_pending(expanded_df)][keep_cols]
                         self.logger.info(
                             f"Expanded list/JSON URLs to {len(expanded_df)} rows; pending {len(remaining_df)}"
                         )
@@ -188,27 +251,32 @@ class DownloadPhaseMixin:
                         import pandas as _pd
                         expanded_df = _pd.DataFrame({url_column: rows})
                         keep_cols = [url_column]
-                        remaining_df = expanded_df[~expanded_df[url_column].isin(successful_urls)][keep_cols]
+                        remaining_df = expanded_df[_pending(expanded_df)][keep_cols]
                         self.logger.info(
                             f"Expanded (fallback) to {len(expanded_df)} rows; pending {len(remaining_df)}"
                         )
                 else:
                     # Simple string URLs: filter directly and keep provenance if present
-                    keep_cols = [url_column] + [c for c in ("source_row", "url_index", "collection_slug") if c in input_df.columns]
-                    remaining_df = input_df[~input_df[url_column].isin(successful_urls)][keep_cols]
+                    keep_cols = [url_column] + [c for c in ("source_row", "url_index", "collection_slug", "source_id", RESOURCE_IDENTITY_COLUMN) if c in input_df.columns]
+                    remaining_df = input_df[_pending(input_df)][keep_cols]
 
                 # If all URLs already downloaded, return existing results
                 if len(remaining_df) == 0:
                     self.logger.info("All files already successfully downloaded")
-                    return existing_results
+                    recorded = persisted_download_frame(existing_results, url_column)
+                    if existing_results_path is not None and not recorded.equals(existing_results):
+                        # An older results file held raw URLs: rewrite it redacted.
+                        recorded.to_parquet(existing_results_path, index=False)
+                    return recorded
 
                 self.logger.info(
                     f"Processing {len(remaining_df)} remaining URLs after skipping successes"
                 )
 
-                # Save filtered per-URL input to a temporary file for the downloader
+                # The remaining raw URLs go to the downloader in memory; the
+                # temporary name only keeps the checkpoint name unchanged.
                 temp_input = self.output_dir / "temp_download_input.parquet"
-                remaining_df.to_parquet(temp_input, index=False)
+                input_frame = remaining_df
                 input_parquet = temp_input
         else:
             self.logger.info("No existing download results found or usable")
@@ -275,7 +343,7 @@ class DownloadPhaseMixin:
         # Download files
         self.logger.info(f"Downloading files from URLs in {input_parquet}...")
         try:
-            new_results = downloader.download_files(input_parquet=str(input_parquet))
+            new_results = downloader.download_files(input_parquet=str(input_parquet), input_frame=input_frame)
         finally:
             # This call's request/progress logs are complete; no later
             # downloader or Corpus in this process may append to them.
@@ -287,8 +355,12 @@ class DownloadPhaseMixin:
         if not existing_results.empty:
             # Filter out rows from existing_results that are in new_results (based on URL)
             if url_column in new_results.columns and url_column in existing_results.columns:
-                processed_urls = new_results[url_column].tolist()
-                existing_filtered = existing_results[~existing_results[url_column].isin(processed_urls)]
+                # Replace previous rows of the same resource identity.
+                processed = set(frame_identities(new_results, url_column)) - {None}
+                processed_urls = set(new_results[url_column].astype(str).tolist())
+                existing_filtered = existing_results[[
+                    (identity not in processed) if identity else (str(url) not in processed_urls)
+                    for identity, url in zip(frame_identities(existing_results, url_column), existing_results[url_column].tolist())]]
 
                 # Combine existing and new results
                 final_results = pd.concat([existing_filtered, new_results], ignore_index=True)
@@ -301,7 +373,7 @@ class DownloadPhaseMixin:
 
         # Save results using the input filename pattern
         output_parquet = download_results_dir / f"download_results_{original_input_filename}"
-        final_results.to_parquet(output_parquet, index=False)
+        persisted_download_frame(final_results, url_column).to_parquet(output_parquet, index=False)
         self.logger.info(f"Saved download results to {output_parquet}")
 
         # Clean up temporary files if created

@@ -92,8 +92,8 @@ def _serve(connection,parent_pid,capacity):
                     import hashlib
                     with producer_hash_scope():
                         result=seal_output_hashes(result,request.work_directory)
-                    from ..ledger.urls import parse_policy, scrub
-                    encoded=json.dumps(scrub(asdict(result),parse_policy(request.settings.get('url_policy'))),ensure_ascii=False)
+                    from ..ledger.urls import parse_policy, scrub, scrub_known_value
+                    encoded=json.dumps(scrub_known_value(scrub(asdict(result),parse_policy(request.settings.get('url_policy')))),ensure_ascii=False)
                     write_text_hashed(request.work_directory/'worker-result.json',encoded)
                     data=encoded.encode('utf-8')
                     connection.send((request.task_id,request.attempt_id,request.lease_token,

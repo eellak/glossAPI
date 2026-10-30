@@ -80,8 +80,8 @@ def _serve(connection, parent_pid):
             target = request.work_directory/'worker-result.json'
             try:
                 from .execution import write_text_hashed, sha256_file
-                from ..ledger.urls import parse_policy, scrub
-                encoded = json.dumps(scrub(asdict(result), parse_policy(request.settings.get('url_policy'))), ensure_ascii=False)
+                from ..ledger.urls import parse_policy, scrub, scrub_known_value
+                encoded = json.dumps(scrub_known_value(scrub(asdict(result), parse_policy(request.settings.get('url_policy')))), ensure_ascii=False)
                 write_text_hashed(target,encoded)
                 import hashlib
                 data = encoded.encode('utf-8')

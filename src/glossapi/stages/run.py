@@ -65,6 +65,8 @@ def _row_identities(row,urls):
 
 
 def _bind(found,identity,raw):
+    from ..ledger.urls import register_url
+    register_url(raw)  # exact secret components join the known-secret scrubber
     previous=found.get(identity)
     if previous is not None and previous!=raw:
         from ..ledger.urls import persisted_url
@@ -139,6 +141,14 @@ def _remote_inventory(rows,root):
           and list(raw_named['filename_base'].astype(str))==list(persisted_named['filename_base'].astype(str)))
     named=persisted_named
     projection=persisted_frame
+    keyed=any(isinstance(identity,str) and not identity.startswith('url:v1:') for identity in identities)
+    if same and not expanded:
+        # One identity per source row: the download serializer records it with
+        # each persisted result row and resumes by it (LG3).
+        projection=persisted_frame.copy()
+        projection['resource_identity']=identities
+    elif same and keyed:
+        same=False  # expanded keyed URLs: record per expanded row below
     if not same:
         # Distinct raw URLs persist alike (different credentials or query
         # values): seal the raw duplicate decisions and names as non-secret
@@ -150,6 +160,7 @@ def _remote_inventory(rows,root):
         named['duplicate_of']=[persisted_url(value) if isinstance(value,str) else value for value in raw_named['duplicate_of']]
         named['frozen_duplicate_group']=groups.astype('int64').values
         projection=named.drop(columns=['__url_norm'])
+        projection['resource_identity']=identities
     return named.to_dict(orient='records'),raw_urls,identities,projection
 
 
@@ -240,6 +251,9 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
         # only, keyed by resource identity. Everything recorded uses the
         # persisted URL form (CP-LEDGER cycle 2, F1/F2).
         transport=_transport_urls(list(credentials or ()),{})
+        from ..ledger.urls import register_setting_secrets
+        register_setting_secrets({key:settings.get(key) for key in ('download',) if settings.get(key)})
+        register_setting_secrets(getattr(corpus,'downloader_config',{}) or {})
         raw_manifest=settings.get('source_manifest')
         manifest_rows=(raw_manifest.get('documents',[]) if isinstance(raw_manifest,dict) else raw_manifest) if raw_manifest is not None else None
         if not resume:

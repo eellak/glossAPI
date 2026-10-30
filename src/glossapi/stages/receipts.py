@@ -40,7 +40,7 @@ def request_receipt(url, *, retry_index=0, backoff_ms=None, route=None):
     if state is None:
         yield None
         return
-    from ..ledger.urls import persisted_url, scrub_text
+    from ..ledger.urls import persisted_url, scrub_error_text
     receipt = {"sequence": len(state["requests"]), "requested_url": persisted_url(url), "final_url": None,
         "http_status": None, "redirects": [], "response_headers": {}, "retry_index": retry_index,
         "route": route or state["route"], "policy_hash": state["policy_hash"], "started_at": utc_now(),
@@ -52,7 +52,7 @@ def request_receipt(url, *, retry_index=0, backoff_ms=None, route=None):
         yield receipt
     except BaseException as error:
         receipt["error"] = {"error_type": type(error).__module__ + "." + type(error).__name__,
-            "message": scrub_text(str(error)), "traceback": scrub_text("".join(traceback.format_exception(error)))}
+            "message": scrub_error_text(str(error)), "traceback": scrub_error_text("".join(traceback.format_exception(error)))}
         raise
     finally:
         receipt["finished_at"] = utc_now()

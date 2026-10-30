@@ -18,10 +18,12 @@ from .encoding import canonical_json, evidence, file_hash, snapshot_hash, typed_
 from .schema import APPEND_ONLY_TABLES, SCHEMA_SQL, SCHEMA_VERSION, COMPACT_SCHEMA_SQL, COMPACT_RETENTION_SCHEMA_SQL
 from .compact import connect, encode_json
 from .validation import validate_evidence
-from .urls import needs_scrub, persisted_url, pop_identity_root, push_identity_root, scrub, scrub_text
+from .urls import (has_known_secrets, needs_scrub, persisted_url, pop_identity_root, push_identity_root, scrub, scrub_known,
+    scrub_known_value, scrub_text)
 
 
 _OPEN_WRITERS = set()
+_FUNCTIONAL_SNAPSHOTS = frozenset(("plan", "settings", "environment", "shared_config", "inputs"))
 
 
 class LedgerError(ValueError):
@@ -516,6 +518,13 @@ class LedgerWriter:
             # Last recording boundary for URL credentials (CP-LEDGER F2).
             value = scrub(value)
             encoded = canonical_json(value)
+        if kind not in _FUNCTIONAL_SNAPSHOTS and has_known_secrets() and scrub_known(encoded) != encoded:
+            # Exact secret strings of in-memory transport URLs (cycle-2 LG3):
+            # evidence, errors and receipts. Frozen plans/settings are re-read
+            # for execution, already carry redacted credentials and persisted
+            # URLs, and are left byte-exact.
+            value = scrub_known_value(value)
+            encoded = canonical_json(value)
         digest = hashlib.sha256(encoded.encode()).hexdigest()
         if digest in self.snapshot_cache:
             return digest
@@ -570,8 +579,8 @@ class LedgerWriter:
         if url_index is not None and (type(url_index) is not int or url_index < 0): raise LedgerError("url_index must be a nonnegative integer")
         source_uri = persisted_url(source_uri)
         encoded = canonical_json({"schema_version": 1, "fields": typed_value(metadata)})
-        if needs_scrub(encoded):
-            encoded = canonical_json({"schema_version": 1, "fields": typed_value(scrub(metadata))})
+        if needs_scrub(encoded) or (has_known_secrets() and scrub_known(encoded) != encoded):
+            encoded = canonical_json({"schema_version": 1, "fields": typed_value(scrub_known_value(scrub(metadata)))})
         identifier = source_record_id or snapshot_hash([document_id, run_id, source_uri, source_kind, manifest_sha256, source_row, url_index, encoded])
         validate_hash(identifier)
         self.connection.execute("INSERT INTO source_records VALUES(?,?,?,?,?,?,?,?,?)", (identifier, document_id, run_id, source_uri, source_kind, manifest_sha256, source_row, url_index, encoded))
@@ -669,7 +678,10 @@ class LedgerWriter:
         if needs_scrub(text):
             payload = scrub(payload)
             text = canonical_json(payload)
-        message, traceback = scrub_text(message), scrub_text(traceback)
+        if has_known_secrets() and scrub_known(text) != text:
+            payload = scrub_known_value(payload)
+            text = canonical_json(payload)
+        message, traceback = scrub_known(scrub_text(message)), scrub_known(scrub_text(traceback))
         if duration_ns is not None and (type(duration_ns) is not int or duration_ns < 0):
             raise LedgerError("Duration must be nonnegative integer nanoseconds")
         encoded=encode_json(text) if self.connection.compact else text

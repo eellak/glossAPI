@@ -245,8 +245,8 @@ def main(argv=None):
             exit_code=3 if outcome['state']=='waiting' else 1 if outcome['state'] in ('completed_with_failures','cancelled') else 0
     except (ReadRequestError, LedgerError, sqlite3.Error, OSError, ValueError, TypeError, ImportError, RuntimeError) as error:
         code = getattr(error, "code", "unsupported_schema" if isinstance(error, LedgerError) else "read_error")
-        from .ledger.urls import scrub, scrub_text
-        envelope["errors"].append(dict(code=code, message=scrub_text(str(error)), document_id=None, stage=None, details=scrub(getattr(error, "details", {}))))
+        from .ledger.urls import scrub, scrub_error_text, scrub_known_value
+        envelope["errors"].append(dict(code=code, message=scrub_error_text(str(error)), document_id=None, stage=None, details=scrub_known_value(scrub(getattr(error, "details", {})))))
         exit_code = 3 if code in ("policy_conflict","disk_guard_unavailable","disk_budget_exceeded","waiting_for_disk") else 2
     # Human mode renders the same object and retains every uncertainty.
     print(json.dumps(envelope, ensure_ascii=False, indent=None if "--json" in argv else 2))

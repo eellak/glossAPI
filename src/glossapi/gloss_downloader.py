@@ -50,6 +50,56 @@ from email.utils import parsedate_to_datetime
 from .ledger.urls import CredentialLogFilter as _UrlCredentialFilter, protect_handler as _protect_handler
 
 
+RESOURCE_IDENTITY_COLUMN = 'resource_identity'
+# URL-valued result columns besides the configured URL column.
+_URL_VALUED_COLUMNS = ('duplicate_of', 'final_url', 'redirect_url', 'referer', 'source_url')
+_ERROR_COLUMNS = ('download_error', 'error', 'error_message')
+
+
+def _row_identity(value, source_id=None):
+    """Resource identity of one raw result URL (same rule as the run path)."""
+    if not isinstance(value, str) or not value.startswith(('http://', 'https://')):
+        return None
+    from .stages.run import resource_identity
+    return resource_identity(value, source_id=source_id if isinstance(source_id, str) and source_id else None)
+
+
+def frame_identities(df: pd.DataFrame, url_column: str = 'url') -> List[Optional[str]]:
+    """Per-row resource identity: a recorded identity column wins, else computed from the URL."""
+    if url_column not in df.columns:
+        return [None] * len(df)
+    recorded = df[RESOURCE_IDENTITY_COLUMN].tolist() if RESOURCE_IDENTITY_COLUMN in df.columns else [None] * len(df)
+    declared = df['source_id'].tolist() if 'source_id' in df.columns else [None] * len(df)
+    return [identity if isinstance(identity, str) and identity else _row_identity(url, source)
+            for identity, url, source in zip(recorded, df[url_column].tolist(), declared)]
+
+
+def persisted_download_frame(df: pd.DataFrame, url_column: str = 'url') -> pd.DataFrame:
+    """The recordable copy of a download results frame (CP-LEDGER cycle 2, LG3).
+
+    URL-valued columns hold only the persisted (allowlisted) spelling, error
+    columns are scrubbed, every string cell loses registered known secrets, and
+    ``resource_identity`` (last column) keeps each row's identity so that a
+    resume matches by identity, never by the raw URL string.
+    """
+    from .ledger.urls import persisted_url, scrub_error_text, scrub_known
+    out = df.drop(columns=['__url_norm'], errors='ignore').copy()
+    if url_column in out.columns:
+        identities = frame_identities(out, url_column)
+        out = out.drop(columns=[RESOURCE_IDENTITY_COLUMN], errors='ignore')
+        out[url_column] = [persisted_url(value) if isinstance(value, str) else value for value in out[url_column].tolist()]
+        out[RESOURCE_IDENTITY_COLUMN] = identities
+    for column in _URL_VALUED_COLUMNS:
+        if column in out.columns:
+            out[column] = [persisted_url(value) if isinstance(value, str) else value for value in out[column].tolist()]
+    for column in out.columns:
+        if column == RESOURCE_IDENTITY_COLUMN or not (out[column].dtype == object or pd.api.types.is_string_dtype(out[column])):
+            continue
+        clean = scrub_error_text if column in _ERROR_COLUMNS else scrub_known
+        out[column] = [clean(value) if isinstance(value, str) else value for value in out[column].tolist()]
+    return out
+
+
 def _private_logger(name: str, level: int, *, propagate: bool = True) -> logging.Logger:
     """An unregistered per-instance logger whose handlers no other instance shares.
 
@@ -1493,12 +1543,8 @@ class GlossDownloader:
             if not checkpoint_path:
                 return
             try:
-                df_out = df.copy()
-                if '__url_norm' in df_out.columns:
-                    try:
-                        df_out = df_out.drop(columns=['__url_norm'])
-                    except Exception:
-                        pass
+                # Recorded checkpoints hold persisted URLs plus resource identity.
+                df_out = persisted_download_frame(df, self.url_column)
                 tmp = checkpoint_path.with_suffix(checkpoint_path.suffix + '.tmp')
                 df_out.to_parquet(tmp, index=False)
                 os.replace(tmp, checkpoint_path)
@@ -1608,12 +1654,14 @@ class GlossDownloader:
             pass
         return df
     
-    def download_files(self, input_parquet: str, **kwargs) -> pd.DataFrame:
+    def download_files(self, input_parquet: str, *, input_frame: Optional[pd.DataFrame] = None, **kwargs) -> pd.DataFrame:
         """
         Download files from URLs in a parquet file
         
         Args:
-            input_parquet: Path to input parquet file
+            input_parquet: Path to input parquet file (also names the checkpoint)
+            input_frame: In-memory rows to download instead of reading ``input_parquet``
+                (raw transport URLs are never written to a temporary parquet)
             
         Returns:
             pd.DataFrame: DataFrame with download results
@@ -1621,7 +1669,7 @@ class GlossDownloader:
         self.logger.info(f"Loading parquet file: {input_parquet}")
         
         # Load input parquet
-        df = pd.read_parquet(input_parquet)
+        df = input_frame.copy() if input_frame is not None else pd.read_parquet(input_parquet)
         
         # Check that URL column exists
         if self.url_column not in df.columns:
@@ -1708,12 +1756,8 @@ class GlossDownloader:
             if not checkpoint_path:
                 return
             try:
-                df_out = df.copy()
-                if '__url_norm' in df_out.columns:
-                    try:
-                        df_out = df_out.drop(columns=['__url_norm'])
-                    except Exception:
-                        pass
+                # Recorded checkpoints hold persisted URLs plus resource identity.
+                df_out = persisted_download_frame(df, self.url_column)
                 tmp = checkpoint_path.with_suffix(checkpoint_path.suffix + '.tmp')
                 df_out.to_parquet(tmp, index=False)
                 os.replace(tmp, checkpoint_path)
@@ -2595,10 +2639,10 @@ class GlossDownloader:
 
         return df
 
-    async def adownload_files(self, input_parquet: str, **kwargs) -> pd.DataFrame:
+    async def adownload_files(self, input_parquet: str, *, input_frame: Optional[pd.DataFrame] = None, **kwargs) -> pd.DataFrame:
         """Async variant of download_files for notebook/async contexts."""
         self.logger.info(f"Loading parquet file: {input_parquet}")
-        df = pd.read_parquet(input_parquet)
+        df = input_frame.copy() if input_frame is not None else pd.read_parquet(input_parquet)
         if self.url_column not in df.columns:
             available_columns = df.columns.tolist()
             self.logger.error(f"URL column '{self.url_column}' not found in parquet file. Available columns: {available_columns}")
