@@ -29,13 +29,23 @@ def package_requirements():
 
 
 def _split_source(value):
-    """Return (url, revision) for a pip source URL; VCS revisions follow the last '@'."""
+    """Return (url, revision) for a pip source URL.
+
+    As in pip, a VCS revision follows the last '@' of the URL *path*, so user
+    information in the authority (``git+ssh://git@host/...``) stays in the URL and
+    branch/tag names may contain '/' (``...@dev/glossapi-ocr-default``). The URL
+    fragment (``#egg=``/``#subdirectory=``) is not part of the source URL.
+    """
+    from urllib.parse import urlsplit, urlunsplit
     value = (value or '').strip()
     if value.startswith('git+'):
         value = value[4:]
-        head, separator, revision = value.rpartition('@')
-        if separator and '://' in head and '/' not in revision:
-            return _normal_url(head), revision
+        parts = urlsplit(value)
+        if parts.scheme and parts.netloc:
+            path, separator, revision = parts.path.rpartition('@')
+            if not separator:
+                path, revision = parts.path, None
+            return _normal_url(urlunsplit((parts.scheme, parts.netloc, path, parts.query, ''))), revision
     return _normal_url(value), None
 
 

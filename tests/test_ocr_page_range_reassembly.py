@@ -37,14 +37,17 @@ def test_unreadable_encrypted_corrupt_and_continue(tmp_path):
     assert records[0].get('error') and records[1].get('error')
     assert not records[2].get('error')
 
-def stall_or_run(path,wordlist,result_path,fold_validity=False,rule_profile="v2"):
+def stall_or_run(path,wordlist,result_path,fold_validity=False,rule_profile="v4",
+                 image_dominant_min_valid_word_rate=0.9,image_dominant_max_junk_share=0.1):
+    """Stand-in for cli._worker: same seven arguments, forwarded unchanged to the real worker."""
     if Path(path).name=='stall.pdf':
         signal.signal(signal.SIGTERM,signal.SIG_IGN)
         Path(path).with_suffix('.started').write_text('started')
         time.sleep(10)
         Path(path).with_suffix('.late').write_text('incorrect late completion')
     else:
-        cli._worker(path,wordlist,result_path,fold_validity,rule_profile)
+        cli._worker(path,wordlist,result_path,fold_validity,rule_profile,
+                    image_dominant_min_valid_word_rate,image_dominant_max_junk_share)
 
 def test_actual_stall_killed_and_next_file_continues(tmp_path,monkeypatch):
     original_context=mp.get_context('fork')
@@ -54,12 +57,17 @@ def test_actual_stall_killed_and_next_file_continues(tmp_path,monkeypatch):
     monkeypatch.setattr(cli.mp,'get_context',lambda _:Context())
     good=tmp_path/'good.pdf';make_pdf(good)
     stall=tmp_path/'stall.pdf'
+    # Load the bundled v4 wordlist in the parent so the forked good-file worker does not spend
+    # the 0.2 s budget on a cold load (earlier tests warm it when the whole file runs).
+    from glossapi import page_quality
+    page_quality._default_words()
     previous={p.pid for p in mp.active_children()}
     started=time.monotonic();records=list(cli.batch([stall,good],workers=1,timeout=.2));elapsed=time.monotonic()-started
     print('STALL RECORDS',json.dumps(records),'elapsed',elapsed)
     assert stall.with_suffix('.started').exists()
     assert records[0]['error']=='Timeout after 0.2 seconds'
     assert not records[1].get('error')
+    assert records[1]['filename']=='good.pdf' and len(records[1]['pages'])==2
     assert elapsed<1.8
     assert not stall.with_suffix('.late').exists()
     assert {p.pid for p in mp.active_children()}==previous

@@ -407,6 +407,62 @@ def test_install_without_vcs_metadata_uses_recorded_code_fingerprint(tmp_path, m
     assert not status['admitted'] and status['status'] == 'fingerprint_mismatch' and PIN['commit'] in status['reason']
 
 
+SSH_URL = 'ssh://git@github.com/fffoivos/greek-ocr-toolkit'
+DEV_BRANCH = 'dev/glossapi-ocr-default'
+
+
+def _package_gate(tmp_path, monkeypatch, direct, override):
+    """The real scheduler package gate with every other pin satisfied (reviewer probe, CP-OCRDEF cycle 2)."""
+    import importlib.metadata as metadata
+    from packaging.requirements import Requirement
+    from glossapi.ledger import LedgerWriter
+    from glossapi.stages.contracts import DocumentSnapshot, StageSpecification
+    from glossapi.stages.scheduler import ScheduledOperation, StreamingScheduler
+    use_site(monkeypatch, fake_toolkit(tmp_path/'site', direct=direct))
+    if override:
+        monkeypatch.setenv('GLOSSAPI_OCR_TOOLKIT_SOURCE', override)
+    versions = {Requirement(r).name: next(iter(Requirement(r).specifier)).version
+                if Requirement(r).specifier else '0.1.0' for r in defaults.package_requirements()
+                if not Requirement(r).marker or Requirement(r).marker.evaluate()}
+    monkeypatch.setattr(metadata, 'version', lambda name: versions[name])
+    monkeypatch.setattr(metadata, 'entry_points', lambda **kw: [SimpleNamespace(name='glossapi')])
+    op = ScheduledOperation('ocr', 'ocr', DocumentSnapshot('d', 'v', 'file:///source.pdf'),
+                            StageSpecification('ocr.document', settings={'entry_point_name':'glossapi'}))
+    with LedgerWriter(tmp_path/'corpus.sqlite3') as writer:
+        return StreamingScheduler(writer, tmp_path)._check_package(op), defaults.toolkit_source_status()
+
+
+@pytest.mark.parametrize('installed_url,commit,override', [
+    # OCRDEF-C2-G01: a slash-containing branch names the pinned install (reviewer counterexample).
+    (PIN['url'], PIN['commit'], 'git+'+PIN['url']+'@'+DEV_BRANCH),
+    # A development branch install declared by its full commit SHA.
+    (PIN['url'], OTHER_COMMIT, 'git+'+PIN['url']+'@'+OTHER_COMMIT),
+    # SSH user information stays in the authority, with a full commit, a slash branch, or no revision.
+    (SSH_URL, OTHER_COMMIT, 'git+'+SSH_URL+'@'+OTHER_COMMIT),
+    (SSH_URL, OTHER_COMMIT, 'git+'+SSH_URL+'.git@'+DEV_BRANCH),
+    (SSH_URL, OTHER_COMMIT, 'git+'+SSH_URL),
+], ids=['https-dev-branch-pinned', 'https-full-commit', 'ssh-full-commit', 'ssh-dev-branch', 'ssh-no-revision'])
+def test_package_gate_admits_declared_vcs_overrides(tmp_path, monkeypatch, installed_url, commit, override):
+    direct = {'url':installed_url, 'vcs_info':{'vcs':'git', 'commit_id':commit, 'requested_revision':DEV_BRANCH}}
+    gate, status = _package_gate(tmp_path, monkeypatch, direct, override)
+    assert gate is False, gate
+    assert status['admitted'] and status['status'] == 'development_override', status
+
+
+@pytest.mark.parametrize('installed_url,override', [
+    (PIN['url'], 'git+'+PIN['url']+'@dev/other-branch'),
+    (PIN['url'], 'git+'+PIN['url']+'@'+'e'*40),
+    (SSH_URL, 'git+ssh://someone@github.com/fffoivos/greek-ocr-toolkit@'+DEV_BRANCH),
+    (SSH_URL, 'git+ssh://github.com/fffoivos/greek-ocr-toolkit@'+OTHER_COMMIT),
+    (PIN['url'], 'git+https://github.com/fffoivos/other-toolkit@'+DEV_BRANCH),
+], ids=['other-branch', 'other-commit', 'other-ssh-user', 'missing-ssh-user', 'other-repository'])
+def test_package_gate_rejects_vcs_overrides_that_do_not_describe_the_install(tmp_path, monkeypatch, installed_url, override):
+    direct = {'url':installed_url, 'vcs_info':{'vcs':'git', 'commit_id':OTHER_COMMIT, 'requested_revision':DEV_BRANCH}}
+    gate, status = _package_gate(tmp_path, monkeypatch, direct, override)
+    assert isinstance(gate, str) and 'does not describe the installed' in gate, gate
+    assert not status['admitted'] and status['status'] == 'override_mismatch', status
+
+
 def test_recorded_fingerprint_belongs_to_the_pin_and_matches_a_pinned_install():
     pin = defaults.toolkit_pin()
     assert pin['fingerprint']['commit'] == pin['commit'] and pin['fingerprint']['python_files'] > 0
