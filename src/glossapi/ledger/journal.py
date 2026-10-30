@@ -25,6 +25,7 @@ import traceback as traceback_module
 from urllib.parse import urlsplit, urlunsplit
 
 from .encoding import canonical_json, dataframe_records, file_hash, pack_evidence, typed_value
+from .urls import sanitize_url, scrub_text
 from .writer import LedgerWriter, new_id, utc_now
 from .stores import TEXT_FIELDS, membership_snapshot, read_store, store_states
 
@@ -51,11 +52,17 @@ def credential_key(key):
 
 
 def redact_credentials(value):
-    """Replace only credential values; every other JSON value is unchanged."""
+    """Replace only credential values; every other JSON value is unchanged.
+
+    Strings keep their spelling except URL userinfo and credential query
+    fields, which are redacted (CP-LEDGER F2).
+    """
     if isinstance(value, dict):
         return {key: (REDACTED if credential_key(key) else redact_credentials(item)) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [redact_credentials(item) for item in value]
+    if isinstance(value, str):
+        return scrub_text(value)
     return value
 
 
@@ -69,8 +76,9 @@ def safe_settings(value):
         return {str(key): (REDACTED if credential_key(key) else safe_settings(item)) for key, item in value.items()}
     if isinstance(value, (list, tuple)): return [safe_settings(item) for item in value]
     if isinstance(value, Path): return str(value)
+    if isinstance(value, str): return scrub_text(value)
     if isinstance(value, float) and not math.isfinite(value): return typed_value(value)
-    if value is None or isinstance(value, (str, bool, int, float)): return value
+    if value is None or isinstance(value, (bool, int, float)): return value
     # Do not use repr: backend option objects can hold secrets.
     return {"type": type(value).__module__ + "." + type(value).__name__, "value": "unknown_not_recorded"}
 
@@ -107,6 +115,8 @@ def wrapper_return_receipt(value):
 
 
 def source_key(uri):
+    """Stable non-secret identity: URL credentials never enter a source key."""
+    uri = sanitize_url(uri)
     parts = urlsplit(uri)
     if parts.scheme in ("http", "https"):
         return "url:v1:" + urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
@@ -251,7 +261,9 @@ class ResultJournal:
                 encoded_metadata = canonical_json({"schema_version": 1, "fields": typed_value(metadata)})
                 # The same source occurrence is an input to five wrappers, not
                 # five new acquisition rows. Each attempt still binds its file.
-                if writer.connection.execute("SELECT 1 FROM source_records WHERE document_id=? AND source_uri=? AND source_row=? AND manifest_sha256 IS NULL AND metadata_json=? LIMIT 1",
+                # A streaming run already recorded every requested occurrence in
+                # its source inventory; publication wrappers add none (F3/F4).
+                if streaming is None and writer.connection.execute("SELECT 1 FROM source_records WHERE document_id=? AND source_uri=? AND source_row=? AND manifest_sha256 IS NULL AND metadata_json=? LIMIT 1",
                         (document_id, uri, str(ordinal), encoded_metadata)).fetchone() is None:
                     writer.source_record(document_id, self.run_id, uri, metadata, source_row=str(ordinal))
                 size = path.stat().st_size if present else None

@@ -3987,6 +3987,8 @@ class CleanPhaseMixin:
             input_dir,
             n_threads,
             int(min_repeat_run),
+            # Owned corpus staging area (disk-observed), not an unaccounted temp dir.
+            scratch_root=Path(self.output_dir) / ".glossapi" / "staging",
         )
         df_updates = pd.DataFrame(list(results))
         if df_updates.empty:

@@ -168,7 +168,8 @@ def _worker(stage, request, connection):
         # capacity could deadlock join(). The pipe carries one small sentinel.
         from dataclasses import asdict
         target = request.work_directory / "worker-result.json"
-        encoded = json.dumps(asdict(result), ensure_ascii=False)
+        from ..ledger.urls import scrub
+        encoded = json.dumps(scrub(asdict(result)), ensure_ascii=False)
         write_text_hashed(target, encoded)
         data = encoded.encode('utf-8')
         connection.send((hashlib.sha256(data).hexdigest(), len(data)))
@@ -285,8 +286,12 @@ def freeze_inputs(request):
     """The only reads of external payloads; freeze and rehash before backend use."""
     import shutil
     frozen = []
+    # A frozen collision-free publication name (CP-LEDGER F1) spells the source
+    # payload, so every product the backend names after it is unique.
+    published = request.settings.get("publication_name")
     for ordinal, artifact in enumerate(request.inputs):
-        path = request.work_directory / "inputs" / str(ordinal) / artifact.path.name
+        name = published if published and artifact.kind in ("source_payload", "initial_input", "download_payload") else artifact.path.name
+        path = request.work_directory / "inputs" / str(ordinal) / name
         path.parent.mkdir(parents=True, exist_ok=True)
         digest,size=copy_hashed(artifact.path,path)
         if size != artifact.bytes or digest != artifact.sha256:

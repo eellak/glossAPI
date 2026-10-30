@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlsplit
 from .catalogue import STAGES, STATUSES
 from .encoding import canonical_json, snapshot_hash, unpack_evidence
 from .identity import source_key
+from .urls import scrub
 from .stores import membership_values
 from .writer import LedgerError, new_id
 from ..stages.retention import retention_facts, retention_summary
@@ -336,8 +337,24 @@ def report_why(connection, selector, *, run=None, stage=None):
         unknowns.append(dict(code="unknown_not_recorded", field=field))
     if not version or version["source_sha256"] is None:
         unknowns.append(dict(code="legacy_unknown", field="source_sha256", explanation="Original acquired entity bytes were not observed"))
+    # Every requested source occurrence (for example each local-manifest row),
+    # linked to the processed document version and its final disposition (F4).
+    final = next((item for item in reversed(inclusion) if item.get("product") == "document_jsonl"), None)
+    if final is not None:
+        disposition = dict(decision=final["decision"], reason_code=final["reason_code"], event_id=final["event_id"], basis="export_inclusion")
+    else:
+        terminal = [item for item in stages if item.get("scope") == "document" and item["status"]]
+        failed = next((item for item in terminal if item["status"] in ("failed", "skipped")), None)
+        disposition = dict(decision="failed" if failed and failed["status"] == "failed" else failed["status"] if failed else
+                           "completed" if terminal else None,
+                           reason_code=(failed["reasons"][-1]["reason_code"] if failed and failed["reasons"] else None),
+                           event_id=None, basis="document_stage_status")
+    occurrences = [dict(source_record_id=record["source_record_id"], run_id=record["run_id"], source_uri=record["source_uri"],
+                        source_row=record["source_row"], url_index=record["url_index"], manifest_sha256=record["manifest_sha256"],
+                        metadata=record["metadata"], document_id=record["document_id"],
+                        version_id=version["version_id"] if version else None, disposition=disposition) for record in records]
     return dict(document=dict(**document, version_id=version["version_id"] if version else None, versions=versions, source_records=records),
-                stages=stages, files=files, inclusion=inclusion, conflicts=conflicts, unknowns=unknowns, observations=observations,retention=retention_summary(connection,run))
+                occurrences=occurrences, stages=stages, files=files, inclusion=inclusion, conflicts=conflicts, unknowns=unknowns, observations=observations,retention=retention_summary(connection,run))
 
 
 def status_view(connection, *, run=None, stage=None, selector=None):
@@ -515,5 +532,5 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
             available=not any(stage in RUN_UNAVAILABLE for stage in pooled_stages),
             unavailable_stages={stage: RUN_UNAVAILABLE[stage] for stage in sorted(pooled_stages) if stage in RUN_UNAVAILABLE},
             basis="run revalidates sources, packages and devices before any dispatch"),
-        explicit_manifest=manifest)
+        explicit_manifest=scrub(manifest))
     return dict(body, plan_hash=snapshot_hash(body))

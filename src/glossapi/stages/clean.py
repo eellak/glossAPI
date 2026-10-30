@@ -18,34 +18,63 @@ from .edits import EditRecorder, text_hash, capture_ocr_edits
 from .receipts import capture_backend_observations
 
 
-def score_ocr_profile_directory(noise, directory, threads, min_repeat_run):
+def _has_supplement_marker(path, marker=b'<!-- ocr-', block=1 << 20):
+    """Stream one file for an OCR supplement marker; never retains its payload."""
+    overlap = len(marker) - 1
+    tail = b''
+    with Path(path).open('rb') as stream:
+        while True:
+            chunk = stream.read(block)
+            if not chunk:
+                return False
+            if marker in tail + chunk:
+                return True
+            tail = chunk[-overlap:]
+
+
+def score_ocr_profile_directory(noise, directory, threads, min_repeat_run, *, scratch_root=None):
     """Native OCR-profile text metrics over a directory, without OCR supplement markers.
 
     The supplement's composition comments are structure, not document text, so
     script shares such as ``latin_percentage`` must not count them (FG-G02).
-    Directories with no marker are scored in place, exactly as before. Otherwise
-    the Markdown files are scored from a marker-free private copy and each row's
-    path is mapped back to the original file.
+    The directory is scored in place, exactly as before. Files are inspected
+    one at a time; only files that contain a marker are rewritten, one at a
+    time, into a marker-free scratch copy that is scored and replaces their
+    rows (CP-LEDGER F7). ``scratch_root`` is the caller's owned, accounted
+    workspace (the attempt directory, or the corpus staging area); the scratch
+    copy is removed before returning.
     """
-    import tempfile
+    import shutil
+    import uuid
     from ..ocr.page_artifacts import strip_supplement_markers
     directory = Path(directory)
-    files = sorted(path for path in directory.rglob('*.md') if path.is_file())
-    payloads = {path: path.read_bytes() for path in files}
-    if not any(b'<!-- ocr-' in payload for payload in payloads.values()):
-        return list(noise.score_markdown_directory_ocr_profile(str(directory), threads, min_repeat_run))
-    with tempfile.TemporaryDirectory(prefix='glossapi-ocr-metrics-') as temporary:
-        surface = Path(temporary)
-        for path, payload in payloads.items():
-            target = surface/path.relative_to(directory)
+    marked = [path for path in sorted(directory.rglob('*.md')) if path.is_file() and _has_supplement_marker(path)]
+    rows = list(noise.score_markdown_directory_ocr_profile(str(directory), threads, min_repeat_run))
+    if not marked:
+        return rows
+    if scratch_root is None:
+        import tempfile
+        scratch = Path(tempfile.mkdtemp(prefix='glossapi-ocr-metrics-'))
+    else:
+        scratch = Path(scratch_root)/('ocr-metrics-'+uuid.uuid4().hex)
+        scratch.mkdir(parents=True)
+    try:
+        for path in marked:
+            target = scratch/path.relative_to(directory)
             target.parent.mkdir(parents=True, exist_ok=True)
-            if b'<!-- ocr-' in payload:
-                payload = strip_supplement_markers(payload.decode('utf-8', 'surrogateescape')).encode('utf-8', 'surrogateescape')
-            target.write_bytes(payload)
-        rows = list(noise.score_markdown_directory_ocr_profile(str(surface), threads, min_repeat_run))
-        for row in rows:
-            row['path'] = str(directory/Path(row['path']).relative_to(surface))
-    return rows
+            text = strip_supplement_markers(path.read_bytes().decode('utf-8', 'surrogateescape'))
+            target.write_bytes(text.encode('utf-8', 'surrogateescape'))
+        replacements = {Path(row['path']).relative_to(scratch): row
+                        for row in noise.score_markdown_directory_ocr_profile(str(scratch), threads, min_repeat_run)}
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    result = []
+    for row in rows:
+        relative = Path(row['path']).relative_to(directory)
+        row = dict(replacements.get(relative, row))
+        row['path'] = str(directory/relative)
+        result.append(row)
+    return result
 
 
 class CleanStage:
@@ -155,7 +184,7 @@ class CleanStage:
                     raise ValueError('OCR producer edit replay does not match cleaned text')
                 write_text_hashed(root/'debug.details.json',json.dumps(details,ensure_ascii=False))
                 metrics = {'ocr_scores': score_ocr_profile_directory(noise, source.path.parent, 1,
-                    int(request.settings.get('min_repeat_run', 6)))}
+                    int(request.settings.get('min_repeat_run', 6)), scratch_root=root)}
                 for row in metrics['ocr_scores']: row['path'] = source.path.name
                 # Do not duplicate text or path-bearing debug summary in SQLite.
                 metrics['matches'] = [{**{key: value for key, value in item.items()

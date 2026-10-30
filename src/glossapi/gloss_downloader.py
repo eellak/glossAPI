@@ -47,11 +47,24 @@ import functools
 from email.utils import parsedate_to_datetime
 
 
+class _UrlCredentialFilter(logging.Filter):
+    """Request/progress logs never record URL userinfo or credential query values."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        from .ledger.urls import scrub_text
+        message = record.getMessage()
+        cleaned = scrub_text(message)
+        if cleaned is not message and cleaned != message:
+            record.msg, record.args = cleaned, ()
+        return True
+
+
 def _private_logger(name: str, level: int, *, propagate: bool = True) -> logging.Logger:
     """An unregistered per-instance logger whose handlers no other instance shares."""
     logger = logging.Logger(name, level)
     logger.parent = logging.getLogger(name)
     logger.propagate = propagate
+    logger.addFilter(_UrlCredentialFilter())
     return logger
 
 

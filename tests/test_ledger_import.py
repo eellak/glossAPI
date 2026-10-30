@@ -19,7 +19,8 @@ def rows(path, records):
 
 
 def test_url_identity_preserves_meaningful_bytes_and_explicit_namespaces():
-    assert source_key("HTTPS://User:Pass@EXAMPLE.COM/A%2fb?b=2&a=1#x") == "url:v1:https://User:Pass@example.com/A%2fb?b=2&a=1"
+    # CP-LEDGER F2: URL credentials never enter an identity; userinfo is redacted.
+    assert source_key("HTTPS://User:Pass@EXAMPLE.COM/A%2fb?b=2&a=1#x") == "url:v1:https://%5Bredacted%5D@example.com/A%2fb?b=2&a=1"
     assert source_key("https://EXAMPLE.com/a?") != source_key("https://example.com/a")
     assert source_key("https://example.com/A") != source_key("https://example.com/a")
     assert source_key("https://example.com/a?b=1&a=2") != source_key("https://example.com/a?a=2&b=1")

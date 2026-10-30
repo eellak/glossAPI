@@ -50,8 +50,11 @@ def execution_environment():
     ocr={'toolkit':{key:toolkit.get(key) for key in ('status','admitted','version','installed_url','installed_commit',
             'installed_code_fingerprint','override_declared','pinned_url','pinned_commit')},
          'detector_override':detector_override()}
-    return {'code':snapshot_hash(files),'environment':environment,'native':[{'name':name,'hashes':hashes} for name,hashes in native.items()],
-            'models':models,'packages':[{'name':name,'version':version} for name,version in packages],'ocr':ocr}
+    from ..ledger.urls import scrub
+    # Recorded and compared in its credential-free spelling (an installed VCS
+    # URL may carry userinfo), so resume compares like with like (F2).
+    return scrub({'code':snapshot_hash(files),'environment':environment,'native':[{'name':name,'hashes':hashes} for name,hashes in native.items()],
+            'models':models,'packages':[{'name':name,'version':version} for name,version in packages],'ocr':ocr})
 
 
 def local_path(uri):
@@ -88,11 +91,18 @@ class ScheduledOperation:
 
 def _has_redacted_credentials(value):
     from ..ledger.journal import REDACTED, credential_key
+    from ..ledger.urls import was_redacted
     if isinstance(value, dict):
         return any((credential_key(key) and item==REDACTED) or _has_redacted_credentials(item) for key, item in value.items())
     if isinstance(value, list):
         return any(_has_redacted_credentials(item) for item in value)
-    return False
+    # A recorded URL whose userinfo/credential query was sanitized (CP-LEDGER F2).
+    return was_redacted(value)
+
+
+CREDENTIALS_NOT_PERSISTED = ('credentials_not_persisted: the ledger records credential settings and URL credentials '
+    'redacted; resume with the credentials supplied again (Corpus.run(resume=RUN_ID, credentials=[full source URLs]) '
+    'or glossapi run --resume RUN_ID --credentials FILE), or resubmit this download in a new run')
 
 
 def operation_json(operation):
@@ -150,6 +160,8 @@ class StreamingScheduler:
         # frozen plan. This process keeps them for its own dispatch only.
         self.credentials = {}
         self.redacted_credentials = set()
+        # Caller-supplied transport URLs, keyed by their recorded sanitized spelling.
+        self.transport_urls = {}
 
     def _wait(self,run,task,operation,reason,message=None):
         if (task,reason) in self.wait_reasons:
@@ -321,7 +333,15 @@ class StreamingScheduler:
             if original is not None and redact_credentials(original)==operation.specification.settings:
                 operations[index]=replace(operation,specification=replace(operation.specification,settings=original))
             elif _has_redacted_credentials(operation.specification.settings):
-                self.redacted_credentials.add(operation.key)
+                settings=operation.specification.settings
+                supplied=self.transport_urls.get(settings.get('url')) if isinstance(settings.get('url'),str) else None
+                if supplied is not None:
+                    # The caller supplied the URL again; only this process holds it.
+                    settings={**settings,'url':supplied}
+                    self.credentials[operation.key]=settings
+                    operations[index]=replace(operation,specification=replace(operation.specification,settings=settings))
+                if _has_redacted_credentials(settings):
+                    self.redacted_credentials.add(operation.key)
         tasks = {row['ordinal']:row['task_id'] for row in self.writer.connection.execute('SELECT * FROM tasks WHERE run_id=? ORDER BY ordinal',(run,))}
         return operations, {operation.key:tasks[index] for index,operation in enumerate(operations)}, row
 
@@ -419,6 +439,10 @@ class StreamingScheduler:
                     terminal.add(operation.key)
                 if state['status']=='skipped' and all(edge[0] in done for edge in operation.inputs):
                     terminal.add(operation.key)
+        # Refuse before any dispatch when pending work lacks its in-memory credentials.
+        blocked=[operation for operation in operations if operation.key in self.redacted_credentials and operation.key not in terminal]
+        if blocked:
+            raise ValueError(CREDENTIALS_NOT_PERSISTED+' (sources: '+', '.join(sorted({operation.document.source_uri for operation in blocked}))+')')
         by_key = {operation.key:operation for operation in operations}
         consumers={key:[] for key in by_key}
         for operation in operations:
@@ -554,8 +578,7 @@ class StreamingScheduler:
                         if any(len(self.ready.get((child.stage,child.specification.device_id),()))>=max(2,2*self.workers.get(child.stage,1)) for child in children):
                             break
                         if operation.key in self.redacted_credentials:
-                            raise ValueError('credentials_not_persisted: the ledger records credential settings redacted; '
-                                'resubmit this download in a new run with its credentials supplied')
+                            raise ValueError(CREDENTIALS_NOT_PERSISTED)
                         queue.popleft()
                         artifacts=list(operation.document.artifacts)
                         roles=list(operation.specification.input_roles[:len(artifacts)])

@@ -18,6 +18,7 @@ from .encoding import canonical_json, evidence, file_hash, snapshot_hash, typed_
 from .schema import APPEND_ONLY_TABLES, SCHEMA_SQL, SCHEMA_VERSION, COMPACT_SCHEMA_SQL, COMPACT_RETENTION_SCHEMA_SQL
 from .compact import connect, encode_json
 from .validation import validate_evidence
+from .urls import needs_scrub, sanitize_url, scrub, scrub_text
 
 
 _OPEN_WRITERS = set()
@@ -505,6 +506,10 @@ class LedgerWriter:
         value = evidence(value)
         validate_evidence(value)
         encoded = canonical_json(value)
+        if needs_scrub(encoded):
+            # Last recording boundary for URL credentials (CP-LEDGER F2).
+            value = scrub(value)
+            encoded = canonical_json(value)
         digest = hashlib.sha256(encoded.encode()).hexdigest()
         if digest in self.snapshot_cache:
             return digest
@@ -527,6 +532,7 @@ class LedgerWriter:
 
     def document(self, source_key):
         self._owner()
+        source_key = scrub_text(source_key)
         row = self.connection.execute("SELECT document_id FROM documents WHERE source_key=?", (source_key,)).fetchone()
         if row: return row[0]
         identifier = new_id()
@@ -556,7 +562,10 @@ class LedgerWriter:
         validate_hash(manifest_sha256, nullable=True)
         if source_row is not None and not isinstance(source_row, str): raise LedgerError("source_row must be text")
         if url_index is not None and (type(url_index) is not int or url_index < 0): raise LedgerError("url_index must be a nonnegative integer")
+        source_uri = sanitize_url(source_uri)
         encoded = canonical_json({"schema_version": 1, "fields": typed_value(metadata)})
+        if needs_scrub(encoded):
+            encoded = canonical_json({"schema_version": 1, "fields": typed_value(scrub(metadata))})
         identifier = source_record_id or snapshot_hash([document_id, run_id, source_uri, source_kind, manifest_sha256, source_row, url_index, encoded])
         validate_hash(identifier)
         self.connection.execute("INSERT INTO source_records VALUES(?,?,?,?,?,?,?,?,?)", (identifier, document_id, run_id, source_uri, source_kind, manifest_sha256, source_row, url_index, encoded))
@@ -650,9 +659,14 @@ class LedgerWriter:
                 if status == "planned" and last: raise LedgerError("Cannot regress an attempt to planned")
         payload = evidence(details or {})
         validate_evidence(payload)
+        text = canonical_json(payload)
+        if needs_scrub(text):
+            payload = scrub(payload)
+            text = canonical_json(payload)
+        message, traceback = scrub_text(message), scrub_text(traceback)
         if duration_ns is not None and (type(duration_ns) is not int or duration_ns < 0):
             raise LedgerError("Duration must be nonnegative integer nanoseconds")
-        encoded=encode_json(canonical_json(payload)) if self.connection.compact else canonical_json(payload)
+        encoded=encode_json(text) if self.connection.compact else text
         if self.connection.compact:
             identifier=self.next_event_id
             self.next_event_id+=1

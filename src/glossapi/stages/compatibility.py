@@ -16,6 +16,34 @@ from .execution import ReceiptCollector, checked_path, sha256_file
 from .extract import ExtractStage
 
 
+def claim_publication(corpus, destination, version):
+    """Reject, never overwrite, a second document version projected onto one location.
+
+    A streaming run publishes each input version under its own frozen name
+    (CP-LEDGER F1). Any remaining collision within the run (for example two
+    names that a case-insensitive filesystem folds together) is an ambiguous
+    projection and fails the barrier instead of silently replacing a product.
+    Returns a callable that records the claim after the bytes are written.
+    """
+    claims = getattr(corpus, '_publication_claims', None)
+    if claims is None or version is None:
+        return lambda: None
+    destination = Path(destination).absolute()
+    keys = [('path', os.path.normcase(str(destination)))]
+    if destination.exists():
+        info = destination.stat()
+        keys.append(('inode', info.st_dev, info.st_ino))
+    for key in keys:
+        owner = claims.get(key)
+        if owner is not None and owner != version:
+            raise ValueError('Ambiguous publication: '+destination.name+' would replace the product of another document version in this run')
+    def record():
+        info = destination.stat()
+        claims[keys[0]] = version
+        claims[('inode', info.st_dev, info.st_ino)] = version
+    return record
+
+
 def extract_compatibility_document(extractor, source, output_dir, timeout_dir=None):
     from ..ledger.journal import observe, accept_worker_observations, _active_journal, ResultJournal
     source, output_dir = Path(source).absolute(), Path(output_dir).absolute()
@@ -91,6 +119,7 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
                     serialized_payload = json.dumps(payload, ensure_ascii=False)
             destination = output_dir.parent / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
+            claimed = claim_publication(journal.corpus, destination, version) if isinstance(journal, ResultJournal) else (lambda: None)
             if output.kind == "chunk_manifest" or (output.kind == "extract_sidecar" and payload.get("chunk_manifest_path")):
                 from .execution import write_text_hashed
                 import hashlib
@@ -103,6 +132,7 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
                 if output.sha256 and (digest, size) != (output.sha256, output.bytes):
                     raise ValueError('Product changed during final publication')
                 mirror_hashes[relative] = (digest, size)
+            claimed()
         if isinstance(journal, ResultJournal):
             with journal.writer.transaction():
                 for output in result.outputs:
@@ -186,12 +216,17 @@ def materialize_stage_outputs(corpus, result, workspace, paths):
         destination = Path(destination).absolute()
         destination.parent.mkdir(parents=True, exist_ok=True)
         from .execution import copy_hashed
-        digest, size = copy_hashed(path, destination)
+        fact = None
+        claimed = lambda: None
         if isinstance(journal, ResultJournal):
             fact = journal.writer.connection.execute('SELECT * FROM files WHERE producer_attempt_id=? AND uri=?',
                 (result.attempt_id, path.as_uri())).fetchone()
             if fact is None:
                 raise ValueError('Cannot materialize unregistered stage output')
+            claimed = claim_publication(corpus, destination, fact['version_id'])
+        digest, size = copy_hashed(path, destination)
+        claimed()
+        if isinstance(journal, ResultJournal):
             if (digest,size)!=(fact['sha256'],fact['bytes']):
                 raise ValueError('Product changed during final publication')
             with journal.writer.transaction():

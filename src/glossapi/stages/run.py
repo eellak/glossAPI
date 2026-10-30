@@ -24,28 +24,116 @@ def extraction_settings(options=None):
         'code_enrichment':False,'use_cls':False,**(options or {})}
 
 
+def _transport_urls(value, found):
+    """Collect credential-bearing URLs (raw -> sanitized) from caller values, in memory only."""
+    from ..ledger.urls import _URL, sanitize_url
+    if isinstance(value, dict):
+        for item in value.values():_transport_urls(item, found)
+    elif isinstance(value, (list, tuple)):
+        for item in value:_transport_urls(item, found)
+    elif isinstance(value, str) and '://' in value:
+        for match in _URL.finditer(value):
+            clean=sanitize_url(match.group(0))
+            if clean!=match.group(0):
+                found.setdefault(clean, match.group(0))
+    return found
+
+
+def _manifest_selector_uri(row, writer):
+    """The source URI a local manifest row names, or None (same selectors as the CLI)."""
+    from ..ledger.urls import sanitize_url
+    if isinstance(row, str):
+        selector = row
+    elif isinstance(row, dict):
+        selector = next((row[k] for k in ('document_id','source_key','source_uri','path','url') if row.get(k)), None)
+        if row.get('document_id') == selector and isinstance(selector, str):
+            known = writer.connection.execute('SELECT source_key FROM documents WHERE document_id=?', (selector,)).fetchone()
+            selector = known[0] if known else None
+    else:
+        return None
+    if not isinstance(selector, str):
+        return None
+    if ':v1:' in selector and selector.split(':v1:',1)[0] in ('local_path','url'):
+        selector = selector.split(':v1:',1)[1]
+    if selector.startswith(('http://','https://')):
+        return sanitize_url(selector)
+    return Path(unquote(urlsplit(selector).path) if selector.startswith('file:') else selector).resolve().as_uri()
+
+
+def _publication_names(entries, remote_bases):
+    """Collision-free compatibility publication names for local inputs (CP-LEDGER F1).
+
+    Legacy serializers key every product by the source basename/stem. Inputs
+    whose canonical stems are unique keep exactly their current names. When
+    distinct inputs share one, each local input is published under a name
+    derived from its own source identity, so no product is overwritten.
+    """
+    import hashlib
+    from .._naming import canonical_stem
+    groups = {}
+    for entry in entries:
+        if entry['path'] is not None:
+            groups.setdefault(canonical_stem(entry['path'].name), []).append(entry)
+    names = {}
+    taken = {canonical_stem(name) for name in remote_bases} | {stem for stem, members in groups.items() if len(members) == 1}
+    for stem, members in groups.items():
+        if len(members) == 1 and stem not in {canonical_stem(name) for name in remote_bases}:
+            continue
+        for entry in members:
+            digest = hashlib.sha256(entry['key'].encode('utf-8')).hexdigest()
+            width = 10
+            while f'{stem}__{digest[:width]}' in taken:
+                width += 2
+            taken.add(f'{stem}__{digest[:width]}')
+            names[entry['key']] = f'{stem}__{digest[:width]}{entry["path"].suffix}'
+    return names
+
+
+def _publication_alias(root, run, name, target):
+    """A run-owned alias spelling the frozen publication name of a local input."""
+    import os
+    alias = Path(root)/'.glossapi/publication-inputs'/run/name
+    alias.parent.mkdir(parents=True, exist_ok=True)
+    if alias.is_symlink():
+        if Path(os.readlink(alias)) != Path(target):
+            raise ValueError('Publication alias already names a different source: '+name)
+    elif alias.exists():
+        raise ValueError('Publication alias location is occupied: '+name)
+    else:
+        os.symlink(Path(target), alias)
+    return alias
+
+
 def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean','sections'),settings=None,
-                      resume=None,retry_failed=False,observer=None,writer=None):
+                      resume=None,retry_failed=False,observer=None,writer=None,credentials=None):
     """Return committed results; public serializers consume them without reruns.
 
     Acquisition naming is sealed in source order before any worker starts.
     Corpus selection/global IDs, annotation and shard publication remain barriers.
     """
     from ..ledger.journal import source_key
+    from ..ledger.urls import sanitize_url, scrub
     began=time.monotonic()
     from .retention import resolved_settings
     settings=resolved_settings(settings)
     root=Path(corpus.output_dir).resolve()
     sources=list(sources)
+    # Transport credentials (URL userinfo, credential query fields) stay in this
+    # process only. Every recorded spelling is sanitized (CP-LEDGER F2).
+    transport=_transport_urls([*(credentials or ()),*[str(source) for source in sources]],{})
+    sources=[sanitize_url(str(source)) if str(source).startswith(('http://','https://')) else source for source in sources]
     source_rows=[{'source_uri':str(source)} for source in sources]
     download_manifest=None
+    occurrence_rows=None
     if not resume and any(str(source).startswith(('http://','https://')) for source in sources):
         import pandas as pd
         from ..gloss_downloader import GlossDownloader
         raw_manifest=settings.get('source_manifest')
         records=raw_manifest.get('documents',[]) if isinstance(raw_manifest,dict) else raw_manifest
         records=records or [{'url':str(source)} for source in sources]
-        frame=pd.DataFrame([row if isinstance(row,dict) else {'url':row} for row in records])
+        rows=[row if isinstance(row,dict) else {'url':row} for row in records]
+        _transport_urls(rows,transport)
+        frame=pd.DataFrame(scrub(rows))
         # Retain the source frame before expansion/naming for the unchanged
         # download serializer. Resume binds these bytes, not a reconstructed
         # frame with inferred column types or missing source metadata.
@@ -67,6 +155,8 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
     with nullcontext(writer) if writer is not None else LedgerWriter(root/'corpus.sqlite3') as writer:
         engine=StreamingScheduler(writer,root,workers=workers,cpu_tokens=settings.get('cpu_tokens'),
             memory_bytes=settings.get('memory_budget_bytes'),disk_budget_bytes=settings.get('disk_budget_bytes'),observer=observer)
+        engine.transport_urls=dict(transport)
+        unavailable={}
         if resume:
             run=resume
             operations,_,run_row=engine._load(run)
@@ -75,15 +165,20 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
             settings=frozen
         else:
             operations=[]
+            from ..ledger.journal import redact_credentials, safe_settings, code_revision
+            entries=[]
+            remote_any=any(str(source).startswith(('http://','https://')) for source in sources)
+            raw_manifest=settings.get('source_manifest')
+            manifest_rows=(raw_manifest.get('documents',[]) if isinstance(raw_manifest,dict) else raw_manifest) if raw_manifest is not None else None
+            # 1. The requested inventory is durable before any fallible per-file
+            # inspection: one missing or unreadable input cannot roll back the
+            # other inputs' census (CP-LEDGER F3).
             with writer.transaction():
-                from ..ledger.journal import redact_credentials
-                observation=writer.run(redact_credentials(settings),{'mode':'explicit_source_inventory'}, {},code_revision=__import__('glossapi.ledger.journal',fromlist=['code_revision']).code_revision())
+                observation=writer.run(redact_credentials(settings),{'mode':'explicit_source_inventory'}, {},code_revision=code_revision())
                 if download_manifest:
                     writer.artifact(observation,'download','source_manifest',download_manifest.as_uri(),
                         sha256=sha256_file(download_manifest),bytes=download_manifest.stat().st_size,
                         ownership='managed',retention_class='initial')
-                manifest=writer.snapshot('source_manifest',{'records':__import__('glossapi.ledger.journal',fromlist=['safe_settings']).safe_settings(source_rows)})
-                seen=set()
                 for ordinal,given in enumerate(sources):
                     source=str(given)
                     remote=source.startswith(('http://','https://'))
@@ -95,20 +190,78 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                         from ..ledger.writer import validate_id,utc_now
                         validate_id(proposed)
                         writer.connection.execute('INSERT INTO documents VALUES(?,?,?)',(proposed,key,utc_now()))
-                    document=writer.document(key)
-                    path=None if remote else local_path(uri)
-                    digest=sha256_file(path) if path else None
-                    version=writer.version(document,source_sha256=digest,stored_sha256=digest)
-                    writer.source_record(document,observation,uri,source_rows[ordinal],source_kind='url' if remote else 'local_path',
-                        source_row=str(source_rows[ordinal].get('source_row',ordinal)),url_index=max(0,int(source_rows[ordinal].get('url_index',0))),manifest_sha256=manifest)
-                    if key in seen:
-                        continue
-                    seen.add(key)
+                    entries.append(dict(ordinal=ordinal,source=source,remote=remote,uri=uri,key=key,
+                        document=writer.document(key),path=None if remote else local_path(uri)))
+                # Occurrence inventory, separate from the deduplicated processing
+                # documents. A local manifest keeps every typed original row (F4).
+                by_key={entry['key']:entry for entry in entries}
+                occurrences=[]
+                if not remote_any and isinstance(manifest_rows,list) and manifest_rows:
+                    covered=set()
+                    first={}
+                    for index,row in enumerate(manifest_rows):
+                        uri=_manifest_selector_uri(row,writer)
+                        entry=by_key.get(source_key(uri)) if uri else None
+                        if entry is None:
+                            continue
+                        covered.add(entry['key'])
+                        original=row if isinstance(row,dict) else {'source_uri':row}
+                        occurrences.append((entry,{'manifest_row':original,'occurrence_index':index,
+                            'duplicate_of_occurrence':first.get(entry['key'])},
+                            str(original.get('source_row',index)),0))
+                        first.setdefault(entry['key'],index)
+                    for entry in entries:
+                        if entry['key'] not in covered:
+                            occurrences.append((entry,source_rows[entry['ordinal']],str(entry['ordinal']),0))
+                    occurrence_rows=[metadata for _,metadata,_,_ in occurrences]
+                else:
+                    occurrences=[(entry,source_rows[entry['ordinal']],str(source_rows[entry['ordinal']].get('source_row',entry['ordinal'])),
+                        max(0,int(source_rows[entry['ordinal']].get('url_index',0)))) for entry in entries]
+                manifest=writer.snapshot('source_manifest',{'records':safe_settings(occurrence_rows if occurrence_rows is not None else source_rows)})
+                for entry,metadata,row_identity,url_index in occurrences:
+                    writer.source_record(entry['document'],observation,entry['uri'],metadata,source_kind='url' if entry['remote'] else 'local_path',
+                        source_row=row_identity,url_index=url_index,manifest_sha256=manifest)
+            # 2. Per-file inspection outside the inventory transaction.
+            unique=[]
+            seen=set()
+            for entry in entries:
+                if entry['key'] in seen:
+                    continue
+                seen.add(entry['key'])
+                unique.append(entry)
+                if entry['path'] is not None:
+                    try:
+                        entry['sha256']=sha256_file(entry['path'])
+                        entry['bytes']=entry['path'].stat().st_size
+                    except OSError as error:
+                        entry['failure']=error
+            remote_bases=[source_rows[entry['ordinal']].get('filename_base') for entry in unique if entry['remote'] and source_rows[entry['ordinal']].get('filename_base')]
+            publication=_publication_names([entry for entry in unique if 'failure' not in entry],remote_bases)
+            with writer.transaction():
+                for entry in unique:
+                    ordinal,source,remote,uri,document,path=(entry[name] for name in ('ordinal','source','remote','uri','document','path'))
+                    failure=entry.get('failure')
+                    if failure is not None:
+                        # An absent/unreadable source is its own outcome; the
+                        # other inputs proceed and report --why explains it.
+                        version=writer.version(document)
+                        writer.artifact(observation,'extract','source_payload',uri,version_id=version,ownership='initial_external',
+                            retention_class='initial',presence='missing')
+                        writer.event(observation,event_kind='decision',reason_code='source_unavailable',version_id=version,
+                            details={'source_uri':uri,'path':str(path),'cause':'local_source_absent' if isinstance(failure,FileNotFoundError) else 'local_source_unreadable',
+                                'error_type':type(failure).__name__,'errno':failure.errno,'message':str(failure)})
+                        unavailable[version]=type(failure).__name__
+                    else:
+                        digest=entry.get('sha256')
+                        version=writer.version(document,source_sha256=digest,stored_sha256=digest)
+                    skip='source_unavailable' if failure is not None else None
+                    published=publication.get(entry['key'])
+                    naming={'publication_name':published} if published else {}
                     artifacts=()
-                    if path:
-                        file_id=writer.artifact(observation,'extract','source_payload',uri,sha256=digest,bytes=path.stat().st_size,
+                    if path and failure is None:
+                        file_id=writer.artifact(observation,'extract','source_payload',uri,sha256=digest,bytes=entry['bytes'],
                             version_id=version,ownership='initial_external',retention_class='initial')
-                        artifacts=(ArtifactReference(file_id,'source_payload',path,digest,path.stat().st_size),)
+                        artifacts=(ArtifactReference(file_id,'source_payload',path,digest,entry['bytes']),)
                     snapshot=DocumentSnapshot(document,version,uri,artifacts=artifacts)
                     parent=None
                     if remote:
@@ -116,7 +269,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                         # retained downloader validates extensions/redirects.
                         name=source_rows[ordinal]['filename_base']
                         download_settings={'download_mode':'standard','legacy_outer_retry_count':0,**corpus.downloader_config,**settings.get('download',{}),
-                            'url':source,'filename_base':name,'row_index':ordinal}
+                            'url':transport.get(source,source),'filename_base':name,'row_index':ordinal}
                         parent=f'{ordinal}:download'
                         operations.append(ScheduledOperation(parent,'download',snapshot,
                             StageSpecification('download.acquire',required_output_kinds=('download_payload',),settings=download_settings),
@@ -125,14 +278,14 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                         key=f'{ordinal}:extract'
                         operations.append(ScheduledOperation(key,'extract',snapshot,
                             StageSpecification('extract.document',('source_payload',) if artifacts else (),('raw_markdown',),
-                                settings=extraction_settings(settings.get('extract'))),
-                            inputs=((parent,'download_payload','source_payload'),) if parent else ()))
+                                settings={**extraction_settings(settings.get('extract')),**naming}),
+                            inputs=((parent,'download_payload','source_payload'),) if parent else (),skip_reason=skip))
                         parent=key
                     if 'clean' in stages:
                         key=f'{ordinal}:clean'
                         operations.append(ScheduledOperation(key,'clean',replace(snapshot,artifacts=()),
                             StageSpecification('clean.initial',required_output_kinds=('clean_markdown','clean_metrics'),settings={'num_threads':1}),
-                            inputs=((parent,'raw_markdown','selected_text'),)))
+                            inputs=((parent,'raw_markdown','selected_text'),),skip_reason=skip))
                         parent=key
                     if 'ocr' in stages:
                         from ..ocr.defaults import default_values, select_device, cache_root
@@ -144,26 +297,26 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                         quality_key=f'{ordinal}:quality'
                         operations.append(ScheduledOperation(quality_key,'extract',snapshot,
                             StageSpecification('extract.page_quality',required_output_kinds=('page_quality',),
-                                settings={'page_quality':settings.get('page_quality',{})}),
-                            inputs=((f'{ordinal}:download','download_payload','source_payload'),) if remote else ()))
+                                settings={'page_quality':settings.get('page_quality',{}),**naming}),
+                            inputs=((f'{ordinal}:download','download_payload','source_payload'),) if remote else (),skip_reason=skip))
                         source_snapshot=replace(snapshot,artifacts=() if remote else snapshot.artifacts)
                         edges=((f'{ordinal}:download','download_payload','source_payload'),) if remote else ()
                         ocr_key=f'{ordinal}:ocr'
                         operations.append(ScheduledOperation(ocr_key,'ocr',source_snapshot,
                             StageSpecification('ocr.document',('source_payload',) if not remote else (),('ocr_markdown','ocr_metrics'),device,
                                 {**ocr_settings,'options':values,'entry_point_name':'glossapi',
-                                 'cache_root':str(cache_root(ocr_settings.get('cache_root')))}),
+                                 'cache_root':str(cache_root(ocr_settings.get('cache_root'))),**naming}),
                             inputs=(*edges,(f'{ordinal}:extract','raw_markdown','native_markdown'),(quality_key,'page_quality','page_quality')),
-                            after=(parent,),cpu_tokens=int(ocr_settings.get('num_threads',1))))
+                            after=(parent,),cpu_tokens=int(ocr_settings.get('num_threads',1)),skip_reason=skip))
                         parent=f'{ordinal}:clean_after_ocr'
                         operations.append(ScheduledOperation(parent,'clean',replace(snapshot,artifacts=()),
                             StageSpecification('clean.initial.artifact:after_ocr',required_output_kinds=('clean_markdown','clean_metrics'),settings={'num_threads':1}),
-                            inputs=((ocr_key,'ocr_markdown','selected_text'),)))
+                            inputs=((ocr_key,'ocr_markdown','selected_text'),),skip_reason=skip))
                     if 'sections' in stages:
-                        filename=path.stem if path else name
+                        filename=Path(published).stem if published else path.stem if path else name
                         operations.append(ScheduledOperation(f'{ordinal}:sections','sections',replace(snapshot,artifacts=()),
                             StageSpecification('sections.document',required_output_kinds=('section_fragment',),settings={'filename':filename}),
-                            inputs=((parent,'clean_markdown','selected_text'),)))
+                            inputs=((parent,'clean_markdown','selected_text'),),skip_reason=skip))
             run=engine.freeze(operations,settings={**settings,'requested_stages':list(stages)})
         corpus._retention_settings={**settings,'requested_stages':list(stages)}
         result=engine.execute(run,resume=bool(resume),retry_failed=retry_failed)
@@ -195,8 +348,12 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                 else:
                     producer=next(edge[0] for edge in operation.inputs if edge[2]=='source_payload')
                     source=next(artifact for artifact in engine._outputs(result['attempts'][producer],include_deleted=True) if artifact.kind=='download_payload')
-                selected_sources.append(source.path)
-                source_versions[str(source.path)]=operation.document.version_id
+                published=operation.specification.settings.get('publication_name')
+                # A colliding basename publishes under its frozen collision-free
+                # name through a run-owned alias of the same bytes (CP-LEDGER F1).
+                path=_publication_alias(root,run,published,source.path) if published else source.path
+                selected_sources.append(path)
+                source_versions[str(path)]=operation.document.version_id
             references=writer.connection.execute('SELECT sha256 FROM attempt_inputs WHERE attempt_id=? ORDER BY rowid',(attempt,)).fetchall()
             key=(operation.stage,operation.specification.operation,tuple(row[0] for row in references))
             receipt=next(artifact for artifact in engine._outputs(attempt) if artifact.kind=='worker_receipt')
@@ -207,6 +364,11 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
         failed_versions={task['version_id'] for task in writer.task_states(run) if task['status']=='failed' and task['version_id'] is not None}
         result['document_counts']={'selected':len(per_version),'included':len(completed_versions),
             'omitted':len(per_version)-len(completed_versions),'failed':len(failed_versions)}
+        unavailable_versions={task['version_id'] for task in writer.task_states(run)
+            if task['reason_code']=='source_unavailable' and task['version_id'] is not None}
+        result['source_inventory']={'unavailable':len(unavailable_versions)}
+        corpus._streaming_planned_versions=[version for version in per_version if version is not None]
+        corpus._streaming_completed_versions=completed_versions
         result['plan_hash']=writer.connection.execute('SELECT plan_sha256 FROM runs WHERE run_id=?',(run,)).fetchone()[0]
         if resume:
             settings=json.loads(writer.connection.execute('SELECT s.json FROM runs r JOIN snapshots s ON s.sha256=r.settings_sha256 WHERE r.run_id=?',(run,)).fetchone()[0])
@@ -217,7 +379,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
 
 
 def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export'),workers=None,settings=None,
-               resume=None,retry_failed=False,plan=None,observer=None):
+               resume=None,retry_failed=False,plan=None,observer=None,credentials=None):
     """Execute document DAG, then declared compatibility publication barriers."""
     settings=settings or {}
     files=list(files)
@@ -253,6 +415,10 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
             uri=observation.get('source_uri',document['source_key'].split(':v1:',1)[1])
             if uri.startswith('file:'):
                 path=local_path(uri)
+                if not path.exists() and observation.get('bytes') is None and not observation.get('stored_sha256'):
+                    # Planned while absent and still absent: the run records it
+                    # as its own unavailable outcome (CP-LEDGER F3).
+                    continue
                 if not path.is_file() or (observation.get('bytes') is not None and
                     (path.stat().st_size,path.stat().st_mtime_ns)!=(observation['bytes'],observation['mtime_ns'])):
                     raise ValueError('Supplied plan source inventory changed')
@@ -289,7 +455,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         settings={**settings,'semantic_files':[{'path':str(path.resolve()),'sha256':sha256_file(path)} for path in semantic_files if path.is_file()]}
     result,replays=prepare_streaming(corpus,files,workers=workers,stages=stages,
         settings={**settings,'publication_barriers':publication_stages},
-        resume=resume,retry_failed=retry_failed,observer=observer,writer=corpus._scheduler_writer)
+        resume=resume,retry_failed=retry_failed,observer=observer,writer=corpus._scheduler_writer,credentials=credentials)
     if result['state'] not in ('completed','completed_with_failures'):
         return result
     corpus._streaming_ocr_replays=replays
@@ -325,6 +491,8 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     # One whole-run disk observer for the publication barriers; it starts from
     # the scheduler's persisted peak and observes before each retention step.
     publication_budget=DiskBudget(corpus._scheduler_writer,corpus.output_dir,result['run_id'],getattr(corpus,'_retention_settings',settings))
+    # Each document version owns its compatibility locations for this run.
+    corpus._publication_claims={}
     with committed_results(replays):
         for stage in ('download','extract','clean','ocr','sections','annotate','export'):
             if stage in stages or (stage=='download' and corpus._streaming_download_manifest):
@@ -345,6 +513,8 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                     retain_completed_run(corpus._scheduler_writer,corpus.output_dir,result['run_id'],
                         getattr(corpus,'_retention_settings',settings),attempts=attempts,
                         observer=getattr(corpus,'_retention_observer',None))
+    if 'export' in stages:
+        reconcile_export_census(corpus,result)
     from .retention import retain_completed_run
     writer=corpus._scheduler_writer
     # Every wrapper generation is a child of this fixed publication plan.
@@ -368,7 +538,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     from collections import Counter
     counts=Counter(task['status'] for task in writer.task_states(result['run_id']))
     result['counts']={status:counts[status] for status in ('planned','running','ok','skipped','failed')}
-    result['state']='completed_with_failures' if counts['failed'] else 'completed'
+    result['state']='completed_with_failures' if counts['failed'] or result.get('source_inventory',{}).get('unavailable') else 'completed'
     with corpus._scheduler_writer.transaction():
         corpus._scheduler_writer.event(result['run_id'],event_kind='run',reason_code='legacy_observed',details={'state':result['state'],
             'disk_high_water_bytes':result['disk']['high_water_bytes'],'disk_high_water_scope':'run','result_sha256':corpus._scheduler_writer.snapshot('retained_run_result',{
@@ -376,6 +546,49 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                 'retained_file_ids':[row['file_id'] for row in writer.file_catalog().values() if row['presence']=='present'
                     and row['ownership'] in ('managed','initial_external') and local_path(row['uri']).is_file()]})})
     return result
+
+
+def reconcile_export_census(corpus,result):
+    """Final include/omit counts from per-version export membership (CP-LEDGER F1).
+
+    A version counts as included only when the export generation's own
+    membership receipt includes it; every other planned version gets one
+    explicit omission decision that ledger-only reports can explain.
+    """
+    from ..ledger.reader import evidence
+    writer=corpus._scheduler_writer
+    run=result['run_id']
+    planned=getattr(corpus,'_streaming_planned_versions',None) or []
+    completed=getattr(corpus,'_streaming_completed_versions',set())
+    if not planned:
+        return
+    table=writer.connection.event_table
+    tasks=writer.task_states(run)
+    barrier=next((task for task in tasks if task['operation']=='export.compatibility_publish'),None)
+    exported=set()
+    if barrier is not None and barrier['status']=='ok':
+        latest=writer.connection.execute(f"SELECT details_json FROM {table} WHERE run_id=? AND event_kind='run' AND message='wrapper:export' ORDER BY event_id DESC LIMIT 1",(run,)).fetchone()
+        if latest:
+            wrapper_run=json.loads(latest[0])['wrapper_run_id']
+            for task in writer.task_states(wrapper_run):
+                if task['stage']!='export':
+                    continue
+                for event in writer.connection.execute(f"SELECT details_json FROM {table} WHERE task_id=? AND event_kind='decision' ORDER BY event_id",(task['task_id'],)).fetchall():
+                    details=evidence(writer.connection,{'details_json':event[0]})
+                    if 'selected_versions' in details:
+                        exported={item['version_id'] for item in details['selected_versions'] if item.get('included') and item.get('version_id')}
+    unavailable={task['version_id'] for task in tasks if task['reason_code']=='source_unavailable' and task['version_id'] is not None}
+    omitted=[version for version in planned if version not in exported]
+    recorded={row[0] for row in writer.connection.execute(
+        f"SELECT DISTINCT version_id FROM {table} WHERE run_id=? AND event_kind='decision' AND reason_code='export_canonical_markdown_missing' AND version_id IS NOT NULL",(run,))} if omitted else set()
+    with writer.transaction():
+        for version in omitted:
+            if version in recorded:
+                continue
+            cause='source_unavailable' if version in unavailable else 'upstream_failed' if version not in completed else 'not_in_export_membership'
+            writer.event(run,event_kind='decision',reason_code='export_canonical_markdown_missing',version_id=version,
+                details={'product':'document_jsonl','included':False,'decision':'omit','cause':cause,'basis':'final_export_membership'})
+    result['document_counts']={**result['document_counts'],'included':len(planned)-len(omitted),'omitted':len(omitted)}
 
 
 @shadow_stage('ocr', 'ocr.wrapper')
@@ -498,3 +711,6 @@ def run_corpus(corpus,*args,**options):
             corpus._scheduler_writer=None
             corpus._streaming_download_replays=None
             corpus._streaming_ocr_replays=None
+            corpus._publication_claims=None
+            corpus._streaming_planned_versions=None
+            corpus._streaming_completed_versions=None

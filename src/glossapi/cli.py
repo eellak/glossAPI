@@ -51,6 +51,9 @@ def parser():
                 command.add_argument('--resume')
                 command.add_argument('--retry-failed', action='store_true')
                 command.add_argument('--trust-legacy-outputs', action='store_true')
+                command.add_argument('--credentials', help='JSON file listing full source URLs with their transport credentials '
+                    '(a list, or {"urls": [...]}). Read into memory only; never recorded. Required to resume or run a saved plan '
+                    'whose URLs were recorded with credentials redacted.')
         else:
             command.add_argument("--run")
             command.add_argument("--stage", choices=sorted(STAGES))
@@ -172,6 +175,18 @@ def main(argv=None):
             # Export after the short read transaction closes.
             envelope["data"] = _export(args.output, data, args.format)
         if args.command == 'run':
+            # Transport credentials stay in this process: from the given manifest
+            # or file list, and from an explicit --credentials file (F2).
+            credentials=[]
+            if args.credentials:
+                supplied=_json_file(args.credentials)
+                supplied=supplied.get('urls',supplied.get('documents',[])) if isinstance(supplied,dict) else supplied
+                if not isinstance(supplied,list):
+                    raise ReadRequestError('invalid_request','--credentials must list source URLs')
+                credentials.extend(supplied)
+            credentials.extend(args.files)
+            if args.manifest:
+                credentials.append(_json_file(args.manifest))
             if args.resume and (args.files or args.manifest or args.plan or args.stages or args.device or args.workers or args.settings or args.debug or args.memory_saving or args.disk_budget_bytes is not None):
                 raise ReadRequestError('invalid_request','Resume restores the frozen plan; overrides are forbidden')
             if args.plan and (args.files or args.manifest or args.stages or args.device or args.workers or args.settings or args.debug or args.memory_saving):
@@ -198,7 +213,7 @@ def main(argv=None):
                     sys.stdout.flush()
                     os.dup2(2,1)
                     outcome=corpus.run(resume=args.resume,retry_failed=args.retry_failed,
-                        **({'plan':requested} if not args.resume else {}))
+                        **({'plan':requested} if not args.resume else {}),**({'credentials':credentials} if credentials else {}))
                 finally:
                     os.dup2(saved_stdout,1)
                     os.close(saved_stdout)
@@ -209,7 +224,8 @@ def main(argv=None):
             exit_code=3 if outcome['state']=='waiting' else 1 if outcome['state'] in ('completed_with_failures','cancelled') else 0
     except (ReadRequestError, LedgerError, sqlite3.Error, OSError, ValueError, TypeError, ImportError, RuntimeError) as error:
         code = getattr(error, "code", "unsupported_schema" if isinstance(error, LedgerError) else "read_error")
-        envelope["errors"].append(dict(code=code, message=str(error), document_id=None, stage=None, details=getattr(error, "details", {})))
+        from .ledger.urls import scrub, scrub_text
+        envelope["errors"].append(dict(code=code, message=scrub_text(str(error)), document_id=None, stage=None, details=scrub(getattr(error, "details", {}))))
         exit_code = 3 if code in ("policy_conflict","disk_guard_unavailable","disk_budget_exceeded","waiting_for_disk") else 2
     # Human mode renders the same object and retains every uncertainty.
     print(json.dumps(envelope, ensure_ascii=False, indent=None if "--json" in argv else 2))

@@ -58,7 +58,7 @@ class ExtractStage:
             from ..gloss_extract import GlossExtract
             # Process-local converters/models survive across attempts. Every
             # semantic option is part of the key; input/workspace paths are not.
-            key = json.dumps(dict(request.settings), sort_keys=True)
+            key = json.dumps({name: value for name, value in request.settings.items() if name != "publication_name"}, sort_keys=True)
             extractor = _worker_extractors.get(key)
             if extractor is None:
                 extractor = GlossExtract()
