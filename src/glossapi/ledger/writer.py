@@ -27,6 +27,69 @@ class LedgerError(ValueError):
     """Invalid evidence, ownership, transition or unsupported schema."""
 
 
+def _load_syncfs():
+    """Linux syncfs(2); it reports writeback errors only from kernel 5.8 on."""
+    import sys
+    if not sys.platform.startswith('linux'):return None
+    match=re.match(r'(\d+)\.(\d+)',os.uname().release)
+    if not match or tuple(map(int,match.groups()))<(5,8):return None
+    import ctypes
+    try:function=ctypes.CDLL(None,use_errno=True).syncfs
+    except (OSError,AttributeError):return None
+    function.argtypes=[ctypes.c_int];function.restype=ctypes.c_int
+    return function
+
+
+_SYNCFS=_load_syncfs()
+
+
+def sync_filesystem(descriptor):
+    """Flush every file and directory of descriptor's filesystem and wait."""
+    if _SYNCFS(descriptor)!=0:
+        import ctypes
+        error=ctypes.get_errno()
+        raise OSError(error,os.strerror(error))
+
+
+class SyncBatch:
+    """One durability flush for a batch of changed files and directories.
+
+    With syncfs this is one call per filesystem. Otherwise each registered file
+    and then each registered directory is fsynced exactly once per batch.
+    """
+    def __init__(self):
+        self.descriptors={}
+
+    def add(self,descriptor):
+        """Register an open file or directory descriptor (it is duplicated)."""
+        import stat
+        info=os.fstat(descriptor);key=(info.st_dev,info.st_ino)
+        if key not in self.descriptors:self.descriptors[key]=(os.dup(descriptor),stat.S_ISDIR(info.st_mode))
+
+    def add_path(self,path):
+        descriptor=os.open(path,os.O_RDONLY)
+        try:self.add(descriptor)
+        finally:os.close(descriptor)
+
+    def flush(self):
+        if _SYNCFS is not None:
+            devices={}
+            for (device,_),(descriptor,_) in self.descriptors.items():devices.setdefault(device,descriptor)
+            for descriptor in devices.values():sync_filesystem(descriptor)
+            return
+        for descriptor,directory in self.descriptors.values():
+            if not directory:os.fsync(descriptor)
+        for descriptor,directory in self.descriptors.values():
+            if directory:os.fsync(descriptor)
+
+    def close(self):
+        for descriptor,_ in self.descriptors.values():os.close(descriptor)
+        self.descriptors={}
+
+    def __enter__(self):return self
+    def __exit__(self,*args):self.close()
+
+
 def utc_now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -284,21 +347,35 @@ class LedgerWriter:
         if self.connection.in_transaction:
             raise LedgerError('Durability barrier requires a committed observation')
         from urllib.parse import unquote, urlsplit
+        import stat
         directories=set()
-        synchronized=[]
+        synchronized=[];paths=[];devices={}
         for row in self.file_catalog().values():
             if row['ownership']!='managed' or row['presence']!='present':continue
             file_id,uri=row['file_id'],row['uri']
             if file_id in self._durable_files:continue
             path=Path(unquote(urlsplit(uri).path))
-            if not path.is_file():continue  # Missing observations are diagnosed by verification/resume.
-            with path.open('rb') as stream:os.fsync(stream.fileno())
+            try:info=os.stat(path)
+            except OSError:continue  # Missing observations are diagnosed by verification/resume.
+            if not stat.S_ISREG(info.st_mode):continue
+            devices.setdefault(info.st_dev,path)
+            paths.append(path)
             directories.update(parent for parent in path.parents if parent.is_relative_to(self.path.parent))
             synchronized.append(file_id)
-        for directory in sorted(directories,key=lambda path:len(path.parts),reverse=True):
-            descriptor=os.open(directory,os.O_RDONLY)
-            try:os.fsync(descriptor)
-            finally:os.close(descriptor)
+        if _SYNCFS is not None:
+            # One flush per filesystem covers every listed file and parent
+            # directory of this batch; the FULL commit below follows it.
+            for directory in directories:devices.setdefault(os.stat(directory).st_dev,directory)
+            with SyncBatch() as batch:
+                for path in devices.values():batch.add_path(path)
+                batch.flush()
+        else:
+            for path in paths:
+                with path.open('rb') as stream:os.fsync(stream.fileno())
+            for directory in sorted(directories,key=lambda path:len(path.parts),reverse=True):
+                descriptor=os.open(directory,os.O_RDONLY)
+                try:os.fsync(descriptor)
+                finally:os.close(descriptor)
         self.connection.execute('PRAGMA synchronous=FULL')
         try:
             with self.transaction():

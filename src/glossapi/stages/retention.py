@@ -283,9 +283,7 @@ class RetentionController:
                 raise ValueError('Artifact replaced before unlink')
             free_before = os.statvfs(self.root).f_bavail * os.statvfs(self.root).f_frsize
             os.unlink(name,dir_fd=descriptor)
-            if hasattr(self,'_directory_syncs'):
-                directory=os.fstat(descriptor);key=(directory.st_dev,directory.st_ino)
-                if key not in self._directory_syncs:self._directory_syncs[key]=os.dup(descriptor)
+            if hasattr(self,'_directory_syncs'):self._directory_syncs.add(descriptor)
             else:os.fsync(descriptor)
             self.fault('after_unlink', file_id)
             free_after = os.statvfs(self.root).f_bavail * os.statvfs(self.root).f_frsize
@@ -363,9 +361,11 @@ class RetentionController:
         self._completed_policy_hashes=set()
 
     def delete_many(self,file_ids):
+        from ..ledger.writer import SyncBatch
         intents=[]
-        # All intents reach stable storage before any unlink. Completions are
-        # another bounded transaction; a death anywhere leaves recoverable intents.
+        # Every intent of this frontier commits, then one durability barrier
+        # precedes any unlink. Completions are bounded transactions; a death
+        # anywhere leaves recoverable intents.
         for offset in range(0,len(file_ids),128):
             with self.writer.transaction():
                 for file_id in file_ids[offset:offset+128]:
@@ -376,21 +376,24 @@ class RetentionController:
                     intent=self.writer.event(self.run_id,event_kind='retention',reason_code='delete_planned',
                         file_id=file_id,version_id=row['version_id'],details=self._compact_receipt(details))
                     intents.append((file_id,intent))
-            self.writer.durable_barrier()
-            batch=intents;intents=[]
-            self._directory_syncs={}
+        if not intents:
+            if file_ids:self._prune_completed_policies()
+            return
+        self.writer.durable_barrier()
+        for offset in range(0,len(intents),128):
+            self._directory_syncs=SyncBatch()
             try:
                 with self.writer.batch():
                     try:
-                        for file_id,intent in batch:
+                        for file_id,intent in intents[offset:offset+128]:
                             self.fault('after_intent',file_id)
                             self.delete(file_id,recovering=intent)
                     finally:
-                        # Every affected parent reaches stable storage before
-                        # this transaction can commit any deletion completion.
-                        for descriptor in self._directory_syncs.values():os.fsync(descriptor)
+                        # Every affected parent reaches stable storage, once per
+                        # batch, before this transaction commits its completions.
+                        self._directory_syncs.flush()
             finally:
-                for descriptor in self._directory_syncs.values():os.close(descriptor)
+                self._directory_syncs.close()
                 del self._directory_syncs
             self._prune_completed_policies()
 
@@ -604,8 +607,12 @@ def retire_downloaded_sources(writer,root,run_id,settings):
         controller.delete_many([row['file_id'] for row in rows])
 
 
-def _unlink_private_file(controller, row, intent):
-    """Unlink only a producer-owned, unexposed regular private file; no rehash."""
+def _unlink_private_file(controller, row, intent, directories):
+    """Unlink only a producer-owned, unexposed regular private file; no rehash.
+
+    The changed parent is registered in directories; the caller flushes each
+    directory once before the batch that records these deletions commits.
+    """
     path = file_path(row)
     private = controller.root/'.glossapi/artifacts'
     if (row['ownership']!='managed' or not row['producer_attempt_id']
@@ -623,10 +630,10 @@ def _unlink_private_file(controller, row, intent):
             if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1:
                 raise ValueError('Private scratch identity is ambiguous')
             os.unlink(relative.name,dir_fd=descriptor)
-            os.fsync(descriptor)
+            directories.add(descriptor)
             controller.fault('after_unlink',row['file_id'])
         except FileNotFoundError:
-            os.fsync(descriptor)
+            directories.add(descriptor)
         controller.writer.event(controller.run_id,event_kind='artifact',reason_code='deleted',
             file_id=row['file_id'],version_id=row['version_id'],
             details={'private_release_intent':intent})
@@ -638,12 +645,17 @@ def _finish_private_release(controller, intent, detail):
     connection=controller.connection
     manifest=json.loads(connection.execute('SELECT json FROM snapshots WHERE sha256=?',
         (detail['manifest_sha256'],)).fetchone()[0])
+    from ..ledger.writer import SyncBatch
     for offset in range(0,len(manifest['file_ids']),128):
-        with controller.writer.batch():
-            for file_id in manifest['file_ids'][offset:offset+128]:
-                row=connection.execute('SELECT * FROM current_file_state WHERE file_id=?',(file_id,)).fetchone()
-                if row['presence']=='deleted':continue
-                _unlink_private_file(controller,row,intent)
+        with SyncBatch() as directories:
+            with controller.writer.batch():
+                for file_id in manifest['file_ids'][offset:offset+128]:
+                    row=connection.execute('SELECT * FROM current_file_state WHERE file_id=?',(file_id,)).fetchone()
+                    if row['presence']=='deleted':continue
+                    _unlink_private_file(controller,row,intent,directories)
+                # One flush per changed directory (or filesystem) per batch,
+                # before this transaction commits the batch's deletions.
+                directories.flush()
     with controller.writer.transaction():
         controller.writer.event(controller.run_id,event_kind='retention',reason_code='delete_completed',
             message='private_stage_release',details={**detail,'intent_event_id':intent})
@@ -666,16 +678,22 @@ def release_private_scratch(controller, rows):
             if not exact:ready=False;break
         if producer and not unfinished and ready:
             by_stage[row['stage']].append(row)
-    for stage,files in by_stage.items():
+    # Every stage summary of this frontier commits in one transaction; one
+    # durability barrier then covers all of them before any unlink.
+    releases=[]
+    if by_stage:
         with controller.writer.transaction():
-            manifest=controller.writer.snapshot('private_release_manifest',{'file_ids':[row['file_id'] for row in files],
-                'planned_reader_task_ids':sorted({reader for row in files for reader in controller.writer.planned_readers(controller.run_id,row)})})
-            detail={'stage':stage,'file_count':len(files),'bytes':sum(row['bytes'] for row in files),
-                'manifest_sha256':manifest,'policy':'private_scratch_after_last_planned_reader',
-                'producer_attempt_ids':sorted({row['producer_attempt_id'] for row in files})}
-            intent=controller.writer.event(controller.run_id,event_kind='retention',reason_code='delete_planned',
-                message='private_stage_release',details=detail)
+            for stage,files in by_stage.items():
+                manifest=controller.writer.snapshot('private_release_manifest',{'file_ids':[row['file_id'] for row in files],
+                    'planned_reader_task_ids':sorted({reader for row in files for reader in controller.writer.planned_readers(controller.run_id,row)})})
+                detail={'stage':stage,'file_count':len(files),'bytes':sum(row['bytes'] for row in files),
+                    'manifest_sha256':manifest,'policy':'private_scratch_after_last_planned_reader',
+                    'producer_attempt_ids':sorted({row['producer_attempt_id'] for row in files})}
+                intent=controller.writer.event(controller.run_id,event_kind='retention',reason_code='delete_planned',
+                    message='private_stage_release',details=detail)
+                releases.append((intent,detail,files))
         controller.writer.durable_barrier()
+    for intent,detail,files in releases:
         controller.fault('after_intent', files[0]['file_id'])
         _finish_private_release(controller,intent,detail)
 
@@ -683,15 +701,18 @@ def release_private_scratch(controller, rows):
 def recover_private_releases(controller):
     connection=controller.connection
     rows=connection.execute(f"SELECT event_id,details_json FROM {connection.event_table} e WHERE run_id=? AND event_kind='retention' AND reason_code='delete_planned' AND message='private_stage_release'", (controller.run_id,)).fetchall()
-    if rows:controller.writer.durable_barrier()
     # details_json can be compressed physically, so match completion links using
     # the decoded public row values rather than SQLite JSON extraction.
+    pending=[]
     for intent,encoded in rows:
-        detail=json.loads(encoded)
         completed=False
         for value, in connection.execute(f"SELECT details_json FROM {connection.event_table} WHERE run_id=? AND reason_code='delete_completed' AND message='private_stage_release' AND event_id>?",(controller.run_id,intent)):
             if json.loads(value).get('intent_event_id')==intent:completed=True;break
-        if not completed:_finish_private_release(controller,intent,detail)
+        if not completed:pending.append((intent,json.loads(encoded)))
+    # A dead writer may have committed its NORMAL intent without its FULL
+    # barrier; only an unfinished release needs that barrier before unlink.
+    if pending:controller.writer.durable_barrier()
+    for intent,detail in pending:_finish_private_release(controller,intent,detail)
 
 
 def retire_completed_scratch(writer, root, run, settings, attempts, *, protected=()):
