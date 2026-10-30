@@ -28,6 +28,9 @@ def execution_environment():
     root=Path(__file__).resolve().parents[1]
     files={str(path.relative_to(root)):sha256_file(path) for path in sorted(root.rglob('*.py'))}
     files['ocr_package.txt']=sha256_file(root/'ocr_package.txt')
+    for path in sorted((root/'data/wordlists').glob('*')):
+        if path.is_file():
+            files[str(path.relative_to(root))]=sha256_file(path)
     native={}
     for name in ('glossapi_rs_cleaner','glossapi_rs_noise','glossapi_rs_pdfrepair'):
         specification=importlib.util.find_spec(name)

@@ -118,8 +118,12 @@ class ExtractStage:
                     dictionary = options.get("wordlist", dictionary_path)
                     dictionary_hash = sha256_file(dictionary) if isinstance(dictionary, str) else None
                     report = page_quality(source.path, output_dir=root, **options)
+                    dictionary_hash = (report.dictionary_identity or {}).get("sha256")
                     decisions = ({"operation": "extract.page_quality", "input_sha256": source.sha256,
-                        "dictionary_sha256": dictionary_hash, "effective_settings": options,
+                        "dictionary_sha256": dictionary_hash,
+                        "dictionary_identity": report.dictionary_identity,
+                        "effective_settings": {**options, "rule_profile": report.rule_profile,
+                                               "fold_validity": report.fold_validity},
                         "report": pack_evidence(report.to_dict())},)
                     return StageResult(request.task_id, request.attempt_id, request.lease_token, "ok", "extract_completed",
                         outputs_in(root, required), decisions, {"wall_ns": time.monotonic_ns()-started})

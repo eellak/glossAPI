@@ -1,4 +1,4 @@
-"""Opt-in validity folding, default v3 selection, and routing provenance."""
+"""Opt-in validity folding, default v4 selection, and routing provenance."""
 
 import json
 import subprocess
@@ -55,9 +55,9 @@ def test_opt_in_lookup_sources_and_sidecar(quality_pdf, tmp_path, monkeypatch, s
         monkeypatch.setenv("GLOSSAPI_GREEK_WORDLIST", str(path))
         wordlist = None
     default = page_quality(quality_pdf, wordlist=wordlist)
-    explicit = page_quality(quality_pdf, wordlist=wordlist, fold_validity=False, rule_profile="v3")
+    explicit = page_quality(quality_pdf, wordlist=wordlist, fold_validity=False, rule_profile="v4")
     assert default.pages == explicit.pages
-    assert default.fold_validity is False and default.rule_profile == "v3"
+    assert default.fold_validity is False and default.rule_profile == "v4"
     assert default.pages[0].valid_greek_word_rate < 1
     folded = page_quality(quality_pdf, wordlist=wordlist, fold_validity=True,
                           rule_profile="v3", output_dir=tmp_path)

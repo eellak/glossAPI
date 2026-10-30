@@ -18,7 +18,7 @@ from glossapi.scripts.pdf_font_repair import _pdf_paths
 
 
 def _worker(path: str, wordlist: str | None, result_path: str,
-            fold_validity: bool = False, rule_profile: str = "v3") -> None:
+            fold_validity: bool = False, rule_profile: str = "v4") -> None:
     """Write one complete result in private staging; sources remain read-only."""
     started = time.perf_counter()
     try:
@@ -45,12 +45,12 @@ def _stop(process: Any) -> None:
 
 def batch(paths: list[Path], *, workers: int = 1, timeout: float = 120,
           wordlist: str | None = None, fold_validity: bool = False,
-          rule_profile: str = "v3") -> Iterator[dict[str, Any]]:
+          rule_profile: str = "v4") -> Iterator[dict[str, Any]]:
     """Yield exactly one row per input, bounding each child's total lifetime."""
     if workers < 1 or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("workers and timeout must be positive and finite")
-    if rule_profile not in ("v2", "v3"):
-        raise ValueError("rule_profile must be 'v2' or 'v3'")
+    if rule_profile not in ("v2", "v3", "v4"):
+        raise ValueError("rule_profile must be 'v2', 'v3' or 'v4'")
     context = mp.get_context("spawn")
     pending = iter(enumerate(paths))
     active: list[dict[str, Any]] = []
@@ -158,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=120)
     parser.add_argument("--wordlist")
     parser.add_argument("--fold-validity", action="store_true", help="Fold accents, case and final sigma for validity lookup")
-    parser.add_argument("--rule-profile", choices=("v2", "v3"), default="v3")
+    parser.add_argument("--rule-profile", choices=("v2", "v3", "v4"), default="v4")
     parser.add_argument("--output-dir", type=Path, help="Publish json/metrics page-quality sidecars here")
     parser.add_argument("--compare-doc-rule", type=Path)
     args = parser.parse_args(argv)

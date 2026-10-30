@@ -53,7 +53,7 @@ where = ["src"]
 include = ["glossapi", "glossapi.*"]
 
 [tool.setuptools.package-data]
-glossapi = ["models/**/*", "ocr_package.txt"]
+glossapi = ["models/**/*", "ocr_package.txt", "data/wordlists/*"]
 
 [tool.pytest.ini_options]
 markers = [

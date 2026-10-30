@@ -43,7 +43,27 @@ glossapi run --files /absolute/path/book.pdf --stages ocr,export --device ocr=cp
 ```
 
 `glossapi run` inserts page-quality inspection and feeds only `page_needs_ocr`
-pages to OCR. Good native pages retain their text. It publishes OCR results before
+pages to OCR. Default routing profile **v4** trusts an image-dominant existing
+text layer (image coverage at least 0.5) only with measured Greek word validity
+at least 0.4 and no PUA/control contamination. Unknown validity routes to OCR.
+The existing scan gate (fewer than 50 extracted characters) remains in force;
+a short valid caption cannot certify the raster body.
+Below the image threshold the v3 routing logic applies. V2/v3 remain selectable
+through `page_quality(..., rule_profile="v3")` or the batch CLI's
+`--rule-profile`; their previous dictionary defaults are preserved.
+
+V4 measures Greek vocabulary membership offline on image-dominant pages with the
+packaged Hunspell el_GR 0.9 surface entries. Automatic lookup is scoped to these
+pages so unconfigured non-image routing stays identical to v3. The source revision,
+scope, SHA256 and licence are recorded
+in `dictionary_identity`; every page records `rule_profile` and its `decision`.
+See [dictionary provenance and licence](../src/glossapi/data/wordlists/README.md).
+Explicit word sets/paths or `GLOSSAPI_GREEK_WORDLIST` override the default and
+retain their previous all-page scope.
+This modern Greek lexicon does not establish OCR accuracy and may over-route
+valid polytonic or specialist text. Accent folding remains opt-in.
+
+Good native pages retain their text. The stage publishes OCR results before
 export and fails explicitly when a selected page is unsupported. Omitting OCR
 from `--stages` keeps the existing text-layer pipeline. A missing or mismatched
 OCR package leaves the DAG waiting with an `install_glossapi.py ocr` hint; another
