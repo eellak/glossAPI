@@ -8,6 +8,7 @@ from ...ledger.journal import observe
 from glossapi.optional_dependencies import optional_dependencies
 
 from importlib.metadata import entry_points
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
@@ -58,7 +59,6 @@ def run_plugin_ocr(
     context: CorpusOcrContext, filenames: list[str], *, request: OcrRequest,
     page_ranges: list[str] | None = None,
 ) -> None:
-    import os
     from ...ocr.defaults import check_requested_device
     # Reject an explicit device that disagrees with ocr_options.device before any
     # pool selection, adapter delegation or converter construction.
@@ -93,8 +93,31 @@ def run_plugin_ocr(
         if {page for first, last in ranges for page in range(first, last + 1)} != set(range(1, count + 1)):
             page_artifacts._retained_native_markdown(out_root=context.output_dir, source_stem=source.stem)
         jobs.append((name, source, ranges))
-    from ...ocr.defaults import cache_root, greek_options, model_provenance, select_device, serialize_options, write_routes, package_requirements
-    os.environ['GREEKOCR_CACHE_DIR'] = str(cache_root(getattr(context, '_ocr_cache_root', None)))
+    from ...ocr.defaults import cache_root
+    # The plugin reads its cache root only from GREEKOCR_CACHE_DIR, at model
+    # acquisition time. Scope the override to this call (OCRDEF-C2-G03).
+    with _scoped_environment('GREEKOCR_CACHE_DIR', str(cache_root(getattr(context, '_ocr_cache_root', None)))) as cache_directory:
+        _convert_jobs(context, filenames, jobs, request=request, cache_directory=cache_directory)
+
+
+@contextmanager
+def _scoped_environment(name, value):
+    """Set one environment variable for the block, then restore the caller's value or absence."""
+    import os
+    missing = object()
+    previous = os.environ.get(name, missing)
+    os.environ[name] = value
+    try:
+        yield value
+    finally:
+        if previous is missing:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
+
+
+def _convert_jobs(context, filenames, jobs, *, request, cache_directory):
+    from ...ocr.defaults import greek_options, model_provenance, select_device, serialize_options, write_routes, package_requirements
     requested_device = request.device
     device = (getattr(request.ocr_options, 'device', None) or select_device(request.device))
     options = request.ocr_options
@@ -151,7 +174,7 @@ def run_plugin_ocr(
         import json
         provenance = {'options':serialize_options(options), 'requested_device':requested_device, 'device':device,
             'detector_device':options.detector_device, 'models':model_provenance(converter),
-            'cache_root':os.environ['GREEKOCR_CACHE_DIR']}
+            'cache_root':cache_directory}
         provenance['model_source']=('local_release_override' if options.release_dir else
             'local_checkpoint_override' if options.checkpoint else
             'verified_hf_fetch' if provenance['models'] else 'not_loaded_no_lines')

@@ -32,6 +32,10 @@ from .phase_sections import SectionPhaseMixin
 from .phase_annotate import AnnotatePhaseMixin
 from .phase_export import ExportPhaseMixin
 
+# Packaged default models ship in ``glossapi/models`` (pyproject package-data),
+# one level above this ``glossapi/corpus`` package.
+PACKAGED_MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+
 class Corpus(
     DownloadPhaseMixin,
     ExtractPhaseMixin,
@@ -106,22 +110,19 @@ class Corpus(
         self.output_dir = Path(output_dir)
         self._metadata_parquet_path: Optional[Path] = None
         
-        # Package directory for default models
-        package_dir = Path(__file__).parent
-        
         # Handle section classifier model path
         if section_classifier_model_path:
             self.section_classifier_model_path = Path(section_classifier_model_path)
         else:
-            # Use default model path in the package
-            self.section_classifier_model_path = package_dir / "models" / "section_classifier.joblib"
+            # Use the packaged default model (glossapi/models)
+            self.section_classifier_model_path = PACKAGED_MODELS_DIR / "section_classifier.joblib"
         
         # Handle extraction model path
         if extraction_model_path:
             self.extraction_model_path = Path(extraction_model_path)
         else:
-            # Use default model path in the package
-            self.extraction_model_path = package_dir / "models" / "kmeans_weights.joblib"
+            # Use the packaged default model (glossapi/models)
+            self.extraction_model_path = PACKAGED_MODELS_DIR / "kmeans_weights.joblib"
             
         self.metadata_path = Path(metadata_path) if metadata_path else None
         if self.metadata_path is not None:
