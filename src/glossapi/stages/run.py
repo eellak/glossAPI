@@ -13,6 +13,7 @@ from .execution import sha256_file
 from .replay import committed_results
 from .scheduler import ScheduledOperation, StreamingScheduler, local_path
 from ..ledger.writer import LedgerWriter
+from ..ledger.journal import shadow_stage
 
 
 def extraction_settings(options=None):
@@ -132,6 +133,31 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                             StageSpecification('clean.initial',required_output_kinds=('clean_markdown','clean_metrics'),settings={'num_threads':1}),
                             inputs=((parent,'raw_markdown','selected_text'),)))
                         parent=key
+                    if 'ocr' in stages:
+                        from ..ocr.defaults import default_values, select_device, cache_root
+                        ocr_settings = dict(settings.get('ocr',{}))
+                        if ocr_settings.get('entry_point_name','glossapi') != 'glossapi':
+                            raise ValueError('This run adapter requires the Greek OCR entry point; pass external options to Corpus.ocr()')
+                        device = ocr_settings.get('device_id') or ocr_settings.get('options',{}).get('device') or select_device()
+                        values = {**default_values(device), **ocr_settings.get('options',{})}
+                        quality_key=f'{ordinal}:quality'
+                        operations.append(ScheduledOperation(quality_key,'extract',snapshot,
+                            StageSpecification('extract.page_quality',required_output_kinds=('page_quality',),
+                                settings={'page_quality':settings.get('page_quality',{})}),
+                            inputs=((f'{ordinal}:download','download_payload','source_payload'),) if remote else ()))
+                        source_snapshot=replace(snapshot,artifacts=() if remote else snapshot.artifacts)
+                        edges=((f'{ordinal}:download','download_payload','source_payload'),) if remote else ()
+                        ocr_key=f'{ordinal}:ocr'
+                        operations.append(ScheduledOperation(ocr_key,'ocr',source_snapshot,
+                            StageSpecification('ocr.document',('source_payload',) if not remote else (),('ocr_markdown','ocr_metrics'),device,
+                                {**ocr_settings,'options':values,'entry_point_name':'glossapi',
+                                 'cache_root':str(cache_root(ocr_settings.get('cache_root')))}),
+                            inputs=(*edges,(f'{ordinal}:extract','raw_markdown','native_markdown'),(quality_key,'page_quality','page_quality')),
+                            after=(parent,),cpu_tokens=int(ocr_settings.get('num_threads',1))))
+                        parent=f'{ordinal}:clean_after_ocr'
+                        operations.append(ScheduledOperation(parent,'clean',replace(snapshot,artifacts=()),
+                            StageSpecification('clean.initial.artifact:after_ocr',required_output_kinds=('clean_markdown','clean_metrics'),settings={'num_threads':1}),
+                            inputs=((ocr_key,'ocr_markdown','selected_text'),)))
                     if 'sections' in stages:
                         filename=path.stem if path else name
                         operations.append(ScheduledOperation(f'{ordinal}:sections','sections',replace(snapshot,artifacts=()),
@@ -214,7 +240,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
             frozen=json.loads(writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(run['settings_sha256'],)).fetchone()[0])
             RetentionController(writer,corpus.output_dir,resume,frozen).recover()
             return saved['result']
-    prerequisites={'clean':('extract',),'sections':('clean','extract'),'annotate':('sections','clean','extract'),'export':('clean','extract')}
+    prerequisites={'clean':('extract',),'ocr':('extract','clean'),'sections':('clean','extract'),'annotate':('sections','clean','extract'),'export':('clean','extract')}
     stages=tuple(dict.fromkeys([dependency for stage in stages for dependency in (*prerequisites.get(stage,()),stage)]))
     if plan is not None:
         from ..ledger.encoding import snapshot_hash
@@ -235,13 +261,16 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         stages=tuple(dict.fromkeys(step['stage'] for document in body['documents'] for step in document['steps']))
         workers={pool['stage']:pool['workers'] for pool in body['pools']}
         settings=body['settings']
+        if 'ocr' in stages:
+            pool=next(pool for pool in body['pools'] if pool['stage']=='ocr')
+            settings={**settings,'ocr':{**settings.get('ocr',{}),'device_id':pool['device_id']}}
         settings={**settings,'planned_document_ids':{document['source_key']:document['document_id'] for document in body['documents']}}
         if body.get('explicit_manifest') is not None:
             settings={**settings,'source_manifest':body['explicit_manifest']}
     if resume and (files or workers or settings):
         raise ValueError('Resume restores its frozen plan; semantic overrides are forbidden')
-    if set(stages)&{'ocr','math'}:
-        raise ValueError('OCR/math require explicit operation DAG and pinned plugin options')
+    if 'math' in stages:
+        raise ValueError('Math requires an explicit operation DAG')
     import inspect
     extraction_options=settings.get('extract',{})
     semantic_options=set(extraction_settings()) & set(inspect.signature(corpus.extract).parameters)
@@ -249,7 +278,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         raise ValueError('Extraction setting requires an explicit operation DAG')
     if int(extraction_options.get('num_threads') or 1)!=1:
         raise ValueError('Native thread overrides require explicit CPU-token declarations in an operation DAG')
-    publication_stages=[stage for stage in ('extract','clean','sections','annotate','export') if stage in stages]
+    publication_stages=[stage for stage in ('extract','clean','ocr','sections','annotate','export') if stage in stages]
     if not resume and any(str(source).startswith(('http://','https://')) for source in files):
         publication_stages.insert(0,'download')
     if not resume:
@@ -262,6 +291,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         resume=resume,retry_failed=retry_failed,observer=observer,writer=corpus._scheduler_writer)
     if result['state'] not in ('completed','completed_with_failures'):
         return result
+    corpus._streaming_ocr_replays=replays
     if resume:
         from ..ledger.writer import open_readonly
         with open_readonly(Path(corpus.output_dir)/'corpus.sqlite3') as connection:
@@ -273,6 +303,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         'extract':lambda:corpus.extract(**{'input_format':'pdf','file_paths':result['sources'],'phase1_backend':'safe',
             'accel_type':'CPU','num_threads':1,'skip_existing':False,'batched':False,'repair_fonts':True,**settings.get('extract',{})}),
         'clean':lambda:corpus.clean(num_threads=1),
+        'ocr':lambda:publish_ocr_results(corpus),
         'sections':corpus.section,'annotate':corpus.annotate,
         'export':lambda:corpus.jsonl(Path(corpus.output_dir)/'export.jsonl')}
     if not result['sources'] and 'export' in stages:
@@ -287,7 +318,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                 writer.event(result['run_id'],event_kind='decision',reason_code='export_canonical_markdown_missing',version_id=version,
                     details={'product':'document_jsonl','included':False,'decision':'omit','cause':'upstream_failed','empty_selected_frontier':True})
     with committed_results(replays):
-        for stage in ('download','extract','clean','sections','annotate','export'):
+        for stage in ('download','extract','clean','ocr','sections','annotate','export'):
             if stage in stages or (stage=='download' and corpus._streaming_download_manifest):
                 published=False
                 if not result['sources'] and stage not in ('download','export'):
@@ -333,6 +364,32 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                 'retained_file_ids':[row['file_id'] for row in writer.file_catalog().values() if row['presence']=='present'
                     and row['ownership'] in ('managed','initial_external') and local_path(row['uri']).is_file()]})})
     return result
+
+
+@shadow_stage('ocr', 'ocr.wrapper')
+def publish_ocr_results(self):
+    """Publish committed OCR bytes at the existing single-writer barrier."""
+    from .workers import read_result
+    from .compatibility import materialize_stage_outputs
+    from ..corpus.ocr.artifacts import persist_ocr_success, refresh_cleaner_after_ocr
+    corpus=self
+    replays=corpus._streaming_ocr_replays
+    filenames=[]
+    for (stage,operation,hashes), candidates in replays.items():
+        if stage != 'ocr':
+            continue
+        for version,settings,receipt,workspace in candidates:
+            result=read_result(receipt.path)
+            if result.reason_code != 'ocr_completed':
+                continue
+            paths={output.relative_path:corpus.output_dir/output.relative_path for output in result.outputs
+                if output.kind in ('ocr_markdown','ocr_metrics','ocr_native','ocr_page_state')}
+            materialize_stage_outputs(corpus,result,workspace,paths)
+            markdown=next(output for output in result.outputs if output.kind=='ocr_markdown')
+            filenames.append(Path(markdown.relative_path).with_suffix('.pdf').name)
+    if filenames:
+        persist_ocr_success(corpus,filenames=filenames,backend_norm='docling')
+        refresh_cleaner_after_ocr(corpus)
 
 
 def skip_barrier(corpus,run,stage):
@@ -396,7 +453,7 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
     else:
         attempt=previous['attempt_id']
     outputs=writer.connection.execute("SELECT f.* FROM files f JOIN attempts a ON a.attempt_id=f.producer_attempt_id JOIN tasks t ON t.task_id=a.task_id WHERE t.run_id=? AND f.uri LIKE ?",(wrapper_run,(Path(corpus.output_dir).resolve()/'.glossapi/artifacts').as_uri()+'/%')).fetchall()
-    wrapper_operation={'download':'download.wrapper','extract':'extract.wrapper','clean':'clean.clean','sections':'sections.wrapper','annotate':'annotate.wrapper','export':'export.jsonl'}[stage]
+    wrapper_operation={'download':'download.wrapper','extract':'extract.wrapper','clean':'clean.clean','ocr':'ocr.wrapper','sections':'sections.wrapper','annotate':'annotate.wrapper','export':'export.jsonl'}[stage]
     outcome=next((task for task in writer.task_states(wrapper_run) if task['operation']==wrapper_operation),None)
     with writer.transaction():
         for index,row in enumerate(outputs):
@@ -428,3 +485,4 @@ def run_corpus(corpus,*args,**options):
         finally:
             corpus._scheduler_writer=None
             corpus._streaming_download_replays=None
+            corpus._streaming_ocr_replays=None

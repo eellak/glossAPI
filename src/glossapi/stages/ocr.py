@@ -15,27 +15,27 @@ from .receipts import capture_backend_observations
 
 class OcrStage:
     name = 'ocr'
-    contract_version = 1
+    contract_version = 2
 
     def __init__(self, ocr_options=None):
-        # Explicit runtime configuration, never a default engine or alternate OCR.
         self.ocr_options = ocr_options
 
     def packages(self, specification):
+        from ..ocr.defaults import package_requirements
         return (PackageRequirement('layout', ('docling==2.81.0',)),
-            PackageRequirement('ocr', (), 'docling', specification.settings.get('entry_point_name')))
+            PackageRequirement('ocr', package_requirements() if specification.settings.get('entry_point_name','glossapi')=='glossapi' else (),
+                'docling', specification.settings.get('entry_point_name', 'glossapi')))
 
     def plan(self, documents, *, settings):
         return StagePlan(tuple(PlannedOperation(document.document_id, document.version_id,
-            StageSpecification('ocr.document', ('source_payload','native_markdown','ocr_page_state','docling_json'),
-                ('ocr_markdown','ocr_metrics'), str(settings.get('device_id','cpu')), settings)) for document in documents))
+            StageSpecification('ocr.document', ('source_payload','native_markdown','ocr_page_state','docling_json','page_quality'),
+                ('ocr_markdown','ocr_metrics'), str(settings.get('device_id') or settings.get('options',{}).get('device') or 'cpu'), settings)) for document in documents))
 
     def finalize(self, request, *, reporter):
         raise ValueError('OCR has no aggregate finalize operation')
 
     def run_document(self, request, *, reporter):
-        # The qualified CPU plugin path can keep its converter in the caller.
-        # GPU qualification and shared warm device workers are later work.
+        # Compatibility executes here; streaming uses bounded device workers.
         return self._run_document(request, reporter=reporter)
 
     def _run_document(self, request, *, reporter):
@@ -44,21 +44,31 @@ class OcrStage:
         reason = 'ocr_configuration_invalid'
         observations = []
         try:
+            from ..ocr.defaults import validate_device
+            validate_device('ocr',request.device_id,request.settings)
+            # DAG edges retain producer kinds; normalize their declared OCR roles.
+            aliases={'download_payload':'source_payload','raw_markdown':'native_markdown'}
+            request=replace(request,inputs=tuple(replace(item,kind=aliases.get(item.kind,item.kind)) for item in request.inputs))
             from ..corpus.ocr import dispatch
             plugins = [point for point in dispatch.entry_points(group='docling') if point.name != 'docling']
             if not plugins:
                 reason = 'ocr_plugin_missing'
-                raise RuntimeError('Install an external OCR plugin registered in the Docling entry-point group')
-            if self.ocr_options is None:
-                reason = 'ocr_options_missing'
-                dispatch.require_ocr_options(None)
-            selected_plugin = request.settings.get('entry_point_name')
+                from ..ocr.defaults import INSTALL_MESSAGE
+                raise RuntimeError(INSTALL_MESSAGE)
+            options = self.ocr_options
+            selected_plugin = request.settings.get('entry_point_name', 'glossapi' if options is None else None)
             if selected_plugin and selected_plugin not in [point.name for point in plugins]:
                 reason = 'ocr_plugin_missing'
-                raise RuntimeError('Selected OCR entry point is not installed')
-            if request.device_id != 'cpu':
+                from ..ocr.defaults import INSTALL_MESSAGE
+                raise RuntimeError(INSTALL_MESSAGE)
+            if request.device_id != 'cpu' and selected_plugin != 'glossapi' and getattr(options,'kind',None) != 'glossapi':
                 reason = 'ocr_backend_unavailable'
-                raise ValueError('This sequential OCR adapter is qualified for CPU plugin fixtures only')
+                raise ValueError('Accelerated OCR requires the Greek OCR plugin')
+            if options is not None and getattr(options,'device',request.device_id) != request.device_id:
+                raise ValueError('OCR option device must match its scheduler device pool')
+            if options is None and (request.settings.get('options') or {}).get('kind','glossapi') != 'glossapi':
+                # Engine selection is validated before routing/early return, without loading models.
+                raise ValueError('Configured OCR kind does not match the Greek OCR engine; pass external options to Corpus.ocr()')
             source = next((item for item in request.inputs if item.kind == 'source_payload'), None)
             if source is None:
                 raise ValueError('OCR requires an explicit original PDF')
@@ -70,6 +80,30 @@ class OcrStage:
             request = freeze_inputs(request)
             root = request.work_directory
             source = next(item for item in request.inputs if item.kind == 'source_payload')
+            ranges = request.settings.get('page_ranges', [])
+            quality = next((item for item in request.inputs if item.kind == 'page_quality'), None)
+            report = None
+            if quality or (options is None and not ranges):
+                if quality:
+                    report = json.loads(quality.path.read_text())
+                else:
+                    from ..page_quality import page_quality
+                    report = page_quality(source.path,output_dir=root).to_dict()
+                selected_pages = [int(page['page']) for page in report['pages'] if page['page_needs_ocr'] is True]
+                ranges = [[page,page] for page in selected_pages]
+                if not selected_pages:
+                    native = next(item for item in request.inputs if item.kind == 'native_markdown')
+                    target = root/'markdown'/source.path.with_suffix('.md').name
+                    target.parent.mkdir(parents=True,exist_ok=True)
+                    target.write_bytes(native.path.read_bytes())
+                    metrics = root/'json/metrics'/f'{source.path.stem}.metrics.json'
+                    metrics.parent.mkdir(parents=True,exist_ok=True)
+                    metrics.write_text(json.dumps({'page_count':report['pages_total'],'ocr_pages':[],
+                        'ocr_engine':getattr(options,'kind','glossapi') if options is not None else 'glossapi'}))
+                    return StageResult(request.task_id,request.attempt_id,request.lease_token,'ok','ocr_not_routed',
+                        tuple(replace(item,kind='ocr_markdown' if item.relative_path.startswith('markdown/') else 'ocr_metrics',required=True)
+                              for item in outputs_in(root) if item.relative_path.startswith(('markdown/','json/metrics/'))),
+                        ({'operation':request.operation,'pages':[],'needs_ocr':False},), {'wall_ns':time.monotonic_ns()-started})
             destinations = {'native_markdown': root/'markdown'/source.path.with_suffix('.md').name,
                 'ocr_native': root/'sidecars/ocr_native'/source.path.with_suffix('.md').name,
                 'ocr_page_state': root/'sidecars/ocr_pages'/source.path.with_suffix('.json').name,
@@ -88,11 +122,15 @@ class OcrStage:
                 native_path.parent.mkdir(parents=True,exist_ok=True)
                 shutil.copy2(supplied_native,native_path)
             context = SimpleNamespace(output_dir=root, input_dir=source.path.parent,
-                logger=logging.getLogger(__name__), _inside_ocr_stage=True)
+                logger=logging.getLogger(__name__), _inside_ocr_stage=True, _ocr_cache_root=request.settings.get('cache_root'))
+            if options is None:
+                from ..ocr.defaults import greek_options
+                options = greek_options(request.settings.get('options'), device=request.device_id,
+                                        routing_sidecar=root/'routing.jsonl')
             from ..corpus.ocr.config import OcrRequest
-            configuration = OcrRequest('ocr_bad','docling',self.ocr_options,'cpu',request.settings.get('max_pages'),
-                False,None,8,220,'single',None,True,False)
-            ranges = [f'{source.path.name}:{int(first)}:{int(last)}' for first,last in request.settings.get('page_ranges', [])]
+            configuration = OcrRequest('ocr_bad','docling',options,request.device_id,request.settings.get('max_pages'),
+                False,None,8,220,'single',None,True,False,num_threads=int(request.settings.get('num_threads',1)))
+            ranges = [f'{source.path.name}:{int(first)}:{int(last)}' for first,last in ranges]
             reason = 'ocr_plugin_conversion_failed'
             with capture_backend_observations() as observations:
                 dispatch.run_plugin_ocr(context,[source.path.name], request=configuration, page_ranges=ranges or None)
@@ -102,7 +140,8 @@ class OcrStage:
                 raise ValueError('Required canonical OCR output/metrics missing')
             metrics = json.loads(metrics_path.read_text())
             count = int(metrics['page_count'])
-            selected = {page for first,last in (request.settings.get('page_ranges') or [(1,count)]) for page in range(int(first), int(last)+1)}
+            selected = ({int(page['page']) for page in report['pages'] if page['page_needs_ocr'] is True} if report is not None else
+                {page for first,last in (request.settings.get('page_ranges') or [(1,count)]) for page in range(int(first), int(last)+1)})
             if configuration.max_pages is not None:
                 selected = {page for page in selected if page <= configuration.max_pages}
             if not selected:
@@ -119,6 +158,9 @@ class OcrStage:
                 raise TimeoutError('OCR deadline exceeded')
             bindings = {item.kind: {'file_id': item.file_id, 'sha256': item.sha256,
                 'producer_attempt_id': request.settings.get('input_producers',{}).get(item.file_id)} for item in originals}
+            call_log=root/'sidecars/ocr_runtime/calls.jsonl'
+            engine_calls={int(row['page']):row for row in map(json.loads,call_log.read_text().splitlines())} if call_log.is_file() else {}
+            engine_receipt_hash=sha256_file(call_log) if call_log.is_file() else None
             pages = [{'page': page, 'action': 'ocr' if page in selected else 'retained_native_or_prior_ocr',
                 'source_file_id': bindings['source_payload']['file_id'] if page in selected else
                     (bindings.get('ocr_page_state') or bindings.get('ocr_native') or bindings.get('native_markdown') or {}).get('file_id'),
@@ -127,8 +169,9 @@ class OcrStage:
                 'producer_attempt_id': request.attempt_id if page in selected else
                     (bindings.get('ocr_page_state') or bindings.get('ocr_native') or bindings.get('native_markdown') or {}).get('producer_attempt_id'),
                 'range': [page,page], 'composition_mode': metrics.get('kept_markdown_source'),
-                'status': 'produced' if page in selected else 'retained', 'drop_reason': 'unknown_not_reported',
-                'engine_reason': 'unknown_not_reported', 'engine_receipt_hash': None} for page in range(1,count+1)]
+                'status': 'produced' if page in selected else 'retained', 'drop_reason': None if page in engine_calls else 'unknown_not_reported',
+                'engine_reason': engine_calls.get(page,{}).get('reason',engine_calls.get(page,{}).get('status','unknown_not_reported')),
+                'engine_receipt_hash': engine_receipt_hash if page in engine_calls else None} for page in range(1,count+1)]
             outputs = []
             for item in outputs_in(root):
                 kind = ('ocr_markdown' if item.relative_path == str(canonical.relative_to(root)) else
@@ -139,8 +182,11 @@ class OcrStage:
                     retention_class='recovery' if kind in ('ocr_native','ocr_page_state') else item.retention_class))
             return StageResult(request.task_id,request.attempt_id,request.lease_token,'ok','ocr_completed',tuple(outputs),
                 ({'operation':request.operation,'inputs':bindings,'pages':pages,'output_sha256':sha256_file(canonical),
-                  'plugin': {'kind':self.ocr_options.kind,'entry_points':[point.name for point in plugins],
-                    'models':request.tools.get('models',[]),'model_identity_unavailable_reason':'plugin_not_reported' if not request.tools.get('models') else None},
+                  'plugin': {'kind':options.kind,'entry_points':[point.name for point in plugins],
+                    **(json.loads((root/'sidecars/ocr_runtime/provenance.json').read_text())
+                       if (root/'sidecars/ocr_runtime/provenance.json').is_file() else {'models':request.tools.get('models',[])}),
+                    'requested_device':request.settings.get('requested_device',request.device_id),
+                    'device':request.device_id,'detector_device':getattr(options,'detector_device',None)},
                   'backend_observations':observations},),
                 {'wall_ns':time.monotonic_ns()-started,'execution':'in_process_plugin'})
         except Exception as error:

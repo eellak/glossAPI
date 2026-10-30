@@ -155,13 +155,14 @@ def test_partial_and_repeated_plugin_outputs_equal_legacy(tmp_path,monkeypatch,m
     assert native.read_text().startswith('NATIVE' if mode=='replace' else 'WHOLE')
 
 
-@pytest.mark.parametrize('missing',['plugin','options'])
-def test_missing_plugin_or_options_returns_honest_failed_contract(tmp_path,monkeypatch,missing):
+@pytest.mark.parametrize('plugins',[[],[SimpleNamespace(name='stub-plugin')]])
+def test_missing_default_plugin_returns_honest_failed_contract(tmp_path,monkeypatch,plugins):
     from glossapi.corpus.ocr import dispatch
-    monkeypatch.setattr(dispatch,'entry_points',lambda **kw:[] if missing=='plugin' else [SimpleNamespace(name='stub-plugin')])
+    monkeypatch.setattr(dispatch,'entry_points',lambda **kw:plugins)
     task=stage_request(tmp_path,'ocr.document',[])
     result=OcrStage().run_document(task,reporter=ReceiptCollector())
-    assert result.status=='failed' and result.reason_code==f'ocr_{missing}_missing'
+    assert result.status=='failed' and result.reason_code=='ocr_plugin_missing'
+    assert 'install_glossapi.py ocr' in result.error.message
     assert result.error.error_type and result.error.traceback
 
 

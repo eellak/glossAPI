@@ -70,7 +70,7 @@ c = Corpus('IN', 'OUT')
 c.download(url_column='url')         # optional, if you have URLs parquet
 c.extract(input_format='pdf')        # Phase‑1 (no OCR by default)
 c.clean()                            # compute quality; filter badness
-c.ocr(ocr_options=plugin_options)    # configured by the external OCR package
+c.ocr(mode='ocr_bad')                 # default Greek R8+x1 plugin
 c.section()                          # to parquet
 c.annotate()                         # classify/annotate sections
 ```
@@ -79,6 +79,7 @@ See `ocr_and_math_enhancement.md` for OCR runtime details, batch sizes, and arti
 
 ### External OCR
 
-Install the toolkit's `greekocr` plugin and configure its options before calling
-`c.ocr(mode="ocr_bad", ocr_options=plugin_options)`.
+Install `python install_glossapi.py ocr --device cpu` (or `mps` / `cuda126` /
+`cuda132`), then call `c.ocr(mode="ocr_bad")`. Explicit `ocr_options` remain
+available for custom plugin configuration.
 See [OCR plugin migration](ocr_plugin_migration.md).

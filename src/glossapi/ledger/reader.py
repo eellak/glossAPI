@@ -413,22 +413,32 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
             if stage not in document_stages:
                 continue
             dependencies = ["download"] if stage == "extract" and "download" in document_stages else prerequisites[stage]
-            package = {"download": "download", "annotate": "annotate", "ocr": "ocr_plugin", "math": "layout"}.get(stage, "core")
+            package = {"download": "download", "annotate": "annotate", "ocr": "ocr", "math": "layout"}.get(stage, "core")
+            from ..ocr.defaults import planned_device
+            device = planned_device((devices or {}).get(stage) or settings.get('ocr',{}).get('options',{}).get('device')) if stage=='ocr' else (devices or {}).get(stage,'cpu')
             steps.append(dict(stage=stage, operation=stage+".planned", action="conditional", reason_code="legacy_unknown" if known else "stage_planned",
                 input_roles=[dict(producer=s, role="stage_input") for s in dependencies],
                 conditional_on=dict(predicate="selected_adapters_and_verified_inputs_available", input_producer=dependencies, unresolved_fields=["quality", "route", "settings_tool_fingerprint"]),
-                packages=[package], device_id=(devices or {}).get(stage, "cpu")))
+                packages=[package], device_id=device))
         documents.append(dict(document_id=identifier, source_key=key, version_id=version["version_id"] if version else None, steps=steps,source_observation=observation))
     source_inventory_hash = snapshot_hash(dict(records=inventory, manifest=manifest))
     present = connection.execute("SELECT COALESCE(SUM(bytes),0) FROM current_file_state WHERE presence='present'").fetchone()[0] if connection else 0
-    pools = [dict(stage=s, device_id=(devices or {}).get(s, "cpu"), workers=(workers or {}).get(s, 1), queue_capacity=max(2, 2*(workers or {}).get(s, 1)), cpu_tokens=1) for s in STAGE_ORDER if s in pooled_stages]
+    from ..ocr.defaults import planned_device, package_entry
+    pools = [dict(stage=s, device_id=planned_device((devices or {}).get(s) or settings.get('ocr',{}).get('options',{}).get('device')) if s=='ocr' else (devices or {}).get(s,'cpu'), workers=(workers or {}).get(s, 1), queue_capacity=max(2, 2*(workers or {}).get(s, 1)), cpu_tokens=1) for s in STAGE_ORDER if s in pooled_stages]
+    from ..ocr.defaults import default_values, accelerator_claims
+    for pool in pools:
+        if pool['stage']=='ocr':
+            values={**default_values(pool['device_id']),**settings.get('ocr',{}).get('options',{})}
+            pool['detector_device']=values['detector_device']
+            pool['accelerator_devices']=sorted(accelerator_claims('ocr',pool['device_id'],{'options':values}))
+            pool['cpu_tokens']=int(settings.get('ocr',{}).get('num_threads',1))
     barriers = [dict(name=name, scope="corpus", waiting_for="sealed_selection", remaining=len(documents))
                 for name, stage in (("source_manifest", None), ("sections_selection_ids", "sections"), ("annotation_batch", "annotate"), ("export_shards", "export"))
                 if stage is None or stage in pooled_stages]
     body = dict(source_inventory_hash=source_inventory_hash, settings=settings, settings_help={"debug":DEBUG_HELP,"memory_saving":MEMORY_SAVING_HELP}, documents=documents, barriers=barriers, pools=pools,
         resource_limits={k: settings.get(k) for k in ("disk_budget_bytes", "max_source_bytes", "max_attempt_bytes")},
         disk=dict(present_bytes=present, pinned_bytes=None, reserved_bytes=None, estimated_peak_bytes=None, unknown_sizes=[dict(document_id=d["document_id"], reason_code="unknown_not_recorded") for d in documents]),
-        requirements=[dict(package_group=p, distributions=[], entry_point="glossapi.ocr" if p == "ocr_plugin" else None, installed=None, reason_code="capabilities_not_recorded") for p in sorted({p for d in documents for s in d["steps"] for p in s["packages"]})],
+        requirements=[package_entry(next(pool['device_id'] for pool in pools if pool['stage']=='ocr')) if p=='ocr' else dict(package_group=p,distributions=[],entry_point=None,installed=None,reason_code='capabilities_not_recorded') for p in sorted({p for d in documents for s in d['steps'] for p in s['packages']})],
         legacy_import_required=connection is None or connection.execute("SELECT 1 FROM events WHERE reason_code='legacy_import_completed' LIMIT 1").fetchone() is None,
         execution_available=False, compatibility_profile="legacy_shadow", explicit_manifest=manifest)
     return dict(body, plan_hash=snapshot_hash(body))

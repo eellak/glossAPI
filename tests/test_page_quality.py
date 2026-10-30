@@ -112,8 +112,16 @@ def test_wordlist_path_and_unknown_rate(quality_pdf, tmp_path):
     wordlist.write_text('\n'.join(COMMON_GREEK), encoding='utf-8')
     assert page_quality(quality_pdf, wordlist=wordlist).pages[0].valid_greek_word_rate == 1
     report = page_quality(quality_pdf)
-    assert not report.dictionary_loaded
-    assert all(p.valid_greek_word_rate is None for p in report.pages)
+    assert report.dictionary_loaded
+    assert report.dictionary_identity['name'] == 'el_GR 0.9'
+    assert report.pages[0].valid_greek_word_rate is None  # Non-image fallback remains v3.
+    for profile in ('v2', 'v3'):
+        legacy = page_quality(quality_pdf, rule_profile=profile)
+        assert not legacy.dictionary_loaded
+        assert all(p.valid_greek_word_rate is None for p in legacy.pages)
+    unknown = page_quality(quality_pdf, wordlist=set())
+    assert not unknown.dictionary_loaded
+    assert all(p.valid_greek_word_rate is None for p in unknown.pages)
 
 
 def test_batch_cli_errors_comparison_and_sidecars(quality_pdf, tmp_path):

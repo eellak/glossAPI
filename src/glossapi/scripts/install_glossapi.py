@@ -7,6 +7,7 @@ import hashlib
 import importlib
 import importlib.metadata as metadata
 import json
+import os
 import platform
 import shlex
 import subprocess
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-PACKAGES = ("core", "download", "browser", "layout", "annotate")
+PACKAGES = ("core", "download", "browser", "layout", "ocr", "annotate")
 DEVICES = ("cpu", "cuda126", "cuda132", "mps")
 TORCH_VERSION = "2.14.1"
 TORCHVISION_VERSION = "0.29.1"
@@ -84,11 +85,12 @@ class InstallPlan:
     torch_index: str | None
     torch_suffix: str
     pypdfium2_version: str | None
+    ocr_toolkit_source: str | None = None
 
 
 def build_install_plan(
     *, packages: Sequence[str] = (), editable: bool = False,
-    device: str | None = None, pypdfium2_version: str | None = None,
+    device: str | None = None, pypdfium2_version: str | None = None, ocr_toolkit_source: str | None = None,
 ) -> InstallPlan:
     selected = tuple(dict.fromkeys(packages or ("core",)))
     unknown = set(selected) - set(PACKAGES)
@@ -96,11 +98,11 @@ def build_install_plan(
         raise ValueError(f"Unknown packages: {', '.join(sorted(unknown))}; choose {', '.join(PACKAGES)}")
     if device is not None and device not in DEVICES:
         raise ValueError(f"Unknown device '{device}'; choose {', '.join(DEVICES)}")
-    if device and "layout" not in selected:
-        raise ValueError("--device requires the layout package")
+    if device and not set(selected) & {'layout', 'ocr'}:
+        raise ValueError("--device requires the layout or ocr package")
     index = None
     suffix = ""
-    if "layout" in selected:
+    if set(selected) & {'layout', 'ocr'}:
         device = device or "cpu"
         system = platform.system()
         if device == "mps":
@@ -126,7 +128,7 @@ def build_install_plan(
         if not (4, 30, 0) <= tuple(map(int, parts)) < (5, 0, 0):
             raise ValueError("pypdfium2 must remain >=4.30,<5")
     return InstallPlan(selected, tuple(sorted(set(selected) - {"core"})), bool(editable),
-                       device, index, suffix, pypdfium2_version)
+                       device, index, suffix, pypdfium2_version, ocr_toolkit_source)
 
 
 def build_pip_commands(plan: InstallPlan, repo_root: Path) -> list[list[str]]:
@@ -141,12 +143,25 @@ def build_pip_commands(plan: InstallPlan, repo_root: Path) -> list[list[str]]:
         profile = plan.torch_suffix[1:] or "macos"
         constraints = ["--constraint", str(repo_root / "dependency_setup" / f"constraints-torch-{profile}.txt")]
     target = str(repo_root)
-    if plan.extras:
-        target += f"[{','.join(plan.extras)}]"
+    # The OCR extra and installer consume the same file. Passing its entries
+    # directly lets development override the unpublished source without also
+    # resolving the public URL through wheel metadata.
+    extras = tuple(extra for extra in plan.extras if extra != 'ocr')
+    if extras:
+        target += f"[{','.join(extras)}]"
     command = [*pip, "--index-url", PYPI_INDEX, *constraints]
     if plan.editable:
         command.append("--editable")
     command.append(target)
+    if 'ocr' in plan.packages:
+        requirements = (repo_root/'src/glossapi/ocr_package.txt').read_text().splitlines()
+        for requirement in requirements:
+            if not requirement.strip() or requirement.startswith('#'):
+                continue
+            requirement = requirement.split(' #',1)[0].strip()
+            if requirement.startswith('greek-ocr-toolkit') and plan.ocr_toolkit_source:
+                requirement = 'greek-ocr-toolkit[docling] @ ' + plan.ocr_toolkit_source
+            command.append(requirement)
     if plan.pypdfium2_version:
         command.append(f"pypdfium2=={plan.pypdfium2_version}")
     commands.append(command)
@@ -164,7 +179,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("packages", nargs="*", choices=None, metavar="PACKAGE",
                         help=f"Default: core. Choices: {', '.join(PACKAGES)}")
     parser.add_argument("--packages", dest="package_list", default="", help="Comma-separated package names")
-    parser.add_argument("--device", choices=DEVICES, help="Layout device (default: cpu)")
+    parser.add_argument("--device", choices=DEVICES, help="Layout/OCR device (default: cpu)")
+    parser.add_argument('--ocr-toolkit-source', default=os.environ.get('GLOSSAPI_OCR_TOOLKIT_SOURCE'),
+                        help='Development-only source URL (git+file://… or file:///archive-directory); public pin remains in package metadata')
     parser.add_argument("--pypdfium2-version", help="Pin a qualified 4.x release, e.g. 4.30.0")
     parser.add_argument("--editable", action="store_true", help="Install the local source in editable mode")
     parser.add_argument("--dry-run", action="store_true", help="Print exact commands without executing them")
@@ -179,7 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         plan = build_install_plan(packages=[*args.packages, *filter(None, args.package_list.split(','))],
                                   editable=args.editable, device=args.device,
-                                  pypdfium2_version=args.pypdfium2_version)
+                                  pypdfium2_version=args.pypdfium2_version, ocr_toolkit_source=args.ocr_toolkit_source)
     except ValueError as error:
         parser.error(str(error))
     repo_root = Path(__file__).resolve().parents[3]

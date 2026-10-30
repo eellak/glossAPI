@@ -34,8 +34,9 @@ These optional knobs map directly to current Docling `PdfPipelineOptions` fields
 
 ### External OCR engines
 
-Install and configure the toolkit's `greekocr` package separately. Pass its
-configured `ocr_options` to `Corpus.ocr()` or sequential `Corpus.extract()`.
+Install `python install_glossapi.py ocr --device cpu` (or `mps` / `cuda126` /
+`cuda132`). `Corpus.ocr(mode='ocr_bad')` defaults to the pinned Greek R8+x1
+plugin; explicit `ocr_options` still select a configured external engine.
 See [OCR plugin migration](ocr_plugin_migration.md).
 
 ## Math Enrichment (Phase‑2)

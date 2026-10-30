@@ -128,11 +128,12 @@ def test_legacy_package_refused_before_any_install(tmp_path, monkeypatch, capsys
     (info / 'METADATA').write_text(f'Metadata-Version: 2.1\nName: {name.replace("_", "-")}\nVersion: 0.1.0\n')
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.setattr(installer.subprocess, 'run', lambda *a, **kw: pytest.fail('mutated environment'))
-    assert name in installer.legacy_native_distributions()
+    detected = installer.legacy_native_distributions()
+    assert name in detected
     assert installer.main([]) == 1
     message = capsys.readouterr().err
     assert 'Refusing installation' in message
-    assert shlex.join([sys.executable, '-m', 'pip', 'uninstall', '-y', name]) in message
+    assert shlex.join([sys.executable, '-m', 'pip', 'uninstall', '-y', *detected]) in message
 
 
 def test_install_verifies_native_in_fresh_process_after_pip_check(monkeypatch):

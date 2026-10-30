@@ -246,15 +246,15 @@ def test_clean_garbage_non_greek_still_requires_ocr(tmp_path, monkeypatch):
     assert row.needs_ocr
 
 
-def test_default_v3_sidecar_cli_and_pipeline_metadata(quality_pdf, tmp_path):
+def test_default_v4_sidecar_cli_and_pipeline_metadata(quality_pdf, tmp_path):
     from glossapi.corpus.phase_clean import _attach_page_quality_routes
     report = page_quality(quality_pdf, wordlist=COMMON_GREEK, output_dir=tmp_path)
-    assert report.rule_profile == 'v3' and report.fold_validity is False
+    assert report.rule_profile == 'v4' and report.fold_validity is False
     frame = _attach_page_quality_routes(pd.DataFrame([dict(filename='quality.pdf', needs_ocr=False)]),
                                         tmp_path / 'json/metrics')
-    assert frame.iloc[0].page_rule_profile == 'v3'
+    assert frame.iloc[0].page_rule_profile == 'v4'
     assert not frame.iloc[0].page_fold_validity
     output = tmp_path / 'batch.jsonl'
     assert page_quality_batch.main(['--pdfs', str(quality_pdf), '--out', str(output)]) == 0
     record = json.loads(output.read_text())
-    assert record['rule_profile'] == 'v3' and record['fold_validity'] is False
+    assert record['rule_profile'] == 'v4' and record['fold_validity'] is False

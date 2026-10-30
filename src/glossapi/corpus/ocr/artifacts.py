@@ -119,6 +119,13 @@ def persist_ocr_success(
         )
         context._cache_metadata_parquet(parquet_path)
         parquet_schema.write_metadata_parquet(df_meta, parquet_path)
+        # Nested clean wrappers restore the latest committed projection. Seal
+        # OCR-owned fields first so their refresh cannot restore pre-OCR flags.
+        from ...stages.products import active_journal
+        journal = active_journal()
+        if journal is not None and journal.cutover:
+            from ...stages.metadata import seal_metadata_projections
+            seal_metadata_projections(journal)
 
     stems = [canonical_stem(name) for name in success_files]
     if hasattr(context, "good_files"):

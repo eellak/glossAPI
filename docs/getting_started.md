@@ -19,7 +19,8 @@ On fresh Linux hosts, make these assumptions explicit instead of relying on shel
 ### Recommended setup
 
 Use `./dependency_setup/setup_glossapi.sh --mode docling --run-tests` for the layout environment.
-Install and configure an external OCR plugin separately; see [OCR plugin migration](ocr_plugin_migration.md).
+Install the default Greek OCR package with `python install_glossapi.py ocr --device cpu`
+(or `mps` / `cuda126` / `cuda132`); see [OCR setup](ocr_plugin_migration.md).
 
 ### Option 1 — pip (evaluate quickly)
 

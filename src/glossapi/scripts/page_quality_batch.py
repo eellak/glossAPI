@@ -18,12 +18,16 @@ from glossapi.scripts.pdf_font_repair import _pdf_paths
 
 
 def _worker(path: str, wordlist: str | None, result_path: str,
-            fold_validity: bool = False, rule_profile: str = "v3") -> None:
+            fold_validity: bool = False, rule_profile: str = "v4",
+            image_dominant_min_valid_word_rate: float = 0.9,
+            image_dominant_max_junk_share: float = 0.1) -> None:
     """Write one complete result in private staging; sources remain read-only."""
     started = time.perf_counter()
     try:
         record = page_quality(path, wordlist=wordlist, fold_validity=fold_validity,
-                              rule_profile=rule_profile).to_dict()
+                              rule_profile=rule_profile,
+                              image_dominant_min_valid_word_rate=image_dominant_min_valid_word_rate,
+                              image_dominant_max_junk_share=image_dominant_max_junk_share).to_dict()
     except Exception as exc:
         record = {"path": path, "filename": Path(path).name,
                   "error": f"{type(exc).__name__}: {exc}"}
@@ -45,12 +49,13 @@ def _stop(process: Any) -> None:
 
 def batch(paths: list[Path], *, workers: int = 1, timeout: float = 120,
           wordlist: str | None = None, fold_validity: bool = False,
-          rule_profile: str = "v3") -> Iterator[dict[str, Any]]:
+          rule_profile: str = "v4", image_dominant_min_valid_word_rate: float = 0.9,
+          image_dominant_max_junk_share: float = 0.1) -> Iterator[dict[str, Any]]:
     """Yield exactly one row per input, bounding each child's total lifetime."""
     if workers < 1 or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("workers and timeout must be positive and finite")
-    if rule_profile not in ("v2", "v3"):
-        raise ValueError("rule_profile must be 'v2' or 'v3'")
+    if rule_profile not in ("v2", "v3", "v4"):
+        raise ValueError("rule_profile must be 'v2', 'v3' or 'v4'")
     context = mp.get_context("spawn")
     pending = iter(enumerate(paths))
     active: list[dict[str, Any]] = []
@@ -66,7 +71,9 @@ def batch(paths: list[Path], *, workers: int = 1, timeout: float = 120,
                     index, path = item
                     result_path = Path(stage) / f"{index}.json"
                     process = context.Process(target=_worker, args=(str(path), wordlist, str(result_path),
-                                                                  fold_validity, rule_profile))
+                                                                  fold_validity, rule_profile,
+                                                                  image_dominant_min_valid_word_rate,
+                                                                  image_dominant_max_junk_share))
                     started = time.monotonic()
                     process.start()
                     active.append(dict(process=process, path=path, result_path=result_path, started=started))
@@ -158,7 +165,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=120)
     parser.add_argument("--wordlist")
     parser.add_argument("--fold-validity", action="store_true", help="Fold accents, case and final sigma for validity lookup")
-    parser.add_argument("--rule-profile", choices=("v2", "v3"), default="v3")
+    parser.add_argument("--rule-profile", choices=("v2", "v3", "v4"), default="v4")
+    parser.add_argument("--image-dominant-min-valid-word-rate", type=float, default=0.9)
+    parser.add_argument("--image-dominant-max-junk-share", type=float, default=0.1)
     parser.add_argument("--output-dir", type=Path, help="Publish json/metrics page-quality sidecars here")
     parser.add_argument("--compare-doc-rule", type=Path)
     args = parser.parse_args(argv)
@@ -169,7 +178,9 @@ def main(argv: list[str] | None = None) -> int:
     records: list[dict[str, Any]] = []
     with args.out.open("w", encoding="utf-8") as handle:
         for record in batch(paths, workers=args.workers, timeout=args.timeout, wordlist=args.wordlist,
-                            fold_validity=args.fold_validity, rule_profile=args.rule_profile):
+                            fold_validity=args.fold_validity, rule_profile=args.rule_profile,
+                            image_dominant_min_valid_word_rate=args.image_dominant_min_valid_word_rate,
+                            image_dominant_max_junk_share=args.image_dominant_max_junk_share):
             records.append(record)
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             handle.flush()
