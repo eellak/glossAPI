@@ -18,6 +18,36 @@ from .edits import EditRecorder, text_hash, capture_ocr_edits
 from .receipts import capture_backend_observations
 
 
+def score_ocr_profile_directory(noise, directory, threads, min_repeat_run):
+    """Native OCR-profile text metrics over a directory, without OCR supplement markers.
+
+    The supplement's composition comments are structure, not document text, so
+    script shares such as ``latin_percentage`` must not count them (FG-G02).
+    Directories with no marker are scored in place, exactly as before. Otherwise
+    the Markdown files are scored from a marker-free private copy and each row's
+    path is mapped back to the original file.
+    """
+    import tempfile
+    from ..ocr.page_artifacts import strip_supplement_markers
+    directory = Path(directory)
+    files = sorted(path for path in directory.rglob('*.md') if path.is_file())
+    payloads = {path: path.read_bytes() for path in files}
+    if not any(b'<!-- ocr-' in payload for payload in payloads.values()):
+        return list(noise.score_markdown_directory_ocr_profile(str(directory), threads, min_repeat_run))
+    with tempfile.TemporaryDirectory(prefix='glossapi-ocr-metrics-') as temporary:
+        surface = Path(temporary)
+        for path, payload in payloads.items():
+            target = surface/path.relative_to(directory)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if b'<!-- ocr-' in payload:
+                payload = strip_supplement_markers(payload.decode('utf-8', 'surrogateescape')).encode('utf-8', 'surrogateescape')
+            target.write_bytes(payload)
+        rows = list(noise.score_markdown_directory_ocr_profile(str(surface), threads, min_repeat_run))
+        for row in rows:
+            row['path'] = str(directory/Path(row['path']).relative_to(surface))
+    return rows
+
+
 class CleanStage:
     name = 'clean'
     contract_version = 1
@@ -124,8 +154,8 @@ class CleanStage:
                 if recorder.text != output.read_bytes().decode('utf-8'):
                     raise ValueError('OCR producer edit replay does not match cleaned text')
                 write_text_hashed(root/'debug.details.json',json.dumps(details,ensure_ascii=False))
-                metrics = {'ocr_scores': list(noise.score_markdown_directory_ocr_profile(str(source.path.parent), 1,
-                    int(request.settings.get('min_repeat_run', 6))))}
+                metrics = {'ocr_scores': score_ocr_profile_directory(noise, source.path.parent, 1,
+                    int(request.settings.get('min_repeat_run', 6)))}
                 for row in metrics['ocr_scores']: row['path'] = source.path.name
                 # Do not duplicate text or path-bearing debug summary in SQLite.
                 metrics['matches'] = [{**{key: value for key, value in item.items()

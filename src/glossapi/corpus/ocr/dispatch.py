@@ -169,6 +169,8 @@ def _convert_jobs(context, filenames, jobs, *, request, cache_directory):
         out_root=context.output_dir, pdf_root=context.input_dir,
         file_list=filenames, page_ranges=completed_ranges,
         source_paths={name: source for name, source, _ in jobs},
+        # The supplement marker is derived from this configuration (FG-G02).
+        ocr_configuration=page_artifacts.ocr_configuration(serialize_options(options), request.device),
     )
     if options.kind == 'glossapi':
         import json

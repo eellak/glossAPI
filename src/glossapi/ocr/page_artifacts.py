@@ -4,6 +4,7 @@ Moved from the retired backend so page routing and retained native Markdown
 remain available to external Docling OCR engines.
 """
 from __future__ import annotations
+import hashlib
 import json
 import logging
 import re
@@ -15,6 +16,81 @@ LOGGER = logging.getLogger(__name__)
 SHARD_STEM_RE = re.compile(r"^(?P<source_stem>.+)__p(?P<start>\d{5})-(?P<end>\d{5})$")
 PAGE_SPLIT_RE = re.compile(r"(?:^|\n)(?:<!-- page:\d+ -->\n)?<--- Page Split --->\n?")
 REASSEMBLED_CONFIG_KEYS = ("backend", "ocr_engine", "device")
+# Lines that compose an OCR supplement. They are structure, not document text.
+SUPPLEMENT_MARKER_RE = re.compile(
+    r"(?m)^<!-- (?:ocr-pages: [^\n]*?|/ocr-pages|ocr-supplement-(?:begin|end): [^\n]*?) -->[ \t]*(?:\n|$)")
+# Option fields that are file locations, not OCR configuration: this call's working
+# files, model/codec/seed locations (model identity is model_revision plus
+# model_manifest_sha256 / checkpoint_sha256 / config_sha256) and the diagnostic
+# outputs block, which selects debug artifacts and never changes the OCR text.
+# Paths name the corpus location; they must not enter the assembly identity.
+NON_IDENTITY_OPTION_KEYS = ("routing_sidecar", "call_log", "checkpoint", "codec", "release_dir",
+                            "ornament_seeds", "hole_seeds", "outputs")
+ASSEMBLY_ID_SCHEMA = "glossapi.ocr_supplement_assembly.v1"
+
+
+def strip_supplement_markers(markdown: str) -> str:
+    """Remove the OCR supplement's composition lines; text metrics must not count them."""
+    return SUPPLEMENT_MARKER_RE.sub("", str(markdown or ""))
+
+
+def _canonical_option(value: Any) -> Any:
+    """Process-independent form of an option value (FG-G02 node finding).
+
+    Lists are sorted by their canonical JSON: plugins may build a list from a
+    set, whose order follows the per-process hash seed. Absolute paths are
+    dropped wherever they occur. Order-sensitive meaning is not lost from the
+    identity, because the assembly id also hashes every produced page's text.
+    """
+    if isinstance(value, dict):
+        return {str(key): _canonical_option(item) for key, item in value.items()
+                if not _is_absolute_path(item)}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items = [_canonical_option(item) for item in value if not _is_absolute_path(item)]
+        return sorted(items, key=lambda item: json.dumps(item, sort_keys=True, default=str))
+    return value
+
+
+def _is_absolute_path(value: Any) -> bool:
+    if isinstance(value, Path):
+        return value.is_absolute()
+    return isinstance(value, str) and (value.startswith("/") or bool(re.match(r"^[A-Za-z]:[\\/]", value))
+                                       or value.startswith("file:"))
+
+
+def ocr_configuration(options: Optional[Dict[str, Any]], device: Optional[str]) -> Dict[str, Any]:
+    """The OCR configuration that identifies an assembly: no paths, no hash-order-dependent lists."""
+    values = {key: value for key, value in dict(options or {}).items() if key not in NON_IDENTITY_OPTION_KEYS}
+    values["device"] = device or values.get("device")
+    return _canonical_option(values)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _assembly_id(*, pdf_path: Path, pages: List[int], configuration: Dict[str, Any],
+                 page_texts: Dict[int, str]) -> str:
+    """Content-derived identity of one OCR assembly (FG-G02).
+
+    The same source bytes, routed pages, OCR configuration and OCR page text
+    always give the same 32-hex id, so a rerun or a resume after a kill writes
+    byte-identical Markdown. A per-call random id would make every rerun differ.
+    """
+    payload = {
+        "schema": ASSEMBLY_ID_SCHEMA,
+        "source_sha256": _file_sha256(pdf_path),
+        "pages": sorted(int(page) for page in pages),
+        "configuration": configuration,
+        "page_text_sha256": {str(page): hashlib.sha256(page_texts[page].encode("utf-8")).hexdigest()
+                             for page in sorted(page_texts)},
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
 
 
 def _page_count(pdf_path: Path) -> int:
@@ -295,6 +371,7 @@ def _reassemble_canonical_output_for_source(
     pdf_path: Path,
     source_name: str,
     selected_ranges: Optional[List[tuple[int, int]]] = None,
+    ocr_configuration: Optional[Dict[str, Any]] = None,
 ) -> bool:
     md_dir = out_root / "markdown"
     metrics_dir = out_root / "json" / "metrics"
@@ -356,7 +433,6 @@ def _reassemble_canonical_output_for_source(
     partial = bool(selected_ranges) and produced != set(range(1, page_count + 1))
     state_path = out_root / "sidecars" / "ocr_pages" / f"{source_stem}.json"
     previous_pages: Dict[int, Dict[str, str]] = {}
-    run_id = uuid.uuid4().hex
     if partial:
         original = _retained_native_markdown(out_root=out_root, source_stem=source_stem)
         previous_pages = _previous_ocr_pages(state_path=state_path, page_count=page_count)
@@ -441,9 +517,14 @@ def _reassemble_canonical_output_for_source(
         }
 
     if partial:
+        configuration = (ocr_configuration if ocr_configuration is not None else
+                         {key: merged_extra_metrics.get(key) for key in REASSEMBLED_CONFIG_KEYS})
+        run_id = _assembly_id(pdf_path=pdf_path, pages=sorted(produced), configuration=configuration,
+                              page_texts={page: merged_pages[page - 1] for page in produced})
         previous_pages.update({page: {"text": merged_pages[page - 1], "run_id": run_id}
                                for page in produced})
         merged_extra_metrics["ocr_run_id"] = run_id
+        merged_extra_metrics["ocr_run_id_basis"] = ASSEMBLY_ID_SCHEMA
         merged_extra_metrics["native_markdown_path"] = str(
             Path("sidecars") / "ocr_native" / f"{source_stem}.md")
     merged_markdown = _join_page_outputs(merged_pages) if merged_pages else "[[Blank page]]"
@@ -451,7 +532,9 @@ def _reassemble_canonical_output_for_source(
         from glossapi.page_quality import compress_page_ranges
 
         # Rebuild one supplement in page order from current replacements. The
-        # marker identifies this assembly; page state retains each producing run.
+        # marker identifies this assembly by content (source, pages, configuration,
+        # OCR text), never by a random per-call id; page state retains each
+        # producing assembly's id. The ledger attempt records the call itself.
         page_set = compress_page_ranges(previous_pages)
         sections = [f"<!-- page:{page} -->\n{previous_pages[page]['text']}" for page in sorted(previous_pages)]
         marker = f"pages={page_set} run_id={run_id}"
@@ -468,7 +551,7 @@ def _reassemble_canonical_output_for_source(
     )
     if partial:
         state_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = state_path.with_suffix(f".{run_id}.tmp")
+        temporary = state_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
         try:
             temporary.write_text(json.dumps({"page_count": page_count, "pages": previous_pages}), encoding="utf-8")
             temporary.replace(state_path)
@@ -490,7 +573,8 @@ def _reassemble_canonical_output_for_source(
 
 def _ensure_canonical_outputs(*, out_root: Path, pdf_root: Path, file_list: List[str],
                               page_ranges: Optional[List[str]] = None,
-                              source_paths: Optional[Dict[str, Path]] = None) -> None:
+                              source_paths: Optional[Dict[str, Path]] = None,
+                              ocr_configuration: Optional[Dict[str, Any]] = None) -> None:
     """Reassemble nonoverlapping current shards while retaining kept Markdown."""
     selected: Dict[str, List[tuple[int, int]]] = {}
     for spec in page_ranges or []:
@@ -500,7 +584,7 @@ def _ensure_canonical_outputs(*, out_root: Path, pdf_root: Path, file_list: List
         pdf_path = (source_paths or {}).get(name, pdf_root / name).resolve()
         assembled = _reassemble_canonical_output_for_source(
             out_root=out_root, pdf_path=pdf_path, source_name=name,
-            selected_ranges=selected.get(name),
+            selected_ranges=selected.get(name), ocr_configuration=ocr_configuration,
         )
         if name in selected and not assembled:
             raise FileNotFoundError(f"No selected OCR shards produced for {name}")

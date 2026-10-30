@@ -14,6 +14,22 @@ from .._naming import canonical_stem
 from ..parquet_schema import ParquetSchema
 
 
+def _cell_text(value) -> str:
+    """Return a metadata cell as text; missing cells (None, pd.NA, NaN, NaT) are "".
+
+    ``pd.NA`` has no truth value, so ``value or ""`` raises on it (FG-G01).
+    """
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        # Array-like cells have no scalar missing state; keep their text.
+        pass
+    return str(value)
+
+
 class _ProcessingStateManager:
     """
     Maintain resume checkpoints using the canonical pipeline metadata parquet.
@@ -62,7 +78,7 @@ class _ProcessingStateManager:
             return None
 
     def _mark_stage(self, current: str, stage: str) -> str:
-        parts = [p for p in (current or "").split(",") if p]
+        parts = [p for p in _cell_text(current).split(",") if p]
         if stage and stage not in parts:
             parts.append(stage)
         return ",".join(parts)
@@ -112,8 +128,8 @@ class _ProcessingStateManager:
             stem = _stem_for(row)
             if not stem:
                 continue
-            status_raw = str(row.get("extract_status") or "").strip().lower()
-            stage_raw = str(row.get("processing_stage") or "")
+            status_raw = _cell_text(row.get("extract_status")).strip().lower()
+            stage_raw = _cell_text(row.get("processing_stage"))
             if status_raw in success_markers or "extract" in stage_raw.split(","):
                 processed.add(stem)
                 continue
@@ -178,7 +194,8 @@ class _ProcessingStateManager:
                     filename, exists = self._guess_filename(stem)
                     file_ext = Path(filename).suffix.lstrip(".")
                     row = {col: pd.NA for col in df.columns}
-                    row[self.url_column] = row.get(self.url_column, "") or ""
+                    # Every cell of a new row starts missing; the URL is unknown here.
+                    row[self.url_column] = ""
                     row["filename"] = filename
                     row["file_ext"] = file_ext
                     row["filename_base"] = stem

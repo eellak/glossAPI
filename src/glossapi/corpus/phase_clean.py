@@ -3981,8 +3981,10 @@ class CleanPhaseMixin:
             len(md_files),
         )
 
-        results = adapter_ocr_scores if adapter_ocr_scores is not None else noise_mod.score_markdown_directory_ocr_profile(
-            str(input_dir),
+        from ..stages.clean import score_ocr_profile_directory
+        results = adapter_ocr_scores if adapter_ocr_scores is not None else score_ocr_profile_directory(
+            noise_mod,
+            input_dir,
             n_threads,
             int(min_repeat_run),
         )

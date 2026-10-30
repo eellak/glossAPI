@@ -107,20 +107,54 @@ def resolve_document(connection, selector):
         for record in _rows(connection, "SELECT document_id,source_uri FROM source_records"):
             if urlsplit(record["source_uri"]).scheme.lower() in ("http", "https") and source_key(record["source_uri"]) == normalized:
                 exact.add(record["document_id"])
+    filename_selector = False
     if not exact:
         # A filename is a convenience selector only. It never joins identities
         # or establishes artifact ownership; all candidates must be returned.
+        filename_selector = True
         for record in _rows(connection, "SELECT document_id,source_uri FROM source_records"):
             if Path(_path(record["source_uri"])).name == selector:
                 exact.add(record["document_id"])
         for file in _rows(connection, "SELECT v.document_id,f.uri FROM files f JOIN document_versions v ON v.version_id=f.version_id"):
             if Path(_path(file["uri"])).name == selector:
                 exact.add(file["document_id"])
+    if len(exact) > 1 and filename_selector:
+        aliases = _same_content_aliases(connection, documents, exact)
+        if aliases:
+            return aliases
     if len(exact) > 1:
         raise ReadRequestError("ambiguous_file", "Selector matches multiple documents", details={"candidate_document_ids": sorted(exact)})
     if not exact:
         raise ReadRequestError("file_not_found", "No recorded document matches selector", details={"selector": selector})
     return next(d for d in documents if d["document_id"] in exact)
+
+
+def _same_content_aliases(connection, documents, candidates):
+    """One document for a bare filename whose candidates are the same bytes (FG-G04).
+
+    The Corpus API registers one supplied file under its input path and its
+    ``downloads/`` copy. When every candidate has exactly one recorded source
+    hash and the hashes are equal, the filename names one content: return the
+    earliest candidate with every alias listed. Unknown or differing hashes stay
+    ambiguous; identities are never joined in the ledger itself.
+    """
+    hashes = {}
+    for document_id in candidates:
+        values = {row[0] for row in connection.execute(
+            "SELECT source_sha256 FROM document_versions WHERE document_id=?", (document_id,))}
+        if len(values) != 1 or None in values:
+            return None
+        hashes[document_id] = values.pop()
+    if len(set(hashes.values())) != 1:
+        return None
+    ordered = [d for d in documents if d["document_id"] in candidates]
+    primary, others = ordered[0], ordered[1:]
+    return dict(primary, alias_basis="same_source_sha256", source_sha256=hashes[primary["document_id"]],
+                aliases=[dict(document_id=d["document_id"], source_key=d["source_key"]) for d in others])
+
+
+def _document_ids(document):
+    return [document["document_id"], *[alias["document_id"] for alias in document.get("aliases", [])]]
 
 
 def _path(uri):
@@ -175,14 +209,18 @@ def _history(connection, run):
 
 def report_why(connection, selector, *, run=None, stage=None):
     document = resolve_document(connection, selector)
-    versions = version_view(connection, document["document_id"])
+    # Same-content aliases (FG-G04) report as one document over all their versions.
+    document_ids = _document_ids(document)
+    versions = [v for identifier in document_ids for v in version_view(connection, identifier)]
+    if len(document_ids) > 1:
+        versions.sort(key=lambda v: (v["created_at"], v["document_id"] != document["document_id"], v["revision"]))
     history = _history(connection, run)
     known_versions = {e["version_id"] for e in history if e["version_id"]}
     cutoff = max((e["recorded_at"] for e in history), default=(run or {}).get("created_at", ""))
     versions = [v for v in versions if v["version_id"] in known_versions or v["created_at"] <= cutoff]
     version = versions[-1] if versions else None
     version_ids = {v["version_id"] for v in versions}
-    records = source_view(connection, document["document_id"])
+    records = [record for identifier in document_ids for record in source_view(connection, identifier)]
     run_ids = _run_scope(connection,run)
     records = [r for r in records if r["run_id"] in run_ids]
     owned_files = [f for f in artifact_view(connection, version_ids) if f["version_id"] in version_ids]
@@ -305,7 +343,8 @@ def report_why(connection, selector, *, run=None, stage=None):
 def status_view(connection, *, run=None, stage=None, selector=None):
     document = resolve_document(connection, selector) if selector else None
     rows = _rows(connection, "SELECT s.*,v.document_id FROM current_task_state s LEFT JOIN document_versions v ON v.version_id=s.version_id WHERE s.run_id=? ORDER BY s.ordinal,s.task_id", (run["run_id"],)) if run else []
-    rows = [r for r in rows if (not stage or r["stage"] == stage) and (not document or r["document_id"] == document["document_id"])]
+    document_ids = set(_document_ids(document)) if document else set()
+    rows = [r for r in rows if (not stage or r["stage"] == stage) and (not document or r["document_id"] in document_ids)]
     counts = dict.fromkeys(sorted(STATUSES), 0)
     documents = []
     for row in rows:
