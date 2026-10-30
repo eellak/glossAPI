@@ -59,6 +59,10 @@ def run_plugin_ocr(
     page_ranges: list[str] | None = None,
 ) -> None:
     import os
+    from ...ocr.defaults import check_requested_device
+    # Reject an explicit device that disagrees with ocr_options.device before any
+    # pool selection, adapter delegation or converter construction.
+    check_requested_device(request.device, request.ocr_options)
     require_ocr_options(request.ocr_options)
     if adapters_enabled() and not getattr(context, "_inside_ocr_stage", False):
         from ...stages.compatibility import ocr_compatibility_documents
@@ -91,6 +95,7 @@ def run_plugin_ocr(
         jobs.append((name, source, ranges))
     from ...ocr.defaults import cache_root, greek_options, model_provenance, select_device, serialize_options, write_routes, package_requirements
     os.environ['GREEKOCR_CACHE_DIR'] = str(cache_root(getattr(context, '_ocr_cache_root', None)))
+    requested_device = request.device
     device = (getattr(request.ocr_options, 'device', None) or select_device(request.device))
     options = request.ocr_options
     if options is None or getattr(options, 'kind', None) == 'glossapi':
@@ -105,6 +110,10 @@ def run_plugin_ocr(
         values['replace_policy'] = 'routed_pages'
         options = greek_options(values, device=device, routing_sidecar=routing,
                                 call_log=sidecars/'calls.jsonl')
+        from ...ocr.defaults import toolkit_source_status
+        toolkit_source = toolkit_source_status()
+        if not toolkit_source['admitted']:
+            raise RuntimeError(toolkit_source['reason'])
     request = replace(request, ocr_options=options, device=device)
     converter = _build_converter(request)
     page_artifacts._clear_previous_page_shards(out_root=context.output_dir, file_list=filenames)
@@ -140,23 +149,25 @@ def run_plugin_ocr(
     )
     if options.kind == 'glossapi':
         import json
-        provenance = {'options':serialize_options(options), 'device':device,
+        provenance = {'options':serialize_options(options), 'requested_device':requested_device, 'device':device,
             'detector_device':options.detector_device, 'models':model_provenance(converter),
             'cache_root':os.environ['GREEKOCR_CACHE_DIR']}
         provenance['model_source']=('local_release_override' if options.release_dir else
             'local_checkpoint_override' if options.checkpoint else
             'verified_hf_fetch' if provenance['models'] else 'not_loaded_no_lines')
-        from importlib.metadata import distribution
-        toolkit=distribution('greek-ocr-toolkit')
-        provenance['toolkit']={'version':toolkit.version,
+        from ...ocr.defaults import detector_provenance, toolkit_source_status
+        source=toolkit_source_status(fingerprint=True)
+        provenance['toolkit']={'version':source.get('version'),
             'requested_source':next(row for row in package_requirements() if row.startswith('greek-ocr-toolkit')),
-            'installed_source':json.loads(toolkit.read_text('direct_url.json') or 'null')}
-        from greekocr.segmenters.assets import SMALL_DETECTOR
+            'installed_source':source.get('installed_direct_url'),
+            'admission':source.get('status'),'override_declared':source.get('override_declared'),
+            'installed_code_fingerprint':source.get('installed_code_fingerprint')}
         detector_calls=[json.loads(line).get('detector') for line in options.call_log.read_text().splitlines()]
-        detector_observations=[{key:call.get(key) for key in ('sha256','requested_device','providers')}
-                               for call in detector_calls if call]
-        provenance['detector']=({**SMALL_DETECTOR,'observations':list({
-            json.dumps(row,sort_keys=True):row for row in detector_observations}.values())}
-            if detector_observations else None)
+        detector_observations=list({json.dumps(row,sort_keys=True):row for row in (
+            {key:call.get(key) for key in ('path','sha256','requested_device','providers')}
+            for call in detector_calls if call)}.values())
+        # Override status and the expected identity are recorded even when no line reached the detector.
+        provenance['detector']=detector_provenance(detector_observations,
+            segmenter_detector=getattr(options,'segmenter_detector','small'))
         (context.output_dir/'sidecars/ocr_runtime/provenance.json').write_text(json.dumps(provenance), encoding='utf-8')
         observe('ocr_completed', status='ok', **provenance)

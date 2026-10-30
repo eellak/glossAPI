@@ -55,6 +55,14 @@ class PageQuality:
     image_dominant_min_valid_word_rate: float = 0.9
     image_dominant_max_junk_share: float = 0.1
     greek_image_bar_applies: bool = False
+    # Every effective routing threshold, so the page row replays its own selection.
+    image_dominant_ratio: float = 0.5
+    image_dominant_min_chars: int = 600
+    min_valid_word_rate: float = 0.4
+    min_chars: int = 50
+    min_image_ratio: float = 0.3
+    min_greek_share: float = 0.5
+    max_other_share: float = 0.3
 
 
 @dataclass(frozen=True)
@@ -76,6 +84,13 @@ class PageQualityReport:
     dictionary_identity: dict | None = None
     image_dominant_min_valid_word_rate: float = 0.9
     image_dominant_max_junk_share: float = 0.1
+    image_dominant_ratio: float = 0.5
+    image_dominant_min_chars: int = 600
+    min_valid_word_rate: float = 0.4
+    min_chars: int = 50
+    min_image_ratio: float = 0.3
+    min_greek_share: float = 0.5
+    max_other_share: float = 0.3
 
     def to_dict(self) -> dict:
         """Return a JSON-compatible copy, retaining null unknown rates."""
@@ -230,6 +245,18 @@ def page_rule_selection(decision: str, *, valid_greek_word_rate: float | None,
             or (decision in {"garbage_greek_text", "symbol_font_garbage"}
                 and (words <= 10 or (valid_greek_word_rate is not None
                                     and valid_greek_word_rate < 0.5))))
+
+
+def replay_page_selection(page: "PageQuality | dict") -> bool:
+    """Replay a recorded page row with its own recorded thresholds (archived sidecars included).
+
+    Every page_rule_selection parameter present in the row is forwarded; rows written
+    before thresholds were serialized fall back to the function defaults.
+    """
+    import inspect
+    values = asdict(page) if not isinstance(page, dict) else page
+    names = [name for name in inspect.signature(page_rule_selection).parameters if name != "decision"]
+    return page_rule_selection(values["decision"], **{name: values[name] for name in names if name in values})
 
 
 def text_contamination_counts(text: str, *, all_pua: bool = False) -> dict[str, int]:
@@ -500,6 +527,13 @@ def page_quality(pdf_path: str | Path, *,
         identity["scope"] = "image-dominant pages" if bundled_dictionary else "all pages"
         identity["normalization"] = ("NFD strip marks, lowercase, final sigma to sigma"
                                      if fold_validity else "NFC casefold")
+    # Fixed thresholds are page_ocr_decision's defaults; all are recorded per page and report.
+    import inspect
+    fixed = inspect.signature(page_ocr_decision).parameters
+    thresholds = dict(image_dominant_ratio=image_dominant_ratio, image_dominant_min_chars=image_dominant_min_chars,
+                      min_valid_word_rate=min_valid_word_rate,
+                      **{name: fixed[name].default for name in ("min_chars", "min_image_ratio",
+                                                                "min_greek_share", "max_other_share")})
     pages: list[PageQuality] = []
     with closing(pdfium.PdfDocument(str(path))) as pdf:
         for index in range(len(pdf)):
@@ -551,7 +585,8 @@ def page_quality(pdf_path: str | Path, *,
                                          validity_not_applicable=not_applicable, **junk,
                                          greek_image_bar_applies=greek_image,
                                          image_dominant_min_valid_word_rate=image_dominant_min_valid_word_rate,
-                                         image_dominant_max_junk_share=image_dominant_max_junk_share))
+                                         image_dominant_max_junk_share=image_dominant_max_junk_share,
+                                         **thresholds))
             finally:
                 page.close()
     selected = [p.page for p in pages if p.page_needs_ocr]
@@ -562,7 +597,8 @@ def page_quality(pdf_path: str | Path, *,
                                fold_validity=fold_validity, rule_profile=rule_profile,
                                dictionary_identity=identity,
                                image_dominant_min_valid_word_rate=image_dominant_min_valid_word_rate,
-                               image_dominant_max_junk_share=image_dominant_max_junk_share)
+                               image_dominant_max_junk_share=image_dominant_max_junk_share,
+                               **thresholds)
     if output_dir is not None:
         write_page_quality(report, output_dir)
     return report

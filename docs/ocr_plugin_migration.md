@@ -13,8 +13,16 @@ The sole toolkit source pin is `src/glossapi/ocr_package.txt`. Both the installe
 and the dynamic `glossapi[ocr]` wheel extra read that file. It pins public commit
 `bb5aa6f` on the toolkit's `dev/glossapi-ocr-default` branch: a code-only snapshot
 of the reviewed release `138cff524` (identical `greekocr/`, `pyproject.toml` and
-`README.md`). To move to a new toolkit release, replace that one requirement line,
-then rerun the CPU smoke. No mirror or glossAPI-side model downloader is used.
+`README.md`). To move to a new toolkit release, replace that requirement line and
+the `# greekocr-source-fingerprint` line beside it (commit, SHA256 over the
+installed `greekocr/**/*.py` files, file count), then rerun the CPU smoke. No mirror
+or glossAPI-side model downloader is used.
+
+Runtime admission verifies the installed toolkit source, not only its version: the
+PEP 610 `direct_url.json` VCS commit must equal the pin; an install without VCS
+metadata must match the recorded code fingerprint. Any other source is rejected
+with a message naming both sources. The installed source (commit, code
+fingerprint, override status) is part of the frozen execution identity.
 
 To test an unpublished toolkit checkout:
 
@@ -25,7 +33,9 @@ python install_glossapi.py ocr --device cpu \
 ```
 
 The override changes the install command, while wheel metadata retains the public
-source pin. The Mac qualification used a code-only `git archive` because the full
+source pin. At run time the same `GLOSSAPI_OCR_TOOLKIT_SOURCE` value must be set:
+it marks the installed source as a development override, is admitted only when it
+describes that installed source, and is recorded as such. The Mac qualification used a code-only `git archive` because the full
 tracked tree alone exceeds its 2 GB experiment limit; see the integration notes.
 
 After extraction and cleaning:
@@ -49,8 +59,12 @@ at least 0.9 and junk-token share strictly below 0.10 on Greek-dominant pages,
 with no PUA/control contamination. Unknown validity routes to OCR; known validity
 with unknown junk share cannot qualify the Greek layer. The independent settings
 `image_dominant_min_valid_word_rate` and `image_dominant_max_junk_share` configure
-this bar and are recorded on every page and in the extraction ledger. Non-image
-and Latin routing retain their previous settings and rules.
+this bar and are recorded on every page and in the extraction ledger. Every other
+effective routing threshold (`image_dominant_ratio`, `image_dominant_min_chars`,
+`min_valid_word_rate` and the fixed `min_chars`, `min_image_ratio`,
+`min_greek_share`, `max_other_share`) is recorded too, so
+`page_quality.replay_page_selection(row)` replays a sidecar row with its own
+thresholds. Non-image and Latin routing retain their previous settings and rules.
 
 Junk is the union of unknown words of up to three letters, unknown Latin fragments
 of up to four letters, tokens mixing letter scripts, and Greek/Latin tokens with
@@ -99,14 +113,20 @@ are supplied by glossAPI.
 
 The scheduler assigns CUDA/MPS recognition, otherwise CPU. It reserves CPU tokens
 for the detector/correction work alongside any accelerator and admits one OCR
-operation per accelerator at a time. Both recognition and detector devices are
-recorded. CLI planning uses a hardware hint without importing Torch; execution
+operation per accelerator at a time. Plugin defaults are resolved before the run
+is frozen, so an omitted macOS `detector_device` (CoreML) claims the Apple
+accelerator like MPS recognition. Requested and resolved devices plus recognition
+and detector devices are recorded; a requested device that disagrees with
+`ocr_options.device` is rejected before any pool or converter is chosen. CLI planning uses a hardware hint without importing Torch; execution
 validates the selected backend without changing to another engine.
 
 `GLOSSAPI_CACHE_DIR` (default `$XDG_CACHE_HOME/glossapi`, or
 `~/.cache/glossapi`) owns the cache root. For explicit operation settings,
 `ocr.cache_root` overrides it. GlossAPI sets `GREEKOCR_CACHE_DIR` for the plugin,
 which alone acquires and verifies the model and official upstream detector.
+A `GREEKOCR_SEGMENTER_MODEL_DIR` detector override is recorded as such (actual
+path and SHA256 next to the expected upstream identity) and its file hashes are
+bound into the frozen execution identity.
 The actual plugin acquisition receipt supplies repository, requested revision,
 resolved commit and manifest hash to the ledger. `release_dir` remains an explicit
 local override. Prewarm both plugin HF caches and Docling layout/table assets

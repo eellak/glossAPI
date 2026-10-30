@@ -41,9 +41,17 @@ def execution_environment():
     packages=sorted((distribution.metadata['Name'],distribution.version) for distribution in importlib.metadata.distributions())
     models=[{'path':str(path.relative_to(root)),'sha256':sha256_file(path)} for path in sorted(root.rglob('*.joblib'))]
     environment={name:os.environ.get(name) for name in ('GLOSSAPI_IMAGES_SCALE','GLOSSAPI_FORMULA_BATCH',
-        'DOCLING_ARTIFACTS_PATH','OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','RAYON_NUM_THREADS')}
+        'DOCLING_ARTIFACTS_PATH','OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','RAYON_NUM_THREADS',
+        'GLOSSAPI_OCR_TOOLKIT_SOURCE','GREEKOCR_SEGMENTER_MODEL_DIR')}
+    # Installed OCR toolkit source (commit / code fingerprint / declared override) and
+    # any detector override bytes are part of the executable identity, not only versions.
+    from ..ocr.defaults import detector_override, toolkit_source_status
+    toolkit=toolkit_source_status(fingerprint=True)
+    ocr={'toolkit':{key:toolkit.get(key) for key in ('status','admitted','version','installed_url','installed_commit',
+            'installed_code_fingerprint','override_declared','pinned_url','pinned_commit')},
+         'detector_override':detector_override()}
     return {'code':snapshot_hash(files),'environment':environment,'native':[{'name':name,'hashes':hashes} for name,hashes in native.items()],
-            'models':models,'packages':[{'name':name,'version':version} for name,version in packages]}
+            'models':models,'packages':[{'name':name,'version':version} for name,version in packages],'ocr':ocr}
 
 
 def local_path(uri):
@@ -130,13 +138,13 @@ class StreamingScheduler:
         self.package_availability = {}
         self.task_status = {}
 
-    def _wait(self,run,task,operation,reason):
+    def _wait(self,run,task,operation,reason,message=None):
         if (task,reason) in self.wait_reasons:
             return
         with self.writer.transaction():
             self.writer.event(run,event_kind='lifecycle',reason_code=reason,status='planned',task_id=task,
                 version_id=operation.document.version_id,
-                message='Run python install_glossapi.py ocr with the selected --device' if reason=='waiting_for_package' and operation.stage=='ocr' else '')
+                message=message or ('Run python install_glossapi.py ocr with the selected --device' if reason=='waiting_for_package' and operation.stage=='ocr' else ''))
         self.wait_reasons.add((task,reason))
 
     def _missing_package(self,operation):
@@ -168,6 +176,12 @@ class StreamingScheduler:
                         return True
                     if pin.specifier and installed not in pin.specifier:
                         return True
+                    if pin.name == 'greek-ocr-toolkit':
+                        # A VCS pin has no version specifier: verify the installed source itself.
+                        from ..ocr.defaults import toolkit_source_status
+                        source=toolkit_source_status()
+                        if not source['admitted']:
+                            return source['reason']
                     continue
                 try:importlib.metadata.version(re.split(r'[<>=!~ ]',distribution,1)[0])
                 except importlib.metadata.PackageNotFoundError:return True
@@ -186,6 +200,12 @@ class StreamingScheduler:
         keys = {operation.key for operation in operations}
         if len(keys) != len(operations):
             raise ValueError('Duplicate operation key')
+        from ..ocr.defaults import effective_ocr_settings
+        # Resolve OCR plugin defaults (e.g. macOS detector_device=coreml) BEFORE freezing,
+        # so validation, accelerator claims and recorded settings see effective values.
+        operations = tuple(replace(operation,specification=replace(operation.specification,
+            settings=effective_ocr_settings(operation.specification.device_id,operation.specification.settings)))
+            if operation.stage=='ocr' else operation for operation in operations)
         for operation in operations:
             if operation.stage not in self.registry:
                 raise ValueError('Unsupported stage: '+operation.stage)
@@ -475,8 +495,10 @@ class StreamingScheduler:
                     pool=self.pools[pool_key]
                     while queue and pool.active+sum(1 for item in pending if item[0] is pool)<pool.capacity:
                         operation=by_key[queue[0]]
-                        if self._missing_package(operation):
-                            self._wait(run,tasks[operation.key],operation,'waiting_for_package')
+                        missing=self._missing_package(operation)
+                        if missing:
+                            self._wait(run,tasks[operation.key],operation,'waiting_for_package',
+                                       message=missing if isinstance(missing,str) else None)
                             break
                         if active_cpu+operation.cpu_tokens>self.cpu_capacity or (
                             self.memory_capacity is not None and active_memory+operation.memory_bytes>self.memory_capacity):
@@ -571,8 +593,9 @@ class StreamingScheduler:
                     'queue_high_water':dict(self.high_water),'result_capacity':2*sum(pool.capacity for pool in self.pools.values())})
         return dict(run_id=run,state=state,counts={status:counts[status] for status in ('planned','running','ok','skipped','failed')},
                     attempts=done,trace=self.trace,queue_high_water=dict(self.high_water),disk=budget.report(),
-                    install_hints=['Run python install_glossapi.py ocr with the selected --device'] if any(
+                    install_hints=(['Run python install_glossapi.py ocr with the selected --device'] if any(
                         (tasks[operation.key],'waiting_for_package') in self.wait_reasons for operation in operations if operation.stage=='ocr') else [])
+                        +sorted({value for value in self.package_availability.values() if isinstance(value,str)}))
 
     def _skip(self,run,task,operation,reason):
         self.task_status[operation.key] = 'skipped'

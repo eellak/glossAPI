@@ -66,6 +66,9 @@ class OcrStage:
                 raise ValueError('Accelerated OCR requires the Greek OCR plugin')
             if options is not None and getattr(options,'device',request.device_id) != request.device_id:
                 raise ValueError('OCR option device must match its scheduler device pool')
+            if options is None and (request.settings.get('options') or {}).get('kind','glossapi') != 'glossapi':
+                # Engine selection is validated before routing/early return, without loading models.
+                raise ValueError('Configured OCR kind does not match the Greek OCR engine; pass external options to Corpus.ocr()')
             source = next((item for item in request.inputs if item.kind == 'source_payload'), None)
             if source is None:
                 raise ValueError('OCR requires an explicit original PDF')
@@ -95,7 +98,8 @@ class OcrStage:
                     target.write_bytes(native.path.read_bytes())
                     metrics = root/'json/metrics'/f'{source.path.stem}.metrics.json'
                     metrics.parent.mkdir(parents=True,exist_ok=True)
-                    metrics.write_text(json.dumps({'page_count':report['pages_total'],'ocr_pages':[], 'ocr_engine':'glossapi'}))
+                    metrics.write_text(json.dumps({'page_count':report['pages_total'],'ocr_pages':[],
+                        'ocr_engine':getattr(options,'kind','glossapi') if options is not None else 'glossapi'}))
                     return StageResult(request.task_id,request.attempt_id,request.lease_token,'ok','ocr_not_routed',
                         tuple(replace(item,kind='ocr_markdown' if item.relative_path.startswith('markdown/') else 'ocr_metrics',required=True)
                               for item in outputs_in(root) if item.relative_path.startswith(('markdown/','json/metrics/'))),
@@ -181,6 +185,7 @@ class OcrStage:
                   'plugin': {'kind':options.kind,'entry_points':[point.name for point in plugins],
                     **(json.loads((root/'sidecars/ocr_runtime/provenance.json').read_text())
                        if (root/'sidecars/ocr_runtime/provenance.json').is_file() else {'models':request.tools.get('models',[])}),
+                    'requested_device':request.settings.get('requested_device',request.device_id),
                     'device':request.device_id,'detector_device':getattr(options,'detector_device',None)},
                   'backend_observations':observations},),
                 {'wall_ns':time.monotonic_ns()-started,'execution':'in_process_plugin'})

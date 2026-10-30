@@ -288,6 +288,9 @@ def ocr_compatibility_documents(context, filenames, *, request, page_ranges=None
     """Keep target selection/persistence outside the plugin result's ownership."""
     import json
     from .ocr import OcrStage
+    from ..ocr.defaults import check_requested_device
+    # An explicit request and ocr_options.device must agree before a pool/adapter is chosen.
+    check_requested_device(request.device, request.ocr_options)
     for name in filenames:
         source = next((directory/name for directory in (context.output_dir/'downloads',context.input_dir/'downloads',context.input_dir)
             if (directory/name).is_file()),context.input_dir/name)
@@ -304,7 +307,7 @@ def ocr_compatibility_documents(context, filenames, *, request, page_ranges=None
         from ..ocr.defaults import serialize_options, default_values, select_device
         device = getattr(options,'device',None) or select_device(request.device)
         serialized = serialize_options(options) if options is not None else default_values(device)
-        settings={'page_ranges':ranges,'max_pages':request.max_pages,'options':serialized,
+        settings={'page_ranges':ranges,'max_pages':request.max_pages,'options':serialized,'requested_device':request.device,
             'entry_point_name':'glossapi' if options is None or getattr(options,'kind',None)=='glossapi' else None,
             'cache_root':str(getattr(context,'_ocr_cache_root', '')) or None}
         # Existing adapter state is reusable only with its recorded source binding.

@@ -199,3 +199,77 @@ def test_latin_pdf_records_validity_not_applicable(tmp_path):
     assert (new.page_needs_ocr, new.decision) == (old.page_needs_ocr, old.decision) == (False, 'text_layer')
     assert report.to_dict()['pages'][0]['validity_not_applicable'] is True
     assert not old.validity_not_applicable
+
+
+# ---- CP-OCRDEF F5: every effective routing threshold travels with the page row ----
+
+def _image_text_pdf(path, coverage=0.6, text='The archive stores printed books reports and articles for readers'):
+    """Raw PDF (no fitz): a 1x1 raster covering `coverage` of the page plus a Latin text layer."""
+    content = f'q 200 0 0 {200*coverage:g} 0 0 cm /Im1 Do Q BT /F1 8 Tf 5 190 Td ({text}) Tj ET'.encode()
+    objects = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 4 0 R >> '
+        b'/XObject << /Im1 6 0 R >> >> /Contents 5 0 R >>',
+        b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        b'<< /Length '+str(len(content)).encode()+b' >>\nstream\n'+content+b'\nendstream',
+        b'<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 '
+        b'/Length 1 >>\nstream\n\xc8\nendstream']
+    payload = b'%PDF-1.4\n'; offsets = []
+    for number, value in enumerate(objects, 1):
+        offsets.append(len(payload)); payload += str(number).encode()+b' 0 obj\n'+value+b'\nendobj\n'
+    xref = len(payload)
+    payload += f'xref\n0 {len(objects)+1}\n0000000000 65535 f \n'.encode()
+    payload += b''.join(f'{offset:010} 00000 n \n'.encode() for offset in offsets)
+    payload += f'trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+    path.write_bytes(payload)
+    return path
+
+
+def _signature_replay(record):
+    """Archived-sidecar replay protocol: forward every page_rule_selection parameter the row records."""
+    import inspect
+    names = [n for n in inspect.signature(page_rule_selection).parameters if n != 'decision']
+    return page_rule_selection(record['decision'], **{n: record[n] for n in names if n in record})
+
+
+@pytest.mark.parametrize('settings', [
+    {'image_dominant_ratio': .7},
+    {'image_dominant_ratio': .7, 'min_valid_word_rate': .6, 'image_dominant_min_chars': 900},
+])
+def test_nondefault_thresholds_round_trip_through_the_page_sidecar(tmp_path, settings):
+    import json
+    source = _image_text_pdf(tmp_path/'threshold.pdf')
+    default = page_quality(source).pages[0]
+    report = page_quality(source, output_dir=tmp_path, **settings)
+    page = report.pages[0]
+    assert page.image_area_ratio == pytest.approx(.6) and default.page_needs_ocr != page.page_needs_ocr
+    saved = json.loads((tmp_path/'json/metrics/threshold.page_quality.json').read_text())
+    assert _signature_replay(saved['pages'][0]) is page.page_needs_ocr is False, 'the sidecar omits an effective threshold'
+    for record in (saved, saved['pages'][0]):
+        assert {k: record[k] for k in settings} == settings
+        assert {'min_chars', 'min_image_ratio', 'min_greek_share', 'max_other_share'} <= set(record)
+    row = saved['pages'][0]
+    assert _signature_replay(row) is page.page_needs_ocr is False, 'the sidecar omits an effective threshold'
+    from glossapi.page_quality import replay_page_selection
+    assert replay_page_selection(row) is replay_page_selection(page) is page.page_needs_ocr
+
+
+def test_nondefault_image_threshold_is_replayable_from_page(tmp_path):
+    """Reviewer probe (F5): real Greek text layer over a 0.6-coverage raster, inspected at 0.7."""
+    fitz = pytest.importorskip('fitz')
+    from dataclasses import asdict
+    font = next((p for p in [Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
+                            Path('/System/Library/Fonts/Supplemental/Arial.ttf')] if p.exists()), None)
+    if font is None:
+        pytest.skip('No Greek fixture font')
+    source = tmp_path/'threshold.pdf'
+    with fitz.open() as d:
+        p = d.new_page(width=400, height=500)
+        p.insert_font(fontname='Greek', fontfile=str(font))
+        p.insert_text((20, 30), '\n'.join(['και άνθρωπος']*20), fontname='Greek', fontsize=10)
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20), False); pix.clear_with(200)
+        p.insert_image(fitz.Rect(0, 0, 400, 300), stream=pix.tobytes('png'), keep_proportion=False, overlay=False)
+        d.save(source)
+    page = page_quality(source, image_dominant_ratio=.7).pages[0]
+    record = asdict(page)
+    assert record['image_dominant_ratio'] == .7
+    assert _signature_replay(record) == page.page_needs_ocr, 'The sidecar omits the effective image coverage threshold'
