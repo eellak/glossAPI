@@ -86,6 +86,15 @@ class ScheduledOperation:
     skip_reason: str | None = None
 
 
+def _has_redacted_credentials(value):
+    from ..ledger.journal import REDACTED, credential_key
+    if isinstance(value, dict):
+        return any((credential_key(key) and item==REDACTED) or _has_redacted_credentials(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(_has_redacted_credentials(item) for item in value)
+    return False
+
+
 def operation_json(operation):
     value = asdict(operation)
     for artifact in value['document']['artifacts']:
@@ -137,6 +146,10 @@ class StreamingScheduler:
         self.attempt_counts = Counter()
         self.package_availability = {}
         self.task_status = {}
+        # Credential values (cookies, auth headers, tokens) never enter the
+        # frozen plan. This process keeps them for its own dispatch only.
+        self.credentials = {}
+        self.redacted_credentials = set()
 
     def _wait(self,run,task,operation,reason,message=None):
         if (task,reason) in self.wait_reasons:
@@ -206,6 +219,15 @@ class StreamingScheduler:
         operations = tuple(replace(operation,specification=replace(operation.specification,
             settings=effective_ocr_settings(operation.specification.device_id,operation.specification.settings)))
             if operation.stage=='ocr' else operation for operation in operations)
+        from ..ledger.journal import redact_credentials
+        recorded=[]
+        for operation in operations:
+            redacted=redact_credentials(operation.specification.settings)
+            if redacted!=json.loads(json.dumps(operation.specification.settings)):
+                self.credentials[operation.key]=operation.specification.settings
+                operation=replace(operation,specification=replace(operation.specification,settings=redacted))
+            recorded.append(operation)
+        operations=tuple(recorded)
         for operation in operations:
             if operation.stage not in self.registry:
                 raise ValueError('Unsupported stage: '+operation.stage)
@@ -250,7 +272,7 @@ class StreamingScheduler:
         require_disk_guard(self.root,settings)
         self.retention_settings=settings
         with self.writer.transaction():
-            run = self.writer.run(settings, plan, execution_environment(), code_revision=code_revision())
+            run = self.writer.run(redact_credentials(settings), plan, execution_environment(), code_revision=code_revision())
             tasks = {}
             for ordinal, operation in enumerate(operations):
                 task = self.writer.task(run, operation.stage, operation.specification.operation,
@@ -293,6 +315,13 @@ class StreamingScheduler:
         self.disk_capacity = plan['disk_budget_bytes']
         self.retry_limit = plan['retry_limit']
         operations = [operation_from_json(value) for value in plan['operations']]
+        from ..ledger.journal import redact_credentials
+        for index,operation in enumerate(operations):
+            original=self.credentials.get(operation.key)
+            if original is not None and redact_credentials(original)==operation.specification.settings:
+                operations[index]=replace(operation,specification=replace(operation.specification,settings=original))
+            elif _has_redacted_credentials(operation.specification.settings):
+                self.redacted_credentials.add(operation.key)
         tasks = {row['ordinal']:row['task_id'] for row in self.writer.connection.execute('SELECT * FROM tasks WHERE run_id=? ORDER BY ordinal',(run,))}
         return operations, {operation.key:tasks[index] for index,operation in enumerate(operations)}, row
 
@@ -369,6 +398,7 @@ class StreamingScheduler:
         from .disk_budget import DiskBudget, require_disk_guard
         require_disk_guard(self.root,frozen_settings)
         budget=DiskBudget(self.writer,self.root,run,{**frozen_settings,'disk_budget_bytes':self.disk_capacity})
+        budget.observe()
         from .retention import RetentionController
         RetentionController(self.writer,self.root,run,frozen_settings).recover()
         done = self._recover(run,tasks,operations) if resume else {}
@@ -425,6 +455,9 @@ class StreamingScheduler:
                             active_memory-=operation.memory_bytes
                             active_disk-=operation.reservation_bytes
                             budget.release(key)
+                            # The admission budget observes after each output
+                            # commit, before any retention can lower usage.
+                            if self.disk_capacity is not None:budget.observe()
                             self._trace('complete',key=key,attempt_id=request.attempt_id,status=result.status)
                             if result.status=='ok':
                                 scratch_frontier.append(request.attempt_id)
@@ -520,6 +553,9 @@ class StreamingScheduler:
                         children=consumers[operation.key]
                         if any(len(self.ready.get((child.stage,child.specification.device_id),()))>=max(2,2*self.workers.get(child.stage,1)) for child in children):
                             break
+                        if operation.key in self.redacted_credentials:
+                            raise ValueError('credentials_not_persisted: the ledger records credential settings redacted; '
+                                'resubmit this download in a new run with its credentials supplied')
                         queue.popleft()
                         artifacts=list(operation.document.artifacts)
                         roles=list(operation.specification.input_roles[:len(artifacts)])
@@ -531,7 +567,7 @@ class StreamingScheduler:
                         document=replace(operation.document,artifacts=tuple(artifacts))
                         specification=replace(operation.specification,input_roles=tuple(roles),settings={**{name:frozen_settings[name] for name in ('debug','memory_saving','disk_budget_bytes','max_source_bytes','max_attempt_bytes') if name in frozen_settings},**operation.specification.settings})
                         fingerprint={'contract_version':self.registry[stage_name]().contract_version,
-                            'specification':asdict(specification),'inputs':[{'sha256':a.sha256,'kind':a.kind,'range':a.page_range} for a in artifacts],
+                            'specification':__import__('glossapi.ledger.journal',fromlist=['redact_credentials']).redact_credentials(asdict(specification)),'inputs':[{'sha256':a.sha256,'kind':a.kind,'range':a.page_range} for a in artifacts],
                             'code_revision':run_row['code_revision'],'environment_sha256':run_row['environment_sha256'],
                             'reuse_eligible':True,'scope':'same frozen run only; no cross-run semantic cache'}
                         pending.append((pool,operation,document,specification,fingerprint))
@@ -580,6 +616,7 @@ class StreamingScheduler:
             for pool in self.pools.values():
                 pool.close()
             # Active attempts remain unfinished; recovery records interruption.
+        budget.observe()
         if scratch_frontier:
             from .retention import retire_completed_scratch
             retire_completed_scratch(self.writer,self.root,run,frozen_settings,scratch_frontier,
@@ -587,12 +624,14 @@ class StreamingScheduler:
                     for parent,kind,_ in child.inputs if parent in done})
         counts=Counter(self.task_status.values())
         state='cancelled' if self.cancelled else 'waiting' if counts['planned'] or counts['running'] else 'completed_with_failures' if counts['failed'] else 'completed'
+        disk=budget.report()
         with self.writer.transaction():
             self.writer.event(run,event_kind='run',reason_code='operator_cancelled' if self.cancelled else 'legacy_observed',
                 details={'state':'waiting' if state=='completed' and any(task['status']=='planned' for task in self.writer.task_states(run)) else state,
-                    'queue_high_water':dict(self.high_water),'result_capacity':2*sum(pool.capacity for pool in self.pools.values())})
+                    'queue_high_water':dict(self.high_water),'result_capacity':2*sum(pool.capacity for pool in self.pools.values()),
+                    'disk_high_water_bytes':disk['high_water_bytes'],'disk_high_water_scope':'scheduler'})
         return dict(run_id=run,state=state,counts={status:counts[status] for status in ('planned','running','ok','skipped','failed')},
-                    attempts=done,trace=self.trace,queue_high_water=dict(self.high_water),disk=budget.report(),
+                    attempts=done,trace=self.trace,queue_high_water=dict(self.high_water),disk=disk,
                     install_hints=(['Run python install_glossapi.py ocr with the selected --device'] if any(
                         (tasks[operation.key],'waiting_for_package') in self.wait_reasons for operation in operations if operation.stage=='ocr') else [])
                         +sorted({value for value in self.package_availability.values() if isinstance(value,str)}))

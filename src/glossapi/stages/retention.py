@@ -18,8 +18,23 @@ from .execution import sha256_file
 from ..ledger.encoding import snapshot_hash
 
 
-DEBUG_HELP = 'off keeps final outputs and evidence; on also keeps every intermediate and failed attempt'
-MEMORY_SAVING_HELP = 'normal keeps initial files; extreme removes downloaded files after their last planned reader succeeds and requires a disk budget'
+DEBUG_HELP = ('off keeps your initial files, final outputs, evidence and the ledger, and removes intermediates once every '
+    'planned reader has used them; on also keeps every intermediate and failed attempt')
+MEMORY_SAVING_HELP = ('normal never deletes your supplied files or downloads; extreme deletes only files this run downloaded, '
+    'after their last planned reader succeeded and its outputs are durable (never your supplied files, '
+    'another run\'s files, or a path reached through a link); extreme requires a disk budget')
+
+# Retention contract (one rule per ownership class; PLAN.md section 2.3):
+# - supplied local originals (ownership initial_external / legacy_external, or
+#   any path outside the corpus root) are never deleted, in any setting;
+# - downloads are deleted only with memory_saving=extreme, only when this run
+#   (or a compatibility wrapper run it created) registered them, only after
+#   the last planned reader in the frozen plan succeeded on the exact hash,
+#   and only after a durability barrier covers the replacement outputs;
+# - deletion opens every path component without following links, so a
+#   symlinked file or directory alias is never followed to its target;
+# - debug=on keeps intermediates and failed attempts, but does not cancel the
+#   extreme exception for owned downloads (the run summary reports it).
 
 
 def resolved_settings(settings=None):
@@ -35,6 +50,35 @@ def resolved_settings(settings=None):
 
 def file_path(row):
     return Path(unquote(urlsplit(row['uri']).path))
+
+
+def path_alias(root, path):
+    """True when ``path`` is outside ``root`` or reached through any symlink below it."""
+    root=Path(root)
+    try:relative=Path(path).absolute().relative_to(root)
+    except ValueError:return True
+    current=root
+    for part in relative.parts:
+        current=current/part
+        if current.is_symlink():return True
+    return False
+
+
+def run_family(connection, run_id):
+    """This run plus the compatibility wrapper runs it created."""
+    family={run_id}
+    table=getattr(connection,'event_table','events')
+    for encoded, in connection.execute(f"SELECT details_json FROM {table} WHERE run_id=? AND event_kind='run' AND message LIKE 'wrapper:%'",(run_id,)):
+        child=json.loads(encoded).get('wrapper_run_id')
+        if child:family.add(child)
+    return family
+
+
+def registering_run(connection, file_id):
+    """The run whose first artifact fact registered this file (its producer's run)."""
+    table=getattr(connection,'event_table','events')
+    row=connection.execute(f"SELECT run_id FROM {table} WHERE file_id=? AND event_kind='artifact' ORDER BY event_id LIMIT 1",(file_id,)).fetchone()
+    return row[0] if row else None
 
 
 def retention_facts(connection, file_id, *, as_of=9223372036854775807):
@@ -160,6 +204,10 @@ class RetentionController:
         reasons = list(facts['pins'])
         if row['ownership'] != 'managed' or not file_path(row).absolute().is_relative_to(self.root):
             reasons.append('external_original')
+        elif path_alias(self.root, file_path(row)):
+            # A link (file or any parent directory) could point at a file this
+            # run does not own; never follow it for deletion.
+            reasons.append('path_alias')
         if not plan:
             return row, facts, reasons
         superseded=plan.get('superseded_by')
@@ -174,6 +222,10 @@ class RetentionController:
         if plan['downloaded_source']:
             if self.settings['memory_saving'] != 'extreme':
                 reasons.append('initial_source_normal')
+            elif registering_run(self.connection, file_id) not in run_family(self.connection, self.run_id):
+                # Extreme releases only downloads this run owns, never a file
+                # another run acquired, even with an identical version/hash.
+                reasons.append('foreign_run_source')
         elif row['retention_class'] == 'initial':
             reasons.append('initial_source')
         elif self.settings['debug'] == 'on' and not superseded:
@@ -582,7 +634,9 @@ def retire_downloaded_sources(writer,root,run_id,settings):
         if not ready or not readers:continue
         if publication:readers.append(publication['task_id'])
         digest=writer.connection.execute('SELECT stored_sha256 FROM document_versions WHERE version_id=?',(version,)).fetchone()[0]
-        rows=writer.connection.execute("SELECT * FROM current_file_state WHERE version_id=? AND sha256=? AND ownership='managed' AND presence='present' AND kind IN ('download_payload','source_snapshot','scratch_copy')",(version,digest)).fetchall()
+        family=run_family(writer.connection,run_id)
+        rows=[row for row in writer.connection.execute("SELECT * FROM current_file_state WHERE version_id=? AND sha256=? AND ownership='managed' AND presence='present' AND kind IN ('download_payload','source_snapshot','scratch_copy')",(version,digest)).fetchall()
+            if registering_run(writer.connection,row['file_id']) in family and not path_alias(controller.root,file_path(row))]
         if not rows:continue
         # Verify source-hash bindings and full coverage on the real readers.
         valid=True

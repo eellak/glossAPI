@@ -83,10 +83,15 @@ class MathStage:
                     'model_identity_unavailable_reason':None if request.tools.get('models') else 'backend_not_reported'}
                 context_hash = hashlib.sha256(canonical_json(context).encode()).hexdigest()
                 regions = [{**item,'context_sha256':context_hash} for item in observations]
+                # Only a real Docling CodeFormula model counts as inference. An
+                # injected deterministic/test kernel, or a kernel that does not
+                # report its backend, is recorded as such (LS4-G03).
+                backend = dict(stats.get('backend') or {'module':None,'qualname':None,'real_inference':False,
+                    'unavailable_reason':'backend_not_reported'})
                 decision = {'operation':request.operation,**context,'context_sha256':context_hash,
                     'regions':regions,'stats':stats,'compile_status':'not_run',
                     'map_sha256':sha256_file(latex_map),'output_sha256':sha256_file(markdown),
-                    'inference_performed':bool(stats['items'])}
+                    'backend':backend,'inference_performed':bool(stats['items']) and backend.get('real_inference') is True}
                 (root/'math.metrics.json').write_text(json.dumps(stats,ensure_ascii=False))
                 output_kinds = {str(markdown.relative_to(root)):'math_markdown',
                     str(latex_map.relative_to(root)):'latex_map','math.metrics.json':'math_metrics'}
@@ -100,6 +105,10 @@ class MathStage:
             return StageResult(request.task_id,request.attempt_id,request.lease_token,'ok',reason,outputs,
                 (decision,),{'wall_ns':time.monotonic_ns()-started,'execution':'in_process_backend'})
         except Exception as error:
-            if isinstance(error,ImportError): reason='math_backend_unavailable'
+            unavailable = isinstance(error,ImportError)
+            if unavailable: reason='math_backend_unavailable'
+            decision = {'backend_observations':observations}
+            if unavailable:
+                decision.update(backend_status='unavailable',inference_performed=False)
             return failed_result(request,'input_hash_changed' if str(error)=='input_hash_changed' else reason,error,
-                decisions=({'backend_observations':observations},),metrics={'wall_ns':time.monotonic_ns()-started})
+                decisions=(decision,),metrics={'wall_ns':time.monotonic_ns()-started})

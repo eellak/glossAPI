@@ -1,7 +1,7 @@
 """Ledger-only source/version/artifact projections and versioned CLI objects.
 
 No payload opens, directory walks, backend imports, or writes occur here.
-Shadow and legacy observations never become contractual cache hits.
+Imported legacy observations never become contractual cache hits.
 """
 from __future__ import annotations
 
@@ -17,6 +17,9 @@ from .writer import LedgerError, new_id
 from ..stages.retention import retention_facts, retention_summary
 
 STAGE_ORDER = ("download", "extract", "clean", "ocr", "math", "sections", "annotate", "export")
+# Stages `glossapi run` cannot execute in its streaming document DAG, with the
+# reason the plan reports. Real math inference is unqualified (LS4-G03).
+RUN_UNAVAILABLE = {"math": "math_backend_unavailable"}
 
 
 class ReadRequestError(LedgerError):
@@ -124,13 +127,32 @@ def _path(uri):
     return unquote(urlsplit(uri).path) if uri.startswith("file:") else uri
 
 
+def child_runs(connection):
+    """Runs a parent plan created for its compatibility publication barriers."""
+    children = {}
+    for parent, encoded in connection.execute("SELECT run_id,details_json FROM events WHERE event_kind='run' AND message LIKE 'wrapper:%'"):
+        child = json.loads(encoded).get("wrapper_run_id")
+        if child:
+            children[child] = parent
+    return children
+
+
 def select_run(connection, run_id=None):
+    """Explicit run, else the latest run the user started.
+
+    A streaming ``run`` creates one child run per compatibility wrapper after
+    its own run; those children are reached through the parent, never chosen
+    as "latest" (LS6-G01/G02). A wrapper the user called directly has no
+    parent link and stays selectable.
+    """
     rows = _rows(connection, "SELECT rowid AS sequence,* FROM runs ORDER BY rowid DESC")
     if run_id is not None:
         rows = [r for r in rows if r["run_id"] == run_id]
         if not rows:
             raise ReadRequestError("run_not_found", "Unknown run ID", details={"run_id": run_id})
-    return rows[0] if rows else None
+        return rows[0]
+    children = child_runs(connection)
+    return next((row for row in rows if row["run_id"] not in children), rows[0] if rows else None)
 
 
 def _run_scope(connection,run):
@@ -213,17 +235,26 @@ def report_why(connection, selector, *, run=None, stage=None):
             terminal = next((e for e, _ in reversed(attempt_events) if e["event_kind"] == "lifecycle"), {})
             outputs = snapshot(connection, terminal["output_manifest_sha256"]).get("files", []) if terminal.get("output_manifest_sha256") else []
             inputs = _rows(connection, "SELECT file_id,role,sha256 FROM attempt_inputs WHERE attempt_id=? ORDER BY role,file_id", (attempt["attempt_id"],))
+            error = dict(type=terminal.get("error_type"), message=terminal.get("message"), traceback=terminal.get("traceback"),
+                basis="attempt_terminal_event") if terminal.get("error_type") or terminal.get("status") == "failed" else None
+            if error and not error["type"]:
+                # Some backends return a failed verdict and report the exception
+                # only as a structured observation; surface that recorded cause.
+                cause = next((item for e, d in attempt_events if e["event_kind"] == "decision"
+                              for item in d.get("backend_observations", []) if isinstance(item, dict) and item.get("error_type")), None)
+                if cause:
+                    error = dict(type=cause["error_type"], message=cause.get("message"), traceback=cause.get("traceback"),
+                                 reason_code=cause.get("reason_code"), basis="recorded_backend_observation")
             attempts.append(dict(attempt_id=attempt["attempt_id"], attempt_number=attempt["attempt_number"],
                 input_hashes=inputs, output_hashes=outputs, settings_hash=attempt["settings_sha256"], tools_hash=attempt["tools_sha256"],
                 started_at=terminal.get("started_at"), finished_at=terminal.get("finished_at"), duration_ns=terminal.get("duration_ns"),
-                error=dict(type=terminal.get("error_type"), message=terminal.get("message"), traceback=terminal.get("traceback")) if terminal.get("error_type") or terminal.get("status") == "failed" else None,
-                decisions=[reason_view(e, d) for e, d in attempt_events + decisions if e["event_kind"] == "decision"]))
+                error=error, decisions=[reason_view(e, d) for e, d in attempt_events + decisions if e["event_kind"] == "decision"]))
         reasons = [reason_view(e, d)
                    for e, d in events + decisions if e["event_kind"] in ("decision", "lifecycle")]
         stages.append(dict(run_id=task["run_id"], version_id=task["version_id"], stage=task["stage"], operation=task["operation"],
                            status=state.get("status"), reasons=reasons, attempts=attempts,scope="document" if task["version_id"] else "corpus"))
         if state.get("status") == "failed" and any(d.get("backend_status") == "ok" for _, d in decisions):
-            conflicts.append(dict(code="shadow_verdict_conflicts_with_success_observation", task_id=task["task_id"],
+            conflicts.append(dict(code="failed_verdict_conflicts_with_success_observation", task_id=task["task_id"],
                                   event_ids=[e["event_id"] for e, _ in decisions], scope="document"))
     files = []
     for file in owned_files:
@@ -288,13 +319,13 @@ def status_view(connection, *, run=None, stage=None, selector=None):
         documents.append(dict(document_id=row["document_id"], version_id=row["version_id"], stage=row["stage"], operation=row["operation"],
             status=row["status"], reason_code=row["reason_code"], attempt_number=attempt.get("attempt_number"), worker_id=attempt.get("worker_id"),
             device_id=attempt.get("device_id"), started_at=event.get("started_at"), elapsed_ns=event.get("duration_ns"), last_heartbeat_at=heartbeat,
-            heartbeat_age_ns=None, stale_reason="shadow_has_no_executable_leases"))
+            heartbeat_age_ns=None, stale_reason="no_streaming_leases_recorded_for_run"))
     state = "completed_with_failures" if counts["failed"] else "running" if counts["running"] else "waiting" if counts["planned"] else "completed"
     last_event = connection.execute("SELECT MAX(event_id) FROM events WHERE run_id=?", (run["run_id"],)).fetchone()[0] if run else None
     present = connection.execute("SELECT SUM(bytes) FROM current_file_state WHERE presence='present'").fetchone()[0]
     result = dict(state=state, counts=counts, documents=documents, queues=[], barriers=[], resources=dict(
         disk_budget_bytes=None, present_bytes=present or 0, reserved_bytes=None, free_bytes=None), last_event_id=last_event,
-        unknowns=["runtime_queues_resources_not_recorded_in_shadow"])
+        unknowns=["runtime_queues_resources_not_recorded_for_non_streaming_run"])
     plan = snapshot(connection,run['plan_sha256']) if run else {}
     if plan.get('mode')=='streaming':
         result['unknowns']=[]
@@ -419,7 +450,8 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
             steps.append(dict(stage=stage, operation=stage+".planned", action="conditional", reason_code="legacy_unknown" if known else "stage_planned",
                 input_roles=[dict(producer=s, role="stage_input") for s in dependencies],
                 conditional_on=dict(predicate="selected_adapters_and_verified_inputs_available", input_producer=dependencies, unresolved_fields=["quality", "route", "settings_tool_fingerprint"]),
-                packages=[package], device_id=device))
+                packages=[package], device_id=device, executable_by_run=stage not in RUN_UNAVAILABLE,
+                unavailable_reason=RUN_UNAVAILABLE.get(stage)))
         documents.append(dict(document_id=identifier, source_key=key, version_id=version["version_id"] if version else None, steps=steps,source_observation=observation))
     source_inventory_hash = snapshot_hash(dict(records=inventory, manifest=manifest))
     present = connection.execute("SELECT COALESCE(SUM(bytes),0) FROM current_file_state WHERE presence='present'").fetchone()[0] if connection else 0
@@ -440,5 +472,9 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
         disk=dict(present_bytes=present, pinned_bytes=None, reserved_bytes=None, estimated_peak_bytes=None, unknown_sizes=[dict(document_id=d["document_id"], reason_code="unknown_not_recorded") for d in documents]),
         requirements=[package_entry(next(pool['device_id'] for pool in pools if pool['stage']=='ocr')) if p=='ocr' else dict(package_group=p,distributions=[],entry_point=None,installed=None,reason_code='capabilities_not_recorded') for p in sorted({p for d in documents for s in d['steps'] for p in s['packages']})],
         legacy_import_required=connection is None or connection.execute("SELECT 1 FROM events WHERE reason_code='legacy_import_completed' LIMIT 1").fetchone() is None,
-        execution_available=False, compatibility_profile="legacy_shadow", explicit_manifest=manifest)
+        execution=dict(command="run", profile="streaming_document_dag",
+            available=not any(stage in RUN_UNAVAILABLE for stage in pooled_stages),
+            unavailable_stages={stage: RUN_UNAVAILABLE[stage] for stage in sorted(pooled_stages) if stage in RUN_UNAVAILABLE},
+            basis="run revalidates sources, packages and devices before any dispatch"),
+        explicit_manifest=manifest)
     return dict(body, plan_hash=snapshot_hash(body))

@@ -274,7 +274,14 @@ class DownloadPhaseMixin:
 
         # Download files
         self.logger.info(f"Downloading files from URLs in {input_parquet}...")
-        new_results = downloader.download_files(input_parquet=str(input_parquet))
+        try:
+            new_results = downloader.download_files(input_parquet=str(input_parquet))
+        finally:
+            # This call's request/progress logs are complete; no later
+            # downloader or Corpus in this process may append to them.
+            close_logs = getattr(downloader, 'close_logs', None)
+            if callable(close_logs):
+                close_logs()
 
         # Merge with existing results
         if not existing_results.empty:

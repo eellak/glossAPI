@@ -76,7 +76,8 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
         else:
             operations=[]
             with writer.transaction():
-                observation=writer.run(settings,{'mode':'explicit_source_inventory'}, {},code_revision=__import__('glossapi.ledger.journal',fromlist=['code_revision']).code_revision())
+                from ..ledger.journal import redact_credentials
+                observation=writer.run(redact_credentials(settings),{'mode':'explicit_source_inventory'}, {},code_revision=__import__('glossapi.ledger.journal',fromlist=['code_revision']).code_revision())
                 if download_manifest:
                     writer.artifact(observation,'download','source_manifest',download_manifest.as_uri(),
                         sha256=sha256_file(download_manifest),bytes=download_manifest.stat().st_size,
@@ -299,7 +300,10 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
             settings=json.loads(connection.execute('SELECT json FROM snapshots WHERE sha256=?',row).fetchone()[0])
             stages=settings['requested_stages']
     calls={
-        'download':lambda:corpus.download(corpus._streaming_download_manifest['path'],**settings.get('download',{})),
+        # A resumed run reads redacted credential markers; the publication replays
+        # committed acquisitions and never receives a placeholder as a credential.
+        'download':lambda:corpus.download(corpus._streaming_download_manifest['path'],**{key:value for key,value in settings.get('download',{}).items()
+            if value!=__import__('glossapi.ledger.journal',fromlist=['REDACTED']).REDACTED}),
         'extract':lambda:corpus.extract(**{'input_format':'pdf','file_paths':result['sources'],'phase1_backend':'safe',
             'accel_type':'CPU','num_threads':1,'skip_existing':False,'batched':False,'repair_fonts':True,**settings.get('extract',{})}),
         'clean':lambda:corpus.clean(num_threads=1),
@@ -317,6 +321,10 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
             for version, in writer.connection.execute('SELECT DISTINCT version_id FROM tasks WHERE run_id=? AND version_id IS NOT NULL',(result['run_id'],)).fetchall():
                 writer.event(result['run_id'],event_kind='decision',reason_code='export_canonical_markdown_missing',version_id=version,
                     details={'product':'document_jsonl','included':False,'decision':'omit','cause':'upstream_failed','empty_selected_frontier':True})
+    from .disk_budget import DiskBudget
+    # One whole-run disk observer for the publication barriers; it starts from
+    # the scheduler's persisted peak and observes before each retention step.
+    publication_budget=DiskBudget(corpus._scheduler_writer,corpus.output_dir,result['run_id'],getattr(corpus,'_retention_settings',settings))
     with committed_results(replays):
         for stage in ('download','extract','clean','ocr','sections','annotate','export'):
             if stage in stages or (stage=='download' and corpus._streaming_download_manifest):
@@ -330,6 +338,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                 # producer records. Retire at that frontier, not at run close.
                 released_stage = {'clean':'extract','sections':'clean','annotate':'sections'}.get(stage)
                 if released_stage and published:
+                    publication_budget.observe()
                     from .retention import retain_completed_run
                     attempts = [attempt for key,attempt in result['attempts'].items()
                         if key.endswith(':'+released_stage)]
@@ -344,11 +353,13 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     for wrapper in wrapper_runs:
         all_attempts.extend(row[0] for row in writer.connection.execute('SELECT attempt_id FROM attempts a JOIN tasks t USING(task_id) WHERE t.run_id=?',(wrapper,)))
     publication_states=[task['status'] for task in writer.task_states(result['run_id']) if task['operation'].endswith('.compatibility_publish')]
+    publication_budget.observe()
     if all(status=='ok' for status in publication_states):
         retain_completed_run(writer,corpus.output_dir,result['run_id'],getattr(corpus,'_retention_settings',settings),attempts=all_attempts,observer=getattr(corpus,"_retention_observer",None))
-    from .disk_budget import DiskBudget
     from .retention import retention_summary
-    result['disk']=DiskBudget(writer,corpus.output_dir,result['run_id'],getattr(corpus,'_retention_settings',settings)).report()
+    # Current present/free bytes after retention; the high-water keeps the
+    # scheduler and publication peaks instead of a fresh zero (LS7-G04).
+    result['disk']=publication_budget.report()
     result['disk']['deleted_logical_bytes']=retention_summary(writer.connection)['deleted_logical_bytes']
     result['outputs']=[]
     output=Path(corpus.output_dir)/'export.jsonl'
@@ -359,7 +370,8 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     result['counts']={status:counts[status] for status in ('planned','running','ok','skipped','failed')}
     result['state']='completed_with_failures' if counts['failed'] else 'completed'
     with corpus._scheduler_writer.transaction():
-        corpus._scheduler_writer.event(result['run_id'],event_kind='run',reason_code='legacy_observed',details={'state':result['state'],'result_sha256':corpus._scheduler_writer.snapshot('retained_run_result',{
+        corpus._scheduler_writer.event(result['run_id'],event_kind='run',reason_code='legacy_observed',details={'state':result['state'],
+            'disk_high_water_bytes':result['disk']['high_water_bytes'],'disk_high_water_scope':'run','result_sha256':corpus._scheduler_writer.snapshot('retained_run_result',{
                 'result':{key:value for key,value in result.items() if key!='trace'},
                 'retained_file_ids':[row['file_id'] for row in writer.file_catalog().values() if row['presence']=='present'
                     and row['ownership'] in ('managed','initial_external') and local_path(row['uri']).is_file()]})})

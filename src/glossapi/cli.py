@@ -1,4 +1,9 @@
-"""Read-only shadow-ledger CLI. No command imports a pipeline or backend."""
+"""glossAPI ledger CLI: plan, run, status and report.
+
+plan/status/report are read-only and import no pipeline or backend; run executes
+the frozen streaming plan. status/report without --run select the latest run the
+user started (a streaming run, not its compatibility wrapper children).
+"""
 from __future__ import annotations
 
 import argparse

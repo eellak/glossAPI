@@ -30,12 +30,43 @@ from .stores import TEXT_FIELDS, membership_snapshot, read_store, store_states
 
 _active_journal = ContextVar("glossapi_shadow_result_journal", default=None)
 _loaded_tools_cache = {}
-_SECRET_KEYS = frozenset(("authorization", "cookie", "cookies", "password", "token", "api_key", "headers", "proxy_auth"))
+_SECRET_KEYS = frozenset(("authorization", "cookie", "cookies", "password", "passwd", "token", "api_key", "apikey",
+    "headers", "proxy_auth", "auth", "secret", "credentials", "set_cookie", "domain_cookies", "access_key", "private_key",
+    "session_id", "sessionid", "bearer", "oauth"))
+# Suffix forms cover containers and header names such as ``domain_cookies``,
+# ``session_cookie``, ``X-Api-Key`` and ``client_secret``.
+_SECRET_SUFFIXES = ("_cookie", "_cookies", "_password", "_passwd", "_secret", "_api_key", "_apikey",
+    "_authorization", "_auth", "_credentials", "_access_key", "_private_key", "_session_id")
+# ``*_token`` is not a generic suffix: ``lease_token`` (scheduler fencing) and
+# ``tail_token`` (LaTeX sanitizer) are evidence, not credentials.
+_SECRET_TOKENS = frozenset(("access_token", "refresh_token", "auth_token", "bearer_token", "id_token", "api_token",
+    "session_token", "csrf_token", "xsrf_token", "x_auth_token", "x_csrf_token", "x_xsrf_token", "hf_token", "github_token"))
+REDACTED = "[redacted]"
+
+
+def credential_key(key):
+    """True for a settings/header key whose value may carry a credential."""
+    name = str(key).strip().lower().replace("-", "_").replace(" ", "_")
+    return name in _SECRET_KEYS or name in _SECRET_TOKENS or name.endswith(_SECRET_SUFFIXES)
+
+
+def redact_credentials(value):
+    """Replace only credential values; every other JSON value is unchanged."""
+    if isinstance(value, dict):
+        return {key: (REDACTED if credential_key(key) else redact_credentials(item)) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_credentials(item) for item in value]
+    return value
 
 
 def safe_settings(value):
+    """Recordable copy of settings: credential values never reach a receipt.
+
+    The whole value under a credential key is replaced, including nested
+    containers such as ``domain_cookies -> domain -> cookie``.
+    """
     if isinstance(value, dict):
-        return {str(key): ("[redacted]" if str(key).lower() in _SECRET_KEYS else safe_settings(item)) for key, item in value.items()}
+        return {str(key): (REDACTED if credential_key(key) else safe_settings(item)) for key, item in value.items()}
     if isinstance(value, (list, tuple)): return [safe_settings(item) for item in value]
     if isinstance(value, Path): return str(value)
     if isinstance(value, float) and not math.isfinite(value): return typed_value(value)

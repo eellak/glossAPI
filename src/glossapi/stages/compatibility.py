@@ -305,7 +305,12 @@ def ocr_compatibility_documents(context, filenames, *, request, page_ranges=None
         ranges=[list(map(int,spec.rsplit(':',2)[1:])) for spec in page_ranges or [] if spec.rsplit(':',2)[0]==name]
         options=request.ocr_options
         from ..ocr.defaults import serialize_options, default_values, select_device
-        device = getattr(options,'device',None) or select_device(request.device)
+        greek_engine = options is None or getattr(options,'kind',None)=='glossapi'
+        # Accelerator auto-selection is only for the qualified Greek OCR engine.
+        # An external engine without an explicit device runs on CPU, its only
+        # qualified device; an explicit accelerator request is still rejected
+        # by validate_device rather than silently replaced.
+        device = getattr(options,'device',None) or (select_device(request.device) if greek_engine else (request.device or 'cpu'))
         serialized = serialize_options(options) if options is not None else default_values(device)
         settings={'page_ranges':ranges,'max_pages':request.max_pages,'options':serialized,'requested_device':request.device,
             'entry_point_name':'glossapi' if options is None or getattr(options,'kind',None)=='glossapi' else None,

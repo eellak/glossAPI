@@ -24,6 +24,55 @@ with optional_dependencies("layout"):
     from docling_core.types.doc import DocItemLabel  # type: ignore
 
 
+LEGACY_CODE_FORMULA_MODULE = "docling.models.code_formula_model"
+
+
+class MathBackendUnavailable(ImportError):
+    """Real CodeFormula inference is unavailable; never substituted or mocked here."""
+
+    reason_code = "math_backend_unavailable"
+
+
+def _code_formula_backend():
+    """Return the CodeFormula API this retained kernel was written against.
+
+    The qualified Docling 2.81.0 removed ``docling.models.code_formula_model``
+    (the model now lives in ``docling.models.stages.code_formula`` and loads an
+    unpinned CodeFormulaV2 ``main`` revision). Switching to it would be an
+    unqualified model/API change, so the kernel reports an explicit
+    unavailable outcome instead of a misleading "install glossapi[layout]"
+    hint (LS4-G03). A missing layout install keeps that install hint.
+    """
+    import importlib
+    with optional_dependencies("layout"):
+        from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice  # type: ignore
+        from docling.datamodel.base_models import ItemAndImageEnrichmentElement  # type: ignore
+    try:
+        module = importlib.import_module(LEGACY_CODE_FORMULA_MODULE)
+    except ModuleNotFoundError as error:
+        if error.name != LEGACY_CODE_FORMULA_MODULE:
+            raise ImportError(f"Missing optional dependency {error.name!r}; install layout with "
+                              "`pip install 'glossapi[layout]'`.") from error
+        try:
+            import importlib.metadata
+            version = importlib.metadata.version("docling")
+        except Exception:
+            version = "unknown"
+        raise MathBackendUnavailable(
+            f"math_backend_unavailable: real CodeFormula math inference is not available with docling {version}: "
+            f"module {LEGACY_CODE_FORMULA_MODULE!r} is absent. glossAPI does not substitute the relocated "
+            "docling.models.stages.code_formula model or an unpinned CodeFormulaV2 revision; math stays "
+            "unavailable until a backend qualification binds the model revision and runs real ROI inference.",
+            name=LEGACY_CODE_FORMULA_MODULE) from error
+    return module.CodeFormulaModel, module.CodeFormulaModelOptions, AcceleratorOptions, AcceleratorDevice, ItemAndImageEnrichmentElement
+
+
+def _backend_identity(model_class) -> dict:
+    module = str(getattr(model_class, "__module__", ""))
+    return {"module": module, "qualname": str(getattr(model_class, "__qualname__", "")),
+            "real_inference": module.startswith("docling.")}
+
+
 @dataclass
 class RoiEntry:
     page_no: int  # 1-based
@@ -98,10 +147,9 @@ def enrich_from_docling_json(
     Writes final Markdown and a latex_map.jsonl sidecar; returns a small metrics dict.
     """
     from glossapi.ocr.utils.json_io import load_docling_json  # type: ignore
-    with optional_dependencies("layout"):
-        from docling.models.code_formula_model import CodeFormulaModel, CodeFormulaModelOptions  # type: ignore
-        from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice  # type: ignore
-        from docling.datamodel.base_models import ItemAndImageEnrichmentElement  # type: ignore
+    (CodeFormulaModel, CodeFormulaModelOptions, AcceleratorOptions, AcceleratorDevice,
+     ItemAndImageEnrichmentElement) = _code_formula_backend()
+    backend = _backend_identity(CodeFormulaModel)
 
     doc = load_docling_json(json_path)
     rc = PageRasterCache(pdf_path)
@@ -156,7 +204,7 @@ def enrich_from_docling_json(
                         fallback.append(str(value))
             if fallback:
                 out_md_path.write_text("\n\n".join(fallback), encoding="utf-8")
-        return {"items": 0, "accepted": 0, "time_sec": 0.0}
+        return {"items": 0, "accepted": 0, "time_sec": 0.0, "backend": backend}
 
     acc = AcceleratorOptions(device=device if device else AcceleratorDevice.AUTO)
     opts = CodeFormulaModelOptions(do_code_enrichment=True, do_formula_enrichment=True)
@@ -346,7 +394,7 @@ def enrich_from_docling_json(
         out_md_path.parent.mkdir(parents=True, exist_ok=True)
         doc.save_as_markdown(out_md_path)
 
-        return {"items": len(rois), "accepted": accepted, "time_sec": time.time() - t0}
+        return {"items": len(rois), "accepted": accepted, "time_sec": time.time() - t0, "backend": backend}
     finally:
         try:
             if model is not None:

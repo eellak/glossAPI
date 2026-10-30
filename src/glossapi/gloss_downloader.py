@@ -47,6 +47,14 @@ import functools
 from email.utils import parsedate_to_datetime
 
 
+def _private_logger(name: str, level: int, *, propagate: bool = True) -> logging.Logger:
+    """An unregistered per-instance logger whose handlers no other instance shares."""
+    logger = logging.Logger(name, level)
+    logger.parent = logging.getLogger(name)
+    logger.propagate = propagate
+    return logger
+
+
 class RateLimiter:
     """Rate limiter to enforce API rate limits with robust handling of timeouts and interruptions"""
     
@@ -172,9 +180,12 @@ class GlossDownloader:
             domain_cookies: Dictionary mapping domain names to cookies dictionaries
             log_level: Logging level (default: logging.INFO)
         """
-        # Setup logging
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(log_level)
+        # Setup logging. Each downloader owns private loggers: its file handlers
+        # never attach to the module-global logger, so a later downloader (for
+        # example another Corpus in this process) cannot append to this one's
+        # request/progress logs after they are sealed (LS7-G07). Records still
+        # propagate to the module logger, so caller-configured handlers work.
+        self.logger = _private_logger(__name__, log_level)
         
         # Verbose logging flag
         self.verbose = verbose
@@ -258,15 +269,12 @@ class GlossDownloader:
         try:
             p = Path(progress_log_file) if progress_log_file else (self.logs_dir / 'download_progress.logs')
             p.parent.mkdir(parents=True, exist_ok=True)
-            self.progress_logger = logging.getLogger(__name__ + ".progress")
-            self.progress_logger.setLevel(progress_log_level)
-            if not any(isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', '') == str(p) for h in self.progress_logger.handlers):
-                fh = logging.FileHandler(p)
-                fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s')
-                fh.setFormatter(fmt)
-                fh.setLevel(progress_log_level)
-                self.progress_logger.addHandler(fh)
-            self.progress_logger.propagate = False
+            self.progress_logger = _private_logger(__name__ + ".progress", progress_log_level, propagate=False)
+            fh = logging.FileHandler(p)
+            fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s')
+            fh.setFormatter(fmt)
+            fh.setLevel(progress_log_level)
+            self.progress_logger.addHandler(fh)
         except Exception:
             self.progress_logger = self.logger
 
@@ -274,11 +282,10 @@ class GlossDownloader:
         try:
             rp = Path(request_log_file) if request_log_file else (self.logs_dir / 'download_request.logs')
             rp.parent.mkdir(parents=True, exist_ok=True)
-            if not any(isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', '') == str(rp) for h in self.logger.handlers):
-                rfh = logging.FileHandler(rp)
-                rfh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-                rfh.setLevel(self.logger.level)
-                self.logger.addHandler(rfh)
+            rfh = logging.FileHandler(rp)
+            rfh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            rfh.setLevel(self.logger.level)
+            self.logger.addHandler(rfh)
         except Exception:
             pass
 
@@ -671,7 +678,7 @@ class GlossDownloader:
             wait=wait_exponential(multiplier=1, min=1, max=10),
             retry=(retry_if_exception_type(aiohttp.ClientError) |
                    retry_if_exception_type(asyncio.TimeoutError)),
-            before_sleep=before_sleep_log(logging.getLogger(__name__), logging.INFO),
+            before_sleep=before_sleep_log(self.logger, logging.INFO),
             reraise=True,
         ):
             with attempt:
@@ -1049,6 +1056,47 @@ class GlossDownloader:
             return f"{filename_base}.{file_ext}"
         return self.generate_filename(row_index, file_ext)
 
+    def _retain_superseded_request_body(self, tmp_path: Path, url: str, row_index: int) -> None:
+        """Keep an earlier inner HTTP request's partial body before a retry reuses its path (LS7-G03).
+
+        Contract: only inside a recorded acquisition attempt (a transport
+        receipt is active). The earlier body moves to
+        ``request_bodies/<row>.request<sequence>.part`` beside, not inside,
+        ``downloads/`` and its request receipt records the retained path and
+        byte count. Retention is bounded: at most ``max_retries - 1`` bodies
+        per row, each no larger than ``max_source_bytes`` when that cap is
+        set. The attempt directory then applies the run's debug policy:
+        debug=on keeps them as attempt diagnostics, debug=off releases them
+        with other private scratch after the producer commits. Outside a
+        recorded attempt the legacy overwrite behaviour is unchanged.
+        """
+        from .stages.receipts import _transport_receipts
+        state = _transport_receipts.get()
+        if state is None:
+            return
+        current = state["requests"][-1] if state["requests"] else None
+        previous = next((item for item in reversed(state["requests"][:-1])
+                         if item.get("requested_url") == url and item.get("partial_body") == tmp_path.name), None)
+        if current is not None:
+            current["partial_body"] = tmp_path.name
+        if previous is None or not tmp_path.is_file():
+            return
+        target = Path(self.output_dir) / "request_bodies" / f"{row_index}.request{previous['sequence']}.part"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        size = tmp_path.stat().st_size
+        os.replace(tmp_path, target)
+        previous["partial_body"] = None
+        previous["retained_body"] = {"relative_path": str(target.relative_to(self.output_dir)), "bytes": size,
+                                     "superseded_by_sequence": current["sequence"] if current else None}
+
+    def close_logs(self) -> None:
+        """Close and detach this instance's file handlers (the sealing boundary)."""
+        for logger in {id(self.logger): self.logger, id(self.progress_logger): self.progress_logger}.values():
+            for handler in list(logger.handlers):
+                if isinstance(handler, logging.FileHandler):
+                    logger.removeHandler(handler)
+                    handler.close()
+
     def _cleanup_temp_file(self, tmp_path: Optional[Path]) -> None:
         if not tmp_path:
             return
@@ -1146,7 +1194,7 @@ class GlossDownloader:
             wait=wait_exponential(multiplier=1, min=1, max=10),
             retry=(retry_if_exception_type(aiohttp.ClientError) |
                    retry_if_exception_type(asyncio.TimeoutError)),
-            before_sleep=before_sleep_log(logging.getLogger(__name__), logging.INFO),
+            before_sleep=before_sleep_log(self.logger, logging.INFO),
             reraise=True,
         ):
             with attempt:
@@ -1156,6 +1204,7 @@ class GlossDownloader:
                     response.raise_for_status()
                     resp_headers = dict(response.headers or {})
                     tmp_path = Path(self.downloads_dir) / f".part_{row_index}"
+                    self._retain_superseded_request_body(tmp_path, url, row_index)
                     async with aiofiles.open(tmp_path, 'wb') as f:
                         async for chunk in response.content.iter_chunked(1 << 16):
                             if chunk:

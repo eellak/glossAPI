@@ -81,7 +81,8 @@ def _payload_observation(value, field=None):
     if isinstance(value, dict):
         result = {}
         for key, item in value.items():
-            if isinstance(key, str) and key.lower() in {"authorization", "cookie", "cookies", "password", "token", "api_key", "headers", "proxy_auth"}:
+            from .journal import credential_key
+            if isinstance(key, str) and credential_key(key):
                 result[key] = "[redacted]"
             else:
                 result[key] = _payload_observation(item, field=key)

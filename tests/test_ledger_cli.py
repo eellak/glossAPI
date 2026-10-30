@@ -94,7 +94,9 @@ def test_plan_hash_prerequisite_closure_and_unknown_routes_without_reuse(tmp_pat
     assert all(s["action"] == "conditional" for s in body["documents"][0]["steps"])
     assert next(p for p in body["pools"] if p["stage"] == "clean")["queue_capacity"] == 6
     assert body["disk"]["estimated_peak_bytes"] is None
-    assert body["execution_available"] is False
+    assert body["execution"]["available"] is True and body["execution"]["profile"] == "streaming_document_dag"
+    assert "execution_available" not in body and "compatibility_profile" not in body
+    assert all(step["executable_by_run"] for step in body["documents"][0]["steps"])
 
 
 def test_new_plan_ids_are_proposals_and_settings_precedence_is_hashed(tmp_path, capsys):
