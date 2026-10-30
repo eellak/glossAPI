@@ -17,10 +17,14 @@ def source_key(uri, *, dataset_id=None, source_id=None, resource_index=0):
         if dataset_id is None:
             raise LedgerError("An explicit source ID requires a dataset namespace")
         return _encoded_source_key(typed_value(dataset_id), typed_value(source_id), resource_index)
-    from .urls import sanitize_url
-    uri = sanitize_url(str(uri))  # URL credentials never enter an identity (CP-LEDGER F2)
+    uri = str(uri)
     parts = urlsplit(uri)
     if parts.scheme.lower() in ("http", "https"):
+        from .urls import keyed_source_key, lossless_url
+        if not lossless_url(uri):
+            # Userinfo, query or fragment values never persist; the identity is a
+            # keyed reference to the raw URL, not its redacted spelling.
+            return keyed_source_key(uri)
         # Lowercase the host, not credentials, path or escaping. Preserve ports,
         # queries (including a trailing empty query) and meaningful URL bytes.
         authority = parts.netloc

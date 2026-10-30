@@ -18,7 +18,7 @@ from .encoding import canonical_json, evidence, file_hash, snapshot_hash, typed_
 from .schema import APPEND_ONLY_TABLES, SCHEMA_SQL, SCHEMA_VERSION, COMPACT_SCHEMA_SQL, COMPACT_RETENTION_SCHEMA_SQL
 from .compact import connect, encode_json
 from .validation import validate_evidence
-from .urls import needs_scrub, sanitize_url, scrub, scrub_text
+from .urls import needs_scrub, persisted_url, pop_identity_root, push_identity_root, scrub, scrub_text
 
 
 _OPEN_WRITERS = set()
@@ -210,6 +210,9 @@ class LedgerWriter:
         try:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _OPEN_WRITERS.add(str(self.path))
+            # Lossy URLs are keyed under this corpus's identity key (cycle-2 F2).
+            push_identity_root(self.path.parent)
+            self._identity_root = self.path.parent
             self.connection = connect(self.path, isolation_level=None)
             self.connection.row_factory = sqlite3.Row
             self.connection.execute("PRAGMA foreign_keys=ON")
@@ -336,6 +339,9 @@ class LedgerWriter:
             os.close(self.lock)
             self.lock = None
             _OPEN_WRITERS.discard(str(self.path))
+        if getattr(self, "_identity_root", None) is not None:
+            pop_identity_root(self._identity_root)
+            self._identity_root = None
 
     def durable_barrier(self):
         """Flush immutable managed products and their parents before a FULL commit.
@@ -562,7 +568,7 @@ class LedgerWriter:
         validate_hash(manifest_sha256, nullable=True)
         if source_row is not None and not isinstance(source_row, str): raise LedgerError("source_row must be text")
         if url_index is not None and (type(url_index) is not int or url_index < 0): raise LedgerError("url_index must be a nonnegative integer")
-        source_uri = sanitize_url(source_uri)
+        source_uri = persisted_url(source_uri)
         encoded = canonical_json({"schema_version": 1, "fields": typed_value(metadata)})
         if needs_scrub(encoded):
             encoded = canonical_json({"schema_version": 1, "fields": typed_value(scrub(metadata))})
@@ -703,6 +709,7 @@ class LedgerWriter:
         if bytes is not None and (type(bytes) is not int or bytes < 0): raise LedgerError("Artifact bytes must be a nonnegative integer")
         if presence == "present" and (sha256 is None or bytes is None): raise LedgerError("Present artifact requires hash and size")
         if ownership == "managed" and (sha256 is None or bytes is None): raise LedgerError("Managed artifact requires hash and size")
+        uri = persisted_url(uri)
         previous_files = self.connection.execute("SELECT file_id,version_id,sha256,presence FROM current_file_state WHERE uri=?", (uri,)).fetchall()
         for previous in previous_files:
             changed = presence == "present" and previous[2] is not None and previous[2] != sha256

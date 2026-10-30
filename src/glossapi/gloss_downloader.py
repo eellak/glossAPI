@@ -47,20 +47,15 @@ import functools
 from email.utils import parsedate_to_datetime
 
 
-class _UrlCredentialFilter(logging.Filter):
-    """Request/progress logs never record URL userinfo or credential query values."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        from .ledger.urls import scrub_text
-        message = record.getMessage()
-        cleaned = scrub_text(message)
-        if cleaned is not message and cleaned != message:
-            record.msg, record.args = cleaned, ()
-        return True
+from .ledger.urls import CredentialLogFilter as _UrlCredentialFilter, protect_handler as _protect_handler
 
 
 def _private_logger(name: str, level: int, *, propagate: bool = True) -> logging.Logger:
-    """An unregistered per-instance logger whose handlers no other instance shares."""
+    """An unregistered per-instance logger whose handlers no other instance shares.
+
+    The shared credential filter (persisted URL form, secret headers, formatted
+    tracebacks) applies to every record of this logger and its handlers.
+    """
     logger = logging.Logger(name, level)
     logger.parent = logging.getLogger(name)
     logger.propagate = propagate
@@ -287,7 +282,7 @@ class GlossDownloader:
             fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s')
             fh.setFormatter(fmt)
             fh.setLevel(progress_log_level)
-            self.progress_logger.addHandler(fh)
+            self.progress_logger.addHandler(_protect_handler(fh))
         except Exception:
             self.progress_logger = self.logger
 
@@ -298,7 +293,7 @@ class GlossDownloader:
             rfh = logging.FileHandler(rp)
             rfh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
             rfh.setLevel(self.logger.level)
-            self.logger.addHandler(rfh)
+            self.logger.addHandler(_protect_handler(rfh))
         except Exception:
             pass
 
@@ -1275,9 +1270,11 @@ class GlossDownloader:
         self.logger.warning(f"Received {status} for {url}")
 
         if self.verbose:
+            # Headers are redacted structurally before any formatting (cycle-2 F1).
+            from .ledger.urls import describe_request, redact_headers
             self.logger.debug(f"HTTP Error Details - Status: {error.status}, Message: {error.message}")
-            self.logger.debug(f"Headers: {error.headers if hasattr(error, 'headers') else 'No headers available'}")
-            self.logger.debug(f"Request info: {error.request_info if hasattr(error, 'request_info') else 'No request info available'}")
+            self.logger.debug(f"Headers: {redact_headers(error.headers) if getattr(error, 'headers', None) is not None else 'No headers available'}")
+            self.logger.debug(f"Request info: {describe_request(getattr(error, 'request_info', None))}")
 
         retry_after = None
         try:
@@ -2579,7 +2576,14 @@ class GlossDownloader:
                 return str(u)
 
         df['__url_norm'] = df[self.url_column].map(_canon)
-        dup_mask = df['__url_norm'].duplicated(keep='first')
+        # A frozen run manifest records URLs in their persisted form, where
+        # distinct raw URLs (different credentials or query values) can spell
+        # alike. Its non-secret per-row duplicate group, sealed from the raw
+        # URLs, keeps exactly the frozen duplicate decisions (CP-LEDGER cycle 2).
+        dedupe_key = df['__url_norm']
+        if 'frozen_duplicate_group' in df.columns:
+            dedupe_key = df['__url_norm'] + '\x00' + df['frozen_duplicate_group'].astype(str)
+        dup_mask = dedupe_key.duplicated(keep='first')
         canon_rows = df.loc[~dup_mask, ['__url_norm', self.url_column]]
         canon_map = dict(zip(canon_rows['__url_norm'], canon_rows[self.url_column]))
         df.loc[dup_mask, 'is_duplicate'] = True

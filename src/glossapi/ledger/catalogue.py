@@ -1,5 +1,5 @@
 """Versioned status/reason vocabulary; details retain original backend tokens."""
-CATALOGUE_VERSION = 3  # 3: source_unavailable (CP-LEDGER F3)
+CATALOGUE_VERSION = 4  # 3: source_unavailable (CP-LEDGER F3); 4: source_inventory_bound (cycle-2 F4)
 STAGES = frozenset(("download", "extract", "clean", "ocr", "math", "sections", "annotate", "export"))
 STATUSES = frozenset(("planned", "running", "ok", "skipped", "failed"))
 TERMINAL_STATUSES = frozenset(("ok", "skipped", "failed"))
@@ -174,6 +174,7 @@ REASON_CODES = frozenset((
     'section_metadata_unavailable',
     'section_no_markdown',
     'section_not_selected',
+    'source_inventory_bound',
     'source_unavailable',
     'sections_completed',
     'sections_empty',

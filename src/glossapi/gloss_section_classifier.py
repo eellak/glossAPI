@@ -48,8 +48,13 @@ class GlossSectionClassifier:
     
     def __init__(self):
         # Setup Logging
+        _existing = list(logging.getLogger().handlers)
         logging.basicConfig(level=logging.INFO,
                             format='%(asctime)s - %(levelname)s - %(message)s')
+        from .ledger.urls import protect_handler
+        for _root_handler in logging.getLogger().handlers:
+            if _root_handler not in _existing:  # only the handler glossAPI created
+                protect_handler(_root_handler)
         self.logger = logging.getLogger(__name__)
         self.loaded_model = None
         self.clf_pipeline = None

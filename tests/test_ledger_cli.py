@@ -217,7 +217,10 @@ def test_canonical_url_selectors_reuse_identity_and_preserve_explicit_record_amb
     uri='HTTPS://EXAMPLE.org/A?b=2&a=1#old'
     with LedgerWriter(tmp_path/'corpus.sqlite3') as writer, writer.transaction():
         run=writer.run({}, {}, {}, code_revision='test')
-        document=writer.document(source_key(uri));version=writer.version(document)
+        # CP-LEDGER cycle 2: a query/fragment URL is keyed under the corpus key,
+        # so its identity is computed while the corpus writer is open.
+        key=source_key(uri)
+        document=writer.document(key);version=writer.version(document)
         writer.source_record(document,run,uri,{},source_kind='url')
         writer.event(run,event_kind='import',reason_code='legacy_observed',version_id=version)
     selector='https://example.org/A?b=2&a=1#new'
@@ -229,4 +232,4 @@ def test_canonical_url_selectors_reuse_identity_and_preserve_explicit_record_amb
         writer.version(other);writer.source_record(other,run,selector,{},source_kind='url')
     code,result=invoke(capsys,'report','--corpus',str(tmp_path),'--why',uri)
     assert code==2 and result['errors'][0]['details']['candidate_document_ids']==sorted([document,other])
-    assert invoke(capsys,'report','--corpus',str(tmp_path),'--why',source_key(uri))[0]==0
+    assert invoke(capsys,'report','--corpus',str(tmp_path),'--why',key)[0]==0

@@ -214,21 +214,27 @@ def test_claim_publication_refuses_a_second_version_on_one_location(tmp_path):
 
 # ---------------------------------------------------------------------- F2 ---
 
-def test_sanitize_url_redacts_userinfo_and_credential_fields_only():
+def test_sanitize_url_redacts_userinfo_and_credential_fields_only(tmp_path):
+    # CP-LEDGER cycle 2 supersedes the name-based list: the persisted form is an
+    # allowlist (scheme, host, port, path); userinfo is dropped and every query
+    # and fragment value is a placeholder unless declared public. Identity is a
+    # keyed reference to the raw URL, so a rotated token is another identity
+    # unless the caller declares a stable source_id.
     from glossapi.ledger.urls import sanitize_url, scrub_text, URL_REDACTED
-    plain = 'https://example.org/a/b.pdf?page=2&lang=el#frag'
+    plain = 'https://example.org/a/b.pdf'
     assert sanitize_url(plain) is plain
     assert sanitize_url('file:///tmp/x@y.pdf') == 'file:///tmp/x@y.pdf'
     url = 'https://user:'+MARKER+'@Example.org/a.pdf?id=7&access_token='+MARKER+'&X-Amz-Signature='+MARKER+'#token='+MARKER
     clean = sanitize_url(url)
-    assert MARKER not in clean and 'id=7' in clean and clean.startswith('https://'+URL_REDACTED+'@Example.org/a.pdf?')
+    assert MARKER not in clean and 'id=7' not in clean and clean.startswith('https://Example.org/a.pdf?id='+URL_REDACTED)
     assert sanitize_url(clean) == clean
     text = "ClientError: GET "+url+" failed; retry 'https://h/p?api_key="+MARKER+"'"
     assert MARKER not in scrub_text(text) and 'ClientError: GET https://' in scrub_text(text)
     from glossapi.ledger.journal import source_key
     from glossapi.ledger.identity import source_key as identity_key
-    assert MARKER not in source_key(url) and MARKER not in identity_key(url)
-    assert source_key(url) == source_key(url.replace(MARKER, 'rotated-secret'))
+    with LedgerWriter(tmp_path/'corpus.sqlite3'):
+        assert MARKER not in source_key(url) and MARKER not in identity_key(url)
+        assert source_key(url) != source_key(url.replace(MARKER, 'rotated-secret'))
 
 
 class _AuthServer:

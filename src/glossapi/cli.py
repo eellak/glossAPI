@@ -51,9 +51,10 @@ def parser():
                 command.add_argument('--resume')
                 command.add_argument('--retry-failed', action='store_true')
                 command.add_argument('--trust-legacy-outputs', action='store_true')
-                command.add_argument('--credentials', help='JSON file listing full source URLs with their transport credentials '
-                    '(a list, or {"urls": [...]}). Read into memory only; never recorded. Required to resume or run a saved plan '
-                    'whose URLs were recorded with credentials redacted.')
+                command.add_argument('--credentials', help='JSON file listing full source URLs (a list, {"urls": [...]} or '
+                    '{"documents": [...]} rows with optional source_id). Read into memory only; never recorded. Required to resume '
+                    'or run a saved plan whose URLs were recorded in their persisted form. A URL binds only to its own resource '
+                    'identity: the identical URL, or the same declared source_id.')
         else:
             command.add_argument("--run")
             command.add_argument("--stage", choices=sorted(STAGES))
@@ -151,18 +152,38 @@ def main(argv=None):
                         raise ReadRequestError("invalid_settings", name + " must be a nonnegative integer")
                 manifest = _json_file(args.manifest) if args.manifest else None
                 selectors = args.files
+                rows = [{} for _ in selectors]
                 if manifest is not None:
                     records = manifest.get("documents", []) if isinstance(manifest, dict) else manifest
                     if not isinstance(records, list):
                         raise ReadRequestError("invalid_manifest", "Manifest must contain a documents array")
-                    selectors = []
+                    selectors, rows = [], []
                     for row in records:
                         selector = row if isinstance(row, str) else next((row[k] for k in ("document_id", "source_key", "source_uri", "path", "url") if row.get(k)), None) if isinstance(row, dict) else None
                         if not isinstance(selector, str):
                             raise ReadRequestError("invalid_manifest", "Every row requires an explicit source selector")
                         selectors.append(selector)
-                data = plan_view(connection, selectors=selectors, stages=args.stages.split(",") if args.stages else None,
-                    settings=settings, devices=_assignments(args.device), workers=_assignments(args.workers, integer=True), manifest=manifest)
+                        rows.append(row if isinstance(row, dict) else {})
+                from .ledger.urls import persisted_url, pop_identity_root, push_identity_root, url_policy
+                with url_policy(settings.get("url_policy")):
+                    identities = None
+                    if any(str(selector).startswith(("http://", "https://")) for selector in selectors):
+                        # Raw URLs stay in memory. The plan carries each URL's
+                        # resource identity (keyed under the corpus key, created
+                        # outside the ledger when first needed) and its persisted
+                        # spelling only (CP-LEDGER cycle 2, F1/F2).
+                        from .stages.run import resource_identity
+                        identity_root = Path(args.corpus).absolute()
+                        push_identity_root(identity_root)
+                        try:
+                            identities = [resource_identity(selector, source_id=row.get("source_id"), dataset_id=row.get("dataset_id"))
+                                          if str(selector).startswith(("http://", "https://")) else None for selector, row in zip(selectors, rows)]
+                        finally:
+                            pop_identity_root(identity_root)
+                        selectors = [persisted_url(selector) if identity else selector for selector, identity in zip(selectors, identities)]
+                    data = plan_view(connection, selectors=selectors, stages=args.stages.split(",") if args.stages else None,
+                        settings=settings, devices=_assignments(args.device), workers=_assignments(args.workers, integer=True), manifest=manifest,
+                        identities=identities)
                 if args.command == 'plan':
                     envelope["warnings"].append(dict(code="conditional_plan", message="Run revalidates inputs and capabilities before dispatch"))
             elif args.command == "status":
@@ -181,8 +202,8 @@ def main(argv=None):
             if args.credentials:
                 supplied=_json_file(args.credentials)
                 supplied=supplied.get('urls',supplied.get('documents',[])) if isinstance(supplied,dict) else supplied
-                if not isinstance(supplied,list):
-                    raise ReadRequestError('invalid_request','--credentials must list source URLs')
+                if not isinstance(supplied,list) or not all(isinstance(item,(str,dict)) for item in supplied):
+                    raise ReadRequestError('invalid_request','--credentials must list source URLs or {"url": ..., "source_id": ...} rows')
                 credentials.extend(supplied)
             credentials.extend(args.files)
             if args.manifest:

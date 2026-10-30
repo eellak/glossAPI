@@ -24,19 +24,133 @@ def extraction_settings(options=None):
         'code_enrichment':False,'use_cls':False,**(options or {})}
 
 
+def _is_url(value):
+    return isinstance(value,str) and value.startswith(('http://','https://'))
+
+
+def _row_url(row):
+    """The remote selector of a manifest row, or None (CP-LEDGER cycle 2, F3)."""
+    if isinstance(row,str):
+        return row if _is_url(row) else None
+    if not isinstance(row,dict):
+        return None
+    url=row.get('url')
+    if isinstance(url,(list,tuple)) or (isinstance(url,str) and url.strip()):
+        return url
+    selector=next((row[k] for k in ('document_id','source_key','source_uri','path') if isinstance(row.get(k),str) and row.get(k)),None)
+    return selector if _is_url(selector) else None
+
+
+def resource_identity(raw_url,*,source_id=None,dataset_id=None,resource_index=0):
+    """Resource identity of one raw source URL (cycle-2 F2).
+
+    A declared, non-secret ``source_id`` is the identity (stable across token
+    rotation). Otherwise a URL whose persisted form loses nothing keeps
+    ``url:v1:``; any other URL is keyed by an HMAC of the raw URL under the
+    corpus identity key. Never the redacted spelling.
+    """
+    from ..ledger.journal import source_key
+    if source_id is not None and not (isinstance(source_id,float) and source_id!=source_id):
+        from ..ledger.identity import source_key as declared_key
+        return declared_key(None,dataset_id=dataset_id if isinstance(dataset_id,str) and dataset_id else 'glossapi:declared_source_id',
+            source_id=source_id,resource_index=resource_index)
+    return source_key(raw_url)
+
+
+def _row_identities(row,urls):
+    """Identities of the URLs one manifest row names (list cells: one per URL)."""
+    declared=row.get('source_id') if isinstance(row,dict) else None
+    dataset=row.get('dataset_id') if isinstance(row,dict) else None
+    return [resource_identity(url,source_id=declared,dataset_id=dataset,resource_index=index) for index,url in enumerate(urls)]
+
+
+def _bind(found,identity,raw):
+    previous=found.get(identity)
+    if previous is not None and previous!=raw:
+        from ..ledger.urls import persisted_url
+        raise ValueError('ambiguous_source_identity: two different source URLs map to one resource identity ('
+            +persisted_url(raw)+'); give each resource its own source_id, or supply one URL per source_id')
+    found[identity]=raw
+
+
 def _transport_urls(value, found):
-    """Collect credential-bearing URLs (raw -> sanitized) from caller values, in memory only."""
-    from ..ledger.urls import _URL, sanitize_url
-    if isinstance(value, dict):
-        for item in value.values():_transport_urls(item, found)
+    """In-memory transport bindings ``resource identity -> raw URL`` (cycle-2 F2/F3).
+
+    Accepts raw URL strings, rows ``{'url': ..., 'source_id': ...}``, manifest
+    dicts ``{'documents': [...]}`` and lists of these. Nothing is recorded.
+    """
+    if isinstance(value, dict) and 'documents' in value and 'url' not in value:
+        _transport_urls(value['documents'], found)
+    elif isinstance(value, dict):
+        url=_row_url(value)
+        urls=[item for item in url if _is_url(item)] if isinstance(url,(list,tuple)) else [url] if _is_url(url) else []
+        for identity,raw in zip(_row_identities(value,urls),urls):
+            _bind(found,identity,raw)
     elif isinstance(value, (list, tuple)):
         for item in value:_transport_urls(item, found)
-    elif isinstance(value, str) and '://' in value:
-        for match in _URL.finditer(value):
-            clean=sanitize_url(match.group(0))
-            if clean!=match.group(0):
-                found.setdefault(clean, match.group(0))
+    elif _is_url(value):
+        _bind(found,resource_identity(value),value)
     return found
+
+
+def _remote_inventory(rows,root):
+    """Expand, deduplicate and name remote rows on their raw URLs, in memory.
+
+    Returns the persisted rows (for the ledger), the raw URL and identity of
+    every expanded row, and the persisted download-projection frame. Nothing
+    raw is returned in a persisted value. The retained kernels perform no
+    network or backend work.
+    """
+    import pandas as pd
+    from ..gloss_downloader import GlossDownloader
+    from ..ledger.urls import persisted_url, scrub
+    def kernel(frame):
+        naming=GlossDownloader.__new__(GlossDownloader)
+        naming.url_column='url';naming._used_filename_bases=set()
+        return naming.ensure_filename_base(naming._expand_and_mark_duplicates(frame))
+    rows=[dict(row) if isinstance(row,dict) else {'url':row} for row in rows]
+    for row in rows:
+        if 'url' not in row or not isinstance(row['url'],(str,list,tuple)) or (isinstance(row['url'],str) and not row['url'].strip()):
+            row['url']=_row_url(row)
+    persisted=scrub(rows)
+    raw_named=kernel(pd.DataFrame(rows))
+    persisted_frame=pd.DataFrame(persisted)
+    persisted_named=kernel(persisted_frame.copy())
+    if len(raw_named)!=len(persisted_named) or list(raw_named['source_row'])!=list(persisted_named['source_row']) \
+            or list(raw_named['url_index'])!=list(persisted_named['url_index']):
+        raise ValueError('source manifest expansion differs between raw and persisted URL forms; give each URL its own row')
+    raw_urls=[value if isinstance(value,str) else '' for value in raw_named['url']]
+    expanded=any(isinstance(row.get('url'),(list,tuple,dict)) or (isinstance(row.get('url'),str) and row['url'].strip().startswith(('[','{')))
+                 for row in rows)
+    identities=[]
+    for index,raw in enumerate(raw_urls):
+        identity=None
+        if _is_url(raw):
+            row=rows[int(raw_named['source_row'].iloc[index])] if expanded else rows[index]
+            declared=row.get('source_id')
+            identity=resource_identity(raw,source_id=declared,dataset_id=row.get('dataset_id'),
+                resource_index=max(0,int(raw_named['url_index'].iloc[index])) if expanded else 0)
+        identities.append(identity)
+    seen={}
+    for identity,raw in zip(identities,raw_urls):
+        if identity is not None:
+            _bind(seen,identity,raw)
+    same=(list(raw_named['is_duplicate'].astype(bool))==list(persisted_named['is_duplicate'].astype(bool))
+          and list(raw_named['filename_base'].astype(str))==list(persisted_named['filename_base'].astype(str)))
+    named=persisted_named
+    projection=persisted_frame
+    if not same:
+        # Distinct raw URLs persist alike (different credentials or query
+        # values): seal the raw duplicate decisions and names as non-secret
+        # columns so the unchanged download serializer reproduces them.
+        groups=raw_named['__url_norm'].map({value:index for index,value in reversed(list(enumerate(raw_named['__url_norm'])))})
+        named=persisted_named.copy()
+        named['is_duplicate']=raw_named['is_duplicate'].astype(bool).values
+        named['filename_base']=raw_named['filename_base'].astype(str).values
+        named['duplicate_of']=[persisted_url(value) if isinstance(value,str) else value for value in raw_named['duplicate_of']]
+        named['frozen_duplicate_group']=groups.astype('int64').values
+        projection=named.drop(columns=['__url_norm'])
+    return named.to_dict(orient='records'),raw_urls,identities,projection
 
 
 def _manifest_selector_uri(row, writer):
@@ -112,47 +226,52 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
     Corpus selection/global IDs, annotation and shard publication remain barriers.
     """
     from ..ledger.journal import source_key
-    from ..ledger.urls import sanitize_url, scrub
     began=time.monotonic()
     from .retention import resolved_settings
     settings=resolved_settings(settings)
     root=Path(corpus.output_dir).resolve()
     sources=list(sources)
-    # Transport credentials (URL userinfo, credential query fields) stay in this
-    # process only. Every recorded spelling is sanitized (CP-LEDGER F2).
-    transport=_transport_urls([*(credentials or ()),*[str(source) for source in sources]],{})
-    sources=[sanitize_url(str(source)) if str(source).startswith(('http://','https://')) else source for source in sources]
-    source_rows=[{'source_uri':str(source)} for source in sources]
     download_manifest=None
     occurrence_rows=None
-    if not resume and any(str(source).startswith(('http://','https://')) for source in sources):
-        import pandas as pd
-        from ..gloss_downloader import GlossDownloader
-        raw_manifest=settings.get('source_manifest')
-        records=raw_manifest.get('documents',[]) if isinstance(raw_manifest,dict) else raw_manifest
-        records=records or [{'url':str(source)} for source in sources]
-        rows=[row if isinstance(row,dict) else {'url':row} for row in records]
-        _transport_urls(rows,transport)
-        frame=pd.DataFrame(scrub(rows))
-        # Retain the source frame before expansion/naming for the unchanged
-        # download serializer. Resume binds these bytes, not a reconstructed
-        # frame with inferred column types or missing source metadata.
-        from ..ledger.writer import new_id
-        download_manifest=root/'.glossapi/source-manifests'/new_id()/'sources.parquet'
-        download_manifest.parent.mkdir(parents=True,exist_ok=False)
-        frame.to_parquet(download_manifest,index=False)
-        settings={**settings,'download_projection_manifest':{'path':str(download_manifest),
-            'sha256':sha256_file(download_manifest),'bytes':download_manifest.stat().st_size},
-            'semantic_files':[*settings.get('semantic_files',()),
-                {'path':str(download_manifest),'sha256':sha256_file(download_manifest)}]}
-        # These retained kernels seal expansion, duplicate policy and collision
-        # names before acquisition. They perform no network or backend work.
-        naming=GlossDownloader.__new__(GlossDownloader)
-        naming.url_column='url';naming._used_filename_bases=set()
-        frame=naming.ensure_filename_base(naming._expand_and_mark_duplicates(frame))
-        source_rows=frame.to_dict(orient='records')
-        sources=[row.get('url',row.get('source_uri')) for row in source_rows]
+    remote_rows=None
+    record_bindings=[]
     with nullcontext(writer) if writer is not None else LedgerWriter(root/'corpus.sqlite3') as writer:
+        # Raw URLs (userinfo, query and fragment values) stay in this process
+        # only, keyed by resource identity. Everything recorded uses the
+        # persisted URL form (CP-LEDGER cycle 2, F1/F2).
+        transport=_transport_urls(list(credentials or ()),{})
+        raw_manifest=settings.get('source_manifest')
+        manifest_rows=(raw_manifest.get('documents',[]) if isinstance(raw_manifest,dict) else raw_manifest) if raw_manifest is not None else None
+        if not resume:
+            # Selectors are resolved per row: remote rows are expanded/named on
+            # their raw URLs; local rows keep their real paths (cycle-2 F3).
+            remote_manifest=[row for row in manifest_rows if _row_url(row) is not None] if isinstance(manifest_rows,list) else []
+            remote_given=[str(source) for source in sources if _is_url(str(source))]
+            if remote_manifest or remote_given:
+                remote_rows=remote_manifest or [{'url':source} for source in remote_given]
+                source_rows,raw_urls,identities,frame=_remote_inventory(remote_rows,root)
+                for identity,raw in zip(identities,raw_urls):
+                    if identity is not None:transport[identity]=raw
+                # Retain the persisted source frame for the unchanged download
+                # serializer. Resume binds these bytes, not a reconstructed frame.
+                from ..ledger.writer import new_id
+                download_manifest=root/'.glossapi/source-manifests'/new_id()/'sources.parquet'
+                download_manifest.parent.mkdir(parents=True,exist_ok=False)
+                frame.to_parquet(download_manifest,index=False)
+                settings={**settings,'download_projection_manifest':{'path':str(download_manifest),
+                    'sha256':sha256_file(download_manifest),'bytes':download_manifest.stat().st_size},
+                    'semantic_files':[*settings.get('semantic_files',()),
+                        {'path':str(download_manifest),'sha256':sha256_file(download_manifest)}]}
+                remote_entries=[dict(source=row.get('url'),remote=True,raw=raw,key=identity)
+                    for row,raw,identity in zip(source_rows,raw_urls,identities)]
+                planned=settings.get('planned_document_ids')
+                if planned is not None and any(entry['key'] is not None and entry['key'] not in planned for entry in remote_entries):
+                    raise ValueError('planned_source_identity_mismatch: a supplied source URL does not key to its planned resource '
+                        'identity (different credentials or query values); plan again with these URLs')
+            else:
+                source_rows,remote_entries=[],[]
+            local_given=[source for source in sources if not _is_url(str(source))]
+            source_rows=[*source_rows,*({'source_uri':str(source)} for source in local_given)]
         engine=StreamingScheduler(writer,root,workers=workers,cpu_tokens=settings.get('cpu_tokens'),
             memory_bytes=settings.get('memory_budget_bytes'),disk_budget_bytes=settings.get('disk_budget_bytes'),observer=observer)
         engine.transport_urls=dict(transport)
@@ -167,9 +286,6 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
             operations=[]
             from ..ledger.journal import redact_credentials, safe_settings, code_revision
             entries=[]
-            remote_any=any(str(source).startswith(('http://','https://')) for source in sources)
-            raw_manifest=settings.get('source_manifest')
-            manifest_rows=(raw_manifest.get('documents',[]) if isinstance(raw_manifest,dict) else raw_manifest) if raw_manifest is not None else None
             # 1. The requested inventory is durable before any fallible per-file
             # inspection: one missing or unreadable input cannot roll back the
             # other inputs' census (CP-LEDGER F3).
@@ -179,27 +295,36 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                     writer.artifact(observation,'download','source_manifest',download_manifest.as_uri(),
                         sha256=sha256_file(download_manifest),bytes=download_manifest.stat().st_size,
                         ownership='managed',retention_class='initial')
-                for ordinal,given in enumerate(sources):
-                    source=str(given)
-                    remote=source.startswith(('http://','https://'))
-                    uri=source if remote else Path(unquote(urlsplit(source).path) if source.startswith('file:') else source).resolve().as_uri()
-                    key=source_key(uri)
+                given=[*remote_entries,*(dict(source=str(source),remote=False,raw=None,key=None) for source in local_given)]
+                for ordinal,item in enumerate(given):
+                    source=item['source']
+                    remote=item['remote']
+                    if remote:
+                        uri=source if isinstance(source,str) else ''
+                        key=item['key'] or source_key(uri)
+                    else:
+                        uri=Path(unquote(urlsplit(source).path) if source.startswith('file:') else source).resolve().as_uri()
+                        key=source_key(uri)
                     proposed=settings.get('planned_document_ids',{}).get(key)
                     known=writer.connection.execute('SELECT document_id FROM documents WHERE source_key=?',(key,)).fetchone()
                     if proposed and known is None:
                         from ..ledger.writer import validate_id,utc_now
                         validate_id(proposed)
                         writer.connection.execute('INSERT INTO documents VALUES(?,?,?)',(proposed,key,utc_now()))
-                    entries.append(dict(ordinal=ordinal,source=source,remote=remote,uri=uri,key=key,
+                    entries.append(dict(ordinal=ordinal,source=uri if remote else source,remote=remote,uri=uri,key=key,
                         document=writer.document(key),path=None if remote else local_path(uri)))
                 # Occurrence inventory, separate from the deduplicated processing
-                # documents. A local manifest keeps every typed original row (F4).
-                by_key={entry['key']:entry for entry in entries}
-                occurrences=[]
-                if not remote_any and isinstance(manifest_rows,list) and manifest_rows:
+                # documents. Every manifest row keeps its typed original row and
+                # its own selector, in local and mixed manifests alike (F3/F4).
+                by_key={entry['key']:entry for entry in entries if not entry['remote']}
+                local_manifest=[(index,row) for index,row in enumerate(manifest_rows)
+                    if _row_url(row) is None] if isinstance(manifest_rows,list) else []
+                occurrences=[(entry,source_rows[entry['ordinal']],str(source_rows[entry['ordinal']].get('source_row',entry['ordinal'])),
+                    max(0,int(source_rows[entry['ordinal']].get('url_index',0) or 0))) for entry in entries if entry['remote']]
+                if local_manifest:
                     covered=set()
                     first={}
-                    for index,row in enumerate(manifest_rows):
+                    for index,row in local_manifest:
                         uri=_manifest_selector_uri(row,writer)
                         entry=by_key.get(source_key(uri)) if uri else None
                         if entry is None:
@@ -211,16 +336,17 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                             str(original.get('source_row',index)),0))
                         first.setdefault(entry['key'],index)
                     for entry in entries:
-                        if entry['key'] not in covered:
+                        if not entry['remote'] and entry['key'] not in covered:
                             occurrences.append((entry,source_rows[entry['ordinal']],str(entry['ordinal']),0))
                     occurrence_rows=[metadata for _,metadata,_,_ in occurrences]
                 else:
-                    occurrences=[(entry,source_rows[entry['ordinal']],str(source_rows[entry['ordinal']].get('source_row',entry['ordinal'])),
-                        max(0,int(source_rows[entry['ordinal']].get('url_index',0)))) for entry in entries]
+                    occurrences.extend((entry,source_rows[entry['ordinal']],str(source_rows[entry['ordinal']].get('source_row',entry['ordinal'])),
+                        max(0,int(source_rows[entry['ordinal']].get('url_index',0) or 0))) for entry in entries if not entry['remote'])
                 manifest=writer.snapshot('source_manifest',{'records':safe_settings(occurrence_rows if occurrence_rows is not None else source_rows)})
                 for entry,metadata,row_identity,url_index in occurrences:
-                    writer.source_record(entry['document'],observation,entry['uri'],metadata,source_kind='url' if entry['remote'] else 'local_path',
+                    record=writer.source_record(entry['document'],observation,entry['uri'],metadata,source_kind='url' if entry['remote'] else 'local_path',
                         source_row=row_identity,url_index=url_index,manifest_sha256=manifest)
+                    record_bindings.append((record,entry['key']))
             # 2. Per-file inspection outside the inventory transaction.
             unique=[]
             seen=set()
@@ -237,6 +363,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                         entry['failure']=error
             remote_bases=[source_rows[entry['ordinal']].get('filename_base') for entry in unique if entry['remote'] and source_rows[entry['ordinal']].get('filename_base')]
             publication=_publication_names([entry for entry in unique if 'failure' not in entry],remote_bases)
+            version_of={}
             with writer.transaction():
                 for entry in unique:
                     ordinal,source,remote,uri,document,path=(entry[name] for name in ('ordinal','source','remote','uri','document','path'))
@@ -254,6 +381,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                     else:
                         digest=entry.get('sha256')
                         version=writer.version(document,source_sha256=digest,stored_sha256=digest)
+                    version_of[entry['key']]=version
                     skip='source_unavailable' if failure is not None else None
                     published=publication.get(entry['key'])
                     naming={'publication_name':published} if published else {}
@@ -269,7 +397,14 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                         # retained downloader validates extensions/redirects.
                         name=source_rows[ordinal]['filename_base']
                         download_settings={'download_mode':'standard','legacy_outer_retry_count':0,**corpus.downloader_config,**settings.get('download',{}),
-                            'url':transport.get(source,source),'filename_base':name,'row_index':ordinal}
+                            'url':transport.get(entry['key'],source),'filename_base':name,'row_index':ordinal}
+                        if download_settings['url']!=source:
+                            # Non-secret marker: the frozen URL is its persisted form and
+                            # transport needs the raw URL, bound by resource identity.
+                            download_settings['transport_url_redacted']=True
+                        if settings.get('url_policy'):
+                            # Workers record their receipts under the same declared policy.
+                            download_settings['url_policy']=settings['url_policy']
                         parent=f'{ordinal}:download'
                         operations.append(ScheduledOperation(parent,'download',snapshot,
                             StageSpecification('download.acquire',required_output_kinds=('download_payload',),settings=download_settings),
@@ -318,6 +453,12 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                             StageSpecification('sections.document',required_output_kinds=('section_fragment',),settings={'filename':filename}),
                             inputs=((parent,'clean_markdown','selected_text'),),skip_reason=skip))
             run=engine.freeze(operations,settings={**settings,'requested_stages':list(stages)})
+            # Inventory-to-run and occurrence-to-version bindings: each source
+            # occurrence reports its own version and this run's disposition (F4).
+            with writer.transaction():
+                writer.event(observation,event_kind='decision',reason_code='source_inventory_bound',
+                    details={'execution_run_id':run,'occurrences':[{'source_record_id':record,'version_id':version_of.get(key)}
+                        for record,key in record_bindings]})
         corpus._retention_settings={**settings,'requested_stages':list(stages)}
         result=engine.execute(run,resume=bool(resume),retry_failed=retry_failed)
         result['wall_seconds']=time.monotonic()-began
@@ -410,9 +551,39 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         body=plan.get('data',plan)
         if snapshot_hash({key:value for key,value in body.items() if key!='plan_hash'})!=body.get('plan_hash'):
             raise ValueError('Supplied plan hash does not match')
+        from ..ledger.urls import is_keyed_key, source_uri_of_key
+        from ..ledger.urls import scrub
+        explicit=body.get('explicit_manifest')
+        raw_manifest=None
+        if explicit is not None:
+            # The plan records the manifest in its persisted form. The caller's
+            # raw manifest (in memory, from --manifest or --credentials) must
+            # persist to exactly the planned one; identities are checked below.
+            for candidate in [*(credentials or ()),[item for item in (credentials or ()) if isinstance(item,dict) and 'documents' not in item]]:
+                rows=candidate.get('documents') if isinstance(candidate,dict) and 'documents' in candidate else candidate
+                planned=explicit.get('documents') if isinstance(explicit,dict) else explicit
+                if isinstance(rows,list) and scrub(rows)==planned:
+                    raw_manifest={'documents':rows} if isinstance(explicit,dict) else rows
+                    break
+        bindings=_transport_urls(list(credentials or ()),{}) if credentials else {}
+        if explicit is not None and raw_manifest is None and any(is_keyed_key(document['source_key']) for document in body['documents']):
+            # Persisted manifest rows cannot be expanded or keyed again.
+            from .scheduler import CREDENTIALS_NOT_PERSISTED
+            raise ValueError(CREDENTIALS_NOT_PERSISTED+' (supply the original manifest rows, for example --credentials MANIFEST.json)')
+        files=[]
         for document in body['documents']:
             observation=document.get('source_observation',{})
-            uri=observation.get('source_uri',document['source_key'].split(':v1:',1)[1])
+            uri=observation.get('source_uri') or source_uri_of_key(document['source_key'])
+            if is_keyed_key(document['source_key']):
+                # A keyed (credential/query-bearing) source binds only to the raw
+                # URL whose resource identity is exactly the planned one.
+                raw=bindings.get(document['source_key'])
+                if raw is None and raw_manifest is None:
+                    from .scheduler import CREDENTIALS_NOT_PERSISTED
+                    raise ValueError(CREDENTIALS_NOT_PERSISTED+' (planned source: '+str(uri)+')')
+                files.append(raw or uri)
+                continue
+            files.append(uri)
             if uri.startswith('file:'):
                 path=local_path(uri)
                 if not path.exists() and observation.get('bytes') is None and not observation.get('stored_sha256'):
@@ -424,7 +595,6 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                     raise ValueError('Supplied plan source inventory changed')
                 if observation.get('stored_sha256') and sha256_file(path)!=observation['stored_sha256']:
                     raise ValueError('Supplied plan source hash changed')
-        files=[document['source_key'].split(':v1:',1)[1] for document in body['documents']]
         stages=tuple(dict.fromkeys(step['stage'] for document in body['documents'] for step in document['steps']))
         workers={pool['stage']:pool['workers'] for pool in body['pools']}
         settings=body['settings']
@@ -432,8 +602,8 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
             pool=next(pool for pool in body['pools'] if pool['stage']=='ocr')
             settings={**settings,'ocr':{**settings.get('ocr',{}),'device_id':pool['device_id']}}
         settings={**settings,'planned_document_ids':{document['source_key']:document['document_id'] for document in body['documents']}}
-        if body.get('explicit_manifest') is not None:
-            settings={**settings,'source_manifest':body['explicit_manifest']}
+        if explicit is not None:
+            settings={**settings,'source_manifest':raw_manifest if raw_manifest is not None else explicit}
     if resume and (files or workers or settings):
         raise ValueError('Resume restores its frozen plan; semantic overrides are forbidden')
     if 'math' in stages:
@@ -698,13 +868,30 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
     return status=='ok'
 
 
+def _declared_url_policy(writer,options):
+    if options.get('resume'):
+        row=writer.connection.execute('SELECT settings_sha256 FROM runs WHERE run_id=?',(options['resume'],)).fetchone()
+        if row is None:
+            return None
+        from ..ledger.reader import snapshot
+        return snapshot(writer.connection,row[0]).get('url_policy')
+    if options.get('plan') is not None:
+        return options['plan'].get('data',options['plan']).get('settings',{}).get('url_policy')
+    return (options.get('settings') or {}).get('url_policy')
+
+
 def run_corpus(corpus,*args,**options):
     """Hold corpus exclusion across document work and every publication barrier."""
     began=time.monotonic()
+    from ..ledger.urls import url_policy
     with LedgerWriter(Path(corpus.output_dir)/'corpus.sqlite3') as writer:
         corpus._scheduler_writer=writer
         try:
-            result=_run_corpus(corpus,*args,**options)
+            # The caller's declared URL policy (public query fields, secret
+            # headers) is frozen in the run settings and active for every
+            # recording boundary of this run, including a resume.
+            with url_policy(_declared_url_policy(writer,options)):
+                result=_run_corpus(corpus,*args,**options)
             result['total_wall_seconds']=time.monotonic()-began
             return result
         finally:

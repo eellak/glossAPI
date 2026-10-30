@@ -244,6 +244,7 @@ class GlossExtract:
         self.max_chunk_timeouts = 2
         global LOGGING_INITIALIZED
         if not LOGGING_INITIALIZED:
+            _existing = list(logging.getLogger().handlers)
             logging.basicConfig(
                 level=logging.DEBUG,
                 format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -253,11 +254,16 @@ class GlossExtract:
                 ]
             )
             LOGGING_INITIALIZED = True
+            from .ledger.urls import protect_handler
+            for _root_handler in logging.getLogger().handlers:
+                if _root_handler not in _existing:  # only the handlers glossAPI created
+                    protect_handler(_root_handler)
         # Per-instance logger
         self._log = logging.getLogger(__name__)
         try:
             if not self._log.handlers:
-                _handler = logging.StreamHandler()
+                from .ledger.urls import protect_handler
+                _handler = protect_handler(logging.StreamHandler())
                 _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s:%(name)s: %(message)s", "%H:%M:%S"))
                 self._log.addHandler(_handler)
             self._log.propagate = False

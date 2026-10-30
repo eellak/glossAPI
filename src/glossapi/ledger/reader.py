@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlsplit
 from .catalogue import STAGES, STATUSES
 from .encoding import canonical_json, snapshot_hash, unpack_evidence
 from .identity import source_key
-from .urls import scrub
+from .urls import scrub, source_uri_of_key
 from .stores import membership_values
 from .writer import LedgerError, new_id
 from ..stages.retention import retention_facts, retention_summary
@@ -103,11 +103,24 @@ def resolve_document(connection, selector):
             if selector in (file["uri"], _path(file["uri"])):
                 exact.add(file["document_id"])
     if not strong_selector and urlsplit(selector).scheme.lower() in ("http", "https"):
-        normalized = source_key(selector)
-        exact.update(d["document_id"] for d in documents if d["source_key"] == normalized)
-        for record in _rows(connection, "SELECT document_id,source_uri FROM source_records"):
-            if urlsplit(record["source_uri"]).scheme.lower() in ("http", "https") and source_key(record["source_uri"]) == normalized:
-                exact.add(record["document_id"])
+        # A raw URL resolves through its resource identity (keyed reference
+        # under the corpus key, read only); a persisted spelling may name
+        # several documents (different credentials) and is then ambiguous.
+        keyed = _selector_identity(connection, selector)
+        exact.update(d["document_id"] for d in documents if keyed is not None and d["source_key"] == keyed)
+        spelled = _persisted_spelling(selector)
+        keys = {d["document_id"]: d["source_key"] for d in documents}
+        spelled_matches = {record["document_id"] for record in _rows(connection, "SELECT document_id,source_uri FROM source_records")
+                           if urlsplit(record["source_uri"]).scheme.lower() in ("http", "https") and _persisted_spelling(record["source_uri"]) == spelled}
+        spelled_matches |= {d["document_id"] for d in documents if source_uri_of_key(d["source_key"]) is not None
+                            and urlsplit(source_uri_of_key(d["source_key"])).scheme.lower() in ("http", "https")
+                            and _persisted_spelling(source_uri_of_key(d["source_key"])) == spelled}
+        # A document keyed by a different keyed reference provably comes from a
+        # different raw URL (other credentials); exclude it only when the
+        # selector's own keyed identity is known. Declared-ID and legacy
+        # records with the same spelling stay explicit candidates.
+        exact.update(identifier for identifier in spelled_matches
+                     if keyed is None or not str(keys.get(identifier, "")).startswith("url:v2:") or keys.get(identifier) == keyed)
     filename_selector = False
     if not exact:
         # A filename is a convenience selector only. It never joins identities
@@ -128,6 +141,38 @@ def resolve_document(connection, selector):
     if not exact:
         raise ReadRequestError("file_not_found", "No recorded document matches selector", details={"selector": selector})
     return next(d for d in documents if d["document_id"] in exact)
+
+
+def _persisted_spelling(url):
+    """Persisted URL form with scheme and host case-folded, fragment dropped."""
+    from .urls import persisted_url
+    parts = urlsplit(persisted_url(url.split("#", 1)[0]))
+    host = parts.netloc.rpartition("@")[2].lower()
+    return (parts.scheme.lower(), host, parts.path, parts.query, "?" in persisted_url(url.split("#", 1)[0]))
+
+
+def _ledger_root(connection):
+    try:
+        for row in connection.execute("PRAGMA database_list"):
+            if row[1] == "main" and row[2]:
+                return Path(row[2]).parent
+    except Exception:
+        return None
+    return None
+
+
+def _selector_identity(connection, selector):
+    """Resource identity of a raw URL selector without writing anything."""
+    from .urls import keyed_source_key, lossless_url
+    if lossless_url(selector):
+        return source_key(selector)
+    root = _ledger_root(connection)
+    if root is None:
+        return None
+    try:
+        return keyed_source_key(selector, root=root, create=False)
+    except LedgerError:
+        return None
 
 
 def _same_content_aliases(connection, documents, candidates):
@@ -313,6 +358,7 @@ def report_why(connection, selector, *, run=None, stage=None):
             ownership=file["ownership"], page_first=file["page_first"], page_last=file["page_last"],
             legacy_evidence=imported_evidence,
             retention=retention_facts(connection,file['file_id'],as_of=max((event['event_id'] for event in history),default=0))))
+    inclusion_scope = []  # (run_id, version_id) of each inclusion item, for per-occurrence dispositions
     for event, details in relevant_events:
         if details.get('selected_versions'):
             record_hashes={record['filename']:record['record_sha256'] for shard in details.get('membership',[]) for record in shard['records']}
@@ -322,9 +368,11 @@ def report_why(connection, selector, *, run=None, stage=None):
                     inclusion.append(dict(product='document_jsonl',decision='include' if selected['included'] else 'omit',
                         reason_code=selected['reason_code'],record_hash=record_hashes.get(selected.get('compatibility_stem')),
                         manifest_hash=terminal.get('output_manifest_sha256'),event_id=event['event_id']))
+                    inclusion_scope.append((event['run_id'], selected.get('version_id')))
         elif event["reason_code"].startswith("export_"):
             inclusion.append(dict(product=details.get("product", details.get("path")), decision=event["reason_code"], reason_code=event["reason_code"],
                                   record_hash=details.get("record_sha256"), manifest_hash=event["output_manifest_sha256"], event_id=event["event_id"]))
+            inclusion_scope.append((event['run_id'], event['version_id']))
     observations = [dict(event_id=e["event_id"], reason_code=e["reason_code"], details=d) for e, d in relevant_events if e["event_kind"] == "import"]
     imported_stages = {}
     for event, details in relevant_events:
@@ -337,22 +385,42 @@ def report_why(connection, selector, *, run=None, stage=None):
         unknowns.append(dict(code="unknown_not_recorded", field=field))
     if not version or version["source_sha256"] is None:
         unknowns.append(dict(code="legacy_unknown", field="source_sha256", explanation="Original acquired entity bytes were not observed"))
-    # Every requested source occurrence (for example each local-manifest row),
-    # linked to the processed document version and its final disposition (F4).
-    final = next((item for item in reversed(inclusion) if item.get("product") == "document_jsonl"), None)
-    if final is not None:
-        disposition = dict(decision=final["decision"], reason_code=final["reason_code"], event_id=final["event_id"], basis="export_inclusion")
-    else:
-        terminal = [item for item in stages if item.get("scope") == "document" and item["status"]]
+    # Every requested source occurrence (for example each manifest row) with its
+    # own persisted binding: the version that occurrence's inventory created
+    # and the disposition of that version in the run that inventory fed (F4).
+    bindings = {}
+    for event in _rows(connection, "SELECT run_id,details_json FROM events WHERE reason_code='source_inventory_bound' ORDER BY event_id"):
+        details = evidence(connection, event)
+        for item in details.get("occurrences", []):
+            bindings[item["source_record_id"]] = (item.get("version_id"), details.get("execution_run_id"))
+    def execution_scope(run_id):
+        children = {json.loads(encoded).get("wrapper_run_id") for encoded, in connection.execute(
+            "SELECT details_json FROM events WHERE run_id=? AND message LIKE 'wrapper:%'", (run_id,))}
+        return {run_id} | {child for child in children if child}
+    def disposition_of(version_id, run_id):
+        scope = execution_scope(run_id)
+        final = None
+        for item, (event_run, event_version) in zip(inclusion, inclusion_scope):
+            if item.get("product") == "document_jsonl" and event_version == version_id and event_run in scope:
+                final = item
+        if final is not None:
+            return dict(decision=final["decision"], reason_code=final["reason_code"], event_id=final["event_id"], run_id=run_id, basis="export_inclusion")
+        terminal = [item for item in stages if item.get("scope") == "document" and item["status"]
+                    and item["version_id"] == version_id and item["run_id"] in scope]
         failed = next((item for item in terminal if item["status"] in ("failed", "skipped")), None)
-        disposition = dict(decision="failed" if failed and failed["status"] == "failed" else failed["status"] if failed else
-                           "completed" if terminal else None,
-                           reason_code=(failed["reasons"][-1]["reason_code"] if failed and failed["reasons"] else None),
-                           event_id=None, basis="document_stage_status")
-    occurrences = [dict(source_record_id=record["source_record_id"], run_id=record["run_id"], source_uri=record["source_uri"],
-                        source_row=record["source_row"], url_index=record["url_index"], manifest_sha256=record["manifest_sha256"],
-                        metadata=record["metadata"], document_id=record["document_id"],
-                        version_id=version["version_id"] if version else None, disposition=disposition) for record in records]
+        return dict(decision="failed" if failed and failed["status"] == "failed" else failed["status"] if failed else
+                    "completed" if terminal else None,
+                    reason_code=(failed["reasons"][-1]["reason_code"] if failed and failed["reasons"] else None),
+                    event_id=None, run_id=run_id, basis="document_stage_status")
+    occurrences = []
+    for record in records:
+        bound_version, execution_run = bindings.get(record["source_record_id"], (None, None))
+        disposition = disposition_of(bound_version, execution_run) if execution_run else dict(
+            decision=None, reason_code=None, event_id=None, run_id=None, basis="occurrence_binding_not_recorded")
+        occurrences.append(dict(source_record_id=record["source_record_id"], run_id=record["run_id"], execution_run_id=execution_run,
+                                source_uri=record["source_uri"], source_row=record["source_row"], url_index=record["url_index"],
+                                manifest_sha256=record["manifest_sha256"], metadata=record["metadata"], document_id=record["document_id"],
+                                version_id=bound_version, disposition=disposition))
     return dict(document=dict(**document, version_id=version["version_id"] if version else None, versions=versions, source_records=records),
                 occurrences=occurrences, stages=stages, files=files, inclusion=inclusion, conflicts=conflicts, unknowns=unknowns, observations=observations,retention=retention_summary(connection,run))
 
@@ -440,7 +508,9 @@ def report_view(connection, *, run=None, stage=None):
                 resources=status["resources"], counts=status["counts"], conflicts=conflicts)
 
 
-def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devices=None, workers=None, manifest=None):
+def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devices=None, workers=None, manifest=None, identities=None):
+    """``identities`` (aligned with ``selectors``) carries precomputed resource
+    identities of URL selectors; their selectors are persisted spellings."""
     settings = {"debug": "off", "memory_saving": "normal", **(settings or {})}
     requested = stages or ["extract", "clean", "sections", "export"]
     if any(s not in STAGES for s in requested):
@@ -462,9 +532,14 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
         selectors = [r[0] for r in connection.execute("SELECT document_id FROM documents ORDER BY rowid")]
     documents, inventory, seen = [], [], set()
     pooled_stages = set(selected_stages)
-    for selector in selectors:
+    for index, selector in enumerate(selectors):
         known = None
-        if connection:
+        identity = identities[index] if identities else None
+        if identity is not None:
+            if connection:
+                rows = _rows(connection, "SELECT * FROM documents WHERE source_key=?", (identity,))
+                known = rows[0] if rows else None
+        elif connection:
             try:
                 known = resolve_document(connection, selector)
             except ReadRequestError as error:
@@ -476,20 +551,20 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
             version = versions[-1] if versions else None
         else:
             parts = urlsplit(selector)
-            if parts.scheme not in ("http", "https", "file") and not Path(selector).is_absolute():
+            if identity is None and parts.scheme not in ("http", "https", "file") and not Path(selector).is_absolute():
                 raise ReadRequestError("file_not_found", "A new local source must be an explicit absolute path", details={"selector": selector})
-            identifier, key, version = new_id(), source_key(selector), None
+            identifier, key, version = new_id(), identity or source_key(selector), None
         if key in seen:
             continue
         seen.add(key)
-        source_uri=key.split(':v1:',1)[1]
+        source_uri=source_uri_of_key(key) or selector
         source_path=Path(_path(source_uri)) if source_uri.startswith('file:') else None
         source_stat=source_path.stat() if source_path is not None and source_path.is_file() else None
         observation=dict(source_uri=source_uri,bytes=source_stat.st_size if source_stat else None,
             mtime_ns=source_stat.st_mtime_ns if source_stat else None,stored_sha256=version.get('stored_sha256') if version else None)
         inventory.append(dict(source_key=key, version=version,observation=observation))
         document_stages = set(selected_stages)
-        remote_source = key.startswith("url:v1:")
+        remote_source = key.startswith(("url:v1:", "url:v2:")) or urlsplit(selector).scheme.lower() in ("http", "https")
         if known and not remote_source:
             remote_source = any(r[0] == "url" for r in connection.execute("SELECT source_kind FROM source_records WHERE document_id=?", (identifier,)))
         if remote_source and (version is None or version["stored_sha256"] is None) and "extract" in document_stages:

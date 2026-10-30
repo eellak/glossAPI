@@ -100,9 +100,11 @@ def _has_redacted_credentials(value):
     return was_redacted(value)
 
 
-CREDENTIALS_NOT_PERSISTED = ('credentials_not_persisted: the ledger records credential settings and URL credentials '
-    'redacted; resume with the credentials supplied again (Corpus.run(resume=RUN_ID, credentials=[full source URLs]) '
-    'or glossapi run --resume RUN_ID --credentials FILE), or resubmit this download in a new run')
+CREDENTIALS_NOT_PERSISTED = ('credentials_not_persisted: the ledger records credential settings redacted and URLs in their '
+    'persisted form (no userinfo, query or fragment values); resume with the source URLs supplied again '
+    '(Corpus.run(resume=RUN_ID, credentials=[full source URLs or {"url": ..., "source_id": ...}]) or glossapi run '
+    '--resume RUN_ID --credentials FILE). A URL binds only to its own resource identity: the identical raw URL, or the '
+    'same declared source_id (needed for token rotation). Otherwise resubmit this download in a new run')
 
 
 def operation_json(operation):
@@ -160,7 +162,7 @@ class StreamingScheduler:
         # frozen plan. This process keeps them for its own dispatch only.
         self.credentials = {}
         self.redacted_credentials = set()
-        # Caller-supplied transport URLs, keyed by their recorded sanitized spelling.
+        # Caller-supplied raw transport URLs, keyed by resource identity (source key).
         self.transport_urls = {}
 
     def _wait(self,run,task,operation,reason,message=None):
@@ -332,14 +334,23 @@ class StreamingScheduler:
             original=self.credentials.get(operation.key)
             if original is not None and redact_credentials(original)==operation.specification.settings:
                 operations[index]=replace(operation,specification=replace(operation.specification,settings=original))
-            elif _has_redacted_credentials(operation.specification.settings):
+            elif _has_redacted_credentials(operation.specification.settings) or operation.specification.settings.get('transport_url_redacted'):
                 settings=operation.specification.settings
-                supplied=self.transport_urls.get(settings.get('url')) if isinstance(settings.get('url'),str) else None
+                supplied=None
+                if isinstance(settings.get('url'),str):
+                    # Exact binding (cycle-2 F2): the resupplied raw URL must key to
+                    # this operation's own resource identity (keyed reference or
+                    # declared source_id), never to a matching redacted spelling.
+                    identity=self.writer.connection.execute('SELECT source_key FROM documents WHERE document_id=?',(operation.document.document_id,)).fetchone()
+                    supplied=self.transport_urls.get(identity[0]) if identity else None
                 if supplied is not None:
                     # The caller supplied the URL again; only this process holds it.
                     settings={**settings,'url':supplied}
                     self.credentials[operation.key]=settings
                     operations[index]=replace(operation,specification=replace(operation.specification,settings=settings))
+                elif settings.get('transport_url_redacted'):
+                    # Dropped userinfo leaves no marker in the URL itself.
+                    self.redacted_credentials.add(operation.key)
                 if _has_redacted_credentials(settings):
                     self.redacted_credentials.add(operation.key)
         tasks = {row['ordinal']:row['task_id'] for row in self.writer.connection.execute('SELECT * FROM tasks WHERE run_id=? ORDER BY ordinal',(run,))}

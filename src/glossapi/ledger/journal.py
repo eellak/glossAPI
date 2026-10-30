@@ -115,10 +115,18 @@ def wrapper_return_receipt(value):
 
 
 def source_key(uri):
-    """Stable non-secret identity: URL credentials never enter a source key."""
-    uri = sanitize_url(uri)
+    """Stable non-secret identity, never the persisted (redacted) spelling.
+
+    A URL whose persisted form loses nothing keeps ``url:v1:``. A URL with
+    userinfo, a query or a fragment value is keyed by an HMAC of the raw URL
+    under the corpus key (``url:v2:``): different credentials are different
+    resources (CP-LEDGER cycle 2, F2).
+    """
     parts = urlsplit(uri)
     if parts.scheme in ("http", "https"):
+        from .urls import keyed_source_key, lossless_url
+        if not lossless_url(uri):
+            return keyed_source_key(uri)
         return "url:v1:" + urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
     return "local_path:v1:" + uri
 
