@@ -135,3 +135,65 @@ def test_v4_includes_supplementary_pua_without_changing_legacy_counts():
     from glossapi.page_quality import text_contamination_counts
     assert text_contamination_counts('\U000f0000')['pua_char_count'] == 0
     assert text_contamination_counts('\U000f0000', all_pua=True)['pua_char_count'] == 1
+
+
+LATIN = dict(chars=631, greek_chars=0, latin_chars=413, other_chars=65,
+             words=91, valid_greek_word_rate=None, image_area_ratio=1)
+
+
+@pytest.mark.parametrize('rate', [None, 0, .399, .4, 1])
+@pytest.mark.parametrize('changes', [{}, {'greek_chars': 200, 'latin_chars': 200},
+                                    {'chars': 600}, {'other_chars': 0},
+                                    {'chars': 1000, 'other_chars': 300}])
+def test_clean_latin_layer_retains_v3(rate, changes):
+    values = LATIN | {'valid_greek_word_rate': rate} | changes
+    result = page_ocr_decision(**values)
+    assert result == page_ocr_decision(**values, rule_profile='v3') == (False, 'text_layer')
+    assert not page_rule_selection(result[1], valid_greek_word_rate=rate,
+                                   words=values['words'], image_area_ratio=1,
+                                   validity_not_applicable=True)
+
+
+@pytest.mark.parametrize('changes,expected', [
+    ({'greek_chars': 201, 'latin_chars': 200}, 'image_dominant_unknown_validity'),
+    ({'greek_chars': 201, 'latin_chars': 200, 'valid_greek_word_rate': 0}, 'image_dominant_bad_text'),
+    ({'greek_chars': 0, 'latin_chars': 0}, 'image_dominant_unknown_validity'),
+    ({'other_chars': 190}, 'image_dominant_unknown_validity'),
+    ({'chars': 599}, 'image_dominant_unknown_validity'),
+    ({'chars': 49}, 'scanned_page'),
+    ({'pua_char_count': 1}, 'image_dominant_contaminated_text'),
+    ({'control_char_count': 1}, 'image_dominant_contaminated_text'),
+    ({'min_chars': 632}, 'scanned_page'),
+    ({'image_dominant_min_chars': 632}, 'image_dominant_unknown_validity'),
+    ({'min_greek_share': .2, 'greek_chars': 101, 'latin_chars': 400}, 'image_dominant_unknown_validity'),
+    ({'max_other_share': .1}, 'image_dominant_unknown_validity'),
+])
+def test_latin_exception_keeps_v4_safety_gates(changes, expected):
+    assert page_ocr_decision(**(LATIN | changes)) == (True, expected)
+
+
+def test_sparse_latin_caption_cannot_certify_image_body():
+    # Sheet 03 is a URL over a broken layer, not the clean prose in sheet 05.
+    assert page_ocr_decision(**(LATIN | dict(chars=54, latin_chars=30,
+        other_chars=17, words=7))) == (True, 'image_dominant_unknown_validity')
+
+
+def test_latin_pdf_records_validity_not_applicable(tmp_path):
+    fitz = pytest.importorskip('fitz')
+    target = tmp_path / 'english_figure.pdf'
+    with fitz.open() as doc:
+        page = doc.new_page()
+        text = 'First of all, we compute the minimum bounding rectangle. '
+        page.insert_text((72, 72), '\n'.join([text] * 14), fontsize=10)
+        image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20), False)
+        image.clear_with(200)
+        page.insert_image(page.rect, stream=image.tobytes('png'), overlay=False)
+        doc.save(target)
+    old = page_quality(target, rule_profile='v3').pages[0]
+    report = page_quality(target)
+    new = report.pages[0]
+    assert new.chars >= 600 and new.greek_chars == 0 and new.image_area_ratio == 1
+    assert new.valid_greek_word_rate is None and new.validity_not_applicable
+    assert (new.page_needs_ocr, new.decision) == (old.page_needs_ocr, old.decision) == (False, 'text_layer')
+    assert report.to_dict()['pages'][0]['validity_not_applicable'] is True
+    assert not old.validity_not_applicable

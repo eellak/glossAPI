@@ -46,6 +46,7 @@ class PageQuality:
     pua_char_count: int = 0
     control_char_count: int = 0
     rule_profile: str = "v4"
+    validity_not_applicable: bool = False
 
 
 @dataclass(frozen=True)
@@ -135,11 +136,13 @@ def page_rule_selection(decision: str, *, valid_greek_word_rate: float | None,
                         rule_profile: str = "v4",
                         image_area_ratio: float | None = None,
                         image_dominant_ratio: float = 0.5,
-                        min_valid_word_rate: float = 0.4) -> bool:
+                        min_valid_word_rate: float = 0.4,
+                        validity_not_applicable: bool = False) -> bool:
     """Select existing decision labels; useful for archived-sidecar replay too.
 
     v4 additionally requires image_area_ratio, and trusts image-dominant text
     only with measured validity >= min_valid_word_rate and no contamination.
+    A recorded validity_not_applicable exception replays the v3 selection.
     v3 keeps scans and any PUA/control contamination. Garbage candidates need
     known validity < 0.5 or at most 10 words. Unknown validity is not zero.
     Image-dominant sparse text alone is excluded. Validity uses the report's
@@ -150,7 +153,7 @@ def page_rule_selection(decision: str, *, valid_greek_word_rate: float | None,
     if rule_profile == "v4":
         if image_area_ratio is None:
             raise ValueError("image_area_ratio is required for rule_profile='v4'")
-        if image_area_ratio >= image_dominant_ratio:
+        if image_area_ratio >= image_dominant_ratio and not validity_not_applicable:
             return (decision == "scanned_page" or valid_greek_word_rate is None
                     or not valid_greek_word_rate >= min_valid_word_rate
                     or pua_char_count > 0 or control_char_count > 0)
@@ -173,6 +176,23 @@ def text_contamination_counts(text: str, *, all_pua: bool = False) -> dict[str, 
     }
 
 
+def _validity_not_applicable(*, chars: int, greek_chars: int, latin_chars: int,
+                             other_chars: int, image_area_ratio: float,
+                             pua_char_count: int, control_char_count: int,
+                             min_chars: int = 50, min_greek_share: float = 0.5,
+                             max_other_share: float = 0.3,
+                             image_dominant_ratio: float = 0.5,
+                             image_dominant_min_chars: int = 600) -> bool:
+    """Greek validity cannot qualify a sufficiently dense, clean Latin layer."""
+    letters = greek_chars + latin_chars
+    return (image_area_ratio >= image_dominant_ratio
+            and chars > 0 and chars >= max(min_chars, image_dominant_min_chars)
+            and latin_chars > 0 and letters > 0
+            and greek_chars / letters <= min_greek_share
+            and other_chars / chars <= max_other_share
+            and pua_char_count == 0 and control_char_count == 0)
+
+
 def page_ocr_decision(*, chars: int, greek_chars: int, latin_chars: int,
                       other_chars: int, valid_greek_word_rate: float | None,
                       image_area_ratio: float, pua_char_count: int = 0,
@@ -191,7 +211,9 @@ def page_ocr_decision(*, chars: int, greek_chars: int, latin_chars: int,
     min_valid_word_rate and no PUA/control contamination. Density does not
     establish quality. The existing chars < min_chars scan gate is retained:
     a valid short caption does not certify the raster body. Below the image
-    threshold it delegates to v3.
+    threshold it delegates to v3. Clean Latin-majority layers with at least
+    image_dominant_min_chars characters also retain v3's decision: Greek
+    validity is not applicable. Sparse captions cannot use this exception.
 
     Legacy v2 labels image coverage >= image_dominant_ratio with
     chars < image_dominant_min_chars as an OCR candidate: a footer/caption does not establish that a raster body is present
@@ -217,6 +239,24 @@ def page_ocr_decision(*, chars: int, greek_chars: int, latin_chars: int,
         if image_area_ratio >= image_dominant_ratio:
             if chars < min_chars:
                 return True, "scanned_page"
+            if _validity_not_applicable(
+                chars=chars, greek_chars=greek_chars, latin_chars=latin_chars,
+                other_chars=other_chars, image_area_ratio=image_area_ratio,
+                pua_char_count=pua_char_count, control_char_count=control_char_count,
+                min_chars=min_chars, min_greek_share=min_greek_share,
+                max_other_share=max_other_share,
+                image_dominant_ratio=image_dominant_ratio,
+                image_dominant_min_chars=image_dominant_min_chars,
+            ):
+                return page_ocr_decision(
+                    chars=chars, greek_chars=greek_chars, latin_chars=latin_chars,
+                    other_chars=other_chars, valid_greek_word_rate=valid_greek_word_rate,
+                    image_area_ratio=image_area_ratio, words=words,
+                    min_chars=min_chars, min_image_ratio=min_image_ratio,
+                    min_greek_share=min_greek_share, min_valid_word_rate=min_valid_word_rate,
+                    max_other_share=max_other_share, image_dominant_ratio=image_dominant_ratio,
+                    image_dominant_min_chars=image_dominant_min_chars,
+                    candidate_decision=candidate_decision, rule_profile="v3")
             needs = page_rule_selection(
                 "text_layer", valid_greek_word_rate=valid_greek_word_rate,
                 words=words, pua_char_count=pua_char_count,
@@ -415,8 +455,14 @@ def page_quality(pdf_path: str | Path, *,
                     rule_profile=rule_profile,
                     candidate_decision=candidate,
                 )
+                not_applicable = rule_profile == "v4" and _validity_not_applicable(
+                    **{key: values[key] for key in ("chars", "greek_chars", "latin_chars",
+                        "other_chars", "image_area_ratio", "pua_char_count", "control_char_count")},
+                    image_dominant_ratio=image_dominant_ratio,
+                    image_dominant_min_chars=image_dominant_min_chars)
                 pages.append(PageQuality(page=index + 1, **values, page_needs_ocr=needs, decision=reason,
-                                         min_image_dpi=dpi, rule_profile=rule_profile))
+                                         min_image_dpi=dpi, rule_profile=rule_profile,
+                                         validity_not_applicable=not_applicable))
             finally:
                 page.close()
     selected = [p.page for p in pages if p.page_needs_ocr]

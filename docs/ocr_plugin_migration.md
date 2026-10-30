@@ -48,6 +48,11 @@ text layer (image coverage at least 0.5) only with measured Greek word validity
 at least 0.4 and no PUA/control contamination. Unknown validity routes to OCR.
 The existing scan gate (fewer than 50 extracted characters) remains in force;
 a short valid caption cannot certify the raster body.
+Clean Latin-majority layers (Greek share <= 0.5 of Greek + Latin letters) retain
+the v3 decision when they have at least 600 characters, no PUA/control characters,
+and other-character share <= 0.3. Their page record sets
+`validity_not_applicable=true`; Greek vocabulary validity cannot qualify Latin text.
+The density bound follows `image_dominant_min_chars` and never bypasses the scan gate.
 Below the image threshold the v3 routing logic applies. V2/v3 remain selectable
 through `page_quality(..., rule_profile="v3")` or the batch CLI's
 `--rule-profile`; their previous dictionary defaults are preserved.

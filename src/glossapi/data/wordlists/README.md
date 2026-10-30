@@ -23,8 +23,10 @@ Licence: MPL-1.1 OR GPL-2.0-or-later OR LGPL-2.1-or-later, as stated in
 MPL-1.1 option; the notice and MPL text are included. The package's EUPL licence
 does not replace the dictionary licence.
 
-This is a modern Greek vocabulary. Valid polytonic, historical, specialist or
-non-Greek text may have low/unknown validity and therefore incur extra OCR.
+This is a modern Greek vocabulary. Valid polytonic, historical or specialist
+text may have low/unknown validity and therefore incur extra OCR. Clean Latin-majority
+image-dominant layers with sufficient text retain v3 routing and record
+`validity_not_applicable`; see the page-routing contract in the migration guide.
 Accent folding is still opt-in; a word hit is evidence of vocabulary membership,
 not proof that an existing OCR layer matches the scan. An explicit empty word
 set disables v4 validity measurement and exercises its unknown-to-OCR safety net.
