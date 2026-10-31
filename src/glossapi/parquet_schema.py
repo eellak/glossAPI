@@ -204,19 +204,67 @@ def _write_metadata_parquet(df: pd.DataFrame, parquet_path: Path) -> None:
         _write_metadata_parquet_locked(df, parquet_path)
 
 
-def update_metadata_parquet(parquet_path: Union[str, Path], update) -> pd.DataFrame:
+def _write_serialized_locked(df: pd.DataFrame, parquet_path: Path, serialize) -> None:
+    """``serialize(frame, temporary_path)`` + atomic replace; the caller holds ``_parquet_lock(parquet_path)``."""
+    parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = parquet_path.with_suffix(parquet_path.suffix + f".{uuid.uuid4().hex}.tmp")
+    try:
+        serialize(df, tmp_path)
+        os.replace(tmp_path, parquet_path)
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except Exception:
+            pass
+
+
+def update_metadata_parquet(parquet_path: Union[str, Path], update, *, serialize=None) -> pd.DataFrame:
     """Locked read-modify-write of a metadata parquet: read, ``update(frame) -> frame``, write, one critical section.
 
     ``update`` receives the current rows (an empty frame when the file does not exist yet) and returns the rows to
     write; returning ``None`` writes nothing. Concurrent writers cannot lose each other's rows: each reads only
-    after the previous writer replaced the file."""
+    after the previous writer replaced the file.
+
+    ``serialize(frame, temporary_path)``, when given, writes the bytes instead of the normalising metadata writer, so
+    a caller that always wrote its file with its own serializer (``DataFrame.to_parquet``, a plain pyarrow table)
+    keeps its bytes; the file is still replaced atomically inside the lock (CP-K2a F1)."""
     parquet_path = Path(parquet_path)
     with _parquet_lock(parquet_path):
         current = pd.read_parquet(parquet_path) if parquet_path.exists() else pd.DataFrame()
         updated = update(current)
         if updated is not None:
-            _write_metadata_parquet_locked(updated, parquet_path)
+            if serialize is None:
+                _write_metadata_parquet_locked(updated, parquet_path)
+            else:
+                _write_serialized_locked(updated, parquet_path, serialize)
         return current if updated is None else updated
+
+
+def pandas_parquet(frame: pd.DataFrame, path: Path) -> None:
+    """The ``DataFrame.to_parquet(path, index=False)`` bytes the download and downloader writers always produced."""
+    frame.to_parquet(path, index=False)
+
+
+def merge_owned_rows(current: pd.DataFrame, rows: pd.DataFrame, key: str, owned=()) -> pd.DataFrame:
+    """Publish this operation's ``rows`` over the ``current`` file without losing another writer's rows or columns.
+
+    The result is ``rows`` in their order; columns only ``current`` has are joined onto them by ``key`` (another
+    writer's fields of the same document), and ``current`` rows whose key is neither in ``rows`` nor in ``owned``
+    (keys this operation wrote before and now replaces) are appended unchanged. With nothing concurrent (``current``
+    holds only this operation's earlier rows and no other column) the result is ``rows`` itself."""
+    if current.empty or key not in current.columns or key not in rows.columns:
+        return rows
+    published = set(rows[key].dropna().tolist())
+    extra = [column for column in current.columns if column not in rows.columns]
+    result = rows
+    if extra:
+        lookup = current[current[key].notna()].drop_duplicates(key, keep='last').set_index(key)[extra]
+        result = rows.join(lookup, on=key)
+    leftover = current[~current[key].isin(published | set(owned))]
+    if len(leftover):
+        result = pd.concat([result, leftover], ignore_index=True)
+    return result
 
 
 class ParquetSchema:
@@ -1017,9 +1065,19 @@ class ParquetSchema:
             # Set output path for the parquet file
             output_path = download_results_dir / "download_results.parquet"
             
-            # Write to parquet without adding complex metadata
-            pq.write_table(pa.Table.from_pandas(df), output_path)
-            
+            # Write to parquet without adding complex metadata. Create-if-missing inside the metadata lock
+            # (CP-K2a F1): a file another writer created meanwhile is kept, never replaced by this seed.
+            created = []
+            def _seed(current):
+                if output_path.exists():
+                    return None
+                created.append(True)
+                return df
+            update_metadata_parquet(output_path, _seed,
+                                    serialize=lambda frame, path: pq.write_table(pa.Table.from_pandas(frame), path))
+            if not created:
+                return output_path
+
             print(f"Created new metadata parquet file at {output_path}")
             return output_path
             

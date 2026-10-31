@@ -89,7 +89,8 @@ packaged Hunspell el_GR 0.9 surface entries. Automatic lookup is scoped to these
 pages so unconfigured non-image routing stays identical to v3. The source revision,
 scope, SHA256 and licence are recorded
 in `dictionary_identity`; every page records `rule_profile` and its `decision`.
-See [dictionary provenance and licence](../src/glossapi/data/wordlists/README.md).
+Dictionary provenance and licence: `src/glossapi/data/wordlists/README.md` in the
+source tree (installed as `glossapi/data/wordlists/README.md`).
 Explicit word sets/paths or `GLOSSAPI_GREEK_WORDLIST` override the default and
 retain their previous all-page scope.
 This modern Greek lexicon does not establish OCR accuracy and may over-route

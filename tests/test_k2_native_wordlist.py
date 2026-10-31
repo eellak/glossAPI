@@ -93,10 +93,36 @@ def test_run_identity_semantic_files(tmp_path, monkeypatch):
     assert missing[:-1] == present[:-1]  # the other identity entries are unaffected
 
 
+def _frozen_wordlist_run(tmp_path, words):
+    """A one-document streaming run frozen while the configured word list ``words`` is missing (marker binding)."""
+    from test_ledger_scheduler import graph, scheduler
+    from glossapi.ledger import LedgerWriter
+    writer = LedgerWriter(tmp_path / 'corpus.sqlite3')
+    engine = scheduler(writer, tmp_path)
+    binding = {'path': str(words), 'sha256': wordlist_identity(str(words))}
+    assert binding['sha256'] == 'missing:' + str(words)
+    run = engine.freeze(graph(writer, tmp_path, 1), settings={'semantic_files': [binding]})
+    return writer, engine, run
+
+
 def test_scheduler_refuses_a_missing_wordlist_that_appeared(tmp_path):
-    from glossapi.stages.extract import wordlist_identity
-    later = tmp_path / 'later.txt'
-    marker = wordlist_identity(str(later))
-    later.write_text('λόγος\n', encoding='utf-8')
-    # The scheduler's frozen-input check compares the marker with the current identity (stages/scheduler.py).
-    assert wordlist_identity(str(later)) != marker
+    """CP-K2a F5: the actual ``StreamingScheduler.execute`` refuses, before any dispatch, a run frozen with the
+    ``missing:`` marker once the file exists. Fails if the scheduler's semantic-file check is removed."""
+    import pytest
+    words = tmp_path / 'later.txt'
+    writer, engine, run = _frozen_wordlist_run(tmp_path, words)
+    with writer:
+        words.write_text('λόγος\n', encoding='utf-8')
+        with pytest.raises(ValueError, match='Frozen model/dictionary input changed; create an amended run'):
+            engine.execute(run)
+        assert writer.connection.execute('SELECT COUNT(*) FROM attempts').fetchone()[0] == 0  # nothing dispatched
+
+
+def test_scheduler_runs_a_wordlist_that_is_still_missing(tmp_path):
+    """The other half: the marker still matches, so the frozen run executes. Fails if the scheduler's ``missing:``
+    branch is removed (the ordinary present-file check would refuse a resumable run)."""
+    words = tmp_path / 'never.txt'
+    writer, engine, run = _frozen_wordlist_run(tmp_path, words)
+    with writer:
+        result = engine.execute(run)
+        assert result['state'] == 'completed' and result['counts']['ok'] == 2

@@ -1,7 +1,7 @@
 """Backend-independent OpenArchives download manifest preparation."""
 from pathlib import Path
 import pandas as pd
-from glossapi.parquet_schema import ParquetSchema, update_metadata_parquet
+from glossapi.parquet_schema import ParquetSchema, merge_owned_rows, update_metadata_parquet
 
 DEFAULT_DOWNLOAD_CONCURRENCY = 24
 DEFAULT_DOWNLOAD_TIMEOUT = 60
@@ -60,15 +60,24 @@ def _normalize_download_results(
     return merged
 
 
-def _write_canonical_metadata(work_root: Path, df: pd.DataFrame, *, only_if_missing: bool = False) -> Path:
+def _write_canonical_metadata(work_root: Path, df: pd.DataFrame, *, only_if_missing: bool = False,
+                              replaces_filenames=None) -> Path:
+    """Write the canonical OpenArchives metadata parquet.
+
+    ``only_if_missing``: create the seed inside the metadata lock (K2 native); an existing file, possibly written
+    concurrently, is kept rather than replaced. ``replaces_filenames`` (the post-download publication, CP-K2a F1):
+    under the lock, ``df`` is merged into the file as it is now by ``filename`` (``merge_owned_rows``): its rows and
+    fields win, rows of these filenames (this run's seed) not in ``df`` are dropped as before, and every other row and
+    column another writer committed is kept. Without either, ``df`` replaces the file (locked, atomic)."""
     schema = ParquetSchema({"url_column": "url"})
     canonical = work_root / "download_results" / "download_results.parquet"
     canonical.parent.mkdir(parents=True, exist_ok=True)
     normalized = schema.normalize_metadata_frame(df)
     if only_if_missing:
-        # Create the seed inside the metadata lock (K2 native): an existing file, possibly written concurrently,
-        # is kept rather than replaced.
         update_metadata_parquet(canonical, lambda current: None if canonical.exists() else normalized)
+    elif replaces_filenames is not None:
+        owned = set(replaces_filenames)
+        update_metadata_parquet(canonical, lambda current: merge_owned_rows(current, normalized, "filename", owned))
     else:
         schema.write_metadata_parquet(normalized, canonical)
     return canonical

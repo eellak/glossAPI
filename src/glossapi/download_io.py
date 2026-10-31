@@ -11,7 +11,9 @@ the behaviour the downloaders relied on:
 - ``open_binary`` opens, writes and closes a file in the default thread executor, so the event loop
   keeps running during slow disk I/O. One write is in flight at a time; ``close`` waits for an
   in-flight write first (also after the writer was cancelled), so there is no close race and no
-  leaked handle. Write and close errors (disk full, failed flush) propagate unchanged.
+  leaked handle. Write and close errors (disk full, failed flush) propagate unchanged. When the caller
+  is cancelled while the open is still running, the late handle is closed in the executor too, by a
+  retained task; its close error is logged (CP-K2a F3).
 """
 from __future__ import annotations
 
@@ -77,6 +79,44 @@ class BinaryFile:
         return False
 
 
+logger = logging.getLogger(__name__)
+_LATE_CLOSES = set()  # cleanup tasks of cancelled opens, referenced until done
+
+
+def _close_when_done(done):
+    """Event-loop shutdown fallback: close the late handle in the open's done callback."""
+    if done.cancelled() or done.exception() is not None:
+        return
+    try:
+        done.result().close()
+    except Exception as error:
+        logger.warning("Closing the handle of a cancelled open failed: %s: %s", type(error).__name__, error)
+
+
+async def _close_late_handle(opening):
+    """Close the handle of an open whose caller was cancelled, without blocking the event loop.
+
+    An open that failed leaves nothing to close (its exception is consumed here). A close error is logged, never
+    raised into the loop's exception handler. If the loop shuts down first, the close falls back to the open's
+    done callback, so the handle is still closed."""
+    try:
+        handle = await asyncio.shield(opening)
+    except asyncio.CancelledError:
+        if opening.done():
+            _close_when_done(opening)
+        else:
+            opening.add_done_callback(_close_when_done)
+        raise
+    except Exception:
+        return
+    try:
+        await asyncio.to_thread(handle.close)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        logger.warning("Closing the handle of a cancelled open failed: %s: %s", type(error).__name__, error)
+
+
 class _Opening:
     def __init__(self, path, mode):
         self._path, self._mode, self._file = path, mode, None
@@ -86,8 +126,11 @@ class _Opening:
         try:
             handle = await asyncio.shield(opening)
         except asyncio.CancelledError:
-            # The open may still complete in its thread: close that handle when it does.
-            opening.add_done_callback(lambda done: done.cancelled() or done.exception() or done.result().close())
+            # The open may still complete in its thread: close that handle when it does, in the executor like the
+            # normal close (CP-K2a F3), from a task this module keeps until it has finished.
+            cleanup = asyncio.ensure_future(_close_late_handle(opening))
+            _LATE_CLOSES.add(cleanup)
+            cleanup.add_done_callback(_LATE_CLOSES.discard)
             raise
         self._file = BinaryFile(handle)
         return self._file

@@ -497,30 +497,44 @@ class GlossDownloader:
             Updated DataFrame with filename_base
         """
         input_parquet = Path(input_parquet)
-        df = pd.read_parquet(input_parquet)
-        observe_source_rows(df, input_parquet, url_column=self.url_column)
-
-        # Ensure URL column exists
-        if self.url_column not in df.columns:
-            available_columns = df.columns.tolist()
-            self.logger.error(f"URL column '{self.url_column}' not found in parquet file. Available columns: {available_columns}")
-            url_like_columns = [col for col in available_columns if any(keyword in col.lower() for keyword in ['url', 'link', 'uri'])]
-            if url_like_columns:
-                self.url_column = url_like_columns[0]
-                self.logger.warning(f"Using '{self.url_column}' as URL column instead")
-            else:
-                raise ValueError(f"URL column '{self.url_column}' not found in parquet file and no alternative URL columns detected")
-
-        # Reuse the same expansion + dedup logic
-        df = self._expand_and_mark_duplicates(df)
-        df = self.ensure_filename_base(df)
-
-        # Drop internal columns not needed in saved parquet
-        if '__url_norm' in df.columns:
-            df = df.drop(columns=['__url_norm'])
-
         out_path = Path(output_parquet) if output_parquet else input_parquet
-        df.to_parquet(out_path, index=False)
+
+        def _transform(df):
+            observe_source_rows(df, input_parquet, url_column=self.url_column)
+
+            # Ensure URL column exists
+            if self.url_column not in df.columns:
+                available_columns = df.columns.tolist()
+                self.logger.error(f"URL column '{self.url_column}' not found in parquet file. Available columns: {available_columns}")
+                url_like_columns = [col for col in available_columns if any(keyword in col.lower() for keyword in ['url', 'link', 'uri'])]
+                if url_like_columns:
+                    self.url_column = url_like_columns[0]
+                    self.logger.warning(f"Using '{self.url_column}' as URL column instead")
+                else:
+                    raise ValueError(f"URL column '{self.url_column}' not found in parquet file and no alternative URL columns detected")
+
+            # Reuse the same expansion + dedup logic
+            df = self._expand_and_mark_duplicates(df)
+            df = self.ensure_filename_base(df)
+
+            # Drop internal columns not needed in saved parquet
+            if '__url_norm' in df.columns:
+                df = df.drop(columns=['__url_norm'])
+
+            return df
+
+        from .parquet_schema import pandas_parquet, update_metadata_parquet
+        if out_path.absolute() == input_parquet.absolute():
+            # In place (CP-K2a F1): read, transform and atomically replace inside the metadata lock, so a concurrent
+            # locked writer's commit is never overwritten by a transform of an older read.
+            def _in_place(current):
+                if not input_parquet.exists():
+                    pd.read_parquet(input_parquet)  # the same missing-file error as before
+                return _transform(current)
+            df = update_metadata_parquet(input_parquet, _in_place, serialize=pandas_parquet)
+        else:
+            df = _transform(pd.read_parquet(input_parquet))
+            df.to_parquet(out_path, index=False)
         self.logger.info(f"Precomputed filename_base and updated parquet at {out_path}")
         return df
     

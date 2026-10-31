@@ -308,6 +308,85 @@ def test_cancel_during_open_closes_the_late_handle(monkeypatch):
     assert handles and handles[0].closed
 
 
+def _cancelled_open_with_late_handle(monkeypatch, close):
+    """Cancel a caller while its open waits; release the open; return the max event-loop tick gap and the loop's
+    unhandled-exception reports (CP-K2a F3, the reviewer's probe)."""
+    opened = threading.Event()
+    class Handle:
+        def close(self):
+            close()
+    def slow_open(*args):
+        opened.wait(timeout=2)
+        return Handle()
+    monkeypatch.setattr(download_io, 'open', slow_open, raising=False)
+    unhandled = []
+    async def run():
+        asyncio.get_running_loop().set_exception_handler(lambda loop, context: unhandled.append(context))
+        ticks = []
+        async def ticker():
+            for _ in range(70):
+                ticks.append(time.monotonic())
+                await asyncio.sleep(.005)
+        async def acquire():
+            async with open_binary('unused'):
+                pass
+        ticker_task = asyncio.create_task(ticker())
+        task = asyncio.create_task(acquire())
+        await asyncio.sleep(.02)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        opened.set()
+        await ticker_task
+        await asyncio.sleep(.05)
+        return max(b - a for a, b in zip(ticks, ticks[1:]))
+    return asyncio.run(run()), unhandled
+
+
+def test_cancelled_open_closes_the_late_handle_off_the_event_loop(monkeypatch):
+    finished = threading.Event()
+    def slow_close():
+        time.sleep(.2); finished.set()
+    gap, unhandled = _cancelled_open_with_late_handle(monkeypatch, slow_close)
+    assert finished.is_set()
+    assert gap < .1, gap  # 9d5d372: ~0.2 s, the close ran on the event loop thread
+    assert not unhandled
+
+
+def test_cancelled_open_late_close_error_is_logged_not_unhandled(monkeypatch, caplog):
+    def failing_close():
+        raise OSError(errno.EIO, 'late close failed')
+    with caplog.at_level(logging.WARNING, logger='glossapi.download_io'):
+        gap, unhandled = _cancelled_open_with_late_handle(monkeypatch, failing_close)
+    assert not unhandled  # 9d5d372: the error escaped into the loop's exception handler
+    assert any('cancelled open failed' in record.getMessage() and 'late close failed' in record.getMessage()
+               for record in caplog.records)
+    assert not download_io.__dict__.get('_LATE_CLOSES', set())  # cleanup task released when done
+
+
+def test_cancelled_open_whose_open_fails_leaves_nothing_unhandled(monkeypatch):
+    released = threading.Event()
+    def failing_open(*args):
+        released.wait(timeout=2)
+        raise PermissionError('denied')
+    monkeypatch.setattr(download_io, 'open', failing_open, raising=False)
+    unhandled = []
+    async def run():
+        asyncio.get_running_loop().set_exception_handler(lambda loop, context: unhandled.append(context))
+        async def acquire():
+            async with open_binary('unused'):
+                pass
+        task = asyncio.create_task(acquire())
+        await asyncio.sleep(.02); task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        released.set()
+        await asyncio.sleep(.1)
+    asyncio.run(run())
+    import gc; gc.collect()
+    assert not unhandled
+
+
 def test_text_modes_are_refused():
     with pytest.raises(ValueError):
         open_binary('x', 'w')

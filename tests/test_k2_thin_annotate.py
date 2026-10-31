@@ -3,7 +3,7 @@
 Every differential case runs both implementations on the same input and compares the part files
 (names and bytes), the classified Parquet bytes, the frame handed to the index adjustment (values,
 dtypes, index, order) and the recorded observations. The oracle needs dask; the dask-free tests
-(default model discovery, bounded memory, partition plan) always run.
+(default model discovery, row-bounded prediction frames, partition plan) always run.
 """
 import os
 from pathlib import Path
@@ -305,23 +305,85 @@ def test_partition_plan_matches_dask_repartition_rules():
     assert [piece[0][0] for piece in more] == [0, 0, 1, 1, 2, 2, 2, 2]
 
 
-def test_prediction_memory_is_bounded_by_one_input_partition(tmp_path, monkeypatch):
+def test_one_read_per_input_partition_and_row_bounded_prediction_frames(tmp_path, monkeypatch):
+    """What holds: during prediction each input partition is read once, and ``predict`` sees at most
+    PREDICTION_ROWS rows. Not claimed: the whole-corpus read-back after prediction (GAPS, K4/W5)."""
     monkeypatch.setattr(partitions, 'BLOCKSIZE', 3000)
+    monkeypatch.setattr(partitions, 'PREDICTION_ROWS', 25, raising=False)
     source = sectioner_file(tmp_path/'input.parquet', [20] * 12)
     groups = partitions.input_partitions(pq.ParquetFile(source).metadata)
     loaded, predicted = [], []
     real_read, real_groups = pq.ParquetFile.read, pq.ParquetFile.read_row_groups
-    monkeypatch.setattr(pq.ParquetFile, 'read', lambda self, *a, **k: loaded.append(real_read(self, *a, **k).num_rows) or real_read(self, *a, **k))
-    monkeypatch.setattr(pq.ParquetFile, 'read_row_groups', lambda self, *a, **k: loaded.append(real_groups(self, *a, **k).num_rows) or real_groups(self, *a, **k))
+    def read(self, *a, **k):
+        table = real_read(self, *a, **k); loaded.append(table.num_rows); return table
+    def read_groups(self, *a, **k):
+        table = real_groups(self, *a, **k); loaded.append(table.num_rows); return table
+    monkeypatch.setattr(pq.ParquetFile, 'read', read)
+    monkeypatch.setattr(pq.ParquetFile, 'read_row_groups', read_groups)
     instance = classifier(FlakyModel())
     original = instance.clf_pipeline.predict
     instance.clf_pipeline.predict = lambda X: predicted.append(len(X)) or original(X)
-    instance._process_predictions(str(source), str(tmp_path/'out.parquet'), pretrained_model=False, n_cpus=4)
+    instance._process_predictions(str(source), str(tmp_path/'out.parquet'), pretrained_model=False, n_cpus=1)
     largest = max(sum(20 for _ in group) for group in groups)
-    assert len(groups) > 1 and largest < 240
+    assert len(groups) > 5 and largest < 240
     prediction_phase = loaded[:len(groups)]  # one read per input partition, then the read-back
     assert max(prediction_phase) == largest and sum(prediction_phase) == 240
-    assert max(predicted) <= largest and sum(predicted) == 240
+    assert max(predicted) <= 25 and sum(predicted) == 240
+
+
+def _largest_prediction_frame(tmp_path, monkeypatch, inputs, npartitions):
+    source = sectioner_file(tmp_path/f'input-{inputs}-{npartitions}.parquet', [20] * inputs)
+    seen = []
+    def predict(frame):
+        seen.append(len(frame))
+        return frame.assign(predicted_section='άλλο')
+    partitions.predict_partitions(source, tmp_path/f'parts-{inputs}-{npartitions}', npartitions, lambda frame: frame, predict)
+    with pq.ParquetFile(source) as file:
+        count = len(partitions.input_partitions(file.metadata))
+    readback = partitions.read_frame(str(tmp_path/f'parts-{inputs}-{npartitions}'))
+    return count, max(seen), sum(seen), readback
+
+
+@pytest.mark.parametrize('npartitions', [5, 20])
+def test_prediction_frame_bound_stays_fixed_as_the_input_grows(tmp_path, monkeypatch, npartitions):
+    """CP-K2a F2: with a fixed partition count (n_cpus=1 → 5) the largest prediction frame used to grow with the
+    corpus (12 inputs: 60 rows; 48 inputs: 200 rows). It is now the fixed row budget for both sizes."""
+    monkeypatch.setattr(partitions, 'BLOCKSIZE', 3000)
+    monkeypatch.setattr(partitions, 'PREDICTION_ROWS', 20, raising=False)  # raising=False: red run on 9d5d372
+    small = _largest_prediction_frame(tmp_path, monkeypatch, 12, npartitions)
+    large = _largest_prediction_frame(tmp_path, monkeypatch, 48, npartitions)
+    assert small[0] == 12 and large[0] == 48  # one input partition per document (3000-byte blocksize)
+    assert small[1] <= 20 and large[1] <= 20
+    assert (small[2], large[2]) == (240, 960)
+    assert sorted(large[3]['id']) == list(range(1, 961))
+
+
+@pytest.mark.parametrize('budget', [7, 25, 10 ** 6])
+@pytest.mark.parametrize('n_cpus', [1, 6])
+def test_row_budget_keeps_products_and_readback_identical_to_dask(tmp_path, monkeypatch, budget, n_cpus):
+    """Splitting prediction frames changes no label, no classified byte and no read-back frame (values, dtypes,
+    index, order). Part files are byte-identical when each fits one piece; otherwise only their row groups differ."""
+    reference_oracle('dask')
+    from dask.dataframe.io.parquet import arrow as dask_arrow
+    monkeypatch.setattr(dask_arrow.ArrowDatasetEngine, 'default_blocksize', classmethod(lambda cls: '3000 B'))
+    monkeypatch.setattr(partitions, 'BLOCKSIZE', 3000)
+    monkeypatch.setattr(partitions, 'PREDICTION_ROWS', budget, raising=False)
+    source = sectioner_file(tmp_path/'input.parquet', [12, 30, 7, 19, 1, 44, 3, 26, 9, 15, 2, 33])
+    results = {}
+    for kind in ('reference', 'own'):
+        work = tmp_path/kind; work.mkdir(); shutil.copy2(source, work/'sections.parquet')
+        frame, _ = run(kind, work/'sections.parquet', work/'classified.parquet', monkeypatch=monkeypatch, n_cpus=n_cpus)
+        results[kind] = dict(frame=frame, classified=(work/'classified.parquet').read_bytes(), parts=tree(work/'classified.parquet.tmp'),
+                             readback=partitions.read_frame(str(work/'classified.parquet.tmp')))
+    reference, own = results['reference'], results['own']
+    assert own['classified'] == reference['classified']
+    pd.testing.assert_frame_equal(own['frame'], reference['frame'], check_exact=True)
+    assert own['frame'].index.tolist() == reference['frame'].index.tolist()
+    pd.testing.assert_frame_equal(own['readback'], reference['readback'], check_exact=True)
+    assert own['readback'].index.tolist() == reference['readback'].index.tolist()
+    assert sorted(own['parts']) == sorted(reference['parts'])
+    if budget == 10 ** 6:
+        assert own['parts'] == reference['parts']
 
 
 ISOLATED = '''

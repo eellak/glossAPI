@@ -77,6 +77,7 @@ class DownloadPhaseMixin:
         from ..gloss_downloader import (GlossDownloader, RESOURCE_IDENTITY_COLUMN, frame_identities,
                                         persisted_download_frame)
         from ..ledger.urls import is_keyed_key, register_setting_secrets, register_url, was_redacted
+        from ..parquet_schema import pandas_parquet, update_metadata_parquet
         BrowserGlossDownloader = None
 
         # If input_parquet not specified, find parquet files in input_dir
@@ -265,8 +266,18 @@ class DownloadPhaseMixin:
                     self.logger.info("All files already successfully downloaded")
                     recorded = persisted_download_frame(existing_results, url_column)
                     if existing_results_path is not None and not recorded.equals(existing_results):
-                        # An older results file held raw URLs: rewrite it redacted.
-                        recorded.to_parquet(existing_results_path, index=False)
+                        # An older results file held raw URLs: rewrite it redacted. The redaction is applied to
+                        # the file as it is now, inside the metadata lock (CP-K2a F1): rows or columns another
+                        # writer committed since the read above are kept, and a removed file is not recreated.
+                        rewritten = []
+                        def _redact(current):
+                            if not Path(existing_results_path).exists():
+                                return None
+                            current_recorded = persisted_download_frame(current, url_column)
+                            rewritten.append(current_recorded)
+                            return None if current_recorded.equals(current) else current_recorded
+                        update_metadata_parquet(existing_results_path, _redact, serialize=pandas_parquet)
+                        recorded = rewritten[0] if rewritten else recorded
                     return recorded
 
                 self.logger.info(
@@ -351,29 +362,55 @@ class DownloadPhaseMixin:
             if callable(close_logs):
                 close_logs()
 
-        # Merge with existing results
-        if not existing_results.empty:
-            # Filter out rows from existing_results that are in new_results (based on URL)
-            if url_column in new_results.columns and url_column in existing_results.columns:
-                # Replace previous rows of the same resource identity.
-                processed = set(frame_identities(new_results, url_column)) - {None}
-                processed_urls = set(new_results[url_column].astype(str).tolist())
-                existing_filtered = existing_results[[
-                    (identity not in processed) if identity else (str(url) not in processed_urls)
-                    for identity, url in zip(frame_identities(existing_results, url_column), existing_results[url_column].tolist())]]
-
-                # Combine existing and new results
-                final_results = pd.concat([existing_filtered, new_results], ignore_index=True)
-                self.logger.info(f"Merged {len(existing_filtered)} existing results with {len(new_results)} new results")
-        else:
-            final_results = new_results
-
         # Ensure we have a download_results directory
         os.makedirs(download_results_dir, exist_ok=True)
 
         # Save results using the input filename pattern
         output_parquet = download_results_dir / f"download_results_{original_input_filename}"
-        persisted_download_frame(final_results, url_column).to_parquet(output_parquet, index=False)
+
+        def _merge(base):
+            # Merge with existing results
+            if base.empty:
+                return new_results
+            # Filter out rows from the existing results that are in new_results (based on URL)
+            if url_column in new_results.columns and url_column in base.columns:
+                # Replace previous rows of the same resource identity.
+                processed = set(frame_identities(new_results, url_column)) - {None}
+                processed_urls = set(new_results[url_column].astype(str).tolist())
+                existing_filtered = base[[
+                    (identity not in processed) if identity else (str(url) not in processed_urls)
+                    for identity, url in zip(frame_identities(base, url_column), base[url_column].tolist())]]
+
+                # Combine existing and new results
+                self.logger.info(f"Merged {len(existing_filtered)} existing results with {len(new_results)} new results")
+                return pd.concat([existing_filtered, new_results], ignore_index=True)
+            # Rows without the URL column cannot be matched: keep them (before CP-K2a F1 this was an unbound name).
+            return pd.concat([base, new_results], ignore_index=True)
+
+        # Publication (CP-K2a F1): the network work above ran without the lock. Under the shared metadata lock the
+        # results file is re-read as it is now, this acquisition's rows replace only earlier rows of the same
+        # resource identity, every other row and column (another writer's commit since the read above) is kept,
+        # and the file is replaced atomically. With nothing concurrent the bytes are those of the previous
+        # read-then-write (the same rows, the same ``to_parquet`` serializer).
+        published = []
+        def _publish(current):
+            base = current
+            if (existing_results_path is not None and Path(existing_results_path) != output_parquet
+                    and not existing_results.empty):
+                # Rows resumed from the partial checkpoint or another results file belong to this publication.
+                if base.empty:
+                    base = existing_results
+                else:
+                    present = set(frame_identities(base, url_column)) - {None}
+                    resumed = existing_results[[identity not in present for identity in frame_identities(existing_results, url_column)]]
+                    if len(resumed):
+                        base = pd.concat([base, resumed], ignore_index=True)
+            final = _merge(base)
+            published.append(final)
+            return persisted_download_frame(final, url_column)
+
+        update_metadata_parquet(output_parquet, _publish, serialize=pandas_parquet)
+        final_results = published[0]
         self.logger.info(f"Saved download results to {output_parquet}")
 
         # Clean up temporary files if created

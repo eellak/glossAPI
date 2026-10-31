@@ -77,7 +77,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         download_policy_file=(str(args.download_policy_file) if str(args.download_policy_file or "").strip() else None),
     )
     canonical_df = _normalize_download_results(shard_df=manifest_df, download_results_df=dl_df, url_column="url")
-    _write_canonical_metadata(work_root, canonical_df)
+    # Merged into the canonical file as it is now, under the metadata lock (CP-K2a F1): this run's seed rows are
+    # replaced, another writer's rows and columns are kept.
+    _write_canonical_metadata(work_root, canonical_df, replaces_filenames=manifest_df["filename"].astype(str).tolist())
     return 0
 
 
