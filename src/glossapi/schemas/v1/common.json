@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/common.json",
+  "title": "glossAPI CLI v1 shared definitions",
+  "description": "Objects shared by several commands: capability and device objects (capabilities, doctor, plan), conflicts, warnings.",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stage": {
+      "enum": [
+        "download",
+        "extract",
+        "clean",
+        "ocr",
+        "math",
+        "sections",
+        "annotate",
+        "export"
+      ]
+    },
+    "task_status": {
+      "enum": [
+        "planned",
+        "running",
+        "ok",
+        "skipped",
+        "failed",
+        null
+      ]
+    },
+    "device_id": {
+      "type": "string",
+      "pattern": "^(cpu|mps|cuda|cuda:[0-9]+)$"
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "counts": {
+      "type": "object",
+      "required": [
+        "planned",
+        "running",
+        "ok",
+        "skipped",
+        "failed"
+      ],
+      "properties": {
+        "planned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "running": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "package_status": {
+      "type": "object",
+      "required": [
+        "package_group",
+        "requirement",
+        "name",
+        "installed_version",
+        "check",
+        "status",
+        "detail",
+        "blocking"
+      ],
+      "properties": {
+        "package_group": {
+          "type": "string"
+        },
+        "requirement": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "installed_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "check": {
+          "enum": [
+            "presence",
+            "version"
+          ]
+        },
+        "status": {
+          "enum": [
+            "present",
+            "missing",
+            "version_mismatch",
+            "not_admitted",
+            "not_applicable"
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "blocking": {
+          "type": "boolean"
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "required": [
+        "stage",
+        "available",
+        "reason_code",
+        "packages",
+        "entry_points",
+        "native_modules",
+        "toolkit",
+        "missing_install_profiles",
+        "install_commands",
+        "supported_device_kinds",
+        "executable_by_run",
+        "unavailable_reason"
+      ],
+      "properties": {
+        "stage": {
+          "$ref": "common.json#/$defs/stage"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "reason_code": {
+          "enum": [
+            null,
+            "missing_package",
+            "version_mismatch",
+            "toolkit_not_admitted",
+            "missing_entry_point",
+            "missing_native_module"
+          ]
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/package_status"
+          }
+        },
+        "entry_points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "group",
+              "name",
+              "status"
+            ],
+            "properties": {
+              "group": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "registered",
+                  "missing"
+                ]
+              }
+            }
+          }
+        },
+        "native_modules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "module",
+              "required",
+              "status"
+            ],
+            "properties": {
+              "module": {
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "status": {
+                "enum": [
+                  "present",
+                  "missing"
+                ]
+              }
+            }
+          }
+        },
+        "toolkit": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "admitted",
+            "status"
+          ],
+          "properties": {
+            "admitted": {
+              "type": "boolean"
+            },
+            "status": {
+              "type": "string"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "missing_install_profiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "install_commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "supported_device_kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "cpu",
+              "mps",
+              "cuda"
+            ]
+          },
+          "minItems": 1
+        },
+        "executable_by_run": {
+          "type": "boolean"
+        },
+        "unavailable_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "device": {
+      "type": "object",
+      "required": [
+        "device_id",
+        "kind",
+        "hardware",
+        "state",
+        "basis",
+        "reason"
+      ],
+      "properties": {
+        "device_id": {
+          "$ref": "common.json#/$defs/device_id"
+        },
+        "kind": {
+          "enum": [
+            "cpu",
+            "mps",
+            "cuda"
+          ]
+        },
+        "hardware": {
+          "enum": [
+            "present",
+            "absent",
+            "unknown"
+          ]
+        },
+        "state": {
+          "enum": [
+            "available",
+            "unknown_until_probe",
+            "unavailable"
+          ]
+        },
+        "basis": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "common.json#/$defs/code"
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "blocking",
+            "warning"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "stage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "common.json#/$defs/code"
+        },
+        "message": {
+          "type": "string"
+        },
+        "stage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

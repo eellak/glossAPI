@@ -1,8 +1,10 @@
-"""glossAPI ledger CLI: plan, run, status and report.
+"""glossAPI ledger CLI: plan, run, status, report, capabilities and doctor.
 
-plan/status/report are read-only and import no pipeline or backend; run executes
-the frozen streaming plan. status/report without --run select the latest run the
-user started (a streaming run, not its compatibility wrapper children).
+plan/status/report/capabilities/doctor are read-only and import no pipeline or
+backend; run executes the frozen streaming plan. status/report without --run
+select the latest run the user started (a streaming run, not its compatibility
+wrapper children). Every command prints one JSON envelope (schema v1:
+glossapi/schemas/v1/envelope.json).
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+from typing import Any
 
 from .ledger.catalogue import STAGES
 from .ledger.encoding import canonical_json
@@ -28,13 +31,19 @@ class Parser(argparse.ArgumentParser):
 
 
 def parser():
-    from .stages.retention import DEBUG_HELP, MEMORY_SAVING_HELP
+    from .settings_contract import PLAN_FIXED_NOTE, option_help
     result = Parser(prog="glossapi", description=__doc__)
     commands = result.add_subparsers(dest="command", required=True, parser_class=Parser)
-    for name in ("plan", "run", "status", "report"):
-        command = commands.add_parser(name)
-        command.add_argument("--corpus", default=".")
+    for name in ("plan", "run", "status", "report", "capabilities", "doctor"):
+        command = commands.add_parser(name, epilog=PLAN_FIXED_NOTE if name in ("plan", "run") else None)
         command.add_argument("--json", action="store_true")
+        if name == "capabilities":
+            continue
+        command.add_argument("--corpus", default=".")
+        if name == "doctor":
+            command.add_argument("--probe-devices", action="store_true",
+                help="also confirm CUDA/MPS with the framework: imports torch in a child process (the result says so)")
+            continue
         if name in ("plan", "run"):
             sources = command.add_mutually_exclusive_group()
             sources.add_argument("--files", nargs="+", action="extend", default=[])
@@ -43,8 +52,8 @@ def parser():
             command.add_argument("--device", action="append", default=[])
             command.add_argument("--workers", action="append", default=[])
             command.add_argument("--settings")
-            command.add_argument("--debug", choices=("on", "off"), help="debug = on/off (default off): "+DEBUG_HELP)
-            command.add_argument("--memory-saving", choices=("normal", "extreme"), help="memory_saving = normal/extreme (default normal): "+MEMORY_SAVING_HELP)
+            command.add_argument("--debug", choices=("off", "on"), help=option_help("debug"))
+            command.add_argument("--memory-saving", choices=("normal", "extreme"), help=option_help("memory_saving"))
             command.add_argument("--disk-budget-bytes", type=int)
             if name == 'run':
                 command.add_argument('--plan')
@@ -117,13 +126,112 @@ def _export(path, data, format):
             Path(temporary).unlink()
 
 
+def _merge(name, given, manifest_value):
+    """An argument and the manifest may both name a value only when they agree (per stage for mappings)."""
+    if isinstance(given, dict) and isinstance(manifest_value, dict):
+        clashes = {key: [given[key], manifest_value[key]] for key in given.keys() & manifest_value.keys() if given[key] != manifest_value[key]}
+        if clashes:
+            raise ReadRequestError("conflicting_request", f"--{name} disagrees with the manifest", details={"field": name, "clashes": clashes})
+        return {**manifest_value, **given}
+    if given and manifest_value and given != manifest_value:
+        raise ReadRequestError("conflicting_request", f"--{name} disagrees with the manifest's {name}",
+                               details={"field": name, "argument": given, "manifest": manifest_value})
+    return given or manifest_value
+
+
+def _manifest_file(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ReadRequestError("invalid_manifest", "Manifest file is not readable JSON: " + str(error), details={"path": str(path)}) from error
+
+
+def _plan_data(connection, root, *, files=(), manifest=None, stages=None, devices=None, workers=None, settings=None, flags=None):
+    """The exact plan (``plan --json`` data) and the parsed manifest; reads only.
+
+    Settings precedence: manifest settings < --settings file < individual flags.
+    Stages/devices/workers given both as arguments and in a v1 manifest must agree.
+    """
+    from .input_manifest import parse_manifest
+    parsed = parse_manifest(manifest) if manifest is not None else None
+    settings = {**(parsed.settings if parsed else {}), **(settings or {})}
+    for name, value in (flags or {}).items():
+        if value is not None:
+            settings[name] = value
+    for name in ("disk_budget_bytes", "max_source_bytes", "max_attempt_bytes"):
+        if settings.get(name) is not None and (type(settings[name]) is not int or settings[name] < 0):
+            raise ReadRequestError("invalid_settings", name + " must be a nonnegative integer")
+    selectors, rows = list(files or []), [{} for _ in files or []]
+    stages = _merge("stages", stages, parsed.stages if parsed else None)
+    devices = _merge("device", devices or {}, parsed.devices if parsed else {})
+    workers = _merge("workers", workers or {}, parsed.workers if parsed else {})
+    if parsed is not None:
+        selectors, rows = list(parsed.selectors), list(parsed.rows)
+    from .ledger.urls import persisted_url, pop_identity_root, push_identity_root, url_policy
+    with url_policy(settings.get("url_policy")):
+        identities = None
+        if any(str(selector).startswith(("http://", "https://")) for selector in selectors):
+            # Raw URLs stay in memory. The plan carries each URL's
+            # resource identity (keyed under the corpus key, created
+            # outside the ledger when first needed) and its persisted
+            # spelling only (CP-LEDGER cycle 2, F1/F2).
+            from .stages.run import resource_identity
+            identity_root = Path(root).absolute()
+            push_identity_root(identity_root)
+            try:
+                identities = [resource_identity(selector, source_id=row.get("source_id"), dataset_id=row.get("dataset_id"))
+                              if str(selector).startswith(("http://", "https://")) else None for selector, row in zip(selectors, rows)]
+            finally:
+                pop_identity_root(identity_root)
+            selectors = [persisted_url(selector) if identity else selector for selector, identity in zip(selectors, identities)]
+        data = plan_view(connection, selectors=selectors, stages=stages, settings=settings, devices=devices, workers=workers,
+            manifest=parsed.selected if parsed else None, identities=identities,
+            exclusions=parsed.exclusions if parsed else None, input_manifest=parsed.describe() if parsed else None)
+    return data, parsed
+
+
+def plan_documents(corpus=".", *, files=(), manifest=None, stages=None, devices=None, workers=None, settings=None,
+                   debug=None, memory_saving=None, disk_budget_bytes=None):
+    """Python API for ``glossapi plan --json``: the same exact plan data the CLI prints.
+
+    ``manifest`` is a decoded manifest (see glossapi.input_manifest) or a path to a
+    JSON file. Typed failures raise ReadRequestError, ManifestError or
+    PlanBindingError (each has ``code`` and ``details``); a plan with a request
+    conflict (unsupported or unavailable device) raises ReadRequestError.
+    """
+    from .plan_preview import plan_errors
+    if isinstance(manifest, (str, os.PathLike)):
+        manifest = _manifest_file(manifest)
+    database = Path(corpus).absolute() / "corpus.sqlite3"
+    with open_readonly(database) if database.is_file() else nullcontext(None) as connection:
+        data, _ = _plan_data(connection, Path(corpus).absolute(), files=list(files), manifest=manifest, stages=list(stages) if stages else None,
+            devices=dict(devices or {}), workers=dict(workers or {}), settings=dict(settings or {}),
+            flags=dict(debug=debug, memory_saving=memory_saving, disk_budget_bytes=disk_budget_bytes))
+    errors = plan_errors(data)
+    if errors:
+        raise ReadRequestError(errors[0]["code"], errors[0]["message"], details={"conflicts": errors})
+    return data
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    envelope = dict(schema_version=1, command=argv[0] if argv else None, corpus_id=None, run_id=None, data=None, warnings=[], errors=[])
+    envelope: dict[str, Any] = dict(schema_version=1, command=argv[0] if argv else None, corpus_id=None, run_id=None, data=None, warnings=[], errors=[])
     exit_code = 0
+    parsed = None
     try:
         args = parser().parse_args(argv)
         envelope["command"] = args.command
+        if args.command == "capabilities":
+            from .capabilities import capabilities_view
+            envelope["data"] = capabilities_view()
+            return _emit(envelope, argv, 0)
+        if args.command == "doctor":
+            from .doctor import doctor_view
+            envelope["data"] = data = doctor_view(args.corpus, probe=args.probe_devices)
+            envelope["corpus_id"] = data["corpus"]["corpus_id"]
+            if args.probe_devices:
+                envelope["warnings"].append(dict(code="device_probe_imported_torch", message="--probe-devices imported torch in a child process"))
+            return _emit(envelope, argv, 0 if data["healthy"] else 1)
         database = Path(args.corpus).absolute() / "corpus.sqlite3"
         if not database.is_file() and args.command not in ("plan", "run"):
             raise ReadRequestError("ledger_not_initialized", "Corpus has no ledger")
@@ -144,48 +252,20 @@ def main(argv=None):
                 settings = _json_file(args.settings) if args.settings else {}
                 if not isinstance(settings, dict):
                     raise ReadRequestError("invalid_settings", "Settings must be a JSON object")
-                for name in ("debug", "memory_saving", "disk_budget_bytes"):
-                    if getattr(args, name) is not None:
-                        settings[name] = getattr(args, name)
-                for name in ("disk_budget_bytes", "max_source_bytes", "max_attempt_bytes"):
-                    if settings.get(name) is not None and (type(settings[name]) is not int or settings[name] < 0):
-                        raise ReadRequestError("invalid_settings", name + " must be a nonnegative integer")
-                manifest = _json_file(args.manifest) if args.manifest else None
-                selectors = args.files
-                rows = [{} for _ in selectors]
-                if manifest is not None:
-                    records = manifest.get("documents", []) if isinstance(manifest, dict) else manifest
-                    if not isinstance(records, list):
-                        raise ReadRequestError("invalid_manifest", "Manifest must contain a documents array")
-                    selectors, rows = [], []
-                    for row in records:
-                        selector = row if isinstance(row, str) else next((row[k] for k in ("document_id", "source_key", "source_uri", "path", "url") if row.get(k)), None) if isinstance(row, dict) else None
-                        if not isinstance(selector, str):
-                            raise ReadRequestError("invalid_manifest", "Every row requires an explicit source selector")
-                        selectors.append(selector)
-                        rows.append(row if isinstance(row, dict) else {})
-                from .ledger.urls import persisted_url, pop_identity_root, push_identity_root, url_policy
-                with url_policy(settings.get("url_policy")):
-                    identities = None
-                    if any(str(selector).startswith(("http://", "https://")) for selector in selectors):
-                        # Raw URLs stay in memory. The plan carries each URL's
-                        # resource identity (keyed under the corpus key, created
-                        # outside the ledger when first needed) and its persisted
-                        # spelling only (CP-LEDGER cycle 2, F1/F2).
-                        from .stages.run import resource_identity
-                        identity_root = Path(args.corpus).absolute()
-                        push_identity_root(identity_root)
-                        try:
-                            identities = [resource_identity(selector, source_id=row.get("source_id"), dataset_id=row.get("dataset_id"))
-                                          if str(selector).startswith(("http://", "https://")) else None for selector, row in zip(selectors, rows)]
-                        finally:
-                            pop_identity_root(identity_root)
-                        selectors = [persisted_url(selector) if identity else selector for selector, identity in zip(selectors, identities)]
-                    data = plan_view(connection, selectors=selectors, stages=args.stages.split(",") if args.stages else None,
-                        settings=settings, devices=_assignments(args.device), workers=_assignments(args.workers, integer=True), manifest=manifest,
-                        identities=identities)
+                data, parsed = _plan_data(connection, Path(args.corpus).absolute(), files=args.files,
+                    manifest=_manifest_file(args.manifest) if args.manifest else None, stages=args.stages.split(",") if args.stages else None,
+                    devices=_assignments(args.device), workers=_assignments(args.workers, integer=True), settings=settings,
+                    flags={name: getattr(args, name) for name in ("debug", "memory_saving", "disk_budget_bytes")})
                 if args.command == 'plan':
                     envelope["warnings"].append(dict(code="conditional_plan", message="Run revalidates inputs and capabilities before dispatch"))
+                    envelope["warnings"].extend(dict(code=item["code"], message=item["message"], stage=item.get("stage"))
+                        for item in data["conflicts"] if item["severity"] in ("warning", "blocking"))
+                    from .plan_preview import plan_errors
+                    errors = plan_errors(data)
+                    if errors:
+                        # The preview stays visible next to the typed error.
+                        envelope["data"] = data
+                        raise ReadRequestError(errors[0]["code"], errors[0]["message"], details={"conflicts": errors})
             elif args.command == "status":
                 data = status_view(connection, run=run, stage=args.stage, selector=args.file)
                 exit_code = 1 if data["counts"]["failed"] else 0
@@ -206,14 +286,24 @@ def main(argv=None):
                     raise ReadRequestError('invalid_request','--credentials must list source URLs or {"url": ..., "source_id": ...} rows')
                 credentials.extend(supplied)
             credentials.extend(args.files)
-            if args.manifest:
-                credentials.append(_json_file(args.manifest))
+            if args.manifest and parsed is not None:
+                # Only the selected entries reach the run; unselected siblings never do.
+                credentials.append(parsed.selected)
             if args.resume and (args.files or args.manifest or args.plan or args.stages or args.device or args.workers or args.settings or args.debug or args.memory_saving or args.disk_budget_bytes is not None):
                 raise ReadRequestError('invalid_request','Resume restores the frozen plan; overrides are forbidden')
             if args.plan and (args.files or args.manifest or args.stages or args.device or args.workers or args.settings or args.debug or args.memory_saving):
                 raise ReadRequestError('invalid_request','A supplied plan cannot be combined with planning overrides')
             requested=_json_file(args.plan) if args.plan else data
             if not args.resume:
+                # Plan identity (hash, inputs, installed capabilities) and conflicts,
+                # before the ledger is touched (K3, PLAN 2.4).
+                from .plan_preview import refuse_conflicts, verify_plan_binding
+                if args.plan:
+                    if not isinstance(requested, dict):
+                        raise ReadRequestError('invalid_plan', 'A plan file holds a JSON object')
+                    verify_plan_binding(requested)
+                else:
+                    refuse_conflicts(data)
                 for document in requested.get('data',requested)['documents']:
                     from .ocr.defaults import validate_device
                     for step in document['steps']:
@@ -238,6 +328,10 @@ def main(argv=None):
                 finally:
                     os.dup2(saved_stdout,1)
                     os.close(saved_stdout)
+            if not args.resume and isinstance(outcome, dict):
+                # The CLI plan identity this run was bound to (verified above); the
+                # scheduler's own frozen-plan hash stays in plan_hash.
+                outcome={**outcome,'bound_plan_hash':requested.get('data',requested).get('plan_hash')}
             envelope['data']=outcome
             envelope['run_id']=outcome['run_id']
             with open_readonly(database) as connection:
@@ -247,8 +341,14 @@ def main(argv=None):
         code = getattr(error, "code", "unsupported_schema" if isinstance(error, LedgerError) else "read_error")
         from .ledger.urls import scrub, scrub_error_text, scrub_known_value
         envelope["errors"].append(dict(code=code, message=scrub_error_text(str(error)), document_id=None, stage=None, details=scrub_known_value(scrub(getattr(error, "details", {})))))
-        exit_code = 3 if code in ("policy_conflict","disk_guard_unavailable","disk_budget_exceeded","waiting_for_disk") else 2
-    # Human mode renders the same object and retains every uncertainty.
+        if envelope.get("command") == "run" and not isinstance((envelope.get("data") or {}).get("state"), str):
+            envelope["data"] = None  # a refused run has no run data (the plan is not its result)
+        exit_code = 3 if code in ("policy_conflict","disk_guard_unavailable","disk_budget_exceeded","disk_budget_required","waiting_for_disk") else 2
+    return _emit(envelope, argv, exit_code)
+
+
+def _emit(envelope, argv, exit_code):
+    """Print the one JSON envelope. Human mode renders the same object and retains every uncertainty."""
     print(json.dumps(envelope, ensure_ascii=False, indent=None if "--json" in argv else 2))
     return exit_code
 

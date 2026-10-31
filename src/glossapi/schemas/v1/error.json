@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/error.json",
+  "title": "glossAPI CLI v1 error object",
+  "description": "One typed error in envelope.errors.",
+  "type": "object",
+  "required": [
+    "code",
+    "message",
+    "document_id",
+    "stage",
+    "details"
+  ],
+  "properties": {
+    "code": {
+      "$ref": "common.json#/$defs/code"
+    },
+    "message": {
+      "type": "string"
+    },
+    "document_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "stage": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "details": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

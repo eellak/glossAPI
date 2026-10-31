@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/capabilities.json",
+  "title": "glossAPI CLI v1 capabilities data",
+  "description": "Installed stages, the packages each needs, visible devices and the install profile that adds each missing capability. Detected from package metadata and module locations only; no backend is imported.",
+  "type": "object",
+  "required": [
+    "stages",
+    "devices",
+    "python",
+    "platform",
+    "glossapi_version",
+    "detection",
+    "fingerprint"
+  ],
+  "properties": {
+    "stages": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/capability"
+      },
+      "minItems": 8,
+      "maxItems": 8
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/device"
+      },
+      "minItems": 1
+    },
+    "python": {
+      "type": "object",
+      "required": [
+        "version",
+        "implementation",
+        "supported"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "implementation": {
+          "type": "string"
+        },
+        "supported": {
+          "type": "string"
+        }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "required": [
+        "system",
+        "machine"
+      ],
+      "properties": {
+        "system": {
+          "type": "string"
+        },
+        "machine": {
+          "type": "string"
+        }
+      }
+    },
+    "glossapi_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "detection": {
+      "type": "object",
+      "required": [
+        "method",
+        "device_probe"
+      ],
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "device_probe": {
+          "type": "string"
+        }
+      }
+    },
+    "fingerprint": {
+      "$ref": "common.json#/$defs/sha256"
+    }
+  }
+}

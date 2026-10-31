@@ -1,0 +1,263 @@
+{
+ "pyright": "1.1.408",
+ "basis": "pyright on the 718edae tree (before K3a), standard mode, same config; line numbers ignored",
+ "files": [
+  "glossapi/cli.py",
+  "glossapi/ledger/reader.py",
+  "glossapi/stages/retention.py"
+ ],
+ "diagnostics": [
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Path\" cannot be assigned to parameter \"output_dir\" of type \"str\" in function \"__init__\"\n  \"Path\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Path\" cannot be assigned to parameter \"start_line\" of type \"int\" in function \"__init__\"\n  \"Path\" is not assignable to \"int\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Path\" cannot be assigned to parameter \"title\" of type \"str\" in function \"__init__\"\n  \"Path\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Path\" cannot be assigned to parameter \"url_column\" of type \"str\" in function \"__init__\"\n  \"Path\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Unknown | dict[str, Unknown | None]\" cannot be assigned to parameter \"value\" of type \"int | str | list[Any] | None\" in function \"__setitem__\"\n  Type \"Unknown | dict[str, Unknown | None]\" is not assignable to type \"int | str | list[Any] | None\"\n    Type \"dict[str, Unknown | None]\" is not assignable to type \"int | str | list[Any] | None\"\n      \"dict[str, Unknown | None]\" is not assignable to \"int\"\n      \"dict[str, Unknown | None]\" is not assignable to \"str\"\n      \"dict[str, Unknown | None]\" is not assignable to \"None\"\n      \"dict[str, Unknown | None]\" is not assignable to \"list[Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"dict[str, str | int | None]\" cannot be assigned to parameter \"value\" of type \"int | str | list[Any] | None\" in function \"__setitem__\"\n  Type \"dict[str, str | int | None]\" is not assignable to type \"int | str | list[Any] | None\"\n    \"dict[str, str | int | None]\" is not assignable to \"int\"\n    \"dict[str, str | int | None]\" is not assignable to \"str\"\n    \"dict[str, str | int | None]\" is not assignable to \"None\"\n    \"dict[str, str | int | None]\" is not assignable to \"list[Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"append\" for class \"int\"\n  Attribute \"append\" is unknown",
+   "count": 2
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"append\" for class \"str\"\n  Attribute \"append\" is unknown",
+   "count": 2
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"run\" for class \"BrowserGlossDownloader\"\n  Attribute \"run\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"run\" for class \"GlossDownloader\"\n  Attribute \"run\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"run\" for class \"GlossSection\"\n  Attribute \"run\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"run\" for class \"GlossSectionClassifier\"\n  Attribute \"run\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"run\" for class \"Section\"\n  Attribute \"run\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportCallIssue",
+   "message": "Expected 0 positional arguments",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"append\" is not a known attribute of \"None\"",
+   "count": 2
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"get\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/cli.py",
+   "rule": "reportOptionalSubscript",
+   "message": "Object of type \"None\" is not subscriptable",
+   "count": 2
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Literal['files']\" cannot be assigned to parameter \"s\" of type \"slice[Any, Any, Any]\" in function \"__getitem__\"\n  \"Literal['files']\" is not assignable to \"slice[Any, Any, Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Literal['workers']\" cannot be assigned to parameter \"s\" of type \"slice[Any, Any, Any]\" in function \"__getitem__\"\n  \"Literal['workers']\" is not assignable to \"slice[Any, Any, Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"list[Unknown]\" cannot be assigned to parameter \"value\" of type \"str | int\" in function \"__setitem__\"\n  Type \"list[Unknown]\" is not assignable to type \"str | int\"\n    \"list[Unknown]\" is not assignable to \"str\"\n    \"list[Unknown]\" is not assignable to \"int\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"str | int\" cannot be assigned to parameter \"device\" of type \"str\" in function \"default_values\"\n  Type \"str | int\" is not assignable to type \"str\"\n    \"int\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"str | int\" cannot be assigned to parameter \"device\" of type \"str\" in function \"package_entry\"\n  Type \"str | int\" is not assignable to type \"str\"\n    \"int\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"get\" for class \"list[dict[Unknown, list[list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]]\"\n  Attribute \"get\" is unknown",
+   "count": 6
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"get\" for class \"list[list[Unknown] | list[dict[Unknown, list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]] | dict[Unknown, Unknown] | Unknown]\"\n  Attribute \"get\" is unknown",
+   "count": 6
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"items\" for class \"list[dict[Unknown, list[list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]]\"\n  Attribute \"items\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"items\" for class \"list[list[Unknown] | list[dict[Unknown, list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]] | dict[Unknown, Unknown] | Unknown]\"\n  Attribute \"items\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"startswith\" for class \"list[dict[str, Unknown]]\"\n  Attribute \"startswith\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportCallIssue",
+   "message": "Expected 1 positional argument",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportCallIssue",
+   "message": "No overloads for \"__getitem__\" match the provided arguments",
+   "count": 2
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Expected mapping for dictionary unpack operator",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportOptionalIterable",
+   "message": "Object of type \"None\" cannot be used as iterable value",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"append\" is not a known attribute of \"None\"",
+   "count": 2
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"execute\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"startswith\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/reader.py",
+   "rule": "reportOptionalSubscript",
+   "message": "Object of type \"None\" is not subscriptable",
+   "count": 3
+  },
+  {
+   "file": "glossapi/stages/retention.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Literal['coverage_allows_source_release']\" cannot be assigned to parameter \"s\" of type \"slice[Any, Any, Any]\" in function \"__getitem__\"\n  \"Literal['coverage_allows_source_release']\" is not assignable to \"slice[Any, Any, Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/retention.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"int\" cannot be assigned to parameter \"value\" of type \"str | list[Any]\" in function \"__setitem__\"\n  Type \"int\" is not assignable to type \"str | list[Any]\"\n    \"int\" is not assignable to \"str\"\n    \"int\" is not assignable to \"list[Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/retention.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"get\" for class \"list[dict[Unknown, list[list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]]\"\n  Attribute \"get\" is unknown",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/retention.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"get\" for class \"list[list[Unknown] | list[dict[Unknown, list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]] | dict[Unknown, Unknown] | Unknown]\"\n  Attribute \"get\" is unknown",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/retention.py",
+   "rule": "reportCallIssue",
+   "message": "No overloads for \"__getitem__\" match the provided arguments",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/retention.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Object of type \"Never\" cannot be used with \"with\" because it does not correctly implement __enter__",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/retention.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Object of type \"Never\" cannot be used with \"with\" because it does not correctly implement __exit__",
+   "count": 1
+  }
+ ]
+}

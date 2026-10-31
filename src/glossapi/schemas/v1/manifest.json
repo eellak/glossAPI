@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/manifest.json",
+  "title": "glossAPI input manifest v1",
+  "description": "What a caller (Python, the CLI, or an LLM) asks glossAPI to process: sources, selection IDs, original metadata, stages/products, devices and settings. Unselected entries are listed as exclusions and never opened.",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "documents"
+  ],
+  "properties": {
+    "manifest_version": {
+      "const": 1
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "absolute local path"
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_uri": {
+            "type": "string",
+            "minLength": 1
+          },
+          "document_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "selection_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dataset_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "metadata": {
+            "type": "object",
+            "description": "the caller's original metadata; returned verbatim"
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "path"
+            ]
+          },
+          {
+            "required": [
+              "url"
+            ]
+          },
+          {
+            "required": [
+              "source_uri"
+            ]
+          },
+          {
+            "required": [
+              "document_id"
+            ]
+          },
+          {
+            "required": [
+              "source_key"
+            ]
+          }
+        ],
+        "description": "Exactly one source field. Other fields are carried verbatim as original metadata."
+      },
+      "minItems": 1
+    },
+    "selection": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/stage"
+      },
+      "minItems": 1
+    },
+    "products": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "document_export",
+          "annotated_sections"
+        ]
+      }
+    },
+    "devices": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "common.json#/$defs/stage"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^(cpu|mps|cuda:[0-9]+)$"
+      }
+    },
+    "workers": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "common.json#/$defs/stage"
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "settings": {
+      "type": "object"
+    },
+    "producer": {},
+    "note": {}
+  },
+  "additionalProperties": false
+}

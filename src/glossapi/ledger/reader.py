@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from .catalogue import STAGES, STATUSES
@@ -425,6 +426,42 @@ def report_why(connection, selector, *, run=None, stage=None):
                 occurrences=occurrences, stages=stages, files=files, inclusion=inclusion, conflicts=conflicts, unknowns=unknowns, observations=observations,retention=retention_summary(connection,run))
 
 
+_JSON_TAGS = frozenset(("null", "str", "bool", "int", "float", "mapping", "list"))
+
+
+def _json_native(typed):
+    if not isinstance(typed, dict) or typed.get("type") not in _JSON_TAGS:
+        return False
+    if typed["type"] == "mapping":
+        return all(key.get("type") == "str" and _json_native(value) for key, value in typed["value"])
+    if typed["type"] == "list":
+        return all(_json_native(value) for value in typed["value"])
+    return typed["type"] != "float" or float.fromhex(typed["value"]) == float.fromhex(typed["value"])  # NaN stays typed
+
+
+def json_metadata(stored):
+    """The caller's original metadata as plain JSON when every value is JSON-native, else the typed ledger form."""
+    from .encoding import untyped_value
+    fields = stored.get("fields") if isinstance(stored, dict) and stored.get("schema_version") == 1 else None
+    if fields is not None and _json_native(fields):
+        return untyped_value(fields), "json"
+    return stored, "typed_v1"
+
+
+def source_metadata(connection, document_ids, run):
+    """Each document's source records (the caller's original metadata, verbatim) up to this run."""
+    run_ids = _run_scope(connection, run)
+    output = []
+    for document_id in document_ids:
+        for record in source_view(connection, document_id):
+            if record["run_id"] in run_ids:
+                metadata, encoding = json_metadata(record["metadata"])
+                output.append(dict(document_id=document_id, source_record_id=record["source_record_id"], run_id=record["run_id"],
+                                   source_uri=record["source_uri"], source_row=record["source_row"], metadata=metadata,
+                                   metadata_encoding=encoding))
+    return output
+
+
 def status_view(connection, *, run=None, stage=None, selector=None):
     document = resolve_document(connection, selector) if selector else None
     rows = _rows(connection, "SELECT s.*,v.document_id FROM current_task_state s LEFT JOIN document_versions v ON v.version_id=s.version_id WHERE s.run_id=? ORDER BY s.ordinal,s.task_id", (run["run_id"],)) if run else []
@@ -447,9 +484,12 @@ def status_view(connection, *, run=None, stage=None, selector=None):
     state = "completed_with_failures" if counts["failed"] else "running" if counts["running"] else "waiting" if counts["planned"] else "completed"
     last_event = connection.execute("SELECT MAX(event_id) FROM events WHERE run_id=?", (run["run_id"],)).fetchone()[0] if run else None
     present = connection.execute("SELECT SUM(bytes) FROM current_file_state WHERE presence='present'").fetchone()[0]
-    result = dict(state=state, counts=counts, documents=documents, queues=[], barriers=[], resources=dict(
+    result: dict[str, Any] = dict(state=state, counts=counts, documents=documents, queues=[], barriers=[], resources=dict(
         disk_budget_bytes=None, present_bytes=present or 0, reserved_bytes=None, free_bytes=None), last_event_id=last_event,
         unknowns=["runtime_queues_resources_not_recorded_for_non_streaming_run"])
+    if document:
+        # status --file: the selected document's original metadata (K3 manifest round trip).
+        result["sources"] = source_metadata(connection, _document_ids(document), run)
     plan = snapshot(connection,run['plan_sha256']) if run else {}
     if plan.get('mode')=='streaming':
         result['unknowns']=[]
@@ -504,13 +544,21 @@ def report_view(connection, *, run=None, stage=None):
         document = connection.execute("SELECT d.document_id,d.source_key FROM documents d JOIN document_versions v USING(document_id) WHERE v.version_id=?", (version,)).fetchone()
         rows.append(dict(document_id=document[0], source_key=document[1], version_id=version, stage=observed_stage,
                          operation="legacy.import", status=None, reason_code="legacy_unknown", reasons=reasons, scope="document"))
+    document_ids = list(dict.fromkeys(row["document_id"] for row in rows if row["document_id"]))
     return dict(rows=rows, retention=retention_summary(connection,run),
-                resources=status["resources"], counts=status["counts"], conflicts=conflicts)
+                resources=status["resources"], counts=status["counts"], conflicts=conflicts,
+                sources=source_metadata(connection, document_ids, run))
 
 
-def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devices=None, workers=None, manifest=None, identities=None):
+def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devices=None, workers=None, manifest=None, identities=None,
+              exclusions=None, input_manifest=None):
     """``identities`` (aligned with ``selectors``) carries precomputed resource
-    identities of URL selectors; their selectors are persisted spellings."""
+    identities of URL selectors; their selectors are persisted spellings.
+
+    ``exclusions`` lists requested entries that are not processed (for example
+    unselected manifest entries), each with its reason; they are never opened.
+    The exact preview (targets, exclusions, capabilities, device allocation,
+    deletion policy, conflicts) is part of the hashed body (K3, PLAN 2.4)."""
     settings = {"debug": "off", "memory_saving": "normal", **(settings or {})}
     requested = stages or ["extract", "clean", "sections", "export"]
     if any(s not in STAGES for s in requested):
@@ -527,10 +575,11 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
         include(stage)
     from ..stages.retention import resolved_settings, DEBUG_HELP, MEMORY_SAVING_HELP
     try:settings=resolved_settings(settings)
-    except ValueError as error:raise ReadRequestError('disk_budget_exceeded',str(error)) from error
+    except ValueError as error:raise ReadRequestError('disk_budget_required',str(error)) from error
     if not selectors and connection:
         selectors = [r[0] for r in connection.execute("SELECT document_id FROM documents ORDER BY rowid")]
-    documents, inventory, seen = [], [], set()
+    documents, inventory, seen = [], [], {}
+    exclusions = list(exclusions or [])
     pooled_stages = set(selected_stages)
     for index, selector in enumerate(selectors):
         known = None
@@ -555,13 +604,20 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
                 raise ReadRequestError("file_not_found", "A new local source must be an explicit absolute path", details={"selector": selector})
             identifier, key, version = new_id(), identity or source_key(selector), None
         if key in seen:
+            exclusions.append(dict(selector=selector, reason_code="duplicate_source", duplicate_of_document_id=seen[key],
+                                   basis="same source identity as an earlier entry"))
             continue
-        seen.add(key)
+        seen[key] = identifier
         source_uri=source_uri_of_key(key) or selector
         source_path=Path(_path(source_uri)) if source_uri.startswith('file:') else None
         source_stat=source_path.stat() if source_path is not None and source_path.is_file() else None
         observation=dict(source_uri=source_uri,bytes=source_stat.st_size if source_stat else None,
             mtime_ns=source_stat.st_mtime_ns if source_stat else None,stored_sha256=version.get('stored_sha256') if version else None)
+        if source_stat is not None and not observation['stored_sha256']:
+            # The exact bytes the plan binds (read only; run refuses if they change).
+            from ..stages.execution import sha256_file
+            try:observation['sha256']=sha256_file(source_path)
+            except OSError as error:observation['read_error']=type(error).__name__  # the run records it as unavailable
         inventory.append(dict(source_key=key, version=version,observation=observation))
         document_stages = set(selected_stages)
         remote_source = key.startswith(("url:v1:", "url:v2:")) or urlsplit(selector).scheme.lower() in ("http", "https")
@@ -598,14 +654,37 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
     barriers = [dict(name=name, scope="corpus", waiting_for="sealed_selection", remaining=len(documents))
                 for name, stage in (("source_manifest", None), ("sections_selection_ids", "sections"), ("annotation_batch", "annotate"), ("export_shards", "export"))
                 if stage is None or stage in pooled_stages]
+    from ..plan_preview import preview_fields
+    planned_stages = [stage for stage in STAGE_ORDER if stage in pooled_stages]
+    preview = preview_fields(documents=documents, stages=planned_stages, requested=list(requested), settings=settings,
+        pools=pools, explicit_devices=dict(devices or {}), exclusions=exclusions, input_manifest=input_manifest)
+    available = {row["stage"]: row for row in preview["capabilities"]["stages"]}
+    def requirement(group):
+        rows = [row for row in available.values() if any(item["package_group"] == group for item in row["packages"])]
+        installed = all(not item["blocking"] for row in rows for item in row["packages"] if item["package_group"] == group)
+        distributions = sorted({item["requirement"] for row in rows for item in row["packages"] if item["package_group"] == group})
+        return installed, distributions
+    def requirement_entry(group):
+        installed, distributions = requirement(group)
+        if group == "ocr":
+            entry = package_entry(next(pool["device_id"] for pool in pools if pool["stage"] == "ocr"))
+            return dict(entry, installed=installed and available["ocr"]["available"],
+                        reason_code=None if available["ocr"]["available"] else available["ocr"]["reason_code"])
+        return dict(package_group=group, distributions=distributions, entry_point=None, installed=installed,
+                    reason_code=None if installed else "missing_capability")
     body = dict(source_inventory_hash=source_inventory_hash, settings=settings, settings_help={"debug":DEBUG_HELP,"memory_saving":MEMORY_SAVING_HELP}, documents=documents, barriers=barriers, pools=pools,
         resource_limits={k: settings.get(k) for k in ("disk_budget_bytes", "max_source_bytes", "max_attempt_bytes")},
         disk=dict(present_bytes=present, pinned_bytes=None, reserved_bytes=None, estimated_peak_bytes=None, unknown_sizes=[dict(document_id=d["document_id"], reason_code="unknown_not_recorded") for d in documents]),
-        requirements=[package_entry(next(pool['device_id'] for pool in pools if pool['stage']=='ocr')) if p=='ocr' else dict(package_group=p,distributions=[],entry_point=None,installed=None,reason_code='capabilities_not_recorded') for p in sorted({p for d in documents for s in d['steps'] for p in s['packages']})],
+        requirements=[requirement_entry(p) for p in sorted({p for d in documents for s in d['steps'] for p in s['packages']})],
         legacy_import_required=connection is None or connection.execute("SELECT 1 FROM events WHERE reason_code='legacy_import_completed' LIMIT 1").fetchone() is None,
         execution=dict(command="run", profile="streaming_document_dag",
             available=not any(stage in RUN_UNAVAILABLE for stage in pooled_stages),
+            # available: the streaming DAG can execute these stages; ready: and
+            # nothing here blocks it (missing installs, device conflicts).
+            ready=not any(stage in RUN_UNAVAILABLE for stage in pooled_stages) and not any(
+                item["severity"] in ("error", "blocking") for item in preview["conflicts"]),
+            blocked_by=sorted({item["code"] for item in preview["conflicts"] if item["severity"] in ("error", "blocking")}),
             unavailable_stages={stage: RUN_UNAVAILABLE[stage] for stage in sorted(pooled_stages) if stage in RUN_UNAVAILABLE},
             basis="run revalidates sources, packages and devices before any dispatch"),
-        explicit_manifest=scrub(manifest))
+        explicit_manifest=scrub(manifest), **preview)
     return dict(body, plan_hash=snapshot_hash(body))

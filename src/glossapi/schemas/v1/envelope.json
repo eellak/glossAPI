@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/envelope.json",
+  "title": "glossAPI CLI v1 envelope",
+  "description": "Every glossapi command prints exactly one envelope. data is null when the command produced no result. A command that failed has a non-empty errors array (exit code 2 or 3); plan keeps its preview in data next to a request conflict.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "command",
+    "corpus_id",
+    "run_id",
+    "data",
+    "warnings",
+    "errors"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "command": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "corpus_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "data": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/warning"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "$ref": "error.json"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "errors": {
+            "maxItems": 0
+          },
+          "command": {
+            "enum": [
+              "plan",
+              "run",
+              "status",
+              "report",
+              "capabilities",
+              "doctor"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "plan"
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "data"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "plan.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "run"
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "data"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "run.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "status"
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "data"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "status.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "report"
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "data"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "report.json"
+              },
+              {
+                "$ref": "report_why.json"
+              },
+              {
+                "$ref": "report_export.json"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "capabilities"
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "data"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "capabilities.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "doctor"
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "data"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "doctor.json"
+          }
+        }
+      }
+    }
+  ]
+}
