@@ -1,0 +1,34 @@
+{
+  "include": [
+    "../../src/glossapi/cli.py",
+    "../../src/glossapi/ledger/reader.py",
+    "../../src/glossapi/stages/retention.py",
+    "../../src/glossapi/capabilities.py",
+    "../../src/glossapi/doctor.py",
+    "../../src/glossapi/input_manifest.py",
+    "../../src/glossapi/plan_preview.py",
+    "../../src/glossapi/settings_contract.py",
+    "../../src/glossapi/schemas/__init__.py",
+    "../../src/glossapi/package_catalog.py",
+    "../../src/glossapi/install_plan.py",
+    "../../src/glossapi/llm_guide.py"
+  ],
+  "strict": [
+    "../../src/glossapi/capabilities.py",
+    "../../src/glossapi/doctor.py",
+    "../../src/glossapi/input_manifest.py",
+    "../../src/glossapi/plan_preview.py",
+    "../../src/glossapi/settings_contract.py",
+    "../../src/glossapi/schemas/__init__.py",
+    "../../src/glossapi/package_catalog.py",
+    "../../src/glossapi/install_plan.py",
+    "../../src/glossapi/llm_guide.py"
+  ],
+  "extraPaths": [
+    "../../src"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "standard",
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "none"
+}

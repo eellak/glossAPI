@@ -16,13 +16,12 @@ from urllib.parse import unquote, urlsplit
 
 from .execution import sha256_file
 from ..ledger.encoding import snapshot_hash
+from ..settings_contract import setting_help
 
 
-DEBUG_HELP = ('off keeps your initial files, final outputs, evidence and the ledger, and removes intermediates once every '
-    'planned reader has used them; on also keeps every intermediate and failed attempt')
-MEMORY_SAVING_HELP = ('normal never deletes your supplied files or downloads; extreme deletes only files this run downloaded, '
-    'after their last planned reader succeeded and its outputs are durable (never your supplied files, '
-    'another run\'s files, or a path reached through a link); extreme requires a disk budget')
+# The owner's settings text (PLAN section 2.2), from its single source.
+DEBUG_HELP = setting_help('debug')
+MEMORY_SAVING_HELP = setting_help('memory_saving')
 
 # Retention contract (one rule per ownership class; PLAN.md section 2.3):
 # - supplied local originals (ownership initial_external / legacy_external, or

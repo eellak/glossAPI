@@ -193,6 +193,16 @@ def resolve_metadata_target(path: Union[str, Path]) -> Path:
 metadata_path_identity = resolve_metadata_target
 
 
+def refuse_metadata_destination(path: Union[str, 'os.PathLike[str]'], *, writer: str) -> None:
+    """A non-metadata writer (the CLI exporter, ``input_manifest.write_manifest``) never writes a metadata target
+    (K2F round 4, CP-K2e F1): a destination that resolves to an existing selectable metadata parquet, or to a
+    ``download_results/*.parquet`` name, raises ``MetadataDestinationError`` before anything is written."""
+    physical = resolve_metadata_target(path)
+    if selectable_metadata_parquet(physical) or (physical.suffix == '.parquet' and physical.parent.name == 'download_results'):
+        raise MetadataDestinationError(f"refusing to {writer} over metadata parquet {os.fspath(path)} ({physical}); "
+                                       "choose a path outside the corpus metadata")
+
+
 def refuse_hard_linked_target(target: Union[str, Path], given: Union[str, Path, None] = None) -> None:
     """Hard links are refused (CP-K2d F2): an existing target with ``st_nlink > 1`` raises ``MetadataAliasError``
     before anything is read or written; an atomic replacement cannot keep the other names pointing at the update."""

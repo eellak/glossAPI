@@ -1,7 +1,8 @@
 """K2 pandas decision: pandas stays a core dependency, and the light entry points never import it.
 
 In a fresh interpreter with every `pandas` import made to fail: `import glossapi`, the CLI, the ledger and its
-reader, the stage runner module, and the CLI plan/status/report paths (including `report --why`) must succeed.
+reader, the stage runner module, and the CLI plan/status/report paths (including `report --why`) must succeed;
+K3 adds `capabilities`, `doctor` and a plan over every stage (capability detection imports no backend).
 A negative control shows the guard trips on a path that does use pandas.
 """
 import json
@@ -47,6 +48,13 @@ for name, argv in (('plan', ['plan', '--corpus', absent, '--files', '/absent.pdf
     envelope = json.loads(out.getvalue())
     assert not envelope['errors'], (name, envelope['errors'])
 assert codes == {'plan': 0, 'status': 1, 'report': 0, 'why': 0}, codes
+# K3: capabilities and doctor detect from metadata only (doctor's exit code reflects this environment's health).
+for argv in (['capabilities'], ['doctor', '--corpus', absent],
+             ['plan', '--corpus', absent, '--files', '/absent.pdf', '--stages', 'download,ocr,math,annotate,export']):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        main([*argv, '--json'])
+    assert not json.loads(out.getvalue())['errors'], (argv, out.getvalue()[:2000])
 loaded = sorted(n for n in sys.modules if n.split('.')[0] == 'pandas')
 assert not loaded, loaded
 print(json.dumps(codes))

@@ -12,6 +12,7 @@ both directions, the ensure writer through a file symlink, exact large integers 
 current schema union, and a static test that fails when a writer bypasses the choke point.
 """
 import ast
+import json
 import os
 from pathlib import Path
 
@@ -759,3 +760,143 @@ def test_static_check_catches_a_second_write_in_an_allowlisted_scope(tmp_path):
         '    frame.to_parquet("download_results/download_results.parquet", index=False)\n')))
     problems = '\n'.join(static_problems(shadow))
     assert '2 call sites, 1 listed' in problems and 'other than its path parameter' in problems
+
+
+# ------------------------------------------------------------------ static: the K3 interface modules (integration)
+# deps/k3-interface added the decision-interface modules and CLI commands. EXPECTED above inventories only parquet and
+# replace/copy writes, so these modules (and the CLI they share with K2) are also scanned with a broader detector:
+# text/byte writes, write-mode opens, deletes, directories, temporary files and child processes. Every such call is
+# listed with its reason; none writes metadata parquet, and the two caller-path writers refuse a metadata destination
+# (``refuse_metadata_destination``) before their first write.
+K3_MODULES = ('glossapi/capabilities.py', 'glossapi/doctor.py', 'glossapi/input_manifest.py', 'glossapi/install_plan.py',
+              'glossapi/llm_guide.py', 'glossapi/package_catalog.py', 'glossapi/plan_preview.py',
+              'glossapi/settings_contract.py', 'glossapi/schemas/__init__.py', 'glossapi/cli.py')
+BROAD_FUNCTIONS = WRITE_FUNCTIONS | {
+    'os.open', 'os.unlink', 'os.remove', 'os.rmdir', 'os.mkdir', 'os.makedirs', 'os.system', 'shutil.rmtree',
+    'tempfile.mkstemp', 'tempfile.mkdtemp', 'tempfile.NamedTemporaryFile', 'tempfile.TemporaryDirectory',
+    'subprocess.run', 'subprocess.Popen', 'subprocess.call', 'subprocess.check_call', 'subprocess.check_output'}
+BROAD_METHODS = {'write_text', 'write_bytes', 'unlink', 'mkdir', 'rmdir', 'touch', 'rename', 'to_parquet', 'write_table',
+                 'to_csv', 'to_json'}
+EXPORT = 'CLI export to a caller path (report --output); refuse_metadata_destination runs first (checked below)'
+K3_EXPECTED = {
+    ('glossapi/doctor.py', '_child', 'subprocess.run'):
+        (1, 'doctor --probe-devices: a child interpreter (-I) imports the device framework and prints JSON; no file'),
+    ('glossapi/input_manifest.py', 'write_manifest', '.write_text'):
+        (1, 'caller-chosen input manifest JSON (Python API); refuse_metadata_destination runs first (checked below)'),
+    ('glossapi/install_plan.py', '_snapshot', 'subprocess.run'):
+        (1, "reads the environment's installed distributions in a fresh interpreter; no file"),
+    ('glossapi/install_plan.py', 'execute_install', 'subprocess.run'):
+        (2, 'install --yes only: the planned pip/uv commands (the Python environment, never corpus files) and the '
+            "installer's read-only dependency check"),
+    ('glossapi/cli.py', '_export', 'tempfile.mkstemp'): (1, EXPORT),
+    ('glossapi/cli.py', '_export', '.write_table'): (1, EXPORT),
+    ('glossapi/cli.py', '_export', '.write_text'): (1, EXPORT),
+    ('glossapi/cli.py', '_export', 'os.replace'): (1, EXPORT),
+    ('glossapi/cli.py', '_export', '.unlink'): (1, "removes _export's own temporary file when the export fails"),
+    ('glossapi/cli.py', 'main', '.mkdir'): (1, '`run`: creates the corpus root after the plan checks (plan never reaches it)'),
+}
+REFUSING_WRITERS = {('glossapi/cli.py', '_export'), ('glossapi/input_manifest.py', 'write_manifest')}
+
+
+def _broad_write_name(node, aliases):
+    dotted = _dotted(node.func)
+    if dotted:
+        head, _, rest = dotted.partition('.')
+        canonical = aliases.get(head, head) + ('.' + rest if rest else '')
+        if canonical in BROAD_FUNCTIONS:
+            return {'pyarrow.parquet.write_table': '.write_table', 'pyarrow.parquet.ParquetWriter': 'ParquetWriter'}.get(canonical, canonical)
+    if isinstance(node.func, ast.Attribute) and node.func.attr in BROAD_METHODS:
+        return '.' + node.func.attr
+    if _call_name(node) == 'open':
+        if isinstance(node.func, ast.Name):
+            mode = node.args[1] if len(node.args) > 1 else None
+        else:
+            mode = node.args[0] if node.args else None
+        mode = mode or next((keyword.value for keyword in node.keywords if keyword.arg == 'mode'), None)
+        value = 'r' if mode is None else mode.value if isinstance(mode, ast.Constant) else '?'
+        if any(flag in str(value) for flag in 'wax+?'):
+            return f'open({value})'
+    return None
+
+
+def k3_static_problems(src, modules=K3_MODULES):
+    found, first_write, refusal, problems = {}, {}, {}, []
+    for module in modules:
+        tree = ast.parse((Path(src) / module).read_text())
+        aliases = _aliases(tree)
+        for node, scope, _ancestors in _walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            where = '.'.join(scope) or '<module>'
+            if _call_name(node) == 'refuse_metadata_destination':
+                refusal[(module, where)] = min(refusal.get((module, where), node.lineno), node.lineno)
+            name = _broad_write_name(node, aliases)
+            if name:
+                key = (module, where, name)
+                found[key] = found.get(key, 0) + 1
+                first_write[(module, where)] = min(first_write.get((module, where), node.lineno), node.lineno)
+    for key, count in sorted(found.items()):
+        if key not in K3_EXPECTED:
+            problems.append(f'unlisted K3 write {key} x{count}: list it with its reason, or route metadata through '
+                            'parquet_schema.metadata_target')
+        elif K3_EXPECTED[key][0] != count:
+            problems.append(f'{key}: {count} call sites, {K3_EXPECTED[key][0]} listed')
+    stale = sorted(key for key in set(K3_EXPECTED) - set(found) if key[0] in modules)
+    if stale:
+        problems.append(f'listed K3 writes no longer present (update the list): {stale}')
+    for writer in sorted(REFUSING_WRITERS):
+        if writer[0] in modules and not refusal.get(writer, 10 ** 9) < first_write.get(writer, 0):
+            problems.append(f'{writer} writes before refuse_metadata_destination (a metadata destination must be refused first)')
+    return problems
+
+
+def test_k3_interface_modules_write_only_declared_files():
+    problems = k3_static_problems(SRC)
+    assert not problems, '\n'.join(problems)
+
+
+def test_k3_static_check_is_not_vacuous(tmp_path):
+    """A planted text write, a write-mode open and a manifest writer that refuses only after writing all fail."""
+    shadow = tmp_path / 'src'
+    for module in K3_MODULES:
+        (shadow / module).parent.mkdir(parents=True, exist_ok=True)
+        text = (SRC / module).read_text()
+        if module == 'glossapi/input_manifest.py':
+            refusal = "    refuse_metadata_destination(path, writer='write a manifest')\n"
+            assert refusal in text
+            text = text.replace(refusal, '').replace('    return target\n', '    ' + refusal.strip() + '\n    return target\n', 1)
+        (shadow / module).write_text(text)
+    (shadow / 'glossapi/k3_bypass.py').write_text(
+        'from pathlib import Path\n'
+        'def save(path, text):\n    Path(path).write_text(text)\n'
+        'def append(path):\n    with open(path, "a") as stream:\n        stream.write("x")\n')
+    problems = '\n'.join(k3_static_problems(shadow, K3_MODULES + ('glossapi/k3_bypass.py',)))
+    assert "('glossapi/k3_bypass.py', 'save', '.write_text')" in problems
+    assert "('glossapi/k3_bypass.py', 'append', 'open(a)')" in problems
+    assert "('glossapi/input_manifest.py', 'write_manifest') writes before refuse_metadata_destination" in problems
+
+
+@pytest.mark.parametrize('spelling', ['literal', 'file-symlink', 'new-download-results-name'])
+def test_write_manifest_refuses_a_metadata_destination(tmp_path, spelling):
+    """The K3 manifest writer is not a metadata writer: like the CLI exporter it refuses a metadata destination
+    before anything is written."""
+    from glossapi.input_manifest import build_manifest, write_manifest
+    target = _seed_metadata(tmp_path)
+    before = target.read_bytes()
+    if spelling == 'literal':
+        destination = target
+    elif spelling == 'file-symlink':
+        destination = tmp_path / 'manifest-link.json'
+        destination.symlink_to(target)
+    else:
+        destination = target.parent / 'download_results_manifest.parquet'
+    manifest = build_manifest([{'path': str(tmp_path / 'a.pdf'), 'metadata': {'title': 'α'}}])
+    with pytest.raises(MetadataDestinationError):
+        write_manifest(manifest, destination)
+    assert target.read_bytes() == before
+    if spelling == 'file-symlink':
+        assert destination.is_symlink()
+    if spelling == 'new-download-results-name':
+        assert not destination.exists()
+    written = write_manifest(manifest, tmp_path / 'manifest.json')
+    assert json.loads(written.read_text(encoding='utf-8')) == manifest

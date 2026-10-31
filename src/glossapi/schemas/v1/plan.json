@@ -1,0 +1,829 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/plan.json",
+  "title": "glossAPI CLI v1 plan data",
+  "description": "plan --json data: the exact preview (targets, exclusions, capabilities, device allocation, deletion policy, conflicts). plan_hash is the identity run --plan binds to.",
+  "type": "object",
+  "required": [
+    "source_inventory_hash",
+    "settings",
+    "settings_help",
+    "documents",
+    "barriers",
+    "pools",
+    "resource_limits",
+    "disk",
+    "requirements",
+    "legacy_import_required",
+    "execution",
+    "explicit_manifest",
+    "preview_version",
+    "requested_stages",
+    "targets",
+    "exclusions",
+    "input_manifest",
+    "capabilities",
+    "device_allocation",
+    "devices",
+    "deletion_policy",
+    "conflicts",
+    "plan_hash"
+  ],
+  "properties": {
+    "source_inventory_hash": {
+      "$ref": "common.json#/$defs/sha256"
+    },
+    "settings": {
+      "type": "object",
+      "required": [
+        "debug",
+        "memory_saving"
+      ],
+      "properties": {
+        "debug": {
+          "enum": [
+            "off",
+            "on"
+          ]
+        },
+        "memory_saving": {
+          "enum": [
+            "normal",
+            "extreme"
+          ]
+        }
+      }
+    },
+    "settings_help": {
+      "type": "object",
+      "required": [
+        "debug",
+        "memory_saving"
+      ],
+      "properties": {
+        "debug": {
+          "type": "string"
+        },
+        "memory_saving": {
+          "type": "string"
+        }
+      }
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "document_id",
+          "source_key",
+          "version_id",
+          "steps",
+          "source_observation"
+        ],
+        "properties": {
+          "document_id": {
+            "type": "string"
+          },
+          "source_key": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "stage",
+                "operation",
+                "action",
+                "reason_code",
+                "input_roles",
+                "conditional_on",
+                "packages",
+                "device_id",
+                "executable_by_run",
+                "unavailable_reason"
+              ],
+              "properties": {
+                "stage": {
+                  "$ref": "common.json#/$defs/stage"
+                },
+                "operation": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string"
+                },
+                "reason_code": {
+                  "type": "string"
+                },
+                "input_roles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object"
+                  }
+                },
+                "conditional_on": {
+                  "type": "object"
+                },
+                "packages": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "device_id": {
+                  "$ref": "common.json#/$defs/device_id"
+                },
+                "executable_by_run": {
+                  "type": "boolean"
+                },
+                "unavailable_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "source_observation": {
+            "type": "object",
+            "required": [
+              "source_uri",
+              "bytes",
+              "mtime_ns",
+              "stored_sha256"
+            ],
+            "properties": {
+              "source_uri": {
+                "type": "string"
+              },
+              "bytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "mtime_ns": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "stored_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sha256": {
+                "$ref": "common.json#/$defs/sha256"
+              },
+              "read_error": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "barriers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "scope",
+          "waiting_for",
+          "remaining"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "waiting_for": {
+            "type": "string"
+          },
+          "remaining": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "pools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage",
+          "device_id",
+          "workers",
+          "queue_capacity",
+          "cpu_tokens"
+        ],
+        "properties": {
+          "stage": {
+            "$ref": "common.json#/$defs/stage"
+          },
+          "device_id": {
+            "$ref": "common.json#/$defs/device_id"
+          },
+          "workers": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "queue_capacity": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cpu_tokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "resource_limits": {
+      "type": "object"
+    },
+    "disk": {
+      "type": "object"
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "package_group",
+          "distributions",
+          "installed",
+          "reason_code"
+        ],
+        "properties": {
+          "package_group": {
+            "type": "string"
+          },
+          "distributions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "installed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "legacy_import_required": {
+      "type": "boolean"
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "command",
+        "profile",
+        "available",
+        "ready",
+        "blocked_by",
+        "unavailable_stages",
+        "basis"
+      ],
+      "properties": {
+        "command": {
+          "const": "run"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "ready": {
+          "type": "boolean"
+        },
+        "blocked_by": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/code"
+          }
+        },
+        "unavailable_stages": {
+          "type": "object"
+        },
+        "basis": {
+          "type": "string"
+        }
+      }
+    },
+    "explicit_manifest": {
+      "type": [
+        "object",
+        "array",
+        "null"
+      ]
+    },
+    "preview_version": {
+      "const": 1
+    },
+    "requested_stages": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/stage"
+      }
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "document_id",
+          "source_key",
+          "source_uri",
+          "path",
+          "state",
+          "bytes",
+          "sha256",
+          "stages",
+          "download",
+          "known_version_id"
+        ],
+        "properties": {
+          "document_id": {
+            "type": "string"
+          },
+          "source_key": {
+            "type": "string"
+          },
+          "source_uri": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "enum": [
+              "present",
+              "absent",
+              "unreadable",
+              "remote"
+            ]
+          },
+          "bytes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "common.json#/$defs/stage"
+            }
+          },
+          "download": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "known_version_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "exclusions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "reason_code"
+        ],
+        "properties": {
+          "reason_code": {
+            "$ref": "common.json#/$defs/code"
+          },
+          "basis": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          },
+          "manifest_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "selection_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duplicate_of_document_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "input_manifest": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "manifest_version",
+        "sha256",
+        "entries",
+        "selected",
+        "excluded"
+      ],
+      "properties": {
+        "manifest_version": {
+          "enum": [
+            1,
+            null
+          ]
+        },
+        "sha256": {
+          "$ref": "common.json#/$defs/sha256"
+        },
+        "entries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "excluded": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "required": [
+        "stages",
+        "missing",
+        "install_commands",
+        "fingerprint"
+      ],
+      "properties": {
+        "stages": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/capability"
+          }
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "stage",
+              "reason_code",
+              "install_profiles",
+              "install_commands"
+            ],
+            "properties": {
+              "stage": {
+                "$ref": "common.json#/$defs/stage"
+              },
+              "reason_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "install_profiles": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "install_commands": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "install_commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fingerprint": {
+          "$ref": "common.json#/$defs/sha256"
+        }
+      }
+    },
+    "device_allocation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage",
+          "device_id",
+          "explicit",
+          "supported_device_kinds",
+          "state",
+          "reason",
+          "workers",
+          "cpu_tokens"
+        ],
+        "properties": {
+          "stage": {
+            "$ref": "common.json#/$defs/stage"
+          },
+          "device_id": {
+            "$ref": "common.json#/$defs/device_id"
+          },
+          "explicit": {
+            "type": "boolean"
+          },
+          "supported_device_kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "enum": [
+              "available",
+              "unknown_until_probe",
+              "unavailable"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workers": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cpu_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "detector_device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "accelerator_devices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/device"
+      }
+    },
+    "deletion_policy": {
+      "type": "object",
+      "required": [
+        "settings",
+        "contract",
+        "never_deleted",
+        "final_products",
+        "releases",
+        "deletions",
+        "per_document",
+        "basis"
+      ],
+      "properties": {
+        "settings": {
+          "type": "object"
+        },
+        "contract": {
+          "type": "object",
+          "required": [
+            "debug",
+            "memory_saving"
+          ],
+          "properties": {
+            "debug": {
+              "type": "string"
+            },
+            "memory_saving": {
+              "type": "string"
+            }
+          }
+        },
+        "never_deleted": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "final_products": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "stage",
+              "product",
+              "kinds"
+            ],
+            "properties": {
+              "stage": {
+                "$ref": "common.json#/$defs/stage"
+              },
+              "product": {
+                "type": "string"
+              },
+              "kinds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "releases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "producer_stage",
+              "kinds",
+              "after_readers",
+              "when",
+              "applies"
+            ],
+            "properties": {
+              "producer_stage": {
+                "$ref": "common.json#/$defs/stage"
+              },
+              "kinds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "after_readers": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.json#/$defs/stage"
+                }
+              },
+              "when": {
+                "type": "string"
+              },
+              "applies": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "deletions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "file_class",
+              "kinds",
+              "after_readers",
+              "when",
+              "applies"
+            ],
+            "properties": {
+              "file_class": {
+                "type": "string"
+              },
+              "kinds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "after_readers": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.json#/$defs/stage"
+                }
+              },
+              "when": {
+                "type": "string"
+              },
+              "applies": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "per_document": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "document_id",
+              "source_uri",
+              "source",
+              "released"
+            ],
+            "properties": {
+              "document_id": {
+                "type": "string"
+              },
+              "source_uri": {
+                "type": "string"
+              },
+              "source": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "action",
+                  "reason"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "supplied",
+                      "download"
+                    ]
+                  },
+                  "action": {
+                    "enum": [
+                      "kept",
+                      "deleted_after_last_reader"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              },
+              "released": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "basis": {
+          "type": "string"
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/conflict"
+      }
+    },
+    "plan_hash": {
+      "$ref": "common.json#/$defs/sha256"
+    }
+  }
+}

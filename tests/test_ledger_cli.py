@@ -86,7 +86,8 @@ def test_ambiguous_filename_returns_all_candidates_and_unknown_selector_is_struc
 
 def test_plan_hash_prerequisite_closure_and_unknown_routes_without_reuse(tmp_path, capsys):
     seed(tmp_path)
-    code, result = invoke(capsys, "plan", "--corpus", str(tmp_path), "--stages", "annotate", "--workers", "clean=3", "--device", "extract=cuda:0")
+    # K3: an unsupported device for a stage now fails the plan (test_k3_interface); extract runs on cpu only.
+    code, result = invoke(capsys, "plan", "--corpus", str(tmp_path), "--stages", "annotate", "--workers", "clean=3", "--device", "extract=cpu")
     assert code == 0
     body = result["data"]; digest = body.pop("plan_hash")
     assert snapshot_hash(body) == digest

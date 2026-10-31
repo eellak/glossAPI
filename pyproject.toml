@@ -51,10 +51,14 @@ reference = [
 test = [
     "pytest>=9.2.0,<10",
     "fpdf2>=2.7.0",
+    # CLI JSON schema v1 validation in tests only; the runtime never imports it (K3).
+    "jsonschema>=4.23,<5",
     {include-group = "reference"},
 ]
 dev = [
     {include-group = "test"},
+    # W19 typing gate (tools/typing/check_typing.py); a dev/test tool only.
+    "pyright==1.1.408",
 ]
 
 [tool.setuptools]
@@ -66,7 +70,7 @@ where = ["src"]
 include = ["glossapi", "glossapi.*"]
 
 [tool.setuptools.package-data]
-glossapi = ["models/**/*", "ocr_package.txt", "data/wordlists/*"]
+glossapi = ["models/**/*", "ocr_package.txt", "data/wordlists/*", "data/package_catalog/*.json", "data/measured_costs.json", "schemas/v1/*.json"]
 
 [tool.pytest.ini_options]
 markers = [

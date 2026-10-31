@@ -1,0 +1,332 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/report_why.json",
+  "title": "glossAPI CLI v1 report --why data",
+  "description": "report --why SELECTOR: one source explained from the ledger alone (works after intermediates are released).",
+  "type": "object",
+  "required": [
+    "document",
+    "occurrences",
+    "stages",
+    "files",
+    "inclusion",
+    "conflicts",
+    "unknowns",
+    "observations",
+    "retention"
+  ],
+  "properties": {
+    "document": {
+      "type": "object",
+      "required": [
+        "document_id",
+        "source_key",
+        "version_id",
+        "versions",
+        "source_records"
+      ],
+      "properties": {
+        "document_id": {
+          "type": "string"
+        },
+        "source_key": {
+          "type": "string"
+        },
+        "version_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "versions": {
+          "type": "array"
+        },
+        "source_records": {
+          "type": "array"
+        }
+      }
+    },
+    "occurrences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "source_record_id",
+          "run_id",
+          "source_uri",
+          "metadata",
+          "document_id",
+          "disposition"
+        ],
+        "properties": {
+          "source_record_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "execution_run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_uri": {
+            "type": "string"
+          },
+          "source_row": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url_index": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "manifest_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {},
+          "document_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "disposition": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "version_id",
+          "stage",
+          "operation",
+          "status",
+          "reasons",
+          "attempts",
+          "scope"
+        ],
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "common.json#/$defs/task_status"
+          },
+          "reasons": {
+            "type": "array"
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "attempt_id",
+                "attempt_number",
+                "input_hashes",
+                "output_hashes",
+                "settings_hash",
+                "tools_hash",
+                "started_at",
+                "finished_at",
+                "duration_ns",
+                "error",
+                "decisions"
+              ],
+              "properties": {
+                "attempt_id": {
+                  "type": "string"
+                },
+                "attempt_number": {
+                  "type": "integer"
+                },
+                "input_hashes": {
+                  "type": "array"
+                },
+                "output_hashes": {
+                  "type": "array"
+                },
+                "settings_hash": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "tools_hash": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "started_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "finished_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "duration_ns": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "error": {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "decisions": {
+                  "type": "array"
+                }
+              }
+            }
+          },
+          "scope": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "file_id",
+          "version_id",
+          "kind",
+          "path",
+          "sha256",
+          "bytes",
+          "presence",
+          "ownership",
+          "retention"
+        ],
+        "properties": {
+          "file_id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bytes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "presence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ownership": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page_first": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_last": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "legacy_evidence": {
+            "type": "array"
+          },
+          "retention": {
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "inclusion": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "retention": {
+      "type": "object"
+    }
+  }
+}

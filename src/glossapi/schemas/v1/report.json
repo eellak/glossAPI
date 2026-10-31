@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/report.json",
+  "title": "glossAPI CLI v1 report data",
+  "description": "report --json data (no --why).",
+  "type": "object",
+  "required": [
+    "rows",
+    "retention",
+    "resources",
+    "counts",
+    "conflicts",
+    "sources"
+  ],
+  "properties": {
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "document_id",
+          "source_key",
+          "version_id",
+          "stage",
+          "operation",
+          "status",
+          "reason_code",
+          "reasons",
+          "scope"
+        ],
+        "properties": {
+          "document_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "common.json#/$defs/task_status"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "scope": {
+            "enum": [
+              "document",
+              "corpus"
+            ]
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "retention": {
+      "type": "object"
+    },
+    "resources": {
+      "type": "object"
+    },
+    "counts": {
+      "$ref": "common.json#/$defs/counts"
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "document_id",
+          "source_record_id",
+          "run_id",
+          "source_uri",
+          "source_row",
+          "metadata",
+          "metadata_encoding"
+        ],
+        "properties": {
+          "document_id": {
+            "type": "string"
+          },
+          "source_record_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "source_uri": {
+            "type": "string"
+          },
+          "source_row": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {},
+          "metadata_encoding": {
+            "enum": [
+              "json",
+              "typed_v1"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
