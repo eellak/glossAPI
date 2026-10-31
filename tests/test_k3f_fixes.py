@@ -304,3 +304,214 @@ def test_owner_mutations_are_caught(monkeypatch, mutation):
         guide = guide_view()
         monkeypatch.setattr(plan_owner, 'RUN_BLOCKERS', plan_owner.RUN_BLOCKERS | {'new_blocker'})
     assert guide_disagreements(guide)
+
+
+# ======================================================================= round 2 (CP-K3c2) ===
+# C2-F1: case aliases and metadata content under any name; C2-F2: literal keyword codes; K3B-M2: proprietary licences.
+
+def _case_insensitive(directory):
+    probe = Path(directory) / 'CaseProbe.tmp'
+    probe.write_text('x')
+    try:
+        return (Path(directory) / 'caseprobe.TMP').exists()
+    finally:
+        probe.unlink()
+
+
+def _committed(tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    target = tmp_path / 'download_results' / 'download_results.parquet'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.Table.from_pylist([{'filename': 'a.pdf', 'title': 'committed'}]), target)
+    return target
+
+
+def _write(writer, destination):
+    from glossapi.cli import _export
+    from glossapi.input_manifest import build_manifest, write_manifest
+    if writer == 'manifest':
+        write_manifest(build_manifest([{'path': '/absolute/a.pdf'}]), destination)
+    else:
+        _export(destination, {'rows': [{'filename': 'new.pdf'}]}, 'json')
+
+
+@pytest.mark.parametrize('writer', ['manifest', 'export'])
+@pytest.mark.parametrize('spelling', ['case-file', 'case-dir', 'symlink-case-file'])
+def test_r2_case_alias_destinations_are_refused(tmp_path, writer, spelling):
+    """CP-K3c2 C2-F1 (reviewer witness, both writers): a case alias of the metadata parquet is refused."""
+    from glossapi.parquet_schema import MetadataDestinationError
+    if not _case_insensitive(tmp_path):
+        pytest.skip('case-sensitive scratch filesystem (content-based tests below cover the rule here)')
+    target = _committed(tmp_path)
+    if spelling == 'case-dir':
+        destination = target.parent.with_name('DOWNLOAD_RESULTS') / target.name
+    else:
+        destination = target.with_name(target.name.upper())
+    if spelling == 'symlink-case-file':
+        link = tmp_path / 'manifest.json'
+        link.symlink_to(destination)
+        destination = link
+    assert target.samefile(destination)
+    before, listing = target.read_bytes(), sorted(os.listdir(target.parent))
+    with pytest.raises(MetadataDestinationError):
+        _write(writer, destination)
+    assert target.read_bytes() == before and sorted(os.listdir(target.parent)) == listing
+    if spelling == 'symlink-case-file':
+        assert destination.is_symlink()
+
+
+def test_r2_public_cli_report_case_alias_is_refused(tmp_path):
+    """CP-K3c2 C2-F1 public reproduction: report --output DOWNLOAD_RESULTS.PARQUET overwrote committed metadata."""
+    from test_ledger_cli import seed
+    if not _case_insensitive(tmp_path):
+        pytest.skip('case-sensitive scratch filesystem')
+    seed(tmp_path)
+    target = _committed(tmp_path)
+    alias = target.with_name(target.name.upper())
+    before = target.read_bytes()
+    for output_format in ('json', 'parquet'):
+        code, envelope = cli('report', '--corpus', str(tmp_path), '--output', str(alias), '--format', output_format)
+        assert code == 2 and envelope['errors'][0]['message'].startswith('refusing to export'), envelope
+        assert target.read_bytes() == before
+
+
+@pytest.mark.parametrize('writer', ['manifest', 'export'])
+@pytest.mark.parametrize('name', ['export.json', 'notes', 'REPORT.PARQUET', 'elsewhere/metadata.parquet'])
+def test_r2_metadata_content_is_refused_under_any_name(tmp_path, writer, name):
+    """Runs on every filesystem: an existing destination whose bytes are a metadata parquet (parquet magic and the
+    find_metadata_parquet schema test) is refused whatever it is called."""
+    from glossapi.parquet_schema import MetadataDestinationError
+    import shutil
+    destination = tmp_path / name
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(_committed(tmp_path / 'source'), destination)
+    before = destination.read_bytes()
+    with pytest.raises(MetadataDestinationError):
+        _write(writer, destination)
+    assert destination.read_bytes() == before
+
+
+@pytest.mark.parametrize('writer', ['manifest', 'export'])
+@pytest.mark.parametrize('relative', ['download_results/NEW.PARQUET', 'Download_Results/new.parquet', 'download_results/new.Parquet'])
+def test_r2_metadata_names_are_compared_case_insensitively(tmp_path, writer, relative):
+    """Runs on every filesystem: a new download_results/*.parquet name in any letter case is refused."""
+    from glossapi.parquet_schema import MetadataDestinationError
+    destination = tmp_path / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(MetadataDestinationError):
+        _write(writer, destination)
+    assert not destination.exists()
+
+
+def test_r2_selectable_metadata_and_ordinary_parquet_destinations(tmp_path):
+    import shutil
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from glossapi.cli import _export
+    from glossapi.parquet_schema import metadata_parquet_content, selectable_metadata_parquet
+    metadata = _committed(tmp_path)
+    upper = tmp_path / 'COPY.PARQUET'; shutil.copyfile(metadata, upper)
+    assert selectable_metadata_parquet(upper) and metadata_parquet_content(upper)
+    sections = tmp_path / 'sections.bin'
+    pq.write_table(pa.Table.from_pylist([{'filename': 'a.pdf', 'section': 'x'}]), sections)
+    assert not metadata_parquet_content(sections)  # a sections parquet is not metadata
+    assert not metadata_parquet_content(tmp_path / 'missing.parquet')
+    # A report parquet export can be written, and written again over itself.
+    report = tmp_path / 'report.parquet'
+    for _ in range(2):
+        assert _export(report, {'rows': [{'document_id': 'd', 'stage': 'extract'}]}, 'parquet')['rows'] == 1
+
+
+def test_r2_case_alias_resolves_to_the_on_disk_name_and_shares_one_lock(tmp_path):
+    """metadata_target identity: a case alias resolves to the on-disk spelling (one lock file, one name), and a write
+    through the alias keeps the file's name."""
+    from filelock import FileLock, Timeout
+    from glossapi.parquet_schema import metadata_target, resolve_metadata_target, update_metadata_parquet
+    if not _case_insensitive(tmp_path):
+        pytest.skip('case-sensitive scratch filesystem')
+    target = _committed(tmp_path)
+    for alias in (target.with_name(target.name.upper()), target.parent.with_name('DOWNLOAD_RESULTS') / target.name.upper()):
+        assert resolve_metadata_target(alias) == resolve_metadata_target(target) == target.resolve()
+        with metadata_target(alias) as physical:
+            assert physical == target.resolve()
+            with pytest.raises(Timeout):
+                with FileLock(str(target.resolve()) + '.lock', timeout=0.05):
+                    pass
+    update_metadata_parquet(target.with_name(target.name.upper()), lambda current: current.assign(triage='changed'))
+    assert sorted(os.listdir(target.parent)) == ['download_results.parquet']
+    # a destination that does not exist yet keeps the on-disk case of its existing directories
+    assert resolve_metadata_target(tmp_path / 'DOWNLOAD_RESULTS' / 'new.json') == target.parent.resolve() / 'new.json'
+
+
+# C2-F2 ------------------------------------------------------------------------------------------------------
+
+def test_r2_reviewer_keyword_code_mutation_is_caught(monkeypatch, tmp_path):
+    """CP-K3c2 C2-F2 witness: a literal code= keyword after the message expression."""
+    import glossapi.plan_preview as owner
+    from glossapi.cli import plan_documents
+    from glossapi.llm_guide import guide_view
+    from test_k3b_interface import guide_disagreements
+    old = ("PlanBindingError('plan_source_changed', 'A source that was absent at planning now exists; plan again',\n"
+           "                                       field='presence', **details)")
+    namespace = _recompiled(owner, old, "PlanBindingError(message=str(path), code='plan_source_altered', field='presence', **details)")
+    monkeypatch.setattr(owner, 'verify_plan_binding', namespace['verify_plan_binding'])
+    absent = tmp_path / 'absent.pdf'
+    plan = plan_documents(tmp_path / 'corpus', files=[str(absent)], stages=['extract'])
+    pdf(absent)
+    with pytest.raises(namespace['PlanBindingError']) as error:
+        owner.verify_plan_binding(plan)
+    assert error.value.code == 'plan_source_altered'
+    problems = guide_disagreements(guide_view())
+    assert any('plan_source_altered' in problem for problem in problems), problems
+
+
+CALL_FORMS = {
+    'keyword-first': "PlanBindingError(code='plan_source_altered', message='m')",
+    'keyword-after-expression': "PlanBindingError(message=str(path), code='plan_source_altered')",
+    'starred': "PlanBindingError(*('plan_source_altered', 'm'))",
+    'computed': "PlanBindingError(str(path), 'm')",
+    'conditional': "PlanBindingError('plan_source_altered' if path else 'plan_source_changed', 'm')",
+}
+
+
+@pytest.mark.parametrize('form', sorted(CALL_FORMS))
+def test_r2_raised_code_reader_fails_closed_on_every_call_form(form):
+    """The owner-source reader finds a literal code in any argument position and refuses a computed one outside the
+    declared computed-code sites; the live functions must equal their source."""
+    from test_k3b_interface import code_problems
+    source = ("from glossapi.plan_preview import PlanBindingError\n"
+              "def mutated(path):\n    raise " + CALL_FORMS[form] + "\n")
+    problems = code_problems('glossapi.mutated_owner', source, registry={'plan_source_changed'})
+    assert problems, form
+
+
+def test_r2_live_function_that_differs_from_its_source_is_reported(monkeypatch):
+    import glossapi.plan_preview as owner
+    from test_k3b_interface import live_source_problems
+    assert live_source_problems(owner) == []
+    namespace = _recompiled(owner, "'invalid_plan', 'Not a glossapi plan", "'invalid_plan', 'Not a glossAPI plan")
+    monkeypatch.setattr(owner, 'verify_plan_binding', namespace['verify_plan_binding'])
+    assert any('verify_plan_binding' in problem for problem in live_source_problems(owner))
+
+
+# K3B-M2 -----------------------------------------------------------------------------------------------------
+
+def test_r2_catalog_and_guide_flag_proprietary_licences():
+    from glossapi.llm_guide import guide_view, render_markdown
+    from glossapi.package_catalog import catalog_view
+    by_name = {row['name']: row for row in catalog_view(installed=False)['profiles']}
+    layout = by_name['layout']['licence']
+    assert layout['proprietary'] is True
+    assert {'nvidia-cublas-cu12', 'nvidia-cudnn-cu12'} <= set(layout['proprietary_packages'])
+    assert {'nvidia-cuda-runtime'} <= set(layout['proprietary_packages'])  # CUDA 13 runtimes declare no licence: NVIDIA EULA
+    for name in ('core', 'download', 'browser', 'annotate'):
+        assert by_name[name]['licence']['proprietary'] is False and by_name[name]['licence']['proprietary_packages'] == []
+    cpu_layout = [size for size in by_name['layout']['install_size'] if size['device'] == 'cpu']
+    assert cpu_layout and all(size['proprietary_packages'] == [] for size in cpu_layout)
+    assert all(size['proprietary_packages'] for size in by_name['layout']['install_size'] if (size['device'] or '').startswith('cuda'))
+    guide = guide_view()
+    rows = {row['name']: row for row in guide['choices']['packages']}
+    assert rows['layout']['proprietary'] is True and rows['layout']['proprietary_packages'] == layout['proprietary_packages']
+    assert rows['core']['proprietary'] is False
+    assert 'proprietary: ' in render_markdown(guide)

@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from .ledger.journal import observe, observe_store, observe_source_rows
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - not POSIX
+    fcntl = None  # type: ignore[assignment]
 import json
 import os
 import time
@@ -164,18 +168,62 @@ METADATA_SIGNATURES = ({'filename'}, {'download_success', 'download_error', 'fil
                        {'filter', 'mojibake_badness_score', 'greek_badness_score'})
 
 
-def selectable_metadata_parquet(path: Union[str, Path]) -> bool:
-    """Whether ``path`` is a parquet ``find_metadata_parquet`` could select: a ``.parquet`` file (not ``.partial.``)
-    whose schema has no ``section`` column and has ``filename``, the downloader signature or the cleaner-metrics
-    signature. Reads only the parquet schema; an unreadable file is not metadata."""
+def metadata_parquet_content(path: Union[str, Path]) -> bool:
+    """Whether the bytes at ``path`` are a metadata parquet, whatever the file is called (CP-K3c2 C2-F1): a regular
+    file that starts with the parquet magic ``PAR1`` and whose schema has no ``section`` column and has
+    ``filename``, the downloader signature or the cleaner-metrics signature (the ``find_metadata_parquet`` schema
+    test). Reads only the magic and the parquet footer; an unreadable file is not metadata."""
     candidate = Path(path)
-    if candidate.suffix != '.parquet' or '.partial.' in candidate.name or not candidate.is_file():
-        return False
     try:
+        if not candidate.is_file():
+            return False
+        with candidate.open('rb') as stream:
+            if stream.read(4) != b'PAR1':
+                return False
         names = set(pq.read_schema(candidate).names)
     except Exception:
         return False
     return 'section' not in names and any(signature <= names for signature in METADATA_SIGNATURES)
+
+
+def selectable_metadata_parquet(path: Union[str, Path]) -> bool:
+    """Whether ``path`` is a parquet ``find_metadata_parquet`` could select: a ``.parquet`` file (not ``.partial.``;
+    both compared case-insensitively, CP-K3c2 C2-F1) whose content passes ``metadata_parquet_content``."""
+    name = Path(path).name.casefold()
+    if not name.endswith('.parquet') or '.partial.' in name:
+        return False
+    return metadata_parquet_content(path)
+
+
+def _on_disk_spelling(path: Path) -> Path:
+    """The spelling the filesystem stores for ``path`` (a ``realpath`` result). On a case-insensitive volume
+    ``realpath`` keeps the caller's letter case, so ``DOWNLOAD_RESULTS.PARQUET`` and ``download_results.parquet``
+    would be two identities of one file (CP-K3c2 C2-F1). Where the platform can say (``fcntl.F_GETPATH``, macOS),
+    the nearest existing ancestor is replaced by its stored spelling and the missing tail is kept; the answer is used
+    only when it differs from the input in letter case alone (a hard link may report another name, which is not a
+    respelling). Elsewhere, and on any error, ``path`` is returned unchanged."""
+    getpath = getattr(fcntl, 'F_GETPATH', None) if fcntl is not None else None
+    if getpath is None:
+        return path
+    existing, tail = path, []
+    while not os.path.lexists(existing):
+        if existing.parent == existing:
+            return path
+        tail.append(existing.name)
+        existing = existing.parent
+    try:
+        descriptor = os.open(existing, os.O_RDONLY | getattr(os, 'O_NONBLOCK', 0))
+    except OSError:
+        return path
+    try:
+        stored = os.fsdecode(fcntl.fcntl(descriptor, getpath, b'\0' * 1024).split(b'\0', 1)[0])
+    except OSError:
+        return path
+    finally:
+        os.close(descriptor)
+    if not stored or stored == os.fspath(existing) or stored.casefold() != os.fspath(existing).casefold():
+        return path
+    return Path(stored, *reversed(tail))
 
 
 def resolve_metadata_target(path: Union[str, Path]) -> Path:
@@ -185,8 +233,10 @@ def resolve_metadata_target(path: Union[str, Path]) -> Path:
     followed by ``..`` climbs from the link's target, as the OS does; no lexical ``abspath`` folding first, CP-K2d F1),
     and a file symlink resolves to its target. Lock, read and atomic replacement all use this path; the caller's
     spelling is kept only for messages, journal observations and return values. Writing through a file symlink
-    therefore updates the real file and the link survives (CP-K2d F3)."""
-    return Path(os.path.realpath(os.path.expanduser(os.fspath(path))))
+    therefore updates the real file and the link survives (CP-K2d F3). On a case-insensitive volume the existing
+    part of the result takes the filesystem's stored letter case (``_on_disk_spelling``, CP-K3c2 C2-F1), so every
+    case alias of one file has one identity: one lock file, and a replacement keeps the file's name."""
+    return _on_disk_spelling(Path(os.path.realpath(os.path.expanduser(os.fspath(path)))))
 
 
 # Round-2 name, kept as an alias of the one policy.
@@ -202,8 +252,10 @@ def refuse_metadata_destination(path: Union[str, 'os.PathLike[str]'], *, writer:
     - an existing physical file with more than one name (``st_nlink > 1``) raises ``MetadataAliasError``, whatever
       its suffix: another name may be a metadata parquet, and a hard link cannot be traced back to it without
       searching the filesystem, so every hard-linked destination is refused;
-    - a physical file that is a selectable metadata parquet, or a ``download_results/*.parquet`` name, raises
-      ``MetadataDestinationError``."""
+    - an existing physical file whose bytes are a metadata parquet (``metadata_parquet_content``: parquet magic and
+      the ``find_metadata_parquet`` schema test, whatever the name or suffix), or a ``download_results/*.parquet``
+      name compared case-insensitively, raises ``MetadataDestinationError`` (CP-K3c2 C2-F1: on a case-insensitive
+      volume ``DOWNLOAD_RESULTS.PARQUET`` is the metadata file; the resolution also takes the stored case)."""
     physical = resolve_metadata_target(path)
     try:
         links = os.stat(physical).st_nlink
@@ -212,7 +264,8 @@ def refuse_metadata_destination(path: Union[str, 'os.PathLike[str]'], *, writer:
     if links > 1:
         raise MetadataAliasError(f"refusing to {writer} through {os.fspath(path)} ({physical}): it is hard-linked "
                                  f"({links} names), and another name may be corpus metadata; choose a new path")
-    if selectable_metadata_parquet(physical) or (physical.suffix == '.parquet' and physical.parent.name == 'download_results'):
+    if metadata_parquet_content(physical) or (physical.suffix.casefold() == '.parquet'
+                                              and physical.parent.name.casefold() == 'download_results'):
         raise MetadataDestinationError(f"refusing to {writer} over metadata parquet {os.fspath(path)} ({physical}); "
                                        "choose a path outside the corpus metadata")
 

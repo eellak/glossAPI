@@ -450,6 +450,8 @@ def guide_disagreements(guide):
             problems.append('install sizes differ for ' + ours['name'])
         if ours['devices'] != [item['device'] for item in theirs['devices'] if item['supported']] or ours['purpose'] != theirs['purpose']:
             problems.append('devices/purpose differ for ' + ours['name'])
+        if (ours.get('proprietary'), ours.get('proprietary_packages')) != (theirs['licence']['proprietary'], theirs['licence']['proprietary_packages']):
+            problems.append('proprietary licence flag differs for ' + ours['name'])
     if [row['name'] for row in guide['schemas']] != list(NAMES) or any(load_schema(row['name'])['$id'] != row['id'] for row in guide['schemas']):
         problems.append('schema list differs')
     if [row['stage'] for row in guide['phases']] != list(STAGE_ORDER) or any(row['device_kinds'] != list(STAGE_DEVICE_KINDS[row['stage']]) for row in guide['phases']):
@@ -465,18 +467,19 @@ def guide_disagreements(guide):
             problems.append(f"workflow step {row['step']} does not parse: {error}")
     if any(guide['errors'][code]['exit_code'] != exit_code for code, (exit_code, _) in ERRORS.items()):
         problems.append('install error codes differ')
-    # Plan/run and manifest errors (CP-K3 F4): the guide rows equal the owners' registries, and each registry equals
-    # the codes the owner's live functions construct (so a code renamed in the raising code itself is caught).
+    # Plan/run and manifest errors (CP-K3 F4, CP-K3c2 C2-F2): the guide rows equal the owners' registries; each
+    # registry equals the literal codes the owner's source raises (read from its AST, any argument position), computed
+    # codes stand only at declared sites, and the live functions are the ones compiled from that source.
     import glossapi.input_manifest as manifest_owner
     import glossapi.plan_preview as plan_owner
     for owner in (plan_owner, manifest_owner):
         for code, row in owner.error_contracts().items():
             if guide['errors'].get(code) != row:
                 problems.append(f'guide error row for {code} differs from {owner.__name__}.ERRORS')
+        problems.extend(code_problems(owner.__name__, Path(owner.__file__).read_text(), registry=set(owner.ERRORS),
+                                      computed_sites=COMPUTED_CODE_SITES.get(owner.__name__, frozenset())))
+        problems.extend(live_source_problems(owner))
         raised = raised_codes(owner)
-        unregistered = sorted(raised - set(owner.ERRORS))
-        if unregistered:
-            problems.append(f'{owner.__name__} raises codes missing from its ERRORS registry (and the guide): {unregistered}')
         dynamic = plan_owner.PLAN_ERRORS if owner is plan_owner else frozenset()
         stale = sorted(set(owner.ERRORS) - raised - dynamic)
         if stale:
@@ -495,44 +498,120 @@ def guide_disagreements(guide):
 
 
 ERROR_CLASSES = frozenset(('PlanBindingError', 'ManifestError'))
+# Call sites that pass a computed code, each checked another way: refuse_conflicts re-raises a conflict's code, which
+# is a PLAN_ERRORS code (the PLAN_ERRORS/RUN_BLOCKERS subset check in guide_disagreements).
+COMPUTED_CODE_SITES = {'glossapi.plan_preview': frozenset(('refuse_conflicts',))}
+
+
+def _error_calls(source):
+    """Every ``PlanBindingError(...)``/``ManifestError(...)`` call in ``source``: (enclosing function qualname, line,
+    the literal code or None when the code is computed). The code is the first positional argument (a starred literal
+    tuple included) or the ``code=`` keyword, wherever it stands among the arguments (CP-K3c2 C2-F2)."""
+    import ast
+    calls = []
+
+    def literal(node):
+        return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+    def visit(node, scope):
+        for child in ast.iter_child_nodes(node):
+            inner = scope
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                inner = scope + (child.name,)
+            if isinstance(child, ast.Call):
+                name = child.func.id if isinstance(child.func, ast.Name) else child.func.attr if isinstance(child.func, ast.Attribute) else None
+                if name in ERROR_CLASSES:
+                    code = None
+                    if child.args:
+                        first = child.args[0]
+                        if isinstance(first, ast.Starred):
+                            items = first.value.elts if isinstance(first.value, (ast.Tuple, ast.List)) else []
+                            code = literal(items[0]) if items else None
+                        else:
+                            code = literal(first)
+                    else:
+                        keyword = next((item for item in child.keywords if item.arg == 'code'), None)
+                        code = literal(keyword.value) if keyword is not None else None
+                    calls.append(('.'.join(scope) or '<module>', child.lineno, code))
+            visit(child, inner)
+
+    visit(ast.parse(source), ())
+    return calls
+
+
+def code_problems(module_name, source, *, registry, computed_sites=frozenset()):
+    """Literal codes missing from ``registry``, and computed codes outside the declared ``computed_sites`` (fail closed)."""
+    problems = []
+    for where, line, code in _error_calls(source):
+        if code is None and where not in computed_sites:
+            problems.append(f'{module_name}.{where} line {line} raises a computed error code (not a literal and not a declared computed site)')
+        elif code is not None and code not in registry:
+            problems.append(f'{module_name}.{where} line {line} raises {code!r}, missing from its ERRORS registry (and the guide)')
+    return problems
 
 
 def raised_codes(module):
-    """The literal codes ``module``'s live functions pass to its typed error classes (``PlanBindingError('code', ...)``,
-    ``ManifestError('code', ...)``), read from their bytecode, nested functions included. Live objects, not the source
-    file: a function replaced at run time is read as it is now. A computed code (``PlanBindingError(item['code'], ...)``)
-    is not a literal and is checked through the conflict registries instead."""
-    import dis
+    """The literal codes ``module``'s source passes to its typed error classes (positional or ``code=``)."""
+    return {code for _, _, code in _error_calls(Path(module.__file__).read_text()) if code is not None}
+
+
+def live_source_problems(module):
+    """Every live function of ``module`` (module level and class methods) must be the one compiled from its source file,
+    so that reading the source reads what runs. A function replaced at run time, for example recompiled from edited
+    source, is reported with the string constants it adds."""
     import inspect
     import types
+    compiled = {}
 
-    def code_objects(code):
-        yield code
+    def walk(code):
+        compiled[code.co_qualname] = code
         for constant in code.co_consts:
             if isinstance(constant, types.CodeType):
-                yield from code_objects(constant)
+                walk(constant)
+
+    walk(compile(Path(module.__file__).read_text(), module.__file__, 'exec'))
+
+    def strings(code):
+        out = set()
+        for constant in code.co_consts:
+            if isinstance(constant, str):
+                out.add(constant)
+            elif isinstance(constant, tuple):
+                out.update(item for item in constant if isinstance(item, str))
+            elif isinstance(constant, types.CodeType):
+                out |= strings(constant)
+        return out
+
+    import dataclasses
+
+    def members(cls):
+        for item in vars(cls).values():
+            if isinstance(item, (staticmethod, classmethod)):
+                item = item.__func__
+            if isinstance(item, property):
+                yield from (accessor for accessor in (item.fget, item.fset, item.fdel) if accessor is not None)
+            elif inspect.isfunction(item):
+                yield item
+
+    def generated(code):
+        # methods that @dataclass writes (exec of generated text, or its own helpers); nothing else is exempt
+        return (code.co_filename == '<string>' and code.co_qualname.startswith('__create_fn__.')) or code.co_filename == dataclasses.__file__
 
     functions = []
     for value in vars(module).values():
         if inspect.isfunction(value) and value.__module__ == module.__name__:
             functions.append(value)
         elif inspect.isclass(value) and value.__module__ == module.__name__:
-            functions.extend(item for item in vars(value).values() if inspect.isfunction(item))
-    codes = set()
+            functions.extend(members(value))
+    problems = []
     for function in functions:
-        for code in code_objects(function.__code__):
-            pending = False
-            for instruction in dis.get_instructions(code):
-                if instruction.opname in ('PUSH_NULL', 'PRECALL', 'CACHE', 'NOP'):
-                    continue
-                if pending and instruction.opname == 'LOAD_CONST':
-                    value = instruction.argval
-                    # A call with **details folds its literal positional arguments into one tuple constant.
-                    value = value[0] if isinstance(value, tuple) and value else value
-                    if isinstance(value, str):
-                        codes.add(value)
-                pending = instruction.opname in ('LOAD_GLOBAL', 'LOAD_NAME') and instruction.argval in ERROR_CLASSES
-    return codes
+        if generated(function.__code__):
+            continue
+        live, source = function.__code__, compiled.get(function.__code__.co_qualname)
+        if live != source:
+            added = sorted(strings(live) - (strings(source) if source is not None else set()))
+            problems.append(f'{module.__name__}.{live.co_qualname} differs from its source file (added constants: {added})')
+    return problems
 
 
 def test_guide_is_schema_valid_consistent_and_equals_the_docs_file():

@@ -20,7 +20,7 @@ from .capabilities import RUN_UNAVAILABLE, STAGE_DEVICE_KINDS, STAGE_ORDER
 from . import input_manifest, plan_preview
 from .input_manifest import MANIFEST_VERSION, PRODUCTS, SELECTOR_KEYS
 from .install_plan import ERRORS as INSTALL_ERRORS
-from .package_catalog import DEVICES, catalog_view, requirement_source, stage_enablement, torch_build
+from .package_catalog import DEVICES, PROPRIETARY_BASIS, catalog_view, requirement_source, stage_enablement, torch_build
 from .schemas import NAMES, SCHEMA_VERSION, load_schema
 from .settings_contract import PLAN_FIXED_NOTE, SETTINGS_CONTRACT, SETTINGS_DEFAULTS
 
@@ -122,7 +122,8 @@ def guide_view() -> dict[str, Any]:
                                         added_packages=size['added_packages'], added_download_bytes=size['added_download_bytes'],
                                         added_installed_bytes=size['added_installed_bytes'], unmeasured=size['unmeasured'])
                                    for size in row['install_size']],
-                     licences=row['licence']['roots'], install_command=row['install_command'])
+                     licences=row['licence']['roots'], proprietary=row['licence']['proprietary'],
+                     proprietary_packages=row['licence']['proprietary_packages'], install_command=row['install_command'])
                 for row in catalog['profiles']]
     return dict(
         guide_version=GUIDE_VERSION, schema_version=SCHEMA_VERSION,
@@ -206,6 +207,9 @@ def render_markdown(guide: dict[str, Any]) -> str:
         name = f"`{row['name']}`" + (f" (alias of {row['alias_of']})" if row['alias_of'] else '')
         out.append(f"| {name} | {row['kind']} | {', '.join(row['enables']) or '-'} | {', '.join(row['devices'])} | {sizes} | "
                    f"{', '.join(row['licences']) or '-'} |")
+    flagged = [row for row in choices['packages'] if row['proprietary']]
+    out += ['', 'Proprietary licences (flagged from the locks; ' + PROPRIETARY_BASIS + '):', '']
+    out += [f"- `{row['name']}`: proprietary: {', '.join(row['proprietary_packages'])}" for row in flagged] or ['- none']
     out += ['', 'Purposes:', '']
     out += [f"- `{row['name']}`: {row['purpose']}" for row in choices['packages']]
     out += ['', '### Settings', '']

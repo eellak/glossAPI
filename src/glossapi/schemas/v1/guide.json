@@ -274,6 +274,17 @@
                   "type": "string"
                 }
               },
+              "proprietary": {
+                "type": "boolean",
+                "description": "The catalog's explicit proprietary-licence flag for this package; added in 1.2."
+              },
+              "proprietary_packages": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The packages under a proprietary licence; added in 1.2."
+              },
               "install_command": {
                 "type": [
                   "string",

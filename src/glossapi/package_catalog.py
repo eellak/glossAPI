@@ -51,6 +51,12 @@ PURPOSES: Final[dict[str, str]] = {
     'docs': 'Documentation tooling (mkdocs); no pipeline capability.',
 }
 KINDS: Final[dict[str, str]] = {'core': 'base', 'docling': 'alias', 'docs': 'tooling'}
+# Proprietary licences (K3B-M2). A package is flagged when its measured licence says proprietary (e.g. 'NVIDIA
+# Proprietary Software', 'LicenseRef-NVIDIA-Proprietary'), or when it is an NVIDIA CUDA runtime distribution that
+# declares no licence at all (the CUDA 13 wheels): those ship under the NVIDIA software licence agreement.
+NVIDIA_RUNTIME_PREFIXES: Final[tuple[str, ...]] = ('nvidia-', 'cuda-toolkit')
+PROPRIETARY_BASIS: Final[str] = ('a measured licence naming a proprietary licence, or an NVIDIA CUDA runtime distribution (nvidia-*, '
+                                 'cuda-toolkit) that declares no licence (shipped under the NVIDIA software licence agreement)')
 # Stage settings variants whose package declarations differ from the defaults (stage adapters' packages()).
 STAGE_VARIANTS: Final[tuple[tuple[str, tuple[tuple[str, str], ...]], ...]] = (
     ('download', ()), ('download', (('download_mode', 'browser'),)),
@@ -305,6 +311,15 @@ def current_target(data: dict[str, Any], system: str, machine: str) -> str | Non
     return None
 
 
+def proprietary_licence(item: dict[str, Any]) -> bool:
+    """Whether one measured lock package is under a proprietary licence (``PROPRIETARY_BASIS``)."""
+    licence = cast(str | None, item.get('licence'))
+    if licence and 'proprietary' in licence.casefold():
+        return True
+    undeclared = not licence or licence == 'unknown' or licence.startswith('not declared')
+    return undeclared and cast(str, item['name']).startswith(NVIDIA_RUNTIME_PREFIXES)
+
+
 def lock_for(data: dict[str, Any], profile: str, device: str | None, target: str) -> dict[str, Any] | None:
     return cast(dict[str, dict[str, Any]], data.get('locks') or {}).get(f'{profile}@{device or "any"}@{target}')
 
@@ -326,7 +341,8 @@ def _lock_summary(data: dict[str, Any], lock: dict[str, Any], core_lock: dict[st
                 added_names=sorted(cast(str, item['name']) for item in added),
                 unmeasured=sorted(cast(str, item['name']) for item in packages
                                   if item.get('download_bytes') is None or item.get('installed_bytes') is None),
-                licences=sorted({cast(str, item.get('licence') or 'unknown') for item in added}))
+                licences=sorted({cast(str, item.get('licence') or 'unknown') for item in added}),
+                proprietary_packages=sorted(cast(str, item['name']) for item in packages if proprietary_licence(item)))
 
 
 def _device_rows(profile: str, bound: bool, data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -353,6 +369,13 @@ def device_support(source: RequirementSource, profile: str, device: str, data: d
     data = measured() if data is None else data
     rows = _device_rows(measured_profile(source, profile), device_bound(source, profile), data or {})
     return next(row for row in rows if row['device'] == device)
+
+
+def _proprietary(sizes: list[dict[str, Any]]) -> dict[str, Any]:
+    """The profile's explicit proprietary-licence flag (K3B-M2): whether any measured lock of it installs a proprietary
+    package, which ones (over every target and device profile), and the rule."""
+    names = sorted({name for size in sizes for name in cast(list[str], size['proprietary_packages'])})
+    return dict(proprietary=bool(names), proprietary_packages=names, proprietary_basis=PROPRIETARY_BASIS)
 
 
 def catalog_view(source: RequirementSource | None = None, *, installed: bool = True) -> dict[str, Any]:
@@ -387,7 +410,8 @@ def catalog_view(source: RequirementSource | None = None, *, installed: bool = T
             name=name, kind=KINDS.get(name, 'feature'), purpose=PURPOSES.get(name), alias_of=basis if basis != name else None,
             includes=includes(source, name), requirements=requirements, enables=enablement.get(basis, []),
             device_bound=bound, devices=_device_rows(basis, bound, data),
-            licence=dict(roots=sorted(root_licences), all_added=sorted({item for size in sizes for item in size['licences']})),
+            licence=dict(roots=sorted(root_licences), all_added=sorted({item for size in sizes for item in size['licences']}),
+                         **_proprietary(sizes)),
             install_size=sizes, measurement=dict(state='missing' if not sizes else 'stale' if stale else 'current', stale_locks=stale),
             install_command=None if name == 'core' else f'glossapi install --device cpu --package {name}' if not bound
             else f'glossapi install --device <{"|".join(DEVICES)}> --package {name}')

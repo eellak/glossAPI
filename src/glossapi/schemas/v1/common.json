@@ -488,6 +488,13 @@
             "type": "string"
           }
         },
+        "proprietary_packages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Packages of this lock under a proprietary licence (package_profile.licence.proprietary_basis); added in 1.2."
+        },
         "current": {
           "type": "boolean"
         }
@@ -685,6 +692,21 @@
               "items": {
                 "type": "string"
               }
+            },
+            "proprietary": {
+              "type": "boolean",
+              "description": "Whether any measured lock of this profile installs a package under a proprietary licence (for example the NVIDIA CUDA runtimes of a CUDA device profile); added in 1.2."
+            },
+            "proprietary_packages": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Those packages, over every target and device profile; added in 1.2."
+            },
+            "proprietary_basis": {
+              "type": "string",
+              "description": "The rule that flags a package as proprietary; added in 1.2."
             }
           }
         },

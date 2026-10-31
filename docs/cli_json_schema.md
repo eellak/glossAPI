@@ -99,6 +99,13 @@ the device profiles it supports per measured platform, the licences of its own r
 its measured install size, and whether it is installed (`installed.state`: installed / partial / missing, per
 requirement).
 
+Proprietary licences are flagged explicitly (schema 1.2): `licence.proprietary` (boolean) and
+`licence.proprietary_packages` per profile, over every target and device profile, and `proprietary_packages` per
+measured lock. A package is flagged when its measured licence names a proprietary licence, or when it is an NVIDIA
+CUDA runtime distribution (`nvidia-*`, `cuda-toolkit`) that declares no licence (`licence.proprietary_basis`). The
+CUDA device profiles of `layout`/`docling`/`ocr` are flagged (the NVIDIA CUDA runtimes); their CPU and MPS locks list
+none. The guide's package rows carry the same flag.
+
 Why a flag on `capabilities` and not a separate `packages` command: the catalog is the same capability surface (the
 same requirement detection and the same envelope command), so an LLM learns one read-only command for "what is here and
 what could be added", the envelope dispatch stays unchanged, and the plan's `install_commands` point at the same names.
@@ -195,3 +202,7 @@ Warnings: `nothing_selected`, `installer_unavailable` (dry run), `dependency_che
 - `1.1` (2026-10-31): additive (K3b): new commands `install` and `guide` (`install.json`, `guide.json`, envelope
   dispatch for them); `capabilities.catalog` (with `--catalog`) and the common definitions `catalog`, `package_profile`,
   `lock_size`, `requirement_state`, `device_profile`. No existing field changed.
+- `1.2` (2026-10-31): additive (K3F round 2, K3B-M2): an optional proprietary-licence flag in the catalog
+  (`package_profile.licence.proprietary`, `proprietary_packages`, `proprietary_basis`;
+  `lock_size.proprietary_packages`) and in the guide package rows (`proprietary`, `proprietary_packages`). No existing
+  field changed.
