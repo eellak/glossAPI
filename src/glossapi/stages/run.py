@@ -649,6 +649,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     result,replays=prepare_streaming(corpus,files,workers=workers,stages=stages,
         settings={**settings,'publication_barriers':publication_stages},
         resume=resume,retry_failed=retry_failed,observer=observer,writer=corpus._scheduler_writer,credentials=credentials)
+    _bind_barrier_context(corpus._scheduler_writer,result.get('run_id'))
     if result['state'] not in ('completed','completed_with_failures'):
         return result
     corpus._streaming_ocr_replays=replays
@@ -740,6 +741,15 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                 'retained_file_ids':[row['file_id'] for row in writer.file_catalog().values() if row['presence']=='present'
                     and row['ownership'] in ('managed','initial_external') and local_path(row['uri']).is_file()]})})
     return result
+
+
+def _bind_barrier_context(writer,run_id):
+    """The run-close barrier records per-barrier files (debug=on) or one summary (debug=off) for this run."""
+    if not run_id:return
+    row=writer.connection.execute('SELECT s.json FROM runs r JOIN snapshots s ON s.sha256=r.settings_sha256 WHERE r.run_id=?',(run_id,)).fetchone()
+    debug=(json.loads(row[0]).get('debug','off') if row else 'off')
+    writer.barrier_context={'run_id':run_id,'debug':debug}
+    writer.retained_intermediates=debug=='on'
 
 
 def reconcile_export_census(corpus,result):

@@ -3,6 +3,11 @@
 UUIDs/SHA256s use 16/32-byte SQLite BLOBs. Large canonical JSON uses a
 self-identifying zlib frame. Hashes cover the original canonical UTF-8 bytes,
 not a compressor-dependent representation. Version one stays read/write plain.
+
+Frames v2 (K4(c), encoding only): the same zlib streams primed with a fixed
+preset dictionary (ledger/json_dictionary.py, pinned by sha256) behind a short
+marker. A v2 frame is never 16 or 32 bytes long, so it cannot be mistaken for a
+UUID or digest BLOB. Readers decode v1 and v2 frames alike.
 """
 from __future__ import annotations
 import re
@@ -13,20 +18,49 @@ import zlib
 
 _JSON_FRAME = b'glossapi-json-zlib-v1\x00'
 _TREE_FRAME = b'glossapi-json-tree-v1\x00'
+_JSON_FRAME2 = b'gjz2\x00'
+_TREE_FRAME2 = b'gjt2\x00'
+_PRIMED = None
+
+
+def _dictionary():
+    from .json_dictionary import DICTIONARY
+    return DICTIONARY
+
+
+def _compress2(marker, raw):
+    """zlib (level 6) primed with the fixed dictionary; the primed state is copied, never rebuilt."""
+    global _PRIMED
+    if _PRIMED is None:
+        _PRIMED = zlib.compressobj(6, zlib.DEFLATED, 15, 8, zlib.Z_DEFAULT_STRATEGY, _dictionary())
+    stream = _PRIMED.copy()
+    return marker + stream.compress(raw) + stream.flush()
+
+
+def _decompress2(payload):
+    stream = zlib.decompressobj(zdict=_dictionary())
+    data = stream.decompress(payload) + stream.flush()
+    if not stream.eof:
+        raise ValueError('Truncated compact ledger frame')
+    return data
 _HASH = re.compile('[0-9a-f]{64}\\Z')
 _UUID = re.compile('[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\Z')
 
 
 def encode_json(encoded):
     raw = encoded.encode('utf-8')
-    if len(raw) < 256:
+    if len(raw) < 64:
         return encoded
-    compressed = _JSON_FRAME + zlib.compress(raw, level=1)
-    return compressed if len(compressed)+32 < len(raw) else encoded
+    compressed = _compress2(_JSON_FRAME2, raw)
+    if len(compressed) in (16, 32) or len(compressed)+8 > len(raw):
+        return encoded
+    return compressed
 
 
 def decode_value(value):
     if isinstance(value, bytes):
+        if len(value) not in (16, 32) and value.startswith(_JSON_FRAME2):
+            return _decompress2(value[len(_JSON_FRAME2):]).decode('utf-8')
         if value.startswith(_JSON_FRAME):
             return zlib.decompress(value[len(_JSON_FRAME):]).decode('utf-8')
         if len(value) == 32:
@@ -84,8 +118,12 @@ class LedgerConnection(sqlite3.Connection):
         return 'event_records' if self.compact else 'events'
 
     def decode(self,value):
-        if isinstance(value,bytes) and value.startswith(_TREE_FRAME):
-            framed=json.loads(zlib.decompress(value[len(_TREE_FRAME):]))
+        tree=None
+        if isinstance(value,bytes):
+            if len(value) not in (16,32) and value.startswith(_TREE_FRAME2):tree=_decompress2(value[len(_TREE_FRAME2):])
+            elif value.startswith(_TREE_FRAME):tree=zlib.decompress(value[len(_TREE_FRAME):])
+        if tree is not None:
+            framed=json.loads(tree)
             value=framed['value']
             for path,digest in framed['references']:
                 parent=value
@@ -122,7 +160,8 @@ class LedgerConnection(sqlite3.Connection):
         references=[(path,digest) for path,digest in references
                     if not any(len(other)<len(path) and path[:len(other)]==other for other,_ in references)]
         raw=json.dumps({'value':prepared,'references':references},ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()
-        return _TREE_FRAME+zlib.compress(raw,1)
+        framed=_compress2(_TREE_FRAME2,raw)
+        return framed if len(framed) not in (16,32) else _TREE_FRAME+zlib.compress(raw,1)
     @property
     def row_factory(self):return self._public_row_factory
     @row_factory.setter

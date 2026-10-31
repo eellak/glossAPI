@@ -1,4 +1,4 @@
-"""Grouped durability barriers: one flush per batch, never one per file."""
+"""Grouped durability barriers: targeted per-path flushes, never syncfs (K4(c) decision 1)."""
 import hashlib
 import os
 
@@ -58,7 +58,7 @@ def test_sync_batch_fallback_flushes_each_path_once(tmp_path, monkeypatch):
     assert calls == [file.stat().st_ino, directory.stat().st_ino]
 
 
-def test_sync_batch_uses_one_syncfs_per_filesystem_and_reports_errors(tmp_path, monkeypatch):
+def test_sync_batch_never_uses_syncfs_and_reports_errors(tmp_path, monkeypatch):
     devices = []
     monkeypatch.setattr(writer_module, '_SYNCFS', lambda descriptor: devices.append(os.fstat(descriptor).st_dev) or 0)
     calls = count_fsyncs(monkeypatch)
@@ -68,12 +68,11 @@ def test_sync_batch_uses_one_syncfs_per_filesystem_and_reports_errors(tmp_path, 
         for index in range(5):
             batch.add_path(tmp_path/str(index))
         batch.flush()
-    assert devices == [tmp_path.stat().st_dev] and calls == []
-    import ctypes
+    # Exactly the registered directories, each once; the filesystem is never flushed as a whole.
+    assert devices == [] and sorted(calls) == sorted((tmp_path/str(index)).stat().st_ino for index in range(5))
     def failing(descriptor):
-        ctypes.set_errno(5)
-        return -1
-    monkeypatch.setattr(writer_module, '_SYNCFS', failing)
+        raise OSError(5, 'Input/output error')
+    monkeypatch.setattr(os, 'fsync', failing)
     with SyncBatch() as batch:
         batch.add_path(tmp_path)
         with pytest.raises(OSError):
@@ -88,11 +87,9 @@ def test_durable_barrier_flushes_new_products_once(tmp_path, monkeypatch, syncfs
     with LedgerWriter(tmp_path/'corpus.sqlite3') as writer:
         run, rows = private_producers(writer, tmp_path, {'extract': {'a': 3, 'b': 2}})
         writer.durable_barrier()
-        if syncfs:
-            assert len(flushed) == 1 and calls == []
-        else:
-            # Five files plus their six distinct parents up to the corpus root.
-            assert len(calls) == len(set(calls)) == 5 + 6
+        # Never syncfs: five files plus their six distinct parents up to the corpus root, each once.
+        assert flushed == []
+        assert len(calls) == len(set(calls)) == 5 + 6
         flushed.clear(); calls.clear()
         writer.durable_barrier()
         assert flushed == [] and calls == []
@@ -100,38 +97,31 @@ def test_durable_barrier_flushes_new_products_once(tmp_path, monkeypatch, syncfs
 
 
 @pytest.mark.parametrize('syncfs', [False, True])
-def test_private_release_flushes_directories_once_per_batch_before_commit(tmp_path, monkeypatch, syncfs):
+def test_private_release_makes_no_private_scratch_durable(tmp_path, monkeypatch, syncfs):
+    """Decision 2: released private scratch is never flushed, neither its bytes nor its unlink; the
+    release intents still commit (FULL) in one barrier before any unlink."""
     with LedgerWriter(tmp_path/'corpus.sqlite3') as writer:
         run, rows = private_producers(writer, tmp_path, {'extract': {'a': 40, 'b': 30}, 'clean': {'c': 5}})
-        writer.durable_barrier()
         flushed = []
         monkeypatch.setattr(writer_module, '_SYNCFS', (lambda descriptor: flushed.append(descriptor) or 0) if syncfs else None)
         calls = count_fsyncs(monkeypatch)
         barriers = []
         original_barrier = writer.durable_barrier
-        def barrier():
-            barriers.append(writer.connection.execute(
-                "SELECT COUNT(*) FROM events WHERE reason_code='delete_planned'").fetchone()[0])
-            original_barrier()
+        def barrier(unlinking=(), **options):
+            barriers.append((writer.connection.execute(
+                "SELECT COUNT(*) FROM events WHERE reason_code='delete_planned'").fetchone()[0], len(set(unlinking)), options.get('private')))
+            original_barrier(unlinking, **options)
         monkeypatch.setattr(writer, 'durable_barrier', barrier)
-        flush = SyncBatch.flush
-        commits = []
-        def checked_flush(batch):
-            # Unlink batches flush their parents while their deletions are
-            # still uncommitted; the durability barrier flushes outside one.
-            if writer.connection.in_transaction:
-                commits.append(len(batch.descriptors))
-            return flush(batch)
-        monkeypatch.setattr(SyncBatch, 'flush', checked_flush)
+        unlink = os.unlink
+        def checked_unlink(*args, **kwargs):
+            assert barriers, 'unlink before the release barrier'
+            return unlink(*args, **kwargs)
+        monkeypatch.setattr(os, 'unlink', checked_unlink)
         release_private_scratch(RetentionController(writer, tmp_path, run), rows)
-        # One barrier covers both stage summaries before any unlink.
-        assert barriers == [2]
-        assert sorted(commits) == [1, 2]
-        if syncfs:
-            # The barrier has nothing new to flush; each unlink batch flushes once.
-            assert calls == [] and len(flushed) == 2
-        else:
-            assert len(calls) == 3
+        # One barrier covers both stage summaries and all 75 files before any unlink.
+        assert barriers == [(2, 75, True)]
+        # Nothing private was flushed: no file, no directory, no filesystem.
+        assert calls == [] and flushed == []
         assert not any(path.exists() for path in (tmp_path/'.glossapi/artifacts').rglob('*.txt'))
         assert {row[0] for row in writer.connection.execute('SELECT presence FROM current_file_state')} == {'deleted'}
         barriers.clear()
@@ -163,7 +153,7 @@ def test_delete_many_uses_one_barrier_per_frontier(tmp_path, monkeypatch):
         writer.durable_barrier()
         barriers = []
         original_barrier = writer.durable_barrier
-        monkeypatch.setattr(writer, 'durable_barrier', lambda: (barriers.append(1), original_barrier()))
+        monkeypatch.setattr(writer, 'durable_barrier', lambda *args, **options: (barriers.append(1), original_barrier(*args, **options)))
         calls = count_fsyncs(monkeypatch)
         controller.delete_many([file for file, _ in files])
         assert barriers == [1]
