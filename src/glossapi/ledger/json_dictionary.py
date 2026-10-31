@@ -6,6 +6,24 @@ probe-run ledger JSON (keys and vocabulary only; no paths, identifiers, digests 
 import base64, hashlib, zlib
 
 DICTIONARY_SHA256 = 'ee449a8f1aaa4f8f3a5c35fb118a3ab70793f7ac518cc9b850b3c5bf601190ca'
+# The identity a version-4 ledger header records (K4C-M3). A future dictionary gets a new id; frames never mix.
+DICTIONARY_ID = 'glossapi-json-v1'
+KNOWN_DICTIONARIES = {DICTIONARY_ID: DICTIONARY_SHA256}
+
+
+class UnknownJsonDictionary(ValueError):
+    """The ledger header names a JSON frame dictionary this code does not have (typed: never guess or re-encode)."""
+    code = 'unknown_json_dictionary'
+
+    def __init__(self, identifier, digest):
+        self.identifier, self.digest = identifier, digest
+        super().__init__(f'{self.code}: ledger frames use JSON dictionary {identifier!r} (sha256 {digest}), which this '
+                         f'glossapi does not know; open the ledger with the glossapi release that wrote it')
+
+
+def check_known(identifier, digest):
+    if KNOWN_DICTIONARIES.get(identifier) != digest:
+        raise UnknownJsonDictionary(identifier, digest)
 _ENCODED = (
     'eNrtWm2P47YR/iuCvlyC6nx6t+V8S5C0DQoURVEUxe6CoCXaZixRKintnrHwf+8MScmS327veq/AIZeFKQ6Hw+Fw5pkhn13J1kwy'
     'kTPlLu8ePPeRlh1zl8/QkdeywK/Prqo7mTPSSe4uXffgfbIvIIDKt6yi5JFJxWvhLoPD4fmWlKorW/xF25ZVTavwt7/MS0YFsvSg'

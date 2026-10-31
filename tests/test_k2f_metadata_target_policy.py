@@ -487,6 +487,11 @@ EXPECTED = {
     ('glossapi/stages/execution.py', 'link_published', 'os.replace'):
         (1, 'K4(c) decision 3: atomic rename of a fresh hard link of a private intermediate onto its per-document '
             'compatibility product; never a .parquet or symlinked destination (it returns None and the caller copies)'),
+    ('glossapi/ledger/writer.py', '_restore_copy', 'shutil.copyfile'):
+        (1, 'K4C-M2: republish an unflushed non-metadata byte copy (export.jsonl, markdown) from its intact managed '
+            'source at the next run start; a .parquet copy goes through metadata_target + _copy_file_locked instead'),
+    ('glossapi/ledger/writer.py', '_restore_copy', 'os.replace'):
+        (1, 'K4C-M2: atomic replace of that temporary copy; never a .parquet destination (see the copyfile entry)'),
     ('glossapi/stages/products.py', '_publish_products_locked', 'os.replace'):
         (1, 'product publication; metadata-shaped products are written to the metadata_target-resolved physical '
             'path held by publish_products (or by a caller passing physical=), checked below'),
@@ -539,7 +544,7 @@ EXPECTED = {
     ('glossapi/ledger/importer.py', '_sqlite_snapshot', 'shutil.copyfile'): (2, STAGEWORK),
     ('glossapi/stages/caller_kernel.py', 'CallerKernelStage.finalize', 'shutil.copyfile'):
         (1, STAGEWORK + '; its republication onto live files goes through publish_products(captured=True)'),
-    ('glossapi/stages/export.py', 'ExportStage.finalize', 'shutil.copyfile'): (1, STAGEWORK),
+    ('glossapi/stages/export.py', 'ExportStage._finalize', 'shutil.copyfile'): (1, STAGEWORK),
     ('glossapi/stages/metadata.py', 'MetadataProjectionStage.finalize', 'shutil.copyfile'): (1, STAGEWORK),
     ('glossapi/stages/ocr.py', 'OcrStage._run_document', 'shutil.copy2'): (2, DOCUMENTS),
     ('glossapi/stages/scheduler.py', 'StreamingScheduler._recover', 'os.rename'): (1, STAGEWORK),

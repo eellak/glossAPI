@@ -1,5 +1,5 @@
 """Normative version-1 DDL from LEDGER_DESIGN section 1 (stdlib only)."""
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 APPEND_ONLY_TABLES = ("events", "source_records", "attempts", "files")
 SCHEMA_SQL = r"""
 CREATE TABLE ledger_info (
@@ -243,4 +243,29 @@ END;
 DROP INDEX source_records_manifest;
 DROP INDEX versions_source_hash;
 DROP INDEX attempts_fingerprint;
+"""
+
+# Version 4 (K4(c) part 2), new ledgers and explicit migration of version 3:
+# - the ledger header records the identity of the fixed JSON frame dictionary
+#   (ledger/json_dictionary.py); a reader refuses a dictionary it does not know
+#   (K4C-M3). Version-3 ledgers implicitly use the same, only, dictionary.
+# - two indexes that no writer, reader, report, --why, status or resume query
+#   plan uses are dropped (events_document, files_version; K4C-G05, EXPLAIN
+#   QUERY PLAN evidence in the K4(c) part-2 notes). files_stage_kind (created at
+#   open) served one query, the sharded-export retirement lookup
+#   (stage='export'); a partial index on the export rows serves it instead, and
+#   v4 opens never add the full index. files_hash stays: the extreme source
+#   retirement and the legacy importer look files up by (version, hash).
+# The script has no trigger bodies, so LedgerWriter.migrate (which refuses BEGIN) can apply it to a v3 ledger.
+FORMAT_SCHEMA_SQL = """
+CREATE TABLE ledger_format (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ json_dictionary_id TEXT NOT NULL,
+ json_dictionary_sha256 TEXT NOT NULL
+);
+INSERT INTO ledger_format VALUES(1,'glossapi-json-v1','ee449a8f1aaa4f8f3a5c35fb118a3ab70793f7ac518cc9b850b3c5bf601190ca');
+DROP INDEX events_document;
+DROP INDEX files_version;
+DROP INDEX IF EXISTS files_stage_kind;
+CREATE INDEX files_export_kind ON file_records(kind) WHERE stage='export';
 """

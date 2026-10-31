@@ -44,6 +44,33 @@ def claim_publication(corpus, destination, version):
     return record
 
 
+def register_publication(writer, run_id, stage, kind, uri, *, version_id, producer_attempt_id, sha256, bytes, retention_class):
+    """Register one published compatibility product exactly once (K4C-H1).
+
+    A publication killed after its bytes reached the destination but before
+    its registration committed is replayed on resume. The replay reuses an
+    identical committed registration instead of adding a second present row
+    for the same path, and a wrapper inventory's unowned observation of the
+    leftover bytes is closed once the product owns the location. Otherwise a
+    second present registration pins the path and retention keeps a file the
+    uninterrupted run releases.
+    """
+    rows = writer.connection.execute(
+        "SELECT file_id,version_id,producer_attempt_id,kind,sha256,bytes,ownership,retention_class FROM current_file_state WHERE uri=? AND presence='present'",
+        (uri,)).fetchall()
+    for row in rows:
+        if (row['producer_attempt_id'], row['kind'], row['ownership'], row['sha256'], row['bytes'], row['retention_class'], row['version_id']) == (
+                producer_attempt_id, kind, 'managed', sha256, bytes, retention_class, version_id):
+            return row['file_id']
+    file_id = writer.artifact(run_id, stage, kind, uri, version_id=version_id, producer_attempt_id=producer_attempt_id,
+        sha256=sha256, bytes=bytes, ownership='managed', retention_class=retention_class)
+    for row in rows:
+        if row['ownership'] == 'legacy_external' and row['producer_attempt_id'] is None and (row['sha256'], row['bytes']) == (sha256, bytes):
+            writer.event(run_id, event_kind='artifact', reason_code='missing', file_id=row['file_id'], version_id=row['version_id'],
+                details={'observation': 'unowned_location_claimed_by_product', 'product_file_id': file_id})
+    return file_id
+
+
 def extract_compatibility_document(extractor, source, output_dir, timeout_dir=None):
     from ..ledger.journal import observe, accept_worker_observations, _active_journal, ResultJournal
     source, output_dir = Path(source).absolute(), Path(output_dir).absolute()
@@ -63,10 +90,12 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
     binding = producer_binding(journal if isinstance(journal, ResultJournal) else None, source)
     reference = ArtifactReference(str(uuid.uuid4()), "source_payload", source,
         binding['sha256'] if binding else sha256_file(source), source.stat().st_size)
+    # One page-count based timeout per document (it was computed twice, each opening the PDF).
+    timeout_seconds = extractor._calculate_text_timeout(file_path=source)
     with tempfile.TemporaryDirectory(prefix="glossapi-sequential-") as temporary:
         identifiers = [str(uuid.uuid4()) for _ in range(5)]
         request = StageRequest(*identifiers, "extract.document", (reference,), settings, {}, "cpu", Path(temporary)/"attempt",
-            time.monotonic_ns() + int(extractor._calculate_text_timeout(file_path=source)*1e9))
+            time.monotonic_ns() + int(timeout_seconds*1e9))
         journal = _active_journal.get()
         if isinstance(journal, ResultJournal):
             from .sequential import SequentialStageRunner
@@ -92,7 +121,7 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
                 ArtifactReference(file_id, reference.kind, source, reference.sha256, reference.bytes),))
             result, workspace = SequentialStageRunner(journal.writer, journal.corpus.output_dir).execute(
                 ExtractStage(), snapshot, StageSpecification("extract.document", ("source_payload",), ("raw_markdown",), settings=settings),
-                timeout_seconds=extractor._calculate_text_timeout(file_path=source), run_id=journal.run_id)
+                timeout_seconds=timeout_seconds, run_id=journal.run_id)
             journal.adapter_stages.add('extract')
             journal.adapter_attempts.add(result.attempt_id)
         else:
@@ -145,9 +174,9 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
                         continue
                     # Compatibility receipts can deliberately re-spell source paths.
                     producer_run=journal.writer.connection.execute('SELECT t.run_id FROM attempts a JOIN tasks t ON t.task_id=a.task_id WHERE a.attempt_id=?',(result.attempt_id,)).fetchone()[0]
-                    journal.writer.artifact(producer_run, "extract", output.kind, destination.as_uri(),
+                    register_publication(journal.writer, producer_run, "extract", output.kind, destination.as_uri(),
                         version_id=version, producer_attempt_id=result.attempt_id, sha256=mirror_hashes[output.relative_path][0],
-                        bytes=mirror_hashes[output.relative_path][1], ownership="managed", retention_class=output.retention_class)
+                        bytes=mirror_hashes[output.relative_path][1], retention_class=output.retention_class)
         if not isinstance(journal, ResultJournal) or result.status != 'ok':
             for decision in result.decisions:
                 accept_worker_observations(decision.get("backend_observations", ()))
@@ -238,9 +267,9 @@ def materialize_stage_outputs(corpus, result, workspace, paths):
                 raise ValueError('Product changed during final publication')
             with journal.writer.transaction():
                 producer_run=journal.writer.connection.execute('SELECT t.run_id FROM attempts a JOIN tasks t ON t.task_id=a.task_id WHERE a.attempt_id=?',(result.attempt_id,)).fetchone()[0]
-                journal.writer.artifact(producer_run, fact['stage'], fact['kind'], destination.as_uri(),
+                register_publication(journal.writer, producer_run, fact['stage'], fact['kind'], destination.as_uri(),
                     version_id=fact['version_id'], producer_attempt_id=result.attempt_id,
-                    sha256=fact['sha256'], bytes=fact['bytes'], ownership='managed', retention_class=fact['retention_class'])
+                    sha256=fact['sha256'], bytes=fact['bytes'], retention_class=fact['retention_class'])
     if not isinstance(journal, ResultJournal):
         # Only the owned temporary attempt, after outputs have been consumed.
         shutil.rmtree(workspace.parent)
@@ -279,15 +308,22 @@ def record_clean_selection(corpus, frame, *, drop_bad, thresholds):
     journal = _active_journal.get()
     if not isinstance(journal, ResultJournal):
         return
+    from .products import producer_binding
+    # The first row of each filename, found once (was a full-frame filter per document; same row chosen).
+    first_rows = {}
+    for position, name in enumerate(frame['filename'].astype(str)):
+        first_rows.setdefault(name, position)
     for source, output in getattr(corpus, '_stage_clean_surfaces', ()):
-        rows = frame[frame['filename'].astype(str) == source.with_suffix('.pdf').name]
-        if rows.empty:
+        position = first_rows.get(source.with_suffix('.pdf').name)
+        if position is None:
             continue
-        row = rows.iloc[0]
+        row = frame.iloc[position]
+        # The selected text is a committed product: its producer hash, not a second read of the same bytes.
+        binding = producer_binding(journal, output)
         selection = {'accepted_for_sections': source.stem in corpus.good_files,
             'needs_ocr': bool(row.get('needs_ocr',False)), 'filter_tokens': str(row.get('filter','ok')).split(';'),
             'effective_thresholds': thresholds, 'drop_bad': drop_bad,
-            'selected_text_sha256': sha256_file(output),
+            'selected_text_sha256': binding['sha256'] if binding else sha256_file(output),
             'selection_policy': 'legacy_needs_ocr_false_when_drop_bad',
             'routing_metrics':{field:(None if __import__('pandas').isna(row[field]) else row[field].item() if hasattr(row[field],'item') else row[field])
                 for field in ('latin_word_shape_rate','ocr_pages','ocr_pages_count','ocr_pages_unflagged_count','page_rule_profile','page_fold_validity') if field in row}}
