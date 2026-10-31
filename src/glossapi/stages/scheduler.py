@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import Counter, deque
 from dataclasses import asdict, dataclass, replace
+import functools
 import hashlib
 import json
 import os
@@ -59,7 +60,9 @@ def execution_environment():
             'models':models,'packages':[{'name':name,'version':version} for name,version in packages],'ocr':ocr})
 
 
+@functools.lru_cache(maxsize=1<<16)
 def local_path(uri):
+    """Path of a file URI (memoized: the same URIs are mapped many times per run; Path is immutable)."""
     from urllib.parse import unquote, urlsplit
     return Path(unquote(urlsplit(uri).path))
 
@@ -470,6 +473,7 @@ class StreamingScheduler:
         active_cpu = active_memory = active_disk = 0
         admission_changed = True
         scratch_frontier = []
+        raw_text_pending = deque()
         try:
             while len(terminal)<len(operations):
                 completions=[]
@@ -480,7 +484,14 @@ class StreamingScheduler:
                     # Only a completion can free a pool/token/downstream credit.
                     # Continue polling deadlines and heartbeat IPC, without
                     # repeatedly scanning the unchanged frozen operation DAG.
-                    time.sleep(.005)
+                    if raw_text_pending:
+                        # Idle main thread: measure one finished raw markdown for the clean barrier's
+                        # enrichment (content-hash keyed; the barrier recomputes anything missing).
+                        from ..corpus.phase_clean import precompute_raw_text_metrics
+                        try:precompute_raw_text_metrics(raw_text_pending.popleft())
+                        except (OSError,ValueError):pass
+                    else:
+                        time.sleep(.005)
                     continue
                 if completions:
                     with self.writer.batch():
@@ -503,6 +514,9 @@ class StreamingScheduler:
                             if self.disk_capacity is not None:budget.observe()
                             self._trace('complete',key=key,attempt_id=request.attempt_id,status=result.status)
                             if result.status=='ok':
+                                if operation.stage=='extract':
+                                    raw_text_pending.extend(local_path(row['uri']) for row in self.writer.produced_files[request.attempt_id]
+                                        if row.get('kind')=='raw_markdown')
                                 scratch_frontier.append(request.attempt_id)
                                 done[key]=request.attempt_id
                                 terminal.add(key)
@@ -587,7 +601,8 @@ class StreamingScheduler:
                         if claims & occupied:
                             self._wait(run,tasks[operation.key],operation,'waiting_for_device')
                             break
-                        reservation=operation.reservation_bytes or (2*frozen_settings.get('max_attempt_bytes',0) if frozen_settings.get('memory_saving')=='extreme' else 0)
+                        from .disk_budget import attempt_reservation
+                        reservation=attempt_reservation(frozen_settings,operation.reservation_bytes)
                         if self.disk_capacity is not None and not budget.can_reserve(reservation):
                             self._wait(run,tasks[operation.key],operation,'waiting_for_disk')
                             break

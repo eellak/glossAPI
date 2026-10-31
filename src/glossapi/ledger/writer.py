@@ -15,7 +15,7 @@ import uuid
 
 from .catalogue import EVENT_KINDS, REASON_CODES, STAGES, STATUSES, TERMINAL_STATUSES
 from .encoding import canonical_json, evidence, file_hash, snapshot_hash, typed_value, untyped_value
-from .schema import APPEND_ONLY_TABLES, SCHEMA_SQL, SCHEMA_VERSION, COMPACT_SCHEMA_SQL, COMPACT_RETENTION_SCHEMA_SQL
+from .schema import APPEND_ONLY_TABLES, SCHEMA_SQL, SCHEMA_VERSION, COMPACT_SCHEMA_SQL, COMPACT_RETENTION_SCHEMA_SQL, FORMAT_SCHEMA_SQL
 from .compact import connect, encode_json
 from .validation import validate_evidence
 from .urls import (has_known_secrets, needs_scrub, persisted_url, pop_identity_root, push_identity_root, scrub, scrub_known,
@@ -97,6 +97,25 @@ def _fsync_path(path):
     finally:os.close(descriptor)
 
 
+def _restore_copy(source, path):
+    """Republish an unflushed byte copy from its intact managed source (K4C-M2): temporary file, atomic replace.
+
+    A metadata-shaped (.parquet) copy goes through the metadata choke point (lock, resolved physical target).
+    """
+    if path.suffix=='.parquet':
+        from ..parquet_schema import _copy_file_locked, metadata_target
+        with metadata_target(path) as physical:
+            _copy_file_locked(source,physical)
+        return
+    import shutil
+    temporary=path.with_name('.'+path.name+'.'+new_id()+'.restore')
+    try:
+        shutil.copyfile(source,temporary)
+        os.replace(temporary,path)
+    finally:
+        if os.path.lexists(temporary):os.unlink(temporary)
+
+
 def _map_bounded(function,items):
     """Run function over items on at most 8 threads (fsync releases the GIL; ext4 groups the journal commits)."""
     items=list(items)
@@ -129,8 +148,12 @@ def new_id():
     return str(uuid.uuid4())
 
 
+_CANONICAL_ID = re.compile('[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+
+
 def validate_id(value):
-    if str(uuid.UUID(value)) != value:
+    # Equal to str(uuid.UUID(value)) == value (the canonical lowercase spelling), without a UUID object (hot path).
+    if not _CANONICAL_ID.fullmatch(value):
         raise LedgerError("IDs must be canonical UUIDs")
     return value
 
@@ -180,7 +203,7 @@ def integrity(connection):
 
 def supported_schema(connection):
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if version not in (1, 2, SCHEMA_VERSION):
+    if version not in (1, 2, 3, SCHEMA_VERSION):
         raise LedgerError(f"Unsupported ledger schema {version}")
     rows = connection.execute("SELECT version,migration_sha256 FROM schema_migrations ORDER BY version").fetchall()
     if [r[0] for r in rows] != list(range(1, version + 1)):
@@ -191,6 +214,8 @@ def supported_schema(connection):
         raise LedgerError("Compact schema migration checksum mismatch")
     if version >= 3 and rows[2][1] != hashlib.sha256(COMPACT_RETENTION_SCHEMA_SQL.encode()).hexdigest():
         raise LedgerError("Compact retention schema migration checksum mismatch")
+    if version >= 4 and rows[3][1] != hashlib.sha256(FORMAT_SCHEMA_SQL.encode()).hexdigest():
+        raise LedgerError("Ledger format schema migration checksum mismatch")
 
 
 @contextmanager
@@ -224,7 +249,7 @@ class LedgerWriter:
     All public mutation methods require an explicit transaction.
     """
     def __init__(self, path, *, code_revision="unknown_not_recorded", storage_version=SCHEMA_VERSION):
-        if storage_version not in (1, 2, SCHEMA_VERSION):raise LedgerError("Unsupported creation schema")
+        if storage_version not in (1, 2, 3, SCHEMA_VERSION):raise LedgerError("Unsupported creation schema")
         self.path = Path(path).absolute()
         if str(self.path) in _OPEN_WRITERS:
             raise BlockingIOError("Ledger already has an owning writer")
@@ -283,6 +308,11 @@ class LedgerWriter:
                         self.connection.execute("INSERT INTO schema_migrations VALUES(3,?,?,?)",
                             (utc_now(),hashlib.sha256(COMPACT_RETENTION_SCHEMA_SQL.encode()).hexdigest(),code_revision))
                         self.connection.execute('PRAGMA user_version=3')
+                    if storage_version >= 4:
+                        for statement in statements(FORMAT_SCHEMA_SQL):self.connection.execute(statement)
+                        self.connection.execute("INSERT INTO schema_migrations VALUES(4,?,?,?)",
+                            (utc_now(),hashlib.sha256(FORMAT_SCHEMA_SQL.encode()).hexdigest(),code_revision))
+                        self.connection.execute('PRAGMA user_version=4')
                 self.connection.compact = storage_version >= 2
                 self.connection.storage_version = storage_version
                 if storage_version>=3:self.connection.path_root=self.path.parent.as_uri()
@@ -296,7 +326,9 @@ class LedgerWriter:
             self.connection.execute('CREATE INDEX IF NOT EXISTS tasks_stage_operation ON tasks(stage,operation)')
             self.connection.execute(f"CREATE INDEX IF NOT EXISTS events_decision_task ON {self.connection.event_table}(event_kind,task_id,event_id) WHERE event_kind='decision'")
             file_table='file_records' if self.connection.storage_version>=3 else 'files'
-            self.connection.execute(f'CREATE INDEX IF NOT EXISTS files_stage_kind ON {file_table}(stage,kind)')
+            if self.connection.storage_version<4:
+                # Version 4 dropped it: no query plan uses it (K4C-G05).
+                self.connection.execute(f'CREATE INDEX IF NOT EXISTS files_stage_kind ON {file_table}(stage,kind)')
             if self.connection.storage_version>=3:
                 self.connection.execute('CREATE INDEX IF NOT EXISTS source_records_manifest_lookup ON source_records(manifest_sha256)')
             event_tables=[self.connection.event_table]
@@ -314,6 +346,7 @@ class LedgerWriter:
             self._durable_files=set()
             self._durable_directories={}
             self.file_catalog()
+            self._durable_files=self._durable_after_last_run_close()
             self.connection.owner_writer=self
         except BaseException:
             self.close()
@@ -411,13 +444,19 @@ class LedgerWriter:
         import time as _time
         began=_time.monotonic_ns()
         catalog=self.file_catalog()
+        # Every registration this barrier can see has an event id below this (compact ledgers keep the counter).
+        through=self.next_event_id if self.connection.compact and not unlinking else None
         unlinking=set(unlinking)
         if unlinking:
             selected=self._barrier_dependents(catalog,unlinking,private)
         else:
             selected=[row for row in catalog.values() if row['ownership']=='managed' and row['presence']=='present'
                 and row['file_id'] not in self._durable_files]
+        candidates={row['file_id'] for row in selected}
         selected=self._without_durable_copies(catalog,selected,unlinking)
+        # Run close: the byte copies left unflushed because their managed source is durable (decision 3). They are
+        # named in the barrier record so that the next run start can verify them and republish a torn one (K4C-M2).
+        excluded=sorted(candidates-{row['file_id'] for row in selected}) if not unlinking else []
         from urllib.parse import unquote, urlsplit
         import stat
         root=self.path.parent
@@ -460,6 +499,14 @@ class LedgerWriter:
             file_count=len(synchronized),byte_count=covered_bytes,directory_count=synced_directories,unlink_count=len(unlinking),flush_ns=flushed_ns)
         context=self.barrier_context
         summary=self._barrier_totals(record)
+        if excluded:
+            record['excluded_copy_file_ids']=excluded
+            summary['run_close_excluded_copy_file_ids']=excluded
+        if through is not None:
+            # After this commit every present managed file registered below `through` is durable except the
+            # excluded copies: the next writer of this ledger starts from that, not from an empty cache.
+            record['durable_through_event_id']=through
+            summary['run_close_durable_through_event_id']=through
         self.connection.execute('PRAGMA synchronous=FULL')
         try:
             with self.transaction():
@@ -474,6 +521,86 @@ class LedgerWriter:
                     self.connection.execute('UPDATE ledger_info SET singleton=singleton WHERE singleton=1')
         finally:self.connection.execute('PRAGMA synchronous=NORMAL')
         self._durable_files.update(synchronized)
+
+    def _durable_after_last_run_close(self):
+        """Files the latest committed run-close barrier made durable (registered before it, still present, not an
+        excluded copy). A later phase or resume then does not fsync them again. Records without the marker (older
+        code) yield nothing: the cache stays empty, as before."""
+        if not self.connection.compact:return set()
+        table=self.connection.event_table
+        for message,encoded in self.connection.execute(f"SELECT message,details_json FROM {table} WHERE reason_code='durability_barrier' "
+                "AND event_kind='retention' ORDER BY event_id DESC LIMIT 64"):
+            details=json.loads(encoded)
+            if message=='barrier_summary':
+                through,excluded=details.get('run_close_durable_through_event_id'),details.get('run_close_excluded_copy_file_ids') or []
+            elif details.get('reason')=='run_close':
+                through,excluded=details.get('durable_through_event_id'),details.get('excluded_copy_file_ids') or []
+            else:
+                continue
+            if through is None:return set()
+            excluded=set(excluded)
+            return {file_id for file_id,row in self.file_catalog().items() if row['ownership']=='managed' and row['presence']=='present'
+                and row['event_id'] is not None and row['event_id']<through and file_id not in excluded}
+        return set()
+
+    def verify_excluded_copies(self):
+        """Run start: verify the byte copies the last run-close barrier left unflushed (K4C-M2).
+
+        Decision 3 skips the fsync of a copy whose managed source is durable, so
+        a power loss after run close can tear the copy while its source is
+        intact. Each copy named by the latest run-close barrier record is
+        checked (size and sha256). A torn or missing copy whose source still
+        matches its registration is republished from that source; every checked
+        copy is then made durable, so the window closes at the next run start.
+        A copy without an intact source is left for verification to report
+        ("Committed publication is missing or corrupt"). Returns the file_ids
+        republished.
+        """
+        self._owner(transaction=False)
+        table=self.connection.event_table
+        latest=self.connection.execute(f"SELECT run_id,details_json,recorded_at FROM {table} WHERE reason_code='durability_barrier' AND event_kind='retention' "
+            "AND (message='barrier_summary' OR message='barrier') ORDER BY event_id DESC LIMIT 1").fetchone()
+        if latest is None:return []
+        barrier_run,details=latest[0],json.loads(latest[1])
+        closed_ns=int(datetime.datetime.fromisoformat(latest[2].replace('Z','+00:00')).timestamp()*1e9)
+        identifiers=details.get('run_close_excluded_copy_file_ids') or details.get('excluded_copy_file_ids') or []
+        if not identifiers:return []
+        from urllib.parse import unquote, urlsplit
+        from .encoding import file_hash
+        local=lambda row:Path(unquote(urlsplit(row['uri']).path))
+        catalog=self.file_catalog()
+        restored=[];checked=[];durable=[]
+        for file_id in identifiers:
+            row=catalog.get(file_id)
+            if row is None or row['presence']!='present':continue
+            path=local(row)
+            intact=path.is_file() and not path.is_symlink() and path.stat().st_size==row['bytes'] and file_hash(path)==row['sha256']
+            # Only bytes the barrier left behind are restored: a file changed after the run close (a user's edit,
+            # newer mtime) is never overwritten; verification still reports it.
+            if not intact and path.exists() and path.lstat().st_mtime_ns>closed_ns+2_000_000_000:continue
+            if not intact:
+                source=next((other for other in catalog.values() if other['file_id']!=file_id and other['presence']=='present'
+                    and other['ownership']=='managed' and other['producer_attempt_id']==row['producer_attempt_id']
+                    and other['sha256']==row['sha256'] and '/.glossapi/artifacts/' in other['uri']
+                    and local(other).is_file() and file_hash(local(other))==other['sha256']),None)
+                if source is None:continue
+                _restore_copy(local(source),path)
+                if file_hash(path)!=row['sha256']:continue
+                restored.append((row,source))
+            checked.append(path);durable.append(file_id)
+        _map_bounded(_fsync_path,checked)
+        for directory in sorted({path.parent for path in checked},key=lambda path:len(path.parts),reverse=True):
+            descriptor=os.open(directory,os.O_RDONLY)
+            try:os.fsync(descriptor)
+            finally:os.close(descriptor)
+        # Durable now: this writer's own run-close barrier need not name them again for the next start.
+        self._durable_files.update(durable)
+        if restored:
+            with self.transaction():
+                for row,source in restored:
+                    self.event(barrier_run,event_kind='artifact',reason_code='present',file_id=row['file_id'],version_id=row['version_id'],
+                        details={'observation':'unflushed_copy_republished_from_source','source_file_id':source['file_id']})
+        return [row['file_id'] for row,_ in restored]
 
     def _barrier_totals(self,record):
         totals=self.barrier_totals
@@ -569,7 +696,17 @@ class LedgerWriter:
         self._owner(transaction=False)
         if self._file_catalog is None:
             self._file_catalog={row['file_id']:dict(row) for row in self.connection.execute('SELECT * FROM current_file_state')}
+            self._catalog_uris=None
         return self._file_catalog
+
+    def _uri_index(self):
+        """URI -> file_ids of the current catalog in registration order (dropped with the catalog on rollback)."""
+        catalog=self.file_catalog()
+        if getattr(self,'_catalog_uris',None) is None:
+            index={}
+            for file_id,row in catalog.items():index.setdefault(row['uri'],[]).append(file_id)
+            self._catalog_uris=index
+        return self._catalog_uris
 
     def _file_presence(self, file_id, presence, event_id):
         row=self.file_catalog()[file_id]
@@ -800,7 +937,10 @@ class LedgerWriter:
             task = self.control()['tasks'].get(task_id)
             if task is None or task['run_id'] != run_id or task['version_id'] != version_id: raise LedgerError("Task/run/version mismatch")
         if file_id:
-            artifact = self.connection.execute("SELECT version_id,producer_attempt_id FROM files WHERE file_id=?", (file_id,)).fetchone()
+            # The owner's catalog holds every registered file's immutable binding (rebuilt after any rollback).
+            entry = self._file_catalog.get(file_id) if self._file_catalog is not None else None
+            artifact = (entry['version_id'], entry['producer_attempt_id']) if entry is not None else self.connection.execute(
+                "SELECT version_id,producer_attempt_id FROM files WHERE file_id=?", (file_id,)).fetchone()
             if artifact is None or artifact[0] != version_id: raise LedgerError("File/version mismatch")
             if attempt_id is not None and artifact[1] is not None and artifact[1] != attempt_id:
                 raise LedgerError("File/attempt mismatch")
@@ -857,7 +997,12 @@ class LedgerWriter:
             if identifier: validate_id(identifier)
         validate_hash(sha256, nullable=True)
         if producer_attempt_id:
-            producer = self.connection.execute("SELECT t.run_id,t.stage,t.version_id FROM attempts a JOIN tasks t ON t.task_id=a.task_id WHERE a.attempt_id=?", (producer_attempt_id,)).fetchone()
+            # The control projection holds every attempt's task and every task's run/stage/version (same facts as a
+            # query of attempts JOIN tasks; rebuilt after any rollback).
+            control = self.control()
+            attempt = control['attempts'].get(producer_attempt_id)
+            task = control['tasks'].get(attempt['task_id']) if attempt is not None else None
+            producer = (task['run_id'], task['stage'], task['version_id']) if task is not None else None
             if producer is None or producer[0] != run_id or producer[1] != stage or (producer[2] is not None and producer[2] != version_id):
                 raise LedgerError("Artifact producer/run/stage/version mismatch")
         for page in (page_first, page_last):
@@ -866,19 +1011,22 @@ class LedgerWriter:
         if presence == "present" and (sha256 is None or bytes is None): raise LedgerError("Present artifact requires hash and size")
         if ownership == "managed" and (sha256 is None or bytes is None): raise LedgerError("Managed artifact requires hash and size")
         uri = persisted_url(uri)
-        previous_files = self.connection.execute("SELECT file_id,version_id,sha256,presence FROM current_file_state WHERE uri=?", (uri,)).fetchall()
+        # Earlier registrations of this location, from the owner's catalog (current presence) by URI.
+        catalog = self.file_catalog()
+        previous_files = [(row['file_id'], row['version_id'], row['sha256'], row['presence'])
+                          for row in (catalog[file_id] for file_id in self._uri_index().get(uri, ()))]
         for previous in previous_files:
             changed = presence == "present" and previous[2] is not None and previous[2] != sha256
             absent = presence == "missing"
             if previous[3] == "present" and (changed or absent):
                 self.event(run_id, event_kind="artifact", reason_code="corrupt" if changed else "missing", file_id=previous[0], version_id=previous[1],
                     details={"observation": "legacy_location_bytes_replaced" if changed else "location_observed_missing", "observed_sha256":sha256})
-        catalog=self.file_catalog()
         identifier = new_id()
         self.connection.execute("INSERT INTO files(file_id,version_id,producer_attempt_id,stage,kind,uri,sha256,bytes,ownership,retention_class,page_first,page_last,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", (identifier, version_id, producer_attempt_id, stage, kind, uri, sha256, bytes, ownership, retention_class, page_first, page_last, utc_now()))
         catalog[identifier]=dict(file_id=identifier,version_id=version_id,producer_attempt_id=producer_attempt_id,
             stage=stage,kind=kind,uri=uri,sha256=sha256,bytes=bytes,ownership=ownership,
             retention_class=retention_class,page_first=page_first,page_last=page_last,presence=None,event_id=None)
+        self._uri_index().setdefault(uri, []).append(identifier)
         self.event(run_id, event_kind="artifact", reason_code=presence, version_id=version_id, file_id=identifier)
         return identifier
 

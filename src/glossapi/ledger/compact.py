@@ -66,27 +66,38 @@ def decode_value(value):
         if len(value) == 32:
             return value.hex()
         if len(value) == 16:
-            return str(uuid.UUID(bytes=value))
+            # str(uuid.UUID(bytes=value)), without constructing a UUID object (hot path).
+            digits = value.hex()
+            return f'{digits[:8]}-{digits[8:12]}-{digits[12:16]}-{digits[16:20]}-{digits[20:]}'
         raise ValueError('Unknown compact ledger value')
     return value
 
 
 def _parameter(value):
     if isinstance(value,str):
-        if len(value)==64 and _HASH.fullmatch(value):return bytes.fromhex(value)
-        if len(value)==36 and _UUID.fullmatch(value):return uuid.UUID(value).bytes
+        size=len(value)
+        if size==64:
+            if _HASH.fullmatch(value):return bytes.fromhex(value)
+        elif size==36 and _UUID.fullmatch(value):
+            # uuid.UUID(value).bytes for the canonical lowercase spelling the pattern admits.
+            return bytes.fromhex(value.replace('-',''))
     return value
+
+
+def _rooted(value, root, prefix):
+    """The physical spelling of one parameter (path root, then UUID/digest BLOB); no per-call closure (hot path)."""
+    if prefix and isinstance(value,str):
+        if value.startswith(('@corpus/','@literal/')):value='@literal/'+value
+        elif value.startswith(prefix):value='@corpus/'+value[len(prefix):]
+    return _parameter(value)
 
 
 def _parameters(values, connection):
     if not connection.compact:return values
-    def parameter(value):
-        if connection.path_root and isinstance(value,str):
-            if value.startswith(('@corpus/','@literal/')):value='@literal/'+value
-            elif value.startswith(connection.path_root+'/'):value='@corpus/'+value[len(connection.path_root)+1:]
-        return _parameter(value)
-    if isinstance(values,dict):return {key:parameter(value) for key,value in values.items()}
-    return tuple(parameter(value) for value in values)
+    root=connection.path_root
+    prefix=root+'/' if root else None
+    if isinstance(values,dict):return {key:_rooted(value,root,prefix) for key,value in values.items()}
+    return tuple([_rooted(value,root,prefix) for value in values])
 
 
 def _row(cursor,row):
@@ -113,11 +124,21 @@ class LedgerConnection(sqlite3.Connection):
         self.compact=self.storage_version>=2
         if self.storage_version>=3:
             self.path_root=super().execute('SELECT uri FROM path_root').fetchone()[0]
+        if self.storage_version>=4:
+            # The header names the frame dictionary; refuse one this code does not know (K4C-M3).
+            from .json_dictionary import check_known
+            check_known(*super().execute('SELECT json_dictionary_id,json_dictionary_sha256 FROM ledger_format').fetchone())
     @property
     def event_table(self):
         return 'event_records' if self.compact else 'events'
 
     def decode(self,value):
+        if not isinstance(value,bytes):
+            # Fast path (most values): only a rooted path spelling changes.
+            if self.path_root and isinstance(value,str) and value[:1]=='@':
+                if value.startswith('@literal/'):return value[len('@literal/'):]
+                if value.startswith('@corpus/'):return self.path_root+'/'+value[len('@corpus/'):]
+            return value
         tree=None
         if isinstance(value,bytes):
             if len(value) not in (16,32) and value.startswith(_TREE_FRAME2):tree=_decompress2(value[len(_TREE_FRAME2):])

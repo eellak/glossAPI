@@ -86,7 +86,10 @@ class AnnotatePhaseMixin:
         )
 
 
-        observe_store(self.classified_parquet, kind="annotation_model_and_index_labels")
+        if not getattr(self, '_inside_product_stage', False):
+            # Inside the annotate product stage this parquet is the stage's own registered output (hash-bound; its
+            # labels are also the decision's lineage): a store observation would only duplicate it in the evidence.
+            observe_store(self.classified_parquet, kind="annotation_model_and_index_labels")
 
         # Perform full annotation if requested
         if fully_annotate:

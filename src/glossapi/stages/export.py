@@ -30,11 +30,22 @@ class ExportStage:
 
     def finalize(self,request,*,reporter):
         request.work_directory.mkdir(parents=True,exist_ok=True)
+        # The legacy serializer reads a corpus-shaped view of the frozen inputs. The view is a throwaway copy beside
+        # the attempt directory, not inside it: inside, every view file became a second registered generation file
+        # (byte-identical to its frozen input snapshot), hashed, sealed and released again (K4(c) part 2).
+        view_root=request.work_directory.with_name(request.work_directory.name+'.export-view')
+        shutil.rmtree(view_root,ignore_errors=True)
+        try:
+            return self._finalize(request,view_root)
+        finally:
+            shutil.rmtree(view_root,ignore_errors=True)
+
+    def _finalize(self,request,view_root):
         try:
             request=freeze_inputs(request)
             from ..corpus.phase_export import ExportPhaseMixin
             view=copy.copy(self.corpus);view._inside_product_stage=True
-            view.output_dir=request.work_directory/'view'
+            view.output_dir=view_root
             view.markdown_dir=view.output_dir/'markdown'
             view.cleaned_markdown_dir=view.output_dir/'clean_markdown'
             view.markdown_dir.mkdir(parents=True);view.cleaned_markdown_dir.mkdir()

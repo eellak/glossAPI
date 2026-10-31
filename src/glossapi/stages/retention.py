@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from contextlib import nullcontext
+import functools
 import json
 import os
 from pathlib import Path
@@ -48,7 +49,12 @@ def resolved_settings(settings=None):
 
 
 def file_path(row):
-    return Path(unquote(urlsplit(row['uri']).path))
+    return _uri_path(row['uri'])
+
+
+@functools.lru_cache(maxsize=1<<16)
+def _uri_path(uri):
+    return Path(unquote(urlsplit(uri).path))
 
 
 def path_alias(root, path):
@@ -291,9 +297,14 @@ class RetentionController:
         row, facts, pins = self.eligibility(file_id)
         if pins or row['presence'] == 'deleted':
             return False
+        # Every retention fact, pin, lease and task outcome is an event of this writer: an unchanged event counter
+        # means an unchanged eligibility (used to skip the identical recheck below when nothing was written).
+        # (compact ledgers only: version 1 assigns event ids in SQLite and keeps no counter).
+        checked_at = self.writer.next_event_id if self.connection.compact else None
         # Several logical registrations may share the same physical pathname.
         aliases = self.connection.execute("SELECT file_id FROM current_file_state WHERE uri=? AND presence='present'", (row['uri'],)).fetchall()
-        if any(self.eligibility(alias[0])[2] for alias in aliases):
+        # This file's own eligibility was computed just above (no state change in between).
+        if any(self.eligibility(alias[0])[2] for alias in aliases if alias[0] != file_id):
             return False
         path=file_path(row)
         if path.exists() and not path.is_symlink() and path.stat().st_nlink>1:
@@ -326,8 +337,9 @@ class RetentionController:
                 self.writer.durable_barrier([file_id,*(alias[0] for alias in aliases)])
                 self.fault('after_intent', file_id)
             # Pins and leases can only change through this writer. Recheck the
-            # path identity under the same opened directory immediately before unlink.
-            if self.eligibility(file_id)[2]:
+            # path identity under the same opened directory immediately before unlink
+            # (the eligibility again only if this writer recorded anything since it was computed).
+            if (checked_at is None or self.writer.next_event_id != checked_at) and self.eligibility(file_id)[2]:
                 return False
             current = os.stat(name,dir_fd=descriptor,follow_symlinks=False)
             if (current.st_dev,current.st_ino,current.st_size,current.st_mtime_ns,current.st_ctime_ns) != identity:
@@ -498,18 +510,32 @@ def retain_completed_run(writer,root,run_id,settings=None,*,attempts=None,cleanu
     controller.recover()
     if attempts is None:
         attempts=[row[0] for row in writer.connection.execute('SELECT attempt_id FROM attempts a JOIN tasks t USING(task_id) WHERE t.run_id=?',(run_id,))]
+    # One pass over the owner's file catalog (current presence) instead of one view query per attempt;
+    # rows are grouped in the given attempt order, each attempt's files in registration order.
+    by_producer=defaultdict(list)
+    for entry in writer.file_catalog().values():
+        if entry['producer_attempt_id'] and entry['ownership']=='managed' and entry['presence']=='present':
+            by_producer[entry['producer_attempt_id']].append(entry)
     rows=[]
     for attempt in attempts:
-        rows.extend(writer.connection.execute("SELECT * FROM current_file_state WHERE producer_attempt_id=? AND ownership='managed' AND presence='present'",(attempt,)).fetchall())
+        rows.extend(dict(entry) for entry in by_producer.get(attempt,()))
     private=Path(root).resolve()/'.glossapi/artifacts'
     projections={}
     for encoded, in writer.connection.execute("SELECT json FROM snapshots WHERE kind='product_projection' ORDER BY rowid"):
         value=json.loads(encoded);projections[value['product_uri']]=value
     current_backings={value['immutable_uri'] for value in projections.values()}
     candidates=[]
+    partial_coverage={}
+    # The OCR publication re-cleans every raw markdown in markdown/ (clean_ocr over the directory), so public raw
+    # markdown is superseded only once that barrier has completed (it was kept until then only by an accidental
+    # duplicate registration, which the K4C-H1 fix removed).
+    requested=controller.settings.get('requested_stages',())
+    raw_still_read='ocr' in requested and any(task['operation']=='ocr.compatibility_publish' and task['status']!='ok'
+        for task in writer.task_states(run_id))
     for row in rows:
         path=file_path(row)
-        superseded_public_raw=(row['kind']=='raw_markdown' and path.is_relative_to(Path(root).resolve()/'markdown') and 'clean' in controller.settings.get('requested_stages',()))
+        superseded_public_raw=(row['kind']=='raw_markdown' and path.is_relative_to(Path(root).resolve()/'markdown') and 'clean' in requested
+            and not raw_still_read)
         public_temporary=row['kind'] in ('annotation_partition','repaired_pdf','temporary_cleaning_report')
         if not path.is_relative_to(private) and path not in cleanup_paths and not superseded_public_raw and not public_temporary:continue
         if row['retention_class'] in ('final','evidence','recovery') or (row['uri'] in current_backings and row['kind']!='annotation_partition'):continue
@@ -520,12 +546,16 @@ def retain_completed_run(writer,root,run_id,settings=None,*,attempts=None,cleanu
         producer=writer.control()['attempts'].get(row['producer_attempt_id'])
         if not producer or writer.task_state(producer['task_id'])['status']!='ok':continue
         if row['stage']=='extract':
-            from ..ledger.encoding import unpack_evidence
-            partial=False
-            for detail, in writer.connection.execute(f"SELECT details_json FROM {writer.connection.event_table} WHERE attempt_id=? AND event_kind='decision'",(row['producer_attempt_id'],)):
-                digest=json.loads(detail).get('evidence_sha256')
-                stored=writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(digest,)).fetchone()
-                if stored and unpack_evidence(json.loads(stored[0])).get('coverage_allows_source_release') is False:partial=True
+            # One verdict per producer attempt (its decisions are immutable), not one per output file.
+            partial=partial_coverage.get(row['producer_attempt_id'])
+            if partial is None:
+                from ..ledger.encoding import unpack_evidence
+                partial=False
+                for detail, in writer.connection.execute(f"SELECT details_json FROM {writer.connection.event_table} WHERE attempt_id=? AND event_kind='decision'",(row['producer_attempt_id'],)):
+                    digest=json.loads(detail).get('evidence_sha256')
+                    stored=writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(digest,)).fetchone()
+                    if stored and unpack_evidence(json.loads(stored[0])).get('coverage_allows_source_release') is False:partial=True
+                partial_coverage[row['producer_attempt_id']]=partial
             if partial:continue
         candidates.append(row)
     private_candidates = [row for row in candidates if file_path(row).is_relative_to(private)
@@ -670,7 +700,34 @@ def _hard_linked_copies(controller):
     return copies
 
 
-def _unlink_private_file(controller, row, intent, copies):
+def _open_private_parent(controller, parts, parents):
+    """The parent directory of a private file, opened component by component without following links.
+
+    ``parents`` keeps the descriptor of the most recent parent: consecutive
+    files of one attempt directory share one chain of no-follow opens.
+    """
+    if parents is not None and parents.get('parts')==parts:
+        return parents['descriptor']
+    descriptor=os.open(controller.root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    try:
+        for component in parts:
+            child=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=descriptor)
+            os.close(descriptor);descriptor=child
+    except BaseException:
+        os.close(descriptor);raise
+    if parents is not None:
+        _close_private_parent(parents)
+        parents.update(parts=parts,descriptor=descriptor)
+    return descriptor
+
+
+def _close_private_parent(parents):
+    if parents and parents.get('descriptor') is not None:
+        os.close(parents['descriptor'])
+    if parents is not None:parents.update(parts=None,descriptor=None)
+
+
+def _unlink_private_file(controller, row, intent, copies, parents=None):
     """Unlink only a producer-owned, unexposed regular private file; no rehash.
 
     A private file may share its inode only with the registered public copies
@@ -684,12 +741,10 @@ def _unlink_private_file(controller, row, intent, copies):
             or row['kind']=='download_payload'):
         raise ValueError('Bulk release requires unexposed producer-owned scratch')
     relative=path.relative_to(controller.root)
-    descriptor=os.open(controller.root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    descriptor=None
     try:
         try:
-            for component in relative.parts[:-1]:
-                child=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=descriptor)
-                os.close(descriptor);descriptor=child
+            descriptor=_open_private_parent(controller,relative.parts[:-1],parents)
             info=os.stat(relative.name,dir_fd=descriptor,follow_symlinks=False)
             links=1
             if stat.S_ISREG(info.st_mode) and info.st_nlink>1:
@@ -708,7 +763,7 @@ def _unlink_private_file(controller, row, intent, copies):
             file_id=row['file_id'],version_id=row['version_id'],
             details={'private_release_intent':intent})
     finally:
-        os.close(descriptor)
+        if parents is None and descriptor is not None:os.close(descriptor)
 
 
 def _finish_private_release(controller, intent, detail):
@@ -721,13 +776,17 @@ def _finish_private_release(controller, intent, detail):
     # reruns from kept inputs. The intent itself committed with FULL first.
     copies=_hard_linked_copies(controller)
     catalog=controller.writer.file_catalog()
-    for offset in range(0,len(manifest['file_ids']),128):
-        with controller.writer.batch():
-            for file_id in manifest['file_ids'][offset:offset+128]:
-                # The owner's append-driven catalog holds current presence (control state, not byte proof).
-                row=catalog.get(file_id) or connection.execute('SELECT * FROM current_file_state WHERE file_id=?',(file_id,)).fetchone()
-                if row['presence']=='deleted':continue
-                _unlink_private_file(controller,row,intent,copies)
+    parents={}
+    try:
+        for offset in range(0,len(manifest['file_ids']),128):
+            with controller.writer.batch():
+                for file_id in manifest['file_ids'][offset:offset+128]:
+                    # The owner's append-driven catalog holds current presence (control state, not byte proof).
+                    row=catalog.get(file_id) or connection.execute('SELECT * FROM current_file_state WHERE file_id=?',(file_id,)).fetchone()
+                    if row['presence']=='deleted':continue
+                    _unlink_private_file(controller,row,intent,copies,parents)
+    finally:
+        _close_private_parent(parents)
     with controller.writer.transaction():
         controller.writer.event(controller.run_id,event_kind='retention',reason_code='delete_completed',
             message='private_stage_release',details={**detail,'intent_event_id':intent})

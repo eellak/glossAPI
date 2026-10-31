@@ -60,14 +60,16 @@ class AnnotateStage:
                 AnnotatePhaseMixin.annotate.__wrapped__(view,annotation_type=request.settings['annotation_type'],
                     fully_annotate=request.settings['fully_annotate'])
             self.corpus.classifier=view.classifier
-            classified=pd.read_parquet(view.classified_parquet)
-            raw=pd.read_parquet(str(view.classified_parquet)+'.tmp')
+            # Lineage reads only the label columns, never the section text (same rows, same order).
+            labelled=['filename','id','predicted_section']
+            classified=pd.read_parquet(view.classified_parquet,columns=labelled)
+            raw=pd.read_parquet(str(view.classified_parquet)+'.tmp',columns=labelled)
             initial={(str(row.filename),int(row.id)):str(row.predicted_section) for row in raw.itertuples()}
-            final=pd.read_parquet(view.fully_annotated_parquet) if view.fully_annotated_parquet.exists() else classified
+            final=pd.read_parquet(view.fully_annotated_parquet,columns=labelled) if view.fully_annotated_parquet.exists() else classified
             labels={(str(row.filename),int(row.id)):str(row.predicted_section) for row in final.itertuples()}
             fallbacks={int(value) for item in observations if item.get('reason_code')=='annotation_prediction_fallback'
                 for value in item.get('details',{}).get('row_ids',[])}
-            source_rows=pd.read_parquet(request.inputs[0].path)
+            source_rows=pd.read_parquet(request.inputs[0].path,columns=['filename','id'])
             parser_fingerprint=sha256_file(Path(__import__('glossapi.gloss_section',fromlist=['__file__']).__file__))
             ordinals={};keys={}
             for row in source_rows.itertuples():

@@ -133,17 +133,23 @@ def link_published(source, destination, sha256, size):
 
 def checked_path(root, relative):
     relative = Path(relative)
-    root = Path(root).resolve()
+    root = Path(os.path.realpath(root))
     if relative.is_absolute() or not relative.parts or ".." in relative.parts:
         raise ValueError("Artifact path must be a contained relative path")
     candidate = root / relative
-    if not candidate.resolve().is_relative_to(root):
-        raise ValueError("Artifact symlink escapes attempt directory")
+    # Below a resolved root, a contained relative path resolves to itself unless one of its components is a
+    # link, so the full resolution is needed only to name the error (same checks, same messages; hot path).
+    linked = False
     for parent in (candidate, *candidate.parents):
         if parent == root:
             break
-        if parent.is_symlink():
-            raise ValueError("Artifact symlinks are not publishable")
+        if os.path.islink(parent):
+            linked = True
+            break
+    if linked:
+        if not candidate.resolve().is_relative_to(root):
+            raise ValueError("Artifact symlink escapes attempt directory")
+        raise ValueError("Artifact symlinks are not publishable")
     return candidate
 
 

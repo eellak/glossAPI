@@ -9,6 +9,7 @@ from ..stages.profile import adapters_enabled
 
 from contextvars import ContextVar
 from functools import wraps
+import functools
 import hashlib
 import importlib.metadata
 import inspect
@@ -132,12 +133,21 @@ def source_key(uri):
 
 
 def code_revision():
+    # The running code cannot change within a process: read the receipt (or ask git) once, not once per attempt.
+    return _code_identity()[0]
+
+
+@functools.lru_cache(maxsize=1)
+def _code_identity():
+    """(commit, tree_sha256) of the running code: the shipped receipt, else git HEAD and no tree hash."""
     root = Path(__file__).resolve().parents[3]
     shipped = root / ".code-receipt.json"
-    if shipped.is_file(): return json.loads(shipped.read_text())["commit"]
+    if shipped.is_file():
+        receipt = json.loads(shipped.read_text())
+        return receipt["commit"], receipt["tree_sha256"]
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, stderr=subprocess.DEVNULL).strip()
-    except (OSError, subprocess.SubprocessError): return "unknown_not_recorded"
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, stderr=subprocess.DEVNULL).strip(), None
+    except (OSError, subprocess.SubprocessError): return "unknown_not_recorded", None
 
 
 def loaded_tools():
@@ -156,8 +166,7 @@ def loaded_tools():
             _loaded_tools_cache[key] = {"name": name, "version": version, "distribution_hash": None, "build_hash": binary_hash}
         entry = _loaded_tools_cache[key]
         (native if entry["build_hash"] else packages).append(entry)
-    shipped_receipt = Path(__file__).resolve().parents[3] / ".code-receipt.json"
-    code_identity = json.loads(shipped_receipt.read_text())["tree_sha256"] if shipped_receipt.is_file() else None
+    code_identity = _code_identity()[1]
     return {"python": sys.version, "platform": platform.platform(), "code_tree_sha256": code_identity, "packages": packages, "native": native,
             "models": [], "dictionaries": [], "unavailable": ["unreported_model_identity", "unreported_dictionary_identity", "distribution_hashes", "font_resolution"]}
 
@@ -383,6 +392,10 @@ class ResultJournal:
                 if child.is_file(): self.store(child, kind=kind, preexisting=preexisting, register=register)
             return
         if not path.is_file(): return
+        if self.adapter_profile and path.absolute().is_relative_to(Path(self.corpus.output_dir).absolute()/'.glossapi'):
+            # A stage's private attempt file (for example the classified parquet the annotate kernel writes in
+            # its staging directory): its producer registers it, as inventory() never observes .glossapi either.
+            return
         if self.cutover and path.parent == self.corpus.output_dir/'download_results' and path.suffix == '.parquet':
             from ..stages.products import current_product
             if not preexisting or current_product(self.writer.connection,path):
@@ -598,6 +611,9 @@ def shadow_stage(stage, operation=None):
             own_writer = provided_writer is None and (parent is None or parent.corpus.output_dir != self.output_dir)
             writer = provided_writer or (LedgerWriter(Path(self.output_dir) / "corpus.sqlite3", code_revision=code_revision()) if own_writer else parent.writer)
             try:
+                if own_writer:
+                    # A phase that owns its writer starts a run: verify the copies the previous run close left unflushed (K4C-M2).
+                    writer.verify_excluded_copies()
                 journal = ResultJournal(writer, self, stage, operation or f"{stage}.{function.__name__}", parameters)
                 if own_writer:
                     # This phase owns the writer: its close is the run-close barrier.

@@ -2691,6 +2691,36 @@ def _latin_word_shape_rate(text: str) -> float | None:
     return plausible / len(words)
 
 
+# Raw-text measurements of _enrich_extraction_metrics, computed ahead of the clean barrier by the streaming
+# scheduler while it waits for workers (K4(c) part 2). Keyed by the sha256 of the exact markdown bytes, so a
+# lookup can only return the values the same bytes would produce; the legacy path never fills it.
+_RAW_TEXT_METRICS: dict = {}
+_RAW_TEXT_METRICS_LIMIT = 200_000
+
+
+def _decode_markdown(data: bytes) -> str:
+    """Exactly Path.read_text(encoding="utf-8") of these bytes (UTF-8, universal newlines)."""
+    import io
+    return io.TextIOWrapper(io.BytesIO(data), encoding="utf-8").read()
+
+
+def _raw_text_metrics(text: str):
+    from glossapi.page_quality import text_contamination_counts
+    return _latin_word_shape_rate(text), text_contamination_counts(text)
+
+
+def precompute_raw_text_metrics(path) -> None:
+    """Measure one raw markdown file now so that the clean barrier's enrichment can reuse the values."""
+    import hashlib
+    data = Path(path).read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest in _RAW_TEXT_METRICS:
+        return
+    if len(_RAW_TEXT_METRICS) >= _RAW_TEXT_METRICS_LIMIT:
+        _RAW_TEXT_METRICS.clear()
+    _RAW_TEXT_METRICS[digest] = _raw_text_metrics(_decode_markdown(data))
+
+
 def _readable_non_greek_mask(df: pd.DataFrame) -> pd.Series:
     """Conservative Latin exemption; unknown metrics never establish readability.
 
@@ -2753,9 +2783,18 @@ def _enrich_extraction_metrics(df: pd.DataFrame, output_dir: Path, markdown_dir:
         result.at[index, "control_char_count"] = pd.NA
         result.at[index, "latin_word_shape_rate"] = pd.NA
         if has_markdown:
-            text = markdown.read_text(encoding="utf-8")
-            result.at[index, "latin_word_shape_rate"] = _latin_word_shape_rate(text)
-            for key, value in text_contamination_counts(text).items():
+            measured = None
+            if _RAW_TEXT_METRICS:
+                import hashlib
+                data = markdown.read_bytes()
+                measured = _RAW_TEXT_METRICS.get(hashlib.sha256(data).hexdigest())
+                if measured is None:
+                    measured = _raw_text_metrics(_decode_markdown(data))
+            else:
+                text = markdown.read_text(encoding="utf-8")
+                measured = (_latin_word_shape_rate(text), text_contamination_counts(text))
+            result.at[index, "latin_word_shape_rate"] = measured[0]
+            for key, value in measured[1].items():
                 result.at[index, key] = value
         failed = (str(status).strip().lower() in _EXTRACT_FAILURE_STATUSES
                   or bool(payload.get("no_partial_output")) or not has_markdown)

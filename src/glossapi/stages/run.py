@@ -735,7 +735,12 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     result['outputs']=[]
     output=Path(corpus.output_dir)/'export.jsonl'
     if output.is_file():
-        result['outputs'].append({'kind':'jsonl','path':str(output),'sha256':sha256_file(output),'bytes':output.stat().st_size})
+        # The export barrier just published these bytes and registered their hash (hash once per byte stream).
+        published=writer.connection.execute("SELECT sha256,bytes FROM current_file_state WHERE uri=? AND producer_attempt_id IS NOT NULL "
+            "AND ownership='managed' AND presence='present' ORDER BY event_id DESC LIMIT 1",(output.absolute().as_uri(),)).fetchone()
+        size=output.stat().st_size
+        digest=published['sha256'] if published and published['bytes']==size else sha256_file(output)
+        result['outputs'].append({'kind':'jsonl','path':str(output),'sha256':digest,'bytes':size})
     from collections import Counter
     counts=Counter(task['status'] for task in writer.task_states(result['run_id']))
     result['counts']={status:counts[status] for status in ('planned','running','ok','skipped','failed')}
@@ -926,6 +931,8 @@ def run_corpus(corpus,*args,**options):
     from ..ledger.urls import url_policy
     with LedgerWriter(Path(corpus.output_dir)/'corpus.sqlite3') as writer:
         corpus._scheduler_writer=writer
+        # Copies the previous run close left unflushed are verified (and republished if torn) first (K4C-M2).
+        writer.verify_excluded_copies()
         try:
             # The caller's declared URL policy (public query fields, secret
             # headers) is frozen in the run settings and active for every
