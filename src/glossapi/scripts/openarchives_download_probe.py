@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 
 import pandas as pd
 
+from glossapi.parquet_schema import pandas_parquet, replace_metadata_parquet  # K2F round 3: one metadata write path
+
 from glossapi import Corpus
 
 
@@ -119,7 +121,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         hosts=args.hosts,
     )
     probe_input = output_dir / "probe_input.parquet"
-    probe_df.to_parquet(probe_input, index=False)
+    replace_metadata_parquet(probe_input, probe_df, serialize=pandas_parquet)
 
     if args.dry_run:
         summary = _summary_payload(probe_df, source_rows=len(source_df))
@@ -148,7 +150,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         suffixes=("", "_probe"),
     )
     merged_path = output_dir / "probe_results.parquet"
-    merged.to_parquet(merged_path, index=False)
+    replace_metadata_parquet(merged_path, merged, serialize=pandas_parquet)
     summary = _summary_payload(merged, source_rows=len(source_df))
     (output_dir / "probe_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0

@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Dict, Iterable, Optional, Sequence
 
 import pandas as pd
+
+from glossapi.parquet_schema import pandas_parquet, replace_metadata_parquet  # K2F round 3: one metadata write path
 import zstandard as zstd
 
 
@@ -209,7 +211,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         source_jsonl_column=str(args.source_jsonl_column),
     )
 
-    enriched_targets.to_parquet(output_path, index=False)
+    replace_metadata_parquet(output_path, enriched_targets, serialize=pandas_parquet)
     summary = {
         "source_parquet": str(parquet_path),
         "output_parquet": str(output_path),

@@ -77,7 +77,7 @@ class DownloadPhaseMixin:
         from ..gloss_downloader import (GlossDownloader, RESOURCE_IDENTITY_COLUMN, frame_identities,
                                         persisted_download_frame)
         from ..ledger.urls import is_keyed_key, register_setting_secrets, register_url, was_redacted
-        from ..parquet_schema import pandas_parquet, same_metadata_file, update_metadata_parquet
+        from ..parquet_schema import lossless_concat, pandas_parquet, same_metadata_file, update_metadata_parquet
         BrowserGlossDownloader = None
 
         # If input_parquet not specified, find parquet files in input_dir
@@ -383,9 +383,9 @@ class DownloadPhaseMixin:
 
                 # Combine existing and new results
                 self.logger.info(f"Merged {len(existing_filtered)} existing results with {len(new_results)} new results")
-                return pd.concat([existing_filtered, new_results], ignore_index=True)
+                return lossless_concat([existing_filtered, new_results], what='download results')
             # Rows without the URL column cannot be matched: keep them (before CP-K2a F1 this was an unbound name).
-            return pd.concat([base, new_results], ignore_index=True)
+            return lossless_concat([base, new_results], what='download results')
 
         # Publication (CP-K2a F1): the network work above ran without the lock. Under the shared metadata lock the
         # results file is re-read as it is now, this acquisition's rows replace only earlier rows of the same
@@ -404,7 +404,7 @@ class DownloadPhaseMixin:
                     present = set(frame_identities(base, url_column)) - {None}
                     resumed = existing_results[[identity not in present for identity in frame_identities(existing_results, url_column)]]
                     if len(resumed):
-                        base = pd.concat([base, resumed], ignore_index=True)
+                        base = lossless_concat([base, resumed], what='resumed download results')
             final = _merge(base)
             published.append(final)
             return persisted_download_frame(final, url_column)

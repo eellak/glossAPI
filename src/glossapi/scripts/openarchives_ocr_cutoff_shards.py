@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
+from glossapi.parquet_schema import pandas_parquet, replace_metadata_parquet  # K2F round 3: one metadata write path
+
 from glossapi.scripts.openarchives_ocr_shards import (
     PAGE_COLUMN_CANDIDATES,
     _assign_rows,
@@ -150,7 +152,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         node_df["shard_id"] = f"node-{node_id:02d}"
         node_df["node_id"] = node_id
         out_path = output_dir / f"openarchives_ocr_shard_node_{node_id:02d}.parquet"
-        node_df.to_parquet(out_path, index=False)
+        replace_metadata_parquet(out_path, node_df, serialize=pandas_parquet)
         node_pages = int(node["pages_total"])
         node_docs = int(node["docs_total"])
         total_pages += node_pages
@@ -165,8 +167,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             }
         )
 
-    available_df.to_parquet(available_path, index=False)
-    missing_df.to_parquet(missing_path, index=False)
+    replace_metadata_parquet(available_path, available_df, serialize=pandas_parquet)
+    replace_metadata_parquet(missing_path, missing_df, serialize=pandas_parquet)
     overall = {
         "source_parquet": str(parquet_path),
         "cutoff_id": cutoff_id,

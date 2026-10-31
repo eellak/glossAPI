@@ -18,6 +18,7 @@ from numbers import Number
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
+import numpy as np
 import pandas as pd
 
 try:  # Optional dependency – lazily confirmed via _ensure_pyarrow()
@@ -136,29 +137,75 @@ def _prepare_metadata_frame(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-def metadata_path_identity(path: Union[str, Path]) -> Path:
-    """The one canonical identity of a metadata parquet path (CP-K2c F1): absolute, ``..`` folded, directory and file
-    symlinks resolved (``os.path.realpath``). The lock file, the write target of the locked writers and every
-    same-file decision derive from it, so two spellings of one file can never take different locks or branches."""
-    return Path(os.path.realpath(os.path.abspath(os.path.expanduser(os.fspath(path)))))
+class MetadataAliasError(ValueError):
+    """A metadata parquet target that cannot be written safely: a hard-linked file (atomic replacement would detach
+    the other names), or two hard-linked names of one file used as input and output (CP-K2d F2, K2F round 3)."""
+
+
+class MetadataSchemaError(ValueError):
+    """A merge whose result cannot hold every preserved value exactly (CP-K2d F4); raised before anything is
+    replaced."""
+
+
+def resolve_metadata_target(path: Union[str, Path]) -> Path:
+    """THE metadata target policy (K2F round 3): the physical file a metadata path names.
+
+    ``os.path.realpath(os.path.expanduser(path))``: components are resolved in traversal order (a directory symlink
+    followed by ``..`` climbs from the link's target, as the OS does; no lexical ``abspath`` folding first, CP-K2d F1),
+    and a file symlink resolves to its target. Lock, read and atomic replacement all use this path; the caller's
+    spelling is kept only for messages, journal observations and return values. Writing through a file symlink
+    therefore updates the real file and the link survives (CP-K2d F3)."""
+    return Path(os.path.realpath(os.path.expanduser(os.fspath(path))))
+
+
+# Round-2 name, kept as an alias of the one policy.
+metadata_path_identity = resolve_metadata_target
+
+
+def refuse_hard_linked_target(target: Union[str, Path], given: Union[str, Path, None] = None) -> None:
+    """Hard links are refused (CP-K2d F2): an existing target with ``st_nlink > 1`` raises ``MetadataAliasError``
+    before anything is read or written; an atomic replacement cannot keep the other names pointing at the update."""
+    try:
+        links = os.stat(target).st_nlink
+    except FileNotFoundError:
+        return
+    if links > 1:
+        raise MetadataAliasError(f'Metadata parquet {given if given is not None else target} is hard-linked '
+                                 f'({links} names for {target}); atomic replacement would detach the other names. '
+                                 'Use one name (or a symbolic link) for a metadata file.')
 
 
 def same_metadata_file(first: Union[str, Path], second: Union[str, Path]) -> bool:
-    """Whether two paths name the same metadata parquet: ``os.path.samefile`` when both exist (also catches
-    case-insensitive spellings and hard links), else equal canonical identities."""
-    if os.path.exists(first) and os.path.exists(second):
-        return os.path.samefile(first, second)
-    return metadata_path_identity(first) == metadata_path_identity(second)
+    """Whether two paths name the same physical metadata parquet: equal resolved targets, or, when both exist,
+    ``os.path.samefile`` of the resolved targets (case-insensitive spellings; hard links, which the writers refuse)."""
+    resolved_first, resolved_second = resolve_metadata_target(first), resolve_metadata_target(second)
+    if resolved_first == resolved_second:
+        return True
+    return (os.path.exists(resolved_first) and os.path.exists(resolved_second)
+            and os.path.samefile(resolved_first, resolved_second))
+
+
+@contextmanager
+def metadata_target(path: Union[str, Path]) -> Iterator[Path]:
+    """THE choke point for every metadata parquet writer (K2F round 3): yields the resolved physical target while
+    holding its lock, after refusing a hard-linked target (checked before the lock and again under it). The caller
+    reads and atomically replaces only the yielded path (``_write_metadata_parquet_locked``,
+    ``_write_serialized_locked``, ``_copy_file_locked``, or a product publication given it as physical target)."""
+    target = resolve_metadata_target(path)
+    refuse_hard_linked_target(target, path)
+    with _parquet_lock(target):
+        refuse_hard_linked_target(target, path)
+        yield target
 
 
 @contextmanager
 def _parquet_lock(path: Path) -> Iterator[None]:
     """Serialize writers via file-based lock, falling back to atomic rename.
 
-    The lock file sits next to the canonical identity of ``path`` (``metadata_path_identity``), whatever spelling the
-    caller used. Hard links of one file are not unified (declared; samefile decides same-file branches)."""
+    The lock file sits next to ``resolve_metadata_target(path)``, whatever spelling the caller used. Writers enter it
+    through ``metadata_target`` (which also refuses hard links); this is its locking primitive."""
 
-    path = metadata_path_identity(path)
+    path = resolve_metadata_target(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
     if FileLock is not None:
@@ -199,8 +246,8 @@ def _parquet_lock(path: Path) -> Iterator[None]:
 
 
 def _write_metadata_parquet_locked(df: pd.DataFrame, parquet_path: Path, observed: Optional[Path] = None) -> None:
-    """Write + atomic replace; the caller holds ``_parquet_lock(parquet_path)``. ``observed``: the caller's spelling
-    recorded by the journal when ``parquet_path`` is the canonical identity."""
+    """Write + atomic replace of the resolved target yielded by ``metadata_target`` (the caller holds it).
+    ``observed``: the caller's spelling, recorded by the journal."""
     prepared = _prepare_metadata_frame(df)
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     pa_mod, pq_mod = _ensure_pyarrow()
@@ -219,13 +266,28 @@ def _write_metadata_parquet_locked(df: pd.DataFrame, parquet_path: Path, observe
 
 
 def _write_metadata_parquet(df: pd.DataFrame, parquet_path: Path) -> None:
-    parquet_path.parent.mkdir(parents=True, exist_ok=True)
-    with _parquet_lock(parquet_path):
-        _write_metadata_parquet_locked(df, metadata_path_identity(parquet_path), observed=parquet_path)
+    with metadata_target(parquet_path) as target:
+        _write_metadata_parquet_locked(df, target, observed=parquet_path)
+
+
+def _copy_file_locked(source: Path, target: Path) -> None:
+    """Copy a file's bytes over the resolved target yielded by ``metadata_target`` (temporary + atomic replace)."""
+    import shutil
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target.with_name('.' + target.name + f'.{uuid.uuid4().hex}.tmp')
+    try:
+        shutil.copyfile(source, tmp_path)
+        os.replace(tmp_path, target)
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except Exception:
+            pass
 
 
 def _write_serialized_locked(df: pd.DataFrame, parquet_path: Path, serialize) -> None:
-    """``serialize(frame, temporary_path)`` + atomic replace; the caller holds ``_parquet_lock(parquet_path)``."""
+    """``serialize(frame, temporary_path)`` + atomic replace of the resolved target yielded by ``metadata_target``."""
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = parquet_path.with_suffix(parquet_path.suffix + f".{uuid.uuid4().hex}.tmp")
     try:
@@ -250,44 +312,50 @@ def update_metadata_parquet(parquet_path: Union[str, Path], update, *, serialize
     a caller that always wrote its file with its own serializer (``DataFrame.to_parquet``, a plain pyarrow table)
     keeps its bytes; the file is still replaced atomically inside the lock (CP-K2a F1).
 
-    Lock, read and replacement all use ``metadata_path_identity(parquet_path)`` (CP-K2c F1): any spelling of the file
-    (``..``, a symlinked directory, a symlink to the file) locks and replaces the same file."""
+    Lock, read and replacement all use the resolved physical target (``metadata_target``, K2F round 3): any spelling
+    of the file (``..`` after a directory symlink, a file symlink) updates the same file; hard links are refused."""
     given = Path(parquet_path)
-    parquet_path = metadata_path_identity(given)
-    with _parquet_lock(parquet_path):
-        current = pd.read_parquet(parquet_path) if parquet_path.exists() else pd.DataFrame()
+    with metadata_target(given) as target:
+        current = pd.read_parquet(target) if target.exists() else pd.DataFrame()
         updated = update(current)
         if updated is not None:
             if serialize is None:
-                _write_metadata_parquet_locked(updated, parquet_path, observed=given)
+                _write_metadata_parquet_locked(updated, target, observed=given)
             else:
-                _write_serialized_locked(updated, parquet_path, serialize)
+                _write_serialized_locked(updated, target, serialize)
         return current if updated is None else updated
 
 
 def replace_metadata_parquet(parquet_path: Union[str, Path], frame: pd.DataFrame, *, serialize=None) -> None:
-    """Replace a parquet whole with ``frame`` (no read), atomically, under its canonical lock: for a writer whose
-    output is an explicit new artifact (a distinct target of ``rewrite_metadata_parquet``)."""
+    """Replace a metadata parquet whole with ``frame`` (no read), atomically, through ``metadata_target``: for a
+    writer whose output is an explicit new artifact (e.g. a distinct target of ``rewrite_metadata_parquet``)."""
     given = Path(parquet_path)
-    parquet_path = metadata_path_identity(given)
-    with _parquet_lock(parquet_path):
+    with metadata_target(given) as target:
         if serialize is None:
-            _write_metadata_parquet_locked(frame, parquet_path, observed=given)
+            _write_metadata_parquet_locked(frame, target, observed=given)
         else:
-            _write_serialized_locked(frame, parquet_path, serialize)
+            _write_serialized_locked(frame, target, serialize)
 
 
 def rewrite_metadata_parquet(source: Union[str, Path], target: Union[str, Path], transform, *, serialize=None) -> pd.DataFrame:
-    """Read ``source``, ``transform(frame) -> frame``, write ``target``; returns the written frame (CP-K2c F1).
+    """Read ``source``, ``transform(frame) -> frame``, write ``target``; returns the written frame.
 
-    The same-file decision is made here, once, by ``same_metadata_file``, so a caller cannot get it wrong: when
-    ``target`` is ``source`` under any spelling, the read, transform and atomic replace are one locked read-modify-write
-    of that file (a concurrent locked commit is transformed, never overwritten). A genuinely distinct ``target`` is an
-    explicit new artifact: ``source`` is read as it is, ``target`` is replaced whole, atomically, under its own lock.
-    A missing ``source`` raises the same error as ``pd.read_parquet``."""
-    if same_metadata_file(source, target):
+    The same-file decision is made here, on resolved targets only (K2F round 3). Same physical file → one locked
+    read/transform/atomic replace of it through ``metadata_target`` (a concurrent locked commit is transformed, never
+    overwritten). Two hard-linked names of one file → ``MetadataAliasError`` before anything is read or written.
+    Otherwise ``target`` is an explicit new artifact: ``source`` is read as it is and ``target`` is replaced whole
+    through ``metadata_target``. Either way a successful rewrite has updated the requested target. A missing
+    ``source`` raises the ``pd.read_parquet`` error before any output exists."""
+    source_target, output_target = resolve_metadata_target(source), resolve_metadata_target(target)
+    if source_target != output_target and os.path.exists(source_target) and os.path.exists(output_target) \
+            and os.path.samefile(source_target, output_target):
+        if os.stat(source_target).st_nlink > 1:
+            raise MetadataAliasError(f'{source} and {target} are hard-linked names of one file ({source_target}); '
+                                     'atomic replacement would detach them. Use one name.')
+        output_target = source_target  # one file under two case spellings: in place
+    if source_target == output_target:
         def _in_place(current):
-            if not os.path.exists(source):
+            if not source_target.exists():
                 pd.read_parquet(source)  # the missing-file error the direct read raised
             return transform(current)
         return update_metadata_parquet(source, _in_place, serialize=serialize)
@@ -301,32 +369,128 @@ def pandas_parquet(frame: pd.DataFrame, path: Path) -> None:
     frame.to_parquet(path, index=False)
 
 
+def _nullable(series: pd.Series) -> pd.Series:
+    """The same values in a dtype that can also hold a missing value without changing them: numpy integers →
+    ``Int64``/``UInt64``, numpy booleans → ``boolean``; every other dtype (float, object, string, datetime,
+    extension types) already holds missing values and is kept as it is (CP-K2d F4)."""
+    dtype = series.dtype
+    if isinstance(dtype, pd.api.extensions.ExtensionDtype):
+        return series
+    if pd.api.types.is_bool_dtype(dtype):
+        return series.astype('boolean')
+    if pd.api.types.is_integer_dtype(dtype):
+        return series.astype('UInt64' if dtype.kind == 'u' else 'Int64')
+    return series
+
+
+def _missing_like(series: pd.Series, index) -> pd.Series:
+    """An all-missing column of ``series``'s (nullable) dtype for ``index``."""
+    filler = _nullable(series).iloc[:0].reindex(range(len(index)))
+    filler.index = index
+    return filler
+
+
+def _same_value(left, right) -> bool:
+    left_missing = pd.api.types.is_scalar(left) and pd.isna(left)
+    right_missing = pd.api.types.is_scalar(right) and pd.isna(right)
+    if left_missing or right_missing:
+        return left_missing and right_missing
+    try:
+        equal = left == right
+        if isinstance(equal, (bool, np.bool_)):
+            return bool(equal)
+    except Exception:
+        pass
+    return np.array_equal(np.asarray(left, dtype=object), np.asarray(right, dtype=object))
+
+
+def _require_exact(original: pd.DataFrame, result: pd.DataFrame, start: int, what: str) -> None:
+    """Every value of ``original`` reappears exactly at ``result`` rows ``start:start+len`` (compared as Python
+    objects, so 9007199254740993 never equals 9007199254740992.0); else ``MetadataSchemaError``."""
+    for column in original.columns:
+        before = original[column]
+        after = result[column].iloc[start:start + len(original)]
+        if after.dtype == before.dtype:
+            continue  # same dtype: no conversion happened
+        for position, (left, right) in enumerate(zip(before.astype(object), after.astype(object))):
+            if not _same_value(left, right):
+                raise MetadataSchemaError(
+                    f'Merging {what} would change column {column!r} at row {position}: {left!r} ({before.dtype}) -> '
+                    f'{right!r} ({after.dtype}); nothing was replaced.')
+
+
+def lossless_concat(frames, *, what: str = 'metadata rows') -> pd.DataFrame:
+    """``pd.concat(frames, ignore_index=True)`` without silent value changes (CP-K2d F4).
+
+    Columns that some frame lacks are first made nullable in the frames that have them (``_nullable``) and added to
+    the others as missing values of that dtype, so integers, booleans and extension types keep exact values and
+    their dtype family; then every original value is checked against the result, and an inexact union raises
+    ``MetadataSchemaError`` before the caller replaces anything. Frames with identical columns concatenate exactly
+    as ``pd.concat`` did."""
+    frames = list(frames)
+    columns = list(dict.fromkeys(column for frame in frames for column in frame.columns))
+    partial = {column for column in columns if any(column not in frame.columns for frame in frames)}
+    aligned = []
+    for frame in frames:
+        frame = frame.copy()
+        for column in columns:
+            if column in frame.columns:
+                if column in partial:
+                    frame[column] = _nullable(frame[column])
+            else:
+                like = next(other[column] for other in frames if column in other.columns)
+                frame[column] = _missing_like(like, frame.index)
+        aligned.append(frame[columns])
+    result = pd.concat(aligned, ignore_index=True)
+    start = 0
+    for frame in frames:
+        _require_exact(frame, result, start, what)
+        start += len(frame)
+    return result
+
+
 def merge_owned_rows(current: pd.DataFrame, rows: pd.DataFrame, key: str, owned=()) -> pd.DataFrame:
-    """Publish this operation's ``rows`` over the ``current`` file without losing another writer's rows or columns.
+    """Publish this operation's ``rows`` over the ``current`` file without losing another writer's rows, columns or
+    values.
 
     The result is ``rows`` in their order; columns only ``current`` has are joined onto them by ``key`` (another
     writer's fields of the same document), and ``current`` rows whose key is neither in ``rows`` nor in ``owned``
     (keys this operation wrote before and now replaces) are appended unchanged. With nothing concurrent (``current``
     holds only this operation's earlier rows and no other column) the result is ``rows`` itself.
 
-    Rule (CP-K2c F2): a merge never drops a current row or column it cannot match. When ``current`` (or ``rows``) has
-    no ``key`` column — e.g. the keyless downloader shape ``download_success``/``download_error``/``filename_base``,
-    which ``find_metadata_parquet`` selects — no row can be matched, so every current row is kept, after ``rows``,
-    with all its columns. Preserving is chosen over refusing: refusing would leave this operation's results
-    unpublished and need a caller recovery path, while appending loses nothing and is visible to the next reader."""
-    if current.empty:
+    Rule (CP-K2c F2, CP-K2d F4/F5): a merge never drops a current row, column or exact value it cannot match. When
+    ``current`` (or ``rows``) has no ``key`` column — e.g. the keyless downloader shape
+    ``download_success``/``download_error``/``filename_base`` that ``find_metadata_parquet`` selects — no row can be
+    matched, so every current row is kept, after ``rows``. A ``current`` with zero rows still contributes its
+    columns. Unions are lossless (``lossless_concat``; joined columns made nullable first) or raise
+    ``MetadataSchemaError`` before anything is replaced. Preserving is chosen over refusing unmatched rows: refusing
+    would leave this operation's results unpublished, while appending loses nothing."""
+    if current.columns.empty:
         return rows
+    if current.empty:
+        result = rows.copy()
+        for column in current.columns:
+            if column not in result.columns:
+                result[column] = _missing_like(current[column], result.index)
+        return result
     if key not in current.columns or key not in rows.columns:
-        return pd.concat([rows, current], ignore_index=True)
+        return lossless_concat([rows, current], what='rows that cannot be matched by ' + key)
     published = set(rows[key].dropna().tolist())
     extra = [column for column in current.columns if column not in rows.columns]
     result = rows
     if extra:
         lookup = current[current[key].notna()].drop_duplicates(key, keep='last').set_index(key)[extra]
-        result = rows.join(lookup, on=key)
+        for column in extra:
+            lookup[column] = _nullable(lookup[column])
+        joined = rows.join(lookup, on=key)
+        matched = rows[key].isin(lookup.index).to_numpy()
+        if matched.any():
+            expected = lookup.loc[rows.loc[matched, key]].reset_index(drop=True)
+            _require_exact(expected, joined.loc[matched, extra].reset_index(drop=True), 0, 'joined columns')
+        result = joined
     leftover = current[~current[key].isin(published | set(owned))]
     if len(leftover):
-        result = pd.concat([result, leftover], ignore_index=True)
+        result = lossless_concat([result, leftover], what='unmatched current rows')
     return result
 
 
@@ -984,21 +1148,25 @@ class ParquetSchema:
         while True:
             existing_candidates = _candidates()
             target_path: Optional[Path] = existing_candidates[0] if existing_candidates else None
-            with _parquet_lock(target_path or parquet_path):
+            # Through the metadata choke point (K2F round 3): the resolved physical target is locked, read and
+            # replaced (a symlinked candidate keeps its link; a hard-linked one is refused); the caller's spelling is
+            # only returned and observed.
+            with metadata_target(target_path or parquet_path) as physical:
                 if parquet_path.exists():
                     return parquet_path
                 current = _candidates()
                 if (current[0] if current else None) != target_path:
                     continue  # another writer created a candidate meanwhile: lock that one instead
-                existing_df = _read_existing(target_path) if target_path is not None else pd.DataFrame()
+                existing_df = _read_existing(physical) if target_path is not None else pd.DataFrame()
                 return self._merge_metadata_locked(
                     df_records, existing_df, target_path, parquet_path, defaults, ordered_columns,
-                    extraction_columns, base_dir, logger)
+                    extraction_columns, base_dir, logger, physical=physical)
 
     @staticmethod
     def _merge_metadata_locked(df_records, existing_df, target_path, parquet_path, defaults, ordered_columns,
-                               extraction_columns, base_dir, logger):
-        """Merge this writer's artifact rows into the existing rows and write; the caller holds the lock."""
+                               extraction_columns, base_dir, logger, *, physical):
+        """Merge this writer's artifact rows into the existing rows and write ``physical`` (the resolved target the
+        caller holds through ``metadata_target``); ``target_path``/``parquet_path`` are returned and observed."""
         if target_path is not None:
             combined = df_records
             if combined.empty and not existing_df.empty:
@@ -1029,7 +1197,7 @@ class ParquetSchema:
                     combined[column] = default
             combined = combined.reindex(columns=ordered_columns, fill_value=pd.NA)
             combined.sort_values(by="filename", inplace=True)
-            _write_metadata_parquet_locked(combined, target_path)
+            _write_metadata_parquet_locked(combined, physical, observed=target_path)
             logger.info(
                 "Updated existing metadata parquet with %d row(s): %s",
                 len(combined),
@@ -1045,7 +1213,7 @@ class ParquetSchema:
             return None
 
         df_records.sort_values(by="filename", inplace=True)
-        _write_metadata_parquet_locked(df_records, parquet_path)
+        _write_metadata_parquet_locked(df_records, physical, observed=parquet_path)
         logger.info(
             "Synthesised metadata parquet with %d row(s): %s",
             len(df_records),
@@ -1274,6 +1442,6 @@ class ParquetSchema:
         if metadata:
             table = self.add_metadata(table, metadata)
         
-        # Write to parquet
-        pq.write_table(table, file_path)
+        # Write to parquet, through the metadata choke point (K2F round 3: resolved target, lock, atomic replace)
+        replace_metadata_parquet(file_path, df_copy, serialize=lambda _frame, path: pq.write_table(table, path))
         print(f"Parquet file written to {file_path} with schema type '{schema_type}'")

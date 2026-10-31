@@ -166,8 +166,12 @@ def generation_outputs(request, paths, *, decisions=(), reason='legacy_observed'
     return StageResult(request.task_id,request.attempt_id,request.lease_token,'ok',reason,tuple(outputs),tuple(decisions),metrics or {})
 
 
-def publish_products(corpus,result,workspace,products,*,retire=()):
-    """Publish mirrors, then one ledger transaction selecting all immutable files."""
+def publish_products(corpus,result,workspace,products,*,retire=(),physical=None):
+    """Publish mirrors, then one ledger transaction selecting all immutable files.
+
+    ``physical`` (``{relative: path}``): the file the bytes are atomically written to when it differs from the
+    recorded destination, i.e. a metadata target resolved and locked by ``parquet_schema.metadata_target`` (K2F round
+    3); the ledger still records the destination as given."""
     if result.status != 'ok':
         if result.status == 'skipped':
             return
@@ -176,9 +180,10 @@ def publish_products(corpus,result,workspace,products,*,retire=()):
     selected=[]
     for relative,destination in products.items():
         source=checked_path(workspace,relative); destination=Path(destination).absolute()
-        destination.parent.mkdir(parents=True,exist_ok=True)
+        written=Path((physical or {}).get(relative,destination))
+        written.parent.mkdir(parents=True,exist_ok=True)
         registered=journal.writer.connection.execute('SELECT sha256,bytes FROM files WHERE producer_attempt_id=? AND uri=?',(result.attempt_id,source.as_uri())).fetchone() if journal else None
-        with tempfile.NamedTemporaryFile(dir=destination.parent,prefix='.'+destination.name+'.',delete=False) as stream:
+        with tempfile.NamedTemporaryFile(dir=written.parent,prefix='.'+written.name+'.',delete=False) as stream:
             temporary=Path(stream.name)
             try:
                 import hashlib
@@ -191,7 +196,7 @@ def publish_products(corpus,result,workspace,products,*,retire=()):
                     raise ValueError('Product hash changed before final publication')
             except BaseException:
                 temporary.unlink(missing_ok=True);raise
-        os.replace(temporary,destination)
+        os.replace(temporary,written)
         selected.append((source,destination))
     if journal:
         with journal.writer.transaction():

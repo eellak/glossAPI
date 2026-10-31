@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from glossapi import Corpus
+from glossapi.parquet_schema import pandas_parquet, replace_metadata_parquet  # K2F round 3: one metadata write path
 from glossapi.scripts.openarchives_manifest import (
     DEFAULT_DOWNLOAD_CONCURRENCY,
     DEFAULT_DOWNLOAD_TIMEOUT,
@@ -48,7 +49,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     manifest_df = _prepare_download_input(_load_frame(input_path))
     download_input = manifests_dir / "download_input.parquet"
-    manifest_df.to_parquet(download_input, index=False)
+    replace_metadata_parquet(download_input, manifest_df, serialize=pandas_parquet)
 
     metadata_path = work_root / "download_results" / "download_results.parquet"
     if not metadata_path.exists():

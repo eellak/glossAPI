@@ -260,7 +260,9 @@ def clean_compatibility_kernel(corpus, md_files, report_path, *, input_root=None
         materialize_stage_outputs(corpus, result, workspace,
             {f'clean_markdown/{source.name}': destination} if write_cleaned_files else {})
     if frames:
-        pd.concat(frames, ignore_index=True).to_parquet(report_path, index=False)
+        # A selectable metadata-shaped report: written through the metadata choke point (K2F round 3), same bytes.
+        from ..parquet_schema import pandas_parquet, replace_metadata_parquet
+        replace_metadata_parquet(report_path, pd.concat(frames, ignore_index=True), serialize=pandas_parquet)
     return scores
 
 
