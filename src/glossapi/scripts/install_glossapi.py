@@ -21,6 +21,8 @@ DEVICES = ("cpu", "cuda126", "cuda132", "mps")
 TORCH_VERSION = "2.14.1"
 TORCHVISION_VERSION = "0.29.1"
 PYPI_INDEX = "https://pypi.org/simple"
+# Packages that need a device-specific torch build (installed first, from the device's index).
+TORCH_PACKAGES = ("layout", "ocr")
 NATIVE_MODULES = ("glossapi_rs_cleaner", "glossapi_rs_noise", "glossapi_rs_pdfrepair")
 
 
@@ -76,6 +78,23 @@ def verify_native_origins(repo_root: Path, *, editable: bool = False) -> None:
     print(json.dumps({"native_modules": origins}, indent=2), flush=True)
 
 
+def torch_build(device: str, system: str, machine: str) -> tuple[str, str]:
+    """The torch index and local-version suffix of a device profile on a platform (``glossapi install`` shares it)."""
+    if device == "mps":
+        if system != "Darwin" or machine != "arm64":
+            raise ValueError("mps requires an Apple Silicon Mac")
+        return PYPI_INDEX, ""
+    if device.startswith("cuda"):
+        if system != "Linux":
+            raise ValueError("CUDA layout packages require Linux; use cpu or mps on macOS")
+        return "https://download.pytorch.org/whl/cu" + device[4:], "+cu" + device[4:]
+    if system == "Linux":
+        return "https://download.pytorch.org/whl/cpu", "+cpu"
+    if system == "Darwin" and machine == "arm64":
+        return PYPI_INDEX, ""
+    raise ValueError("layout supports Linux or Apple Silicon macOS")
+
+
 @dataclass(frozen=True)
 class InstallPlan:
     packages: tuple[str, ...]
@@ -98,29 +117,13 @@ def build_install_plan(
         raise ValueError(f"Unknown packages: {', '.join(sorted(unknown))}; choose {', '.join(PACKAGES)}")
     if device is not None and device not in DEVICES:
         raise ValueError(f"Unknown device '{device}'; choose {', '.join(DEVICES)}")
-    if device and not set(selected) & {'layout', 'ocr'}:
+    if device and not set(selected) & set(TORCH_PACKAGES):
         raise ValueError("--device requires the layout or ocr package")
     index = None
     suffix = ""
-    if set(selected) & {'layout', 'ocr'}:
+    if set(selected) & set(TORCH_PACKAGES):
         device = device or "cpu"
-        system = platform.system()
-        if device == "mps":
-            if system != "Darwin" or platform.machine() != "arm64":
-                raise ValueError("mps requires an Apple Silicon Mac")
-            index = PYPI_INDEX
-        elif device.startswith("cuda"):
-            if system != "Linux":
-                raise ValueError("CUDA layout packages require Linux; use cpu or mps on macOS")
-            suffix = "+cu" + device[4:]
-            index = "https://download.pytorch.org/whl/" + suffix[1:]
-        elif system == "Linux":
-            suffix = "+cpu"
-            index = "https://download.pytorch.org/whl/cpu"
-        elif system == "Darwin" and platform.machine() == "arm64":
-            index = PYPI_INDEX
-        else:
-            raise ValueError("layout supports Linux or Apple Silicon macOS")
+        index, suffix = torch_build(device, platform.system(), platform.machine())
     if pypdfium2_version:
         parts = pypdfium2_version.split(".")
         if len(parts) != 3 or not all(part.isdigit() for part in parts):

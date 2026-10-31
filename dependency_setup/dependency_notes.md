@@ -18,6 +18,11 @@ python install_glossapi.py layout --device mps
 python install_glossapi.py --pypdfium2-version 4.30.0 --dry-run
 ```
 
+To add optional packages to an environment that already has glossAPI, use `glossapi install --device DEV
+--package NAME` (a dry run that prints the exact commands; add `--yes` to run them). It installs only the named
+profiles' requirements and never reinstalls glossAPI; `glossapi capabilities --catalog` lists the profiles with their
+measured install sizes (`tools/catalog/measure_profiles.py` re-measures them from fresh locks when requirements change).
+
 The Python entry point installs in the active interpreter. Both entry points
 accept `--dry-run` and print the exact commands without creating environments or
 installing packages. The shell also accepts `--python`, `--venv`, `--editable`

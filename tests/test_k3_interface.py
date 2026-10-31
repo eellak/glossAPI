@@ -318,7 +318,7 @@ def test_capabilities_match_the_scheduler_rule_and_report_installs(tmp_path):
         ours = all(not item['blocking'] for item in row['packages']) and all(item['status'] == 'registered' for item in row['entry_points'])
         assert package_ok == ours, row
         if not row['available']:
-            assert row['install_commands'] and all(command.startswith(('python install_glossapi.py', 'pip install')) for command in row['install_commands'])
+            assert row['install_commands'] and all(command.startswith(('glossapi install --device ', 'python install_glossapi.py core')) for command in row['install_commands'])
     cpu = data['devices'][0]
     assert cpu == dict(device_id='cpu', kind='cpu', hardware='present', state='available', basis='always present', reason=None)
     assert all(row['state'] in ('unknown_until_probe', 'unavailable') for row in data['devices'][1:])
@@ -447,11 +447,11 @@ def test_missing_capability_is_previewed_and_run_refuses_before_writing(tmp_path
     data = envelope['data']
     assert code == 0 and data['execution']['ready'] is False and data['execution']['blocked_by'] == ['missing_capability']
     assert data['capabilities']['missing'] == [dict(stage='download', reason_code='missing_package', install_profiles=['download'],
-                                                    install_commands=['python install_glossapi.py download'])]
+                                                    install_commands=['glossapi install --device cpu --package download'])]
     assert any(item['code'] == 'missing_capability' for item in envelope['warnings'])
     code, envelope = cli('run', '--corpus', str(corpus), '--files', 'https://example.org/a.pdf', '--stages', 'extract')
     assert code == 2 and envelope['errors'][0]['code'] == 'missing_capability'
-    assert envelope['errors'][0]['details']['install_commands'] == ['python install_glossapi.py download']
+    assert envelope['errors'][0]['details']['install_commands'] == ['glossapi install --device cpu --package download']
     assert not corpus.exists()
 
 

@@ -1,7 +1,7 @@
 # CLI JSON schema v1 and the input manifest v1
 
-Every `glossapi` command (`plan`, `run`, `status`, `report`, `capabilities`, `doctor`) prints exactly one JSON
-envelope. The schemas (JSON Schema draft 2020-12) ship with the package in `glossapi/schemas/v1/`:
+Every `glossapi` command (`plan`, `run`, `status`, `report`, `capabilities`, `doctor`, `install`, `guide`) prints
+exactly one JSON envelope. The schemas (JSON Schema draft 2020-12) ship with the package in `glossapi/schemas/v1/`:
 
 | file | describes |
 | --- | --- |
@@ -17,6 +17,8 @@ envelope. The schemas (JSON Schema draft 2020-12) ship with the package in `glos
 | `capabilities.json` | `capabilities --json` data |
 | `doctor.json` | `doctor --json` data |
 | `manifest.json` | the input manifest v1 (`--manifest`) |
+| `install.json` | `install --json` data (dry run or executed) |
+| `guide.json` | `guide --json` data (the LLM guide) |
 
 The runtime never validates against the schemas (`jsonschema` is a test-group dependency only); the tests validate
 real outputs: the CLI test corpora (`pytest -p cli_schema_validation ...` validates every envelope those tests print),
@@ -76,6 +78,75 @@ process), standalone native distributions that shadow the root wheel, free disk 
 ledger. `doctor --probe-devices` imports torch in a child process to confirm CUDA/MPS and says so in `device_probe`
 and a warning.
 
+## `capabilities --catalog`: the package list
+
+`--catalog` adds `data.catalog` (`common.json#/$defs/catalog`) to the capabilities data. It lists every install profile
+(core and every pyproject extra): its purpose, the profiles it includes, its exact requirement lines, the stage
+variants it enables (derived from each stage adapter's `packages()`), whether it is device-bound (needs a torch build),
+the device profiles it supports per measured platform, the licences of its own requirements and of everything it adds,
+its measured install size, and whether it is installed (`installed.state`: installed / partial / missing, per
+requirement).
+
+Why a flag on `capabilities` and not a separate `packages` command: the catalog is the same capability surface (the
+same requirement detection and the same envelope command), so an LLM learns one read-only command for "what is here and
+what could be added", the envelope dispatch stays unchanged, and the plan's `install_commands` point at the same names.
+
+Sizes are measured, not estimated: `tools/catalog/measure_profiles.py` compiles one PEP 751 lock per profile, device
+profile and platform (`uv pip compile`, CPython 3.12, linux-x86_64 manylinux_2_28 and macos-arm64 14.0) from exactly the
+requirements `install` would request, and records per lock the package count, the download bytes (the lock's wheel
+sizes) and the installed bytes (uncompressed sizes from each wheel's ZIP central directory, read with range requests),
+plus the packages added over the core lock. Packages without a wheel (the Greek OCR toolkit is a VCS source) are listed
+in `unmeasured`. Each lock records the hash of its inputs; when the requirements change, `measurement.state` becomes
+`stale`, `capabilities --catalog` warns `catalog_measurement_stale`, and the tests fail until the tool is re-run.
+
+## `install --device DEV [--package NAME ...] [--yes]`
+
+- The default is a **dry run**: `data.commands` holds the exact commands (installer, index URLs, requirement lines),
+  `data.requirements` the installed state of each line, and `data.would_change` what would change (the missing or
+  mismatched requirements, and an estimate from the measured locks of the packages added and their bytes). Nothing runs.
+- `--yes` runs exactly `data.commands` in order and stops at the first failure, then re-runs the capability check in a
+  fresh interpreter: `data.executed` (each step's exit code, time and output tail, and the installer's dependency check)
+  and `data.changes` (distributions added/removed/changed, stages whose availability changed, capability fingerprints).
+- Only what was requested: the commands carry the requested profiles' own requirement lines, with `glossapi[...]` self
+  references expanded (browser includes download), and nothing else. glossapi itself is never reinstalled (the source
+  installer `install_glossapi.py` does that). A device-bound profile (layout, ocr) first installs the device's
+  torch/torchvision build from its index; the second command pins the same build.
+- One device profile per environment: `cpu`, `cuda126`, `cuda132` (Linux) or `mps` (Apple Silicon). Without
+  `--package` nothing is installed (warning `nothing_selected`).
+- `--installer auto|pip|uv`: auto uses pip when this interpreter has it, else `uv pip install --python`.
+
+## `guide --json`
+
+The versioned LLM guide (`guide_version` 1): the phases and the two products, the choices (files, devices, packages,
+`debug`, `memory_saving`) with their measured costs, the workflow (capabilities, choose, plan, run, status/report,
+`report --why`), how to hand over files found elsewhere (input manifest v1; glossAPI does not scrape), the typed errors
+and the schema files. `docs/llm_guide.md` is the same content rendered by `python -m glossapi.llm_guide`. Every fact
+comes from the module that owns it; `tests/test_k3b_interface.py` fails when the guide, the Markdown file, the schemas,
+the settings contract or the catalog disagree.
+
+## Typed errors and exit codes of `install`, `guide` and `capabilities --catalog`
+
+`guide` and `capabilities --catalog` are read-only and exit 0; their only errors are the generic ones (`invalid_request`
+for a bad argument, `read_error`). `install` checks the whole request before anything runs; every refusal below leaves
+the environment untouched, except `install_command_failed`, which reports what ran.
+
+| code | exit | when |
+| --- | --- | --- |
+| `device_required` | 2 | no `--device` |
+| `conflicting_device_profiles` | 2 | two device profiles at once (`--device cpu --device cuda126`, `cpu,mps`) |
+| `unknown_device` | 2 | not one of cpu, cuda126, cuda132, mps |
+| `device_unsupported_on_platform` | 2 | mps off Apple Silicon macOS, cuda126/cuda132 off Linux |
+| `unknown_package` | 2 | a package not in the catalog (`details.known` lists them) |
+| `package_device_unsupported` | 2 | the package's lock for that device profile did not resolve, or no measured platform has it |
+| `installed_device_profile_conflict` | 2 | the environment holds a torch build of another device profile |
+| `requirements_unavailable` | 2 | glossapi is neither a source checkout nor an installed distribution |
+| `installer_unavailable` | 2 | `--yes` without pip in this interpreter or uv on PATH (the dry run warns instead) |
+| `install_command_failed` | 2 | a command exited non-zero; `data` keeps the steps, output tails and the changes so far |
+| `invalid_request` | 2 | a malformed argument (for example `--installer conda`) |
+
+Warnings: `nothing_selected`, `installer_unavailable` (dry run), `dependency_check_failed` (after `--yes`),
+`catalog_measurement_stale` (`capabilities --catalog`).
+
 ## Input manifest v1
 
 ```json
@@ -105,3 +176,6 @@ and a warning.
 
 - `1.0` (2026-10-31): initial freeze: envelope, error, plan, run, status, report, report --why, report --output,
   capabilities, doctor, input manifest v1.
+- `1.1` (2026-10-31): additive (K3b): new commands `install` and `guide` (`install.json`, `guide.json`, envelope
+  dispatch for them); `capabilities.catalog` (with `--catalog`) and the common definitions `catalog`, `package_profile`,
+  `lock_size`, `requirement_state`, `device_profile`. No existing field changed.

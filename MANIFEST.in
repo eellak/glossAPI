@@ -4,4 +4,7 @@ include install_glossapi.py
 recursive-include dependency_setup *.sh *.txt *.md
 include src/glossapi/ocr_package.txt
 recursive-include src/glossapi/data/wordlists *
+include src/glossapi/data/package_catalog/measured.json
+include src/glossapi/data/measured_costs.json
+recursive-include tools/catalog *.py
 recursive-include src/glossapi/schemas *.json

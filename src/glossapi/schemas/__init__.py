@@ -12,7 +12,7 @@ from typing import Any, Final, cast
 
 SCHEMA_VERSION: Final[int] = 1
 NAMES: Final[tuple[str, ...]] = ('common', 'error', 'envelope', 'plan', 'run', 'status', 'report', 'report_why',
-                                 'report_export', 'capabilities', 'doctor', 'manifest')
+                                 'report_export', 'capabilities', 'doctor', 'manifest', 'install', 'guide')
 
 
 def schema_files(version: int = SCHEMA_VERSION) -> dict[str, bytes]:

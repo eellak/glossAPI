@@ -20,6 +20,27 @@
         "doctor": "97058b55983015734e0ff627374b1e6b1af32b90486aefbc9d5727c487a0207f",
         "manifest": "f29e6a8ecdacdb128c6d7c79bcc7a58d4e38c7b275e9400180b80341128ef7c2"
       }
+    },
+    {
+      "entry": "1.1",
+      "date": "2026-10-31",
+      "change": "additive (K3b): new commands install and guide (install.json, guide.json, envelope dispatch for them); capabilities.catalog (with --catalog) and the common defs catalog, package_profile, lock_size, requirement_state, device_profile. No existing field changed.",
+      "files": {
+        "common": "bcfe14bd83c7e873b930e5d0b078cbd300157ef2f424269551d7dcdc8fdf9f87",
+        "error": "a37a875afde3e4a371373c9f438b0a6c9ac077a55b4511622027b9100aad2e80",
+        "envelope": "08c6d41a33a28c8320f5919097edcb5b437fe253038b65cb7850ff73e2e4ec22",
+        "plan": "0d7821a4dc859db3cdbfb9f81843ba8fc861859aae5494f727e6afc16be26e1b",
+        "run": "89fab3d18cbc492b73f65256479567d1a71bc4c203ad686d8500d6104212d86a",
+        "status": "de291dd66fb9ebd42a287ed196aa9989a7ec7d673ac9187c2086488445bf71bf",
+        "report": "03849d59942cd74a0806c7a3c4615adb657cd2963a288b0317f8e7ae612f26d2",
+        "report_why": "bae3e8b3dd9389e8ce031c5f4c1bb985d6a409e29e7a003bc14ccf331d4b8c92",
+        "report_export": "1547c90740e2895230119d69f08d1b8f2586f4a8c51e7fd6669c220eee30add9",
+        "capabilities": "4b2037437d800760577539ae1a3dcd2d0f1519fee6f24d72bb833520cf7ae3b5",
+        "doctor": "97058b55983015734e0ff627374b1e6b1af32b90486aefbc9d5727c487a0207f",
+        "manifest": "f29e6a8ecdacdb128c6d7c79bcc7a58d4e38c7b275e9400180b80341128ef7c2",
+        "install": "345b80af8b45e4a552af8265c3ad077cafb5516e87c2862cbd4cd4ccf3d333f7",
+        "guide": "9a9f80c850007b7ed122481473c07bb1e594768b3e84ae2059dc718b1ac9cf43"
+      }
     }
   ]
 }

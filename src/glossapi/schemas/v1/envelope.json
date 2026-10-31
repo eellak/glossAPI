@@ -69,7 +69,9 @@
               "status",
               "report",
               "capabilities",
-              "doctor"
+              "doctor",
+              "install",
+              "guide"
             ]
           }
         }
@@ -226,6 +228,52 @@
         "properties": {
           "data": {
             "$ref": "doctor.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "install"
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "data"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "install.json"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "guide"
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "data"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "guide.json"
           }
         }
       }

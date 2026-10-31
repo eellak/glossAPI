@@ -86,6 +86,10 @@
     },
     "fingerprint": {
       "$ref": "common.json#/$defs/sha256"
+    },
+    "catalog": {
+      "$ref": "common.json#/$defs/catalog",
+      "description": "Present with --catalog (additive, entry 1.1)."
     }
   }
 }

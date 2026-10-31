@@ -1,7 +1,8 @@
-"""glossAPI ledger CLI: plan, run, status, report, capabilities and doctor.
+"""glossAPI ledger CLI: plan, run, status, report, capabilities, doctor, install and guide.
 
-plan/status/report/capabilities/doctor are read-only and import no pipeline or
-backend; run executes the frozen streaming plan. status/report without --run
+plan/status/report/capabilities/doctor/guide are read-only and import no pipeline or
+backend; run executes the frozen streaming plan; install previews (default) or, with
+--yes, runs the exact package install commands. status/report without --run
 select the latest run the user started (a streaming run, not its compatibility
 wrapper children). Every command prints one JSON envelope (schema v1:
 glossapi/schemas/v1/envelope.json).
@@ -23,6 +24,7 @@ from .ledger.catalogue import STAGES
 from .ledger.encoding import canonical_json
 from .ledger.reader import ReadRequestError, plan_view, report_view, report_why, select_run, status_view
 from .ledger.writer import LedgerError, open_readonly
+from .package_catalog import CatalogError
 
 
 class Parser(argparse.ArgumentParser):
@@ -34,10 +36,22 @@ def parser():
     from .settings_contract import PLAN_FIXED_NOTE, option_help
     result = Parser(prog="glossapi", description=__doc__)
     commands = result.add_subparsers(dest="command", required=True, parser_class=Parser)
-    for name in ("plan", "run", "status", "report", "capabilities", "doctor"):
+    for name in ("plan", "run", "status", "report", "capabilities", "doctor", "install", "guide"):
         command = commands.add_parser(name, epilog=PLAN_FIXED_NOTE if name in ("plan", "run") else None)
         command.add_argument("--json", action="store_true")
         if name == "capabilities":
+            command.add_argument("--catalog", action="store_true",
+                help="also list every optional package: what it adds, devices, measured install size and package count, licences, installed state")
+            continue
+        if name == "guide":
+            continue
+        if name == "install":
+            command.add_argument("--device", action="append", default=[],
+                help="the one device profile of this environment: cpu, cuda126, cuda132 or mps (selects the torch build of layout/ocr)")
+            command.add_argument("--package", action="append", default=[],
+                help="an optional package from `capabilities --catalog` (repeat or comma-separate); only these are installed")
+            command.add_argument("--yes", action="store_true", help="execute the previewed commands (default: dry run)")
+            command.add_argument("--installer", choices=("auto", "pip", "uv"), default="auto")
             continue
         command.add_argument("--corpus", default=".")
         if name == "doctor":
@@ -223,7 +237,30 @@ def main(argv=None):
         envelope["command"] = args.command
         if args.command == "capabilities":
             from .capabilities import capabilities_view
-            envelope["data"] = capabilities_view()
+            envelope["data"] = data = capabilities_view()
+            if args.catalog:
+                from .package_catalog import catalog_view
+                data["catalog"] = catalog = catalog_view()
+                stale = [row["name"] for row in catalog["profiles"] if row["measurement"]["state"] != "current"]
+                if stale:
+                    envelope["warnings"].append(dict(code="catalog_measurement_stale", message="Install sizes of "
+                        + ", ".join(stale) + " were measured from older requirements (tools/catalog/measure_profiles.py)"))
+            return _emit(envelope, argv, 0)
+        if args.command == "guide":
+            from .llm_guide import guide_view
+            envelope["data"] = guide_view()
+            return _emit(envelope, argv, 0)
+        if args.command == "install":
+            from .install_plan import execute_install, plan_install
+            plan = plan_install(args.device, args.package, installer=args.installer)
+            envelope["warnings"].extend(plan["warnings"])
+            envelope["data"] = plan
+            if args.yes:
+                data, failure = execute_install(plan, installer=args.installer)
+                envelope["data"] = data
+                envelope["warnings"] = list(data["warnings"])
+                if failure is not None:
+                    raise failure
             return _emit(envelope, argv, 0)
         if args.command == "doctor":
             from .doctor import doctor_view
@@ -337,7 +374,7 @@ def main(argv=None):
             with open_readonly(database) as connection:
                 envelope['corpus_id']=connection.execute('SELECT corpus_id FROM ledger_info').fetchone()[0]
             exit_code=3 if outcome['state']=='waiting' else 1 if outcome['state'] in ('completed_with_failures','cancelled') else 0
-    except (ReadRequestError, LedgerError, sqlite3.Error, OSError, ValueError, TypeError, ImportError, RuntimeError) as error:
+    except (ReadRequestError, CatalogError, LedgerError, sqlite3.Error, OSError, ValueError, TypeError, ImportError, RuntimeError) as error:
         code = getattr(error, "code", "unsupported_schema" if isinstance(error, LedgerError) else "read_error")
         from .ledger.urls import scrub, scrub_error_text, scrub_known_value
         envelope["errors"].append(dict(code=code, message=scrub_error_text(str(error)), document_id=None, stage=None, details=scrub_known_value(scrub(getattr(error, "details", {})))))

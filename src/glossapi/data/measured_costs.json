@@ -1,0 +1,24 @@
+{
+ "format": 1,
+ "rule": "Only measured values. Each entry names its machine, workload, date and evidence record; a stage/device pair without an entry is not measured. The LLM guide reads this file; never copy its numbers by hand.",
+ "time_per_page": [
+  {"id": "text-layer-cpu-node-20261028", "stages": {"extract": 0.0054, "clean": 0.002, "sections": 0.0001, "export": 0.00007},
+   "device": "cpu", "unit": "seconds per page, one worker", "machine": "persistent Linux CPU dev node",
+   "workload": "text-layer cohort of 242 PDFs, 24,551 pages (harness 8e05c3b)", "date": "2026-10-28",
+   "evidence": "deps_20261028 STATE.md, 2026-10-28 15:36 EET harness row"},
+  {"id": "docling-layout-cuda-20261029", "stages": {"extract (phase1_backend=docling)": 0.1126},
+   "device": "cuda", "unit": "seconds per page per node (8.88 pages/s per node of 4 GH200 GPUs)", "machine": "CSCS Clariden, 4x GH200",
+   "workload": "Docling 2.81 over the 242-PDF cohort, 24,551 pages in 46.1 min; 4 native crashes recovered", "date": "2026-10-29",
+   "evidence": "deps_20261028 STATE.md, 2026-10-29 17:00 cscs_docling row"},
+  {"id": "greek-ocr-mps-20261030", "stages": {"ocr": [1.86, 2.0]},
+   "device": "mps", "unit": "seconds per page (range over runs), via glossAPI", "machine": "Apple Silicon Mac, MPS recogniser + CoreML detector",
+   "workload": "72 scanned pages through the Greek OCR toolkit (bb5aa6f), output equal to the direct runner", "date": "2026-10-30",
+   "evidence": "deps_20261028 STATE.md, 30 Oct 07:00 Run OCR tests 72-page result"}
+ ],
+ "disk": [
+  {"id": "ledger-kb-per-document-20261030", "what": "ledger bytes per document (debug=off)", "values_kb": [58.1, 85.8],
+   "detail": "58.1 sequential to 85.8 streaming KB per document; the K4 target is 50 KB (not met)", "machine": "persistent Linux CPU dev node",
+   "date": "2026-10-30", "evidence": "deps_20261028 STATE.md, 30 Oct 19:34 X1/X2 row"}
+ ],
+ "not_measured": ["ocr on cpu or cuda (per page)", "extract with Docling on cpu (per page)", "download (network bound)", "math enrichment", "intermediate bytes kept by debug=on"]
+}

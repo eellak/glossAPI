@@ -159,12 +159,12 @@ def module_present(name: str) -> bool:
 
 
 def install_command(group: str, device: str | None = None) -> str:
-    if group in ('layout', 'ocr'):
-        target = 'mps' if device == 'mps' else 'cuda126' if (device or '').startswith('cuda') else 'cpu'
-        return f'python install_glossapi.py {group} --device {target}'
-    if group in INSTALLER_PACKAGES:
-        return f'python install_glossapi.py {group}'
-    return f"pip install 'glossapi[{group}]'"
+    """The dry-run command that adds a missing package group (``glossapi install``; add ``--yes`` to execute). Core (the
+    Rust extensions) is rebuilt by the source installer, which reinstalls glossapi itself."""
+    if group == 'core':
+        return 'python install_glossapi.py core'
+    target = 'mps' if device == 'mps' else 'cuda126' if (device or '').startswith('cuda') else 'cpu'
+    return f'glossapi install --device {target if group in ("layout", "ocr") else "cpu"} --package {group}'
 
 
 def _toolkit_status() -> dict[str, Any]:
