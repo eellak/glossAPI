@@ -13,13 +13,13 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [
-    "pandas>=1.3.0",
+    "pandas>=3.0.0",
     "numpy>=1.26,<3",
     "pyarrow>=26,<27",
     "ftfy>=6.0.0",
     "pypdfium2>=4.30,<5",
     "zstandard>=0.22.0",
-    "filelock>=3.0",
+    "filelock>=4.2.4",
 ]
 license = "EUPL-1.2"
 classifiers = [
@@ -36,12 +36,24 @@ classifiers = [
 glossapi = "glossapi.cli:main"
 
 [dependency-groups]
+# Pinned oracles for the parity tests: the packages K2 replaced (tenacity, aiofiles, dask) and the
+# Python font-repair reference (pypdf, fontTools). Runtime installs never need them. Tests read the
+# same pins from tests/reference_oracles.py; with GLOSSAPI_REFERENCE_REQUIRED=1 a missing or
+# different oracle fails instead of skipping.
+reference = [
+    "tenacity==9.2.1",
+    "aiofiles==25.1.0",
+    "dask[dataframe]==2026.8.0",
+    "pypdf==6.21.3",
+    "fonttools==4.68.0",
+]
 test = [
     "pytest>=9.2.0,<10",
     "fpdf2>=2.7.0",
-    "pypdf>=6.0.0",
-    "fonttools>=4.0.0",
-    "psutil>=5.9",
+    {include-group = "reference"},
+]
+dev = [
+    {include-group = "test"},
 ]
 
 [tool.setuptools]

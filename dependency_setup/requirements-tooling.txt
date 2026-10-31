@@ -1,4 +1,5 @@
 # Build/test tools only; never part of the runtime requirements.
+pip==26.2.2
 setuptools==84.2.1
 wheel==0.48.0
 maturin==1.15.0

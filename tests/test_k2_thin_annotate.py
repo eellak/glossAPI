@@ -22,6 +22,7 @@ import glossapi
 import glossapi.gloss_section_classifier as gsc
 from glossapi import annotation_partitions as partitions
 from glossapi.gloss_section import section_schema
+from reference_oracles import oracle as reference_oracle
 
 MODEL = Path(glossapi.__file__).resolve().parent/'models/section_classifier.joblib'
 TEXTS = ['Εισαγωγή στο αντικείμενο της μελέτης και στους στόχους της εργασίας.',
@@ -105,7 +106,7 @@ def tree(root):
 
 
 def differential(tmp_path, monkeypatch, source, *, prepare=None, **options):
-    pytest.importorskip('dask')
+    reference_oracle('dask')
     results = {}
     for kind in ('reference', 'own'):
         work = tmp_path/kind
@@ -179,7 +180,7 @@ def test_null_and_list_columns_where_dask_failed(tmp_path, monkeypatch):
     frame['tags'] = [[i, i + 1] for i in range(len(frame))]
     source = tmp_path/'input.parquet'
     frame.to_parquet(source, index=False)
-    if pytest.importorskip('dask'):
+    if reference_oracle('dask'):
         with pytest.raises(pa.ArrowInvalid):
             run('reference', source, tmp_path/'reference.parquet', monkeypatch=monkeypatch)
     run('own', source, tmp_path/'own.parquet', monkeypatch=monkeypatch)
@@ -212,7 +213,7 @@ def test_empty_input_writes_empty_partitions(tmp_path, monkeypatch, layout):
 
 
 def test_missing_required_column_fails_the_same_way(tmp_path, monkeypatch):
-    pytest.importorskip('dask')
+    reference_oracle('dask')
     source = tmp_path/'input.parquet'
     pd.DataFrame(rows([4])).drop(columns=['has_list']).to_parquet(source, index=False)
     errors = []
@@ -239,7 +240,7 @@ def test_prediction_exception_falls_back_per_partition(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize(('blocksize', 'n_cpus'), [(2048, 4), (2048, 1), (6000, 1), (1, 2)])
 def test_multi_partition_inputs_follow_dask_blocksize_rules(tmp_path, monkeypatch, blocksize, n_cpus):
-    pytest.importorskip('dask')
+    reference_oracle('dask')
     from dask.dataframe.io.parquet import arrow as dask_arrow
     monkeypatch.setattr(dask_arrow.ArrowDatasetEngine, 'default_blocksize', classmethod(lambda cls: f'{blocksize} B'))
     monkeypatch.setattr(partitions, 'BLOCKSIZE', blocksize)

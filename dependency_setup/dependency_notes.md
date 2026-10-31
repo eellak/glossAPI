@@ -48,7 +48,37 @@ Core installs contain no torch or Docling. PDFium remains `>=4.30,<5`; pass
 device-specific layout environment. External OCR engines remain separately
 installed plugins; see [OCR plugin migration](../docs/ocr_plugin_migration.md).
 
-`requirements-tooling.txt` pins the surveyed build/test tools. Standalone Rust
+## PDF libraries and retired compatibility paths
+
+PDFium (`pypdfium2`) is the only PDF library on the runtime path: text, page
+counts, page ranges and rendering. Font repair runs in the bundled Rust
+extension (`glossapi_rs_pdfrepair`); the Python reference repair (`pypdf`,
+`fontTools`) is used only when that extension cannot be imported, or when
+requested explicitly, and needs the `font-repair` extra.
+
+Retired, with no replacement fallback (accepted install-path behaviour change):
+
+- **PyPDF2** is no longer used anywhere. The legacy extract page-count fallback
+  (`pypdf`, then `PyPDF2`) and the benchmark scripts' PyPDF2/PyMuPDF/pypdf
+  counters are gone. When PDFium cannot open a PDF (malformed, password-protected
+  or zero-page), the extraction work estimator counts it as one page and the
+  strict counters (checkpoint, Docling cost and batched benchmarks, OCR
+  reassembly) raise PDFium's error.
+- **PyMuPDF** (`fitz`) is no longer used at runtime (it went with the DeepSeek
+  backend) or in the tests, whose fixture PDFs are now built with PDFium
+  (`tests/pdf_fixtures.py`).
+
+## Test environments
+
+The `test` dependency group (and `dev`, which includes it) installs the
+`reference` group: pinned oracles for the parity tests (tenacity 9.2.1,
+aiofiles 25.1.0, dask 2026.8.0, pypdf 6.21.3, fontTools 4.68.0). With
+`GLOSSAPI_REFERENCE_REQUIRED=1` (set by `--run-tests`) a missing or different
+oracle fails its test instead of skipping it.
+`requirements-docs.lock` locks the docs profile (mkdocs 1.6.1,
+mkdocs-material 9.8.0) with hashes.
+
+`requirements-tooling.txt` pins the surveyed build/test tools, including pip. Standalone Rust
 builds use maturin >=1.15; root builds use setuptools >=84.2.1. The serialized
 classifier does not support Python 3.14; the declared interpreter range describes
 core. The original qualification exercised core on Python 3.11; Python 3.13

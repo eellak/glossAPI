@@ -12,6 +12,7 @@ import pytest
 
 from glossapi import download_io
 from glossapi.download_io import open_binary, retry_async, retry_wait
+from reference_oracles import oracle as reference_oracle
 
 
 class Retryable(Exception):
@@ -83,7 +84,7 @@ SCENARIOS = [
 
 @pytest.mark.parametrize(('outcomes', 'attempts'), SCENARIOS)
 def test_retry_matches_tenacity_oracle(outcomes, attempts, caplog):
-    pytest.importorskip('tenacity')
+    reference_oracle('tenacity')
     own = drive(retry_async, outcomes, attempts, caplog)
     oracle = drive(tenacity_retry, outcomes, attempts, caplog)
     assert own == oracle
@@ -198,7 +199,7 @@ def test_chunks_are_written_in_order_byte_identical(tmp_path):
                 await handle.write(chunk)
     asyncio.run(main(tmp_path/'own.bin'))
     assert (tmp_path/'own.bin').read_bytes() == b''.join(chunks)
-    aiofiles = pytest.importorskip('aiofiles')
+    aiofiles = reference_oracle('aiofiles')
     async def reference(path):
         async with aiofiles.open(path, 'wb') as handle:
             for chunk in chunks:
@@ -412,7 +413,7 @@ def _attempts(aiohttp):
 @pytest.mark.parametrize('case', ['cut_then_ok', 'timeout_then_ok', 'all_cut', 'http_404_retried', 'non_retryable'])
 def test_streaming_loop_matches_tenacity_including_temp_and_head(tmp_path, monkeypatch, case, transport):
     aiohttp = pytest.importorskip('aiohttp')
-    pytest.importorskip('tenacity')
+    reference_oracle('tenacity')
     attempts, final = _attempts(aiohttp)[case]
     own = downloader_run(tmp_path, monkeypatch, retry_async, attempts, transport=transport)
     oracle = downloader_run(tmp_path, monkeypatch, tenacity_retry, attempts, transport=transport)
@@ -430,7 +431,7 @@ def test_streaming_loop_matches_tenacity_including_temp_and_head(tmp_path, monke
 @pytest.mark.parametrize('requester', ['get', 'post'])
 def test_buffered_request_loop_matches_tenacity(tmp_path, monkeypatch, requester):
     aiohttp = pytest.importorskip('aiohttp')
-    pytest.importorskip('tenacity')
+    reference_oracle('tenacity')
     attempts = [([b'x'], None, 200, aiohttp.ServerDisconnectedError()), ([b'%PDF-ok'],)]
     own = downloader_run(tmp_path, monkeypatch, retry_async, attempts, mode='buffered', requester=requester, transport=True)
     oracle = downloader_run(tmp_path, monkeypatch, tenacity_retry, attempts, mode='buffered', requester=requester, transport=True)

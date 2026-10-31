@@ -6,6 +6,20 @@ import pytest
 
 from glossapi.page_quality import page_ocr_decision, page_quality, page_rule_selection
 from test_page_quality import COMMON_GREEK
+from pdf_fixtures import FixturePdf
+
+
+def _page_text(path):
+    """The first page's PDFium text with PyMuPDF-style line breaks (formerly fitz get_text())."""
+    from contextlib import closing
+    import pypdfium2 as pdfium
+    with closing(pdfium.PdfDocument(str(path))) as pdf:
+        page = pdf[0]
+        textpage = page.get_textpage()
+        try:
+            return textpage.get_text_range().replace('\r\n', '\n')
+        finally:
+            textpage.close(); page.close()
 
 
 BASE = dict(chars=300, greek_chars=200, latin_chars=10, other_chars=0,
@@ -15,23 +29,19 @@ BASE = dict(chars=300, greek_chars=200, latin_chars=10, other_chars=0,
 @pytest.fixture
 def scanner_layer_pdf(tmp_path):
     """Independent scan plus text; does not use the legacy corrupt-CMap fixture."""
-    fitz = pytest.importorskip('fitz')
     font = next((p for p in [Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
                             Path('/System/Library/Fonts/Supplemental/Arial.ttf')]
                  if p.exists()), None)
     if font is None:
         pytest.skip('No Greek fixture font')
     target = tmp_path / 'scanner_layer.pdf'
-    with fitz.open() as doc:
-        page = doc.new_page()
-        page.insert_font(fontname='Greek', fontfile=str(font))
-        words = sorted(COMMON_GREEK)
-        text = '\n'.join(' '.join(words[i:i+6]) for i in range(0,len(words),6))
-        page.insert_text((72,72), text, fontname='Greek', fontsize=14)
-        image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0,0,20,20), False)
-        image.clear_with(200)
-        page.insert_image(page.rect, stream=image.tobytes('png'), overlay=False)
-        doc.save(target)
+    doc = FixturePdf()
+    page = doc.new_page()
+    words = sorted(COMMON_GREEK)
+    text = '\n'.join(' '.join(words[i:i+6]) for i in range(0,len(words),6))
+    doc.insert_image(page, (0, 0, 595, 842), (20, 20, (200, 200, 200)))  # underlay (overlay=False)
+    doc.insert_text(page, (72,72), text, fontsize=14, font=doc.load_truetype(font))
+    doc.save(target)
     return target
 
 
@@ -116,15 +126,12 @@ def test_real_scan_layer_with_unknown_bad_and_good_validity(scanner_layer_pdf):
 
 
 def test_default_non_image_pdf_keeps_v3_routing(scanner_layer_pdf, tmp_path, monkeypatch):
-    fitz = pytest.importorskip('fitz')
     target = tmp_path / 'non_image.pdf'
     font = next(p for p in [Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
                            Path('/System/Library/Fonts/Supplemental/Arial.ttf')] if p.exists())
-    with fitz.open(scanner_layer_pdf) as source, fitz.open() as doc:
-        page = doc.new_page()
-        page.insert_font(fontname='Greek', fontfile=str(font))
-        page.insert_text((72,72), source[0].get_text(), fontname='Greek', fontsize=14)
-        doc.save(target)
+    doc = FixturePdf()
+    doc.insert_text(doc.new_page(), (72,72), _page_text(scanner_layer_pdf), fontsize=14, font=doc.load_truetype(font))
+    doc.save(target)
     monkeypatch.delenv('GLOSSAPI_GREEK_WORDLIST', raising=False)
     old, new = page_quality(target, rule_profile='v3'), page_quality(target)
     assert new.dictionary_identity['scope'] == 'image-dominant pages'
@@ -181,16 +188,13 @@ def test_sparse_latin_caption_cannot_certify_image_body():
 
 
 def test_latin_pdf_records_validity_not_applicable(tmp_path):
-    fitz = pytest.importorskip('fitz')
     target = tmp_path / 'english_figure.pdf'
-    with fitz.open() as doc:
-        page = doc.new_page()
-        text = 'First of all, we compute the minimum bounding rectangle. '
-        page.insert_text((72, 72), '\n'.join([text] * 14), fontsize=10)
-        image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20), False)
-        image.clear_with(200)
-        page.insert_image(page.rect, stream=image.tobytes('png'), overlay=False)
-        doc.save(target)
+    doc = FixturePdf()
+    page = doc.new_page()
+    text = 'First of all, we compute the minimum bounding rectangle. '
+    doc.insert_image(page, (0, 0, 595, 842), (20, 20, (200, 200, 200)))  # underlay (overlay=False)
+    doc.insert_text(page, (72, 72), '\n'.join([text] * 14), fontsize=10)
+    doc.save(target)
     old = page_quality(target, rule_profile='v3').pages[0]
     report = page_quality(target)
     new = report.pages[0]
@@ -255,20 +259,17 @@ def test_nondefault_thresholds_round_trip_through_the_page_sidecar(tmp_path, set
 
 def test_nondefault_image_threshold_is_replayable_from_page(tmp_path):
     """Reviewer probe (F5): real Greek text layer over a 0.6-coverage raster, inspected at 0.7."""
-    fitz = pytest.importorskip('fitz')
     from dataclasses import asdict
     font = next((p for p in [Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
                             Path('/System/Library/Fonts/Supplemental/Arial.ttf')] if p.exists()), None)
     if font is None:
         pytest.skip('No Greek fixture font')
     source = tmp_path/'threshold.pdf'
-    with fitz.open() as d:
-        p = d.new_page(width=400, height=500)
-        p.insert_font(fontname='Greek', fontfile=str(font))
-        p.insert_text((20, 30), '\n'.join(['και άνθρωπος']*20), fontname='Greek', fontsize=10)
-        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20), False); pix.clear_with(200)
-        p.insert_image(fitz.Rect(0, 0, 400, 300), stream=pix.tobytes('png'), keep_proportion=False, overlay=False)
-        d.save(source)
+    d = FixturePdf()
+    p = d.new_page(400, 500)
+    d.insert_image(p, (0, 0, 400, 300), (20, 20, (200, 200, 200)))  # underlay, keep_proportion=False
+    d.insert_text(p, (20, 30), '\n'.join(['και άνθρωπος']*20), fontsize=10, font=d.load_truetype(font))
+    d.save(source)
     page = page_quality(source, image_dominant_ratio=.7).pages[0]
     record = asdict(page)
     assert record['image_dominant_ratio'] == .7

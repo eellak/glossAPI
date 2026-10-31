@@ -27,6 +27,7 @@ import pytest
 from glossapi.pdf_repair import analyze_pdf, extract_text_stats, repair_pdf
 from glossapi.pdf_repair.tounicode import _cmap_entries, _glyph_unicode, _inspect_font, _make_cmap
 from glossapi.scripts.pdf_font_repair import _batch, main, summarize
+from pdf_fixtures import FixturePdf
 
 
 def _cmap(mapping: dict[int, str], width: int = 2) -> bytes:
@@ -56,7 +57,6 @@ def _text(path: Path, page_index: int = 0) -> str:
 
 @pytest.fixture(scope="module")
 def greek_fixture(tmp_path_factory):
-    fitz = pytest.importorskip("fitz", reason="PDF fixture generation requires optional PyMuPDF")
     candidates = [
         '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
         '/Library/Fonts/Arial Unicode.ttf',
@@ -88,14 +88,18 @@ def greek_fixture(tmp_path_factory):
     font['post'].mapping = {}
     font.save(fontpath)
     expected = {font.getGlyphID(name): chr(code) for code, name in font.getBestCmap().items()}
+    widths = [int(font['hmtx'][name][0] * 1000 / font['head'].unitsPerEm) for name in font.getGlyphOrder()]
     font.close()
     original = directory / 'original.pdf'
-    document = fitz.open()
-    page = document.new_page()
-    page.insert_font(fontname='GreekFixture', fontfile=str(fontpath))
-    page.insert_text((72, 72), text, fontname='GreekFixture', fontsize=20)
-    document.save(original)
-    document.close()
+    document = FixturePdf()
+    document.insert_text(document.new_page(), (72, 72), text, fontsize=20, font=document.load_truetype(fontpath))
+    document.save(directory / 'pdfium.pdf')
+    # PDFium shifts /W past the subset's unmapped 'tonos' glyph; restore the hmtx advances (as PyMuPDF wrote
+    # them), so glyph positions and renders equal the former fixture's. Text and ToUnicode are unaffected.
+    writer = PdfWriter(clone_from=directory / 'pdfium.pdf')
+    descendant = next(iter(writer.pages[0]['/Resources']['/Font'].values())).get_object()['/DescendantFonts'][0].get_object()
+    descendant[NameObject('/W')] = ArrayObject([NumberObject(0), ArrayObject([NumberObject(w) for w in widths])])
+    writer.write(original)
     assert _text(original).strip() == text
     writer = PdfWriter(clone_from=original)
     fontobj = next(iter(writer.pages[0]['/Resources']['/Font'].values())).get_object()
@@ -806,13 +810,31 @@ def test_real_fonttools_warning_is_quiet_and_counted(greek_fixture, tmp_path):
     program = DecodedStreamObject()
     program.set_data(buffer.getvalue())
     font['/DescendantFonts'][0]['/FontDescriptor'][NameObject('/FontFile2')] = writer._add_object(program)
-    source, report = tmp_path / 'noisy-font.pdf', tmp_path / 'report.jsonl'
+    source = tmp_path / 'noisy-font.pdf'
     writer.write(source)
-    completed = subprocess.run([sys.executable, '-m', 'glossapi.scripts.pdf_font_repair',
-                                'classify', '--pdfs', str(source), '--out', str(report)],
-                               capture_output=True, text=True, timeout=10)
-    assert completed.returncode == 0, completed.stderr
-    assert 'post.stringData' not in completed.stderr
-    record = json.loads(report.read_text())
+    # The warning capture belongs to the Python reference: run the CLI (and its spawned workers) with
+    # the native extension unimportable, which is the selector's documented fallback. The native
+    # backend parses fonts in Rust and so records no fontTools warnings (pdfrepair README).
+    stub = tmp_path / 'no-native'
+    stub.mkdir()
+    (stub / 'glossapi_rs_pdfrepair.py').write_text("raise ImportError('reference backend requested by the test')\n")
+    records = {}
+    import importlib.util
+    native_available = importlib.util.find_spec('glossapi_rs_pdfrepair') is not None
+    for backend, extra_path in (('python', [str(stub)]), ('native', []))[:2 if native_available else 1]:
+        report = tmp_path / f'report-{backend}.jsonl'
+        env = {**os.environ, 'PYTHONPATH': os.pathsep.join([*extra_path, *sys.path])}
+        completed = subprocess.run([sys.executable, '-m', 'glossapi.scripts.pdf_font_repair',
+                                    'classify', '--pdfs', str(source), '--out', str(report)],
+                                   capture_output=True, text=True, timeout=30, env=env)
+        assert completed.returncode == 0, completed.stderr
+        assert 'post.stringData' not in completed.stderr
+        records[backend] = json.loads(report.read_text())
+    record = records['python']
     assert record['warning_counts']['fontTools'] >= 1
     assert record['warning_count'] == sum(record['warning_counts'].values())
+    if native_available:
+        native = records['native']
+        assert native['category'] == record['category']
+        assert native['warning_counts']['fontTools'] == 0
+        assert native['warning_count'] == sum(native['warning_counts'].values())

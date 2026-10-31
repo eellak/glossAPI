@@ -85,7 +85,7 @@ class CleanStage:
         self.selection = selection
 
     def packages(self, specification):
-        return (PackageRequirement('core', ('pandas>=1.3.0', 'pyarrow>=26,<27')),)
+        return (PackageRequirement('core', ('pandas>=3.0.0', 'pyarrow>=26,<27')),)
 
     def plan(self, documents, *, settings):
         operation = settings.get('operation', 'clean.initial')

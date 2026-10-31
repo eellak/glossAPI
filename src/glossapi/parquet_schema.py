@@ -144,14 +144,17 @@ def _parquet_lock(path: Path) -> Iterator[None]:
     lock_path = path.with_suffix(path.suffix + ".lock")
     if FileLock is not None:
         lock = FileLock(str(lock_path))
-        try:
-            with lock:
-                yield
-        finally:
+        with lock:
             try:
-                lock_path.unlink()
-            except FileNotFoundError:
-                pass
+                yield
+            finally:
+                # Remove the lock file while still holding it. A waiter that opened the removed inode
+                # sees st_nlink == 0 after its flock and retries on the path (filelock >= 4.2.4).
+                # Removing it after the release let two processes hold the lock on two inodes at once.
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
         return
 
     acquired = False

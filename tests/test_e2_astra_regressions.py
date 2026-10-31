@@ -10,15 +10,16 @@ from types import SimpleNamespace
 from PIL import Image, ImageDraw
 import pytest
 
+from pdf_fixtures import FixturePdf
+
 
 def outputs(tmp_path, original=None):
-    fitz = pytest.importorskip("fitz", reason="PDF fixture generation requires optional PyMuPDF")
     from glossapi.ocr.page_artifacts import _write_outputs
     source = tmp_path / 'case.pdf'
-    with fitz.open() as doc:
-        for index in range(3):
-            doc.new_page().insert_text((50, 70), f'Native page {index + 1}')
-        doc.save(source)
+    doc = FixturePdf()
+    for index in range(3):
+        doc.insert_text(doc.new_page(), (50, 70), f'Native page {index + 1}')
+    doc.save(source)
     out = tmp_path / 'out'
     if original is not None:
         _write_outputs(output_dir=out, stem='case', markdown=original, page_count=3)
@@ -67,22 +68,19 @@ def test_missing_kept_markdown_must_not_succeed(tmp_path):
 
 
 def test_scan_with_text_overlay_must_not_lose_raster_body(tmp_path):
-    fitz = pytest.importorskip("fitz", reason="PDF fixture generation requires optional PyMuPDF")
     from glossapi.page_quality import page_quality
     image = Image.new('RGB', (550, 700), 'white')
     draw = ImageDraw.Draw(image)
     for y in range(50, 640, 25):
         draw.text((40, y), 'Important source text exists only in the scanned body.', fill='black')
-    buf = BytesIO()
-    image.save(buf, format='PNG')
     source = tmp_path / 'overlay_scan.pdf'
-    with fitz.open() as doc:
-        for index in range(2):
-            page = doc.new_page(width=600, height=800)
-            page.insert_image(fitz.Rect(20, 20, 580, 740), stream=buf.getvalue())
-            if index == 0:
-                page.insert_text((20, 780), 'ARCHIVE HEADER ' + ('copyright notice ' * 5), fontsize=5)
-        doc.save(source)
+    doc = FixturePdf()
+    for index in range(2):
+        page = doc.new_page(600, 800)
+        doc.insert_image(page, (20, 20, 580, 740), image, fit=True)
+        if index == 0:
+            doc.insert_text(page, (20, 780), 'ARCHIVE HEADER ' + ('copyright notice ' * 5), fontsize=5)
+    doc.save(source)
     report = page_quality(source)
     assert report.pages[0].chars == 100
     assert all(p.image_area_ratio == pytest.approx(.8315151774) for p in report.pages)

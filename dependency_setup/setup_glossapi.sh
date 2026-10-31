@@ -75,7 +75,8 @@ if [[ "${RUN_TESTS}" -eq 1 ]]; then
   run "${VENV_PYTHON}" -m pip install --index-url https://pypi.org/simple -r "${SCRIPT_DIR}/requirements-tooling.txt"
   run "${VENV_PATH}/bin/uv" pip install --python "${VENV_PYTHON}" --index-url https://pypi.org/simple --group "${REPO_ROOT}/pyproject.toml:test"
   TEST_TEMP="${VENV_PATH}/pytest-basetemp"
-  (cd "${REPO_ROOT}"; run "${VENV_PYTHON}" -m pytest -q "--basetemp=${TEST_TEMP}")
+  # The test group includes the pinned `reference` oracles, so a missing oracle fails rather than skips.
+  (cd "${REPO_ROOT}"; run env GLOSSAPI_REFERENCE_REQUIRED=1 "${VENV_PYTHON}" -m pytest -q "--basetemp=${TEST_TEMP}")
   if [[ "${DRY_RUN}" -eq 0 ]]; then
     "${VENV_PYTHON}" -c 'import shutil,sys; shutil.rmtree(sys.argv[1])' "${TEST_TEMP}"
   fi

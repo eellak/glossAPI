@@ -2869,7 +2869,7 @@ class CleanPhaseMixin:
                 )
             try:
                 subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "maturin>=1.5,<2.0"],
+                    [sys.executable, "-m", "pip", "install", "maturin>=1.15.0,<2.0"],
                     check=True,
                     env=build_env,
                     stdout=subprocess.DEVNULL,
@@ -2962,7 +2962,7 @@ class CleanPhaseMixin:
                     else venv_bin
                 )
             subprocess.run(
-                [sys.executable, "-m", "pip", "install", "maturin>=1.5,<2.0"],
+                [sys.executable, "-m", "pip", "install", "maturin>=1.15.0,<2.0"],
                 check=True,
                 env=build_env,
             )

@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 import pandas as pd
+from fontTools.ttLib import TTFont
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, NameObject
 import pytest
@@ -15,6 +16,7 @@ import pytest
 from glossapi.page_quality import compress_page_ranges, page_ocr_decision, page_quality
 from glossapi.pdf_repair.tounicode import _cmap_entries, extract_text_stats
 from glossapi.scripts.page_quality_batch import batch, compare_doc_rule
+from pdf_fixtures import FixturePdf
 from test_pdf_font_repair import _cmap  # Reuse E1's independent fixture CMap helper.
 
 
@@ -24,7 +26,6 @@ COMMON_GREEK = set("και το η ο σε με για από είναι ένα 
 @pytest.fixture
 def quality_pdf(tmp_path, monkeypatch):
     """Build independent valid-text, image, corrupt-ToUnicode and blank pages."""
-    fitz = pytest.importorskip("fitz", reason="PDF fixture generation requires optional PyMuPDF")
     monkeypatch.delenv("GLOSSAPI_GREEK_WORDLIST", raising=False)
     candidates = [Path('/System/Library/Fonts/Supplemental/Arial.ttf'),
                   Path('/System/Library/Fonts/Supplemental/Arial Unicode.ttf'),
@@ -35,14 +36,16 @@ def quality_pdf(tmp_path, monkeypatch):
     words = sorted(COMMON_GREEK)
     text = '\n'.join(' '.join(words[i:i + 6]) for i in range(0, len(words), 6))
     source = tmp_path / 'text.pdf'
-    with fitz.open() as doc:
-        page = doc.new_page()
-        page.insert_font(fontname='Greek', fontfile=str(font))
-        page.insert_text((72, 72), text, fontname='Greek', fontsize=14)
-        doc.save(source)
+    doc = FixturePdf()
+    doc.insert_text(doc.new_page(), (72, 72), text, fontsize=14, font=doc.load_truetype(font))
+    doc.save(source)
     writer = PdfWriter(clone_from=source)
     fontobj = next(iter(writer.pages[0]['/Resources']['/Font'].values())).get_object()
-    mapping = _cmap_entries(fontobj['/ToUnicode'].get_data())
+    # PDFium writes a whole-font ToUnicode whose bfchar and bfrange blocks overlap; map the glyphs
+    # the page uses (code = glyph ID, Identity-H) from the font's own cmap instead.
+    with TTFont(font) as tt:
+        cmap = tt.getBestCmap()
+        mapping = {tt.getGlyphID(cmap[ord(char)]): char for char in sorted(set(text) - {'\n'})}
     shifted = {code: chr(ord(value) + 1) if len(value) == 1 and '\u0370' <= value <= '\u03ff' else value
                for code, value in mapping.items()}
     stream = DecodedStreamObject()
@@ -51,17 +54,12 @@ def quality_pdf(tmp_path, monkeypatch):
     corrupt = tmp_path / 'corrupt.pdf'
     writer.write(corrupt)
     target = tmp_path / 'quality.pdf'
-    with fitz.open() as doc:
-        with fitz.open(source) as good:
-            doc.insert_pdf(good)
-        page = doc.new_page()
-        image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20), False)
-        image.clear_with(128)
-        page.insert_image(page.rect, stream=image.tobytes('png'))
-        with fitz.open(corrupt) as broken:
-            doc.insert_pdf(broken)
-        doc.new_page()
-        doc.save(target)
+    doc = FixturePdf()
+    doc.import_pdf(source)
+    doc.insert_image(doc.new_page(), (0, 0, 595, 842), (20, 20, (128, 128, 128)))
+    doc.import_pdf(corrupt)
+    doc.new_page()
+    doc.save(target)
     return target
 
 

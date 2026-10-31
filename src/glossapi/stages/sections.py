@@ -46,7 +46,7 @@ class SectionsStage:
         self.sectioner=sectioner
 
     def packages(self,specification):
-        return (PackageRequirement('core',('pandas>=1.3.0','pyarrow>=26,<27')),)
+        return (PackageRequirement('core',('pandas>=3.0.0','pyarrow>=26,<27')),)
 
     def plan(self,documents,*,settings):
         return StagePlan(tuple(PlannedOperation(d.document_id,d.version_id,

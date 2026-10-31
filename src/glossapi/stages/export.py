@@ -20,7 +20,7 @@ class ExportStage:
     def __init__(self,corpus=None):self.corpus=corpus
 
     def packages(self,specification):
-        return (PackageRequirement('core',('pandas>=1.3.0','pyarrow>=26,<27','zstandard>=0.22.0')),)
+        return (PackageRequirement('core',('pandas>=3.0.0','pyarrow>=26,<27','zstandard>=0.22.0')),)
 
     def plan(self,documents,*,settings):
         return StagePlan((),('export_order_and_shard_membership',))

@@ -12,16 +12,16 @@ import time
 from pypdf import PdfWriter
 import pytest
 
+from pdf_fixtures import FixturePdf
+
 from glossapi.page_quality import compress_page_ranges
 from glossapi.scripts import page_quality_batch as cli
 
 def make_pdf(path, n=2):
-    fitz = pytest.importorskip("fitz", reason="PDF fixture generation requires optional PyMuPDF")
-    with fitz.open() as d:
-        for i in range(n):
-            p=d.new_page()
-            p.insert_text((72,72), 'Native heading\nA B\n1 2' if i==0 else f'Old scanned appendix {i+1}')
-        d.save(path)
+    d=FixturePdf()
+    for i in range(n):
+        d.insert_text(d.new_page(), (72,72), 'Native heading\nA B\n1 2' if i==0 else f'Old scanned appendix {i+1}')
+    d.save(path)
 
 def test_crafted_ranges():
     assert compress_page_ranges([22,3,4,5,6,7,8,9,14,20,21,3,1,99,100,102])=='1,3-9,14,20-22,99-100,102'

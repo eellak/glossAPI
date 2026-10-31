@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path[:0] = [str(ROOT / 'rust/glossapi_rs_pdfrepair/target/python'), str(ROOT / 'src')]
+sys.path[:0] = [str(ROOT / 'rust/glossapi_rs_pdfrepair/target/python'), str(ROOT / 'src'), str(ROOT / 'tests')]
 spec = importlib.util.spec_from_file_location('pdfrepair_native_fixtures', ROOT / 'tests/test_pdf_font_repair.py')
 reference = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(reference)
