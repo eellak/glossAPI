@@ -1,7 +1,10 @@
-"""Optional native repair backend; PDFium remains the text-presence renderer.
+"""Optional native repair backend helpers.
 
-The Rust extension imports only ``_sample_json``. The dict-returning adapters
-use the same optional-extension selector as the typed public API.
+The Rust extension decides text presence natively from content-stream text
+operators; it no longer calls back into Python. ``_sample_json`` is kept as the
+PDFium reference sample that the native decision is gated against (the K5a
+decision-equality gate and ``--sample``). The dict-returning adapters use the
+same optional-extension selector as the typed public API.
 """
 from __future__ import annotations
 
@@ -12,6 +15,7 @@ import pypdfium2 as pdfium
 
 
 def _sample_json(path: str) -> str:
+    """PDFium reference text-presence sample (not on the default path; see module docstring)."""
     with closing(pdfium.PdfDocument(path)) as pdf:
         count = len(pdf)
         indexes = (sorted({round(i * (count - 1) / (min(count, 8) - 1))

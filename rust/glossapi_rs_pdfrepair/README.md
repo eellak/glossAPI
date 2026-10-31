@@ -1,8 +1,9 @@
 # glossapi_rs_pdfrepair
 
 Conservative native port of `glossapi.pdf_repair.tounicode`. Font and PDF parsing,
-CMap decisions, reports, and incremental serialization run in Rust. The optional
-Python shim supplies PDFium's identical eight-page text-presence sample. Analysis
+CMap decisions, reports, incremental serialization and the eight-page
+text-presence sample run in Rust (K5a: the sample is decided from content-stream
+text operators; the former Rust→Python→PDFium callback is gone). Analysis
 returns an error-bearing `PdfFontReport`; repair returns an error-bearing
 `RepairResult`, matching the reference dataclasses. Neither function raises for
 ordinary document/font failures.
@@ -42,11 +43,33 @@ Both return plain JSON-safe dictionaries. The shim additionally accepts `Path`
 arguments and `protected_sources=`. The extension supports an optional third
 `protected_sources` list. The existing Python backend is not automatically changed.
 
-Rust callers use `analyze(path)` / `repair(src, dst)` or the
+Analyse once, repair from the analysis (the extraction pre-pass does this):
+
+```python
+report, analysis = glossapi_rs_pdfrepair.analyze_for_repair("source.pdf")
+if analysis is not None:  # None exactly when report["error"] is set
+    result = glossapi_rs_pdfrepair.repair_pdf("source.pdf", "/tmp/repaired.pdf", [], analysis)
+```
+
+The repair reuses the analysis's parsed fonts and text sample, so it neither
+re-inspects fonts nor re-samples; it refuses (as a result error) another source
+path or a source whose bytes changed since the analysis. The output equals the
+standalone `repair_pdf` byte for byte.
+
+Text presence: up to eight evenly spaced pages (PDFium page order and count), a
+page has text when a text-showing operator (`Tj`, `TJ`, `'`, `"`), directly or in
+a drawn Form XObject, shows a character that is not whitespace after ToUnicode
+(else the code itself, as PDFium falls back). Invisible text counts, inline images
+are skipped, a damaged FlateDecode content stream keeps its inflated prefix.
+Declared difference from the PDFium sample: text drawn wholly outside the page
+box counts here, while PDFium's bounded text excludes it. `_native_sample_json`
+and `_native_page_flags_json` are diagnostics for the equality gates;
+`glossapi.pdf_repair.rust_backend._sample_json` stays as the PDFium reference.
+
+Rust callers use `analyze(path)` / `repair(src, dst)` (native sample), the
+analyse-once pair `analyze_for_repair` / `repair_with_analysis`, or the
 `analyze_with_sample` / `repair_with_sample` variants with their own renderer.
-The convenience Rust API invokes the shim using `GLOSSAPI_PDFREPAIR_PYTHON`
-(default: `python3`); the callback variants do not launch Python. The Python
-extension calls the shim directly, without a subprocess.
+No Rust API launches Python.
 
 ## CLI
 

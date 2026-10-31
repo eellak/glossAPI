@@ -93,7 +93,13 @@ def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: flo
 
             backend = get_backend(backend_name) if backend_name is not None else get_backend()
             data["font_repair_backend"] = backend.name
-            report = backend.analyze_pdf(source)
+            # Analyse once: a backend with an analyse-once path hands its analysis to repair_pdf, so the
+            # repair neither re-inspects fonts nor re-samples text presence.
+            analyze_once = getattr(backend, "analyze_for_repair", None)
+            if analyze_once is not None:
+                report, analysis = analyze_once(source)
+            else:
+                report, analysis = backend.analyze_pdf(source), None
             from dataclasses import asdict, is_dataclass
             observe("legacy_observed", path=source, font_analysis=asdict(report) if is_dataclass(report) else {"unavailable": "unknown_not_recorded"})
             if report.error:
@@ -108,7 +114,8 @@ def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: flo
                 # pre-pass never leaves a fresh PDF to reuse on the next run.
                 with tempfile.TemporaryDirectory(prefix=".extract-font-", dir=target.parent) as staging:
                     staged_pdf = Path(staging) / target.name
-                    result = backend.repair_pdf(source, staged_pdf)
+                    result = (backend.repair_pdf(source, staged_pdf, analysis=analysis) if analysis is not None
+                              else backend.repair_pdf(source, staged_pdf))
                     if result.error or not result.written or result.repaired_fonts < 1:
                         raise ValueError(result.error or "Repair produced no repaired fonts")
                     data["font_repair_fonts"] = int(result.repaired_fonts)
