@@ -621,13 +621,13 @@ mod python {
             .map_err(|e| anyhow!("{e}"))?;
         Ok(serde_json::from_str(&s)?)
     }
-    fn dict(py: Python<'_>, r: &impl Serialize) -> PyResult<PyObject> {
+    fn dict(py: Python<'_>, r: &impl Serialize) -> PyResult<Py<PyAny>> {
         let s = serde_json::to_string(r)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        Ok(py.import("json")?.getattr("loads")?.call1((s,))?.into())
+        Ok(py.import("json")?.getattr("loads")?.call1((s,))?.unbind())
     }
     #[pyfunction]
-    fn analyze_pdf(py: Python<'_>, path: &str) -> PyResult<PyObject> {
+    fn analyze_pdf(py: Python<'_>, path: &str) -> PyResult<Py<PyAny>> {
         dict(py, &analyze_with_sample(path, |p| sample(py, p)))
     }
     #[pyfunction]
@@ -637,7 +637,7 @@ mod python {
         src: &str,
         dst: &str,
         protected_sources: Vec<String>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         dict(
             py,
             &repair_with_sample(
@@ -651,8 +651,10 @@ mod python {
             ),
         )
     }
-    #[pymodule]
-    fn glossapi_rs_pdfrepair(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    // gil_used = true keeps the 0.19 contract (the module requires the GIL); PyO3 0.28+ would otherwise declare
+    // free-threaded support, which has not been audited (abi3 builds cannot load on free-threaded Python anyway).
+    #[pymodule(gil_used = true)]
+    fn glossapi_rs_pdfrepair(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(analyze_pdf, m)?)?;
         m.add_function(wrap_pyfunction!(repair_pdf, m)?)?;
         Ok(())

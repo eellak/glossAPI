@@ -328,10 +328,6 @@ pypdfium2.PdfDocument = capture
     assert _row(tmp_path, source.name).extract_error
 
 
-@pytest.mark.xfail(strict=True, reason='K2 batch 3 finding: the ledger extract stage hashes GLOSSAPI_GREEK_WORDLIST '
-                   'for the attempt identity (stages/extract.py run_prepared: sha256_file(dictionary_path)); a missing '
-                   'wordlist raises FileNotFoundError and fails the document (output_schema_invalid) instead of leaving '
-                   'the rates null')
 def test_bad_wordlist_is_nullable(greek_fixture, tmp_path, monkeypatch):
     corpus, source = _corpus(tmp_path, greek_fixture["broken"])
     monkeypatch.setenv("GLOSSAPI_GREEK_WORDLIST", str(tmp_path / "missing.txt"))

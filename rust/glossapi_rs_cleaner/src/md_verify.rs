@@ -671,7 +671,7 @@ pub fn verify_md_preview_equivalent_py(
     py: Python<'_>,
     input: &str,
     output: &str,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let r = verify_md_preview_equivalent(input, output);
     let d = PyDict::new(py);
     d.set_item("html_render_equal", r.html_render_equal)?;
@@ -684,7 +684,7 @@ pub fn verify_md_preview_equivalent_py(
 }
 
 #[pyfunction]
-pub fn verify_md_structural_py(py: Python<'_>, input: &str, output: &str) -> PyResult<PyObject> {
+pub fn verify_md_structural_py(py: Python<'_>, input: &str, output: &str) -> PyResult<Py<PyAny>> {
     let r = verify_md_structural(input, output);
     let d = PyDict::new(py);
     d.set_item("block_count_equal", r.block_count_equal)?;

@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from glossapi._naming import canonical_stem
-from glossapi.parquet_schema import ParquetSchema
+from glossapi.parquet_schema import update_metadata_parquet
 
 
 def summarize_math_density_from_metrics(per_page_path: Path) -> dict[str, Any]:
@@ -79,39 +79,40 @@ def update_download_results_parquet(root_dir: Path, filename_stem: str, summary:
         dl_dir = root_dir / "download_results"
         dl_dir.mkdir(parents=True, exist_ok=True)
         parquet_path = dl_dir / "download_results.parquet"
-        if parquet_path.exists():
-            df = pd.read_parquet(parquet_path)
-        else:
-            df = pd.DataFrame()
-        # Ensure filename column and find/create row
-        schema = ParquetSchema()
-        if "filename" not in df.columns:
-            df["filename"] = pd.Series(dtype=str)
-        target_stem = canonical_stem(filename_stem)
-        stem_series = df["filename"].astype(str).map(canonical_stem)
-        mask = stem_series == target_stem
-        if not mask.any():
-            # append new row
-            df.loc[len(df)] = {"filename": f"{target_stem}.pdf"}
+
+        # One locked read-modify-write (K2 native): the rows read are the rows replaced. A missing file reads as an
+        # empty frame, as before.
+        def _update(df):
+            # Ensure filename column and find/create row
+            if "filename" not in df.columns:
+                df["filename"] = pd.Series(dtype=str)
+            target_stem = canonical_stem(filename_stem)
             stem_series = df["filename"].astype(str).map(canonical_stem)
             mask = stem_series == target_stem
-        # Rounded numeric fields for readability/consistency
-        ints = ["formula_total", "pages_total", "pages_with_formula"]
-        floats = ["formula_avg_pp", "formula_p90_pp"]
-        for col in ints:
-            if col in summary and summary.get(col) is not None:
-                try:
-                    df.loc[mask, col] = int(summary.get(col))
-                except Exception:
-                    df.loc[mask, col] = summary.get(col)
-        for col in floats:
-            if col in summary and summary.get(col) is not None:
-                try:
-                    df.loc[mask, col] = round(float(summary.get(col)), 3)
-                except Exception:
-                    df.loc[mask, col] = summary.get(col)
-        df.loc[mask, "phase_recommended"] = recommendation
-        schema.write_metadata_parquet(df, parquet_path)
+            if not mask.any():
+                # append new row
+                df.loc[len(df)] = {"filename": f"{target_stem}.pdf"}
+                stem_series = df["filename"].astype(str).map(canonical_stem)
+                mask = stem_series == target_stem
+            # Rounded numeric fields for readability/consistency
+            ints = ["formula_total", "pages_total", "pages_with_formula"]
+            floats = ["formula_avg_pp", "formula_p90_pp"]
+            for col in ints:
+                if col in summary and summary.get(col) is not None:
+                    try:
+                        df.loc[mask, col] = int(summary.get(col))
+                    except Exception:
+                        df.loc[mask, col] = summary.get(col)
+            for col in floats:
+                if col in summary and summary.get(col) is not None:
+                    try:
+                        df.loc[mask, col] = round(float(summary.get(col)), 3)
+                    except Exception:
+                        df.loc[mask, col] = summary.get(col)
+            df.loc[mask, "phase_recommended"] = recommendation
+            return df
+
+        update_metadata_parquet(parquet_path, _update)
         return parquet_path
     except Exception:
         return None
@@ -145,21 +146,24 @@ def update_math_enrich_results(parquet_path: Path, stem: str, *, items: int, acc
     # Always try to update consolidated parquet as well
     if not Path(parquet_path).exists():
         return
-    df = pd.read_parquet(parquet_path)
-    if "filename" not in df.columns:
-        return
-    schema = ParquetSchema()
-    target_stem = canonical_stem(stem)
-    stem_series = df["filename"].astype(str).map(canonical_stem)
-    mask = stem_series == target_stem
-    if not mask.any():
-        return
-    df.loc[mask, "enriched_math"] = True
-    df.loc[mask, "math_items"] = int(items)
-    df.loc[mask, "math_accept_rate"] = (float(accepted) / float(items)) if items else 0.0
-    df.loc[mask, "math_time_sec"] = float(time_sec)
-    if "math_enriched" not in df.columns:
-        df["math_enriched"] = df.get("enriched_math", False)
-    if mask.any():
-        df.loc[mask, "math_enriched"] = True
-    schema.write_metadata_parquet(df, parquet_path)
+
+    # One locked read-modify-write (K2 native); returning None writes nothing, as the early returns did.
+    def _update(df):
+        if "filename" not in df.columns:
+            return None
+        target_stem = canonical_stem(stem)
+        stem_series = df["filename"].astype(str).map(canonical_stem)
+        mask = stem_series == target_stem
+        if not mask.any():
+            return None
+        df.loc[mask, "enriched_math"] = True
+        df.loc[mask, "math_items"] = int(items)
+        df.loc[mask, "math_accept_rate"] = (float(accepted) / float(items)) if items else 0.0
+        df.loc[mask, "math_time_sec"] = float(time_sec)
+        if "math_enriched" not in df.columns:
+            df["math_enriched"] = df.get("enriched_math", False)
+        if mask.any():
+            df.loc[mask, "math_enriched"] = True
+        return df
+
+    update_metadata_parquet(parquet_path, _update)

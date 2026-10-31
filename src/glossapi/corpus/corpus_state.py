@@ -11,7 +11,7 @@ from typing import Dict, Iterable, Optional, Set, Tuple
 import pandas as pd
 
 from .._naming import canonical_stem
-from ..parquet_schema import ParquetSchema
+from ..parquet_schema import ParquetSchema, update_metadata_parquet
 
 
 def _cell_text(value) -> str:
@@ -165,72 +165,84 @@ class _ProcessingStateManager:
         if parquet_path is None:
             return
 
-        try:
-            df = self.schema.normalize_metadata_frame(pd.read_parquet(parquet_path))
-        except Exception as exc:
-            self.logger.warning("Unable to read metadata parquet %s: %s", parquet_path, exc)
-            return
+        # One locked read-modify-write (K2 native): read, update and replace inside the metadata lock, so a concurrent
+        # writer's rows cannot be lost. Failure handling is unchanged: a read failure (including a missing file) logs
+        # and returns, a write failure is observed and logged, and update errors propagate.
+        phase = {"value": "read"}
 
-        if "extract_status" not in df.columns:
-            df["extract_status"] = pd.Series([pd.NA] * len(df))
-        if "extract_error" not in df.columns:
-            df["extract_error"] = pd.Series([""] * len(df))
-        if "processing_stage" not in df.columns:
-            df["processing_stage"] = pd.Series([""] * len(df))
+        def _update(current):
+            if not parquet_path.exists():
+                pd.read_parquet(parquet_path)  # raises the same missing-file error as before
+            df = self.schema.normalize_metadata_frame(current)
+            phase["value"] = "update"
 
-        df["__stem__"] = df["filename"].astype(str).map(canonical_stem)
+            if "extract_status" not in df.columns:
+                df["extract_status"] = pd.Series([pd.NA] * len(df))
+            if "extract_error" not in df.columns:
+                df["extract_error"] = pd.Series([""] * len(df))
+            if "processing_stage" not in df.columns:
+                df["processing_stage"] = pd.Series([""] * len(df))
 
-        def _update_rows(target_stems: Set[str], status: str, error: str = "") -> None:
-            nonlocal df
-            if not target_stems:
-                return
-            mask = df["__stem__"].isin(target_stems)
-            existing_stems = set(df.loc[mask, "__stem__"].tolist())
-            missing_stems = target_stems.difference(existing_stems)
+            df["__stem__"] = df["filename"].astype(str).map(canonical_stem)
 
-            if missing_stems:
-                rows: list[dict] = []
-                for stem in sorted(missing_stems):
-                    filename, exists = self._guess_filename(stem)
-                    file_ext = Path(filename).suffix.lstrip(".")
-                    row = {col: pd.NA for col in df.columns}
-                    # Every cell of a new row starts missing; the URL is unknown here.
-                    row[self.url_column] = ""
-                    row["filename"] = filename
-                    row["file_ext"] = file_ext
-                    row["filename_base"] = stem
-                    row["download_success"] = bool(exists)
-                    row["extract_status"] = status
-                    row["extract_error"] = error
-                    row["processing_stage"] = self._mark_stage("", "extract")
-                    row["__stem__"] = stem
-                    rows.append(row)
-                df = pd.concat([df, pd.DataFrame(rows)], ignore_index=True)
+            def _update_rows(target_stems: Set[str], status: str, error: str = "") -> None:
+                nonlocal df
+                if not target_stems:
+                    return
                 mask = df["__stem__"].isin(target_stems)
+                existing_stems = set(df.loc[mask, "__stem__"].tolist())
+                missing_stems = target_stems.difference(existing_stems)
 
-            df.loc[mask, "extract_status"] = status
-            if error:
-                df.loc[mask, "extract_error"] = error
-            df.loc[mask, "processing_stage"] = df.loc[mask, "processing_stage"].apply(
-                lambda current: self._mark_stage(current, "extract")
-            )
+                if missing_stems:
+                    rows: list[dict] = []
+                    for stem in sorted(missing_stems):
+                        filename, exists = self._guess_filename(stem)
+                        file_ext = Path(filename).suffix.lstrip(".")
+                        row = {col: pd.NA for col in df.columns}
+                        # Every cell of a new row starts missing; the URL is unknown here.
+                        row[self.url_column] = ""
+                        row["filename"] = filename
+                        row["file_ext"] = file_ext
+                        row["filename_base"] = stem
+                        row["download_success"] = bool(exists)
+                        row["extract_status"] = status
+                        row["extract_error"] = error
+                        row["processing_stage"] = self._mark_stage("", "extract")
+                        row["__stem__"] = stem
+                        rows.append(row)
+                    df = pd.concat([df, pd.DataFrame(rows)], ignore_index=True)
+                    mask = df["__stem__"].isin(target_stems)
 
-        # Prioritize problematic markers over processed ones for overlapping stems
-        overlap = processed_stems & problematic_stems
-        if overlap:
-            processed_stems.difference_update(overlap)
+                df.loc[mask, "extract_status"] = status
+                if error:
+                    df.loc[mask, "extract_error"] = error
+                df.loc[mask, "processing_stage"] = df.loc[mask, "processing_stage"].apply(
+                    lambda current: self._mark_stage(current, "extract")
+                )
 
-        _update_rows(processed_stems, "success")
-        _update_rows(problematic_stems, "problematic")
+            # Prioritize problematic markers over processed ones for overlapping stems
+            overlap = processed_stems & problematic_stems
+            if overlap:
+                processed_stems.difference_update(overlap)
+
+            _update_rows(processed_stems, "success")
+            _update_rows(problematic_stems, "problematic")
+
+            try:
+                df = df.drop(columns=["__stem__"])
+            except KeyError:
+                pass
+            phase["value"] = "write"
+            return df
 
         try:
-            df = df.drop(columns=["__stem__"])
-        except KeyError:
-            pass
-
-        try:
-            self.schema.write_metadata_parquet(df, parquet_path)
+            update_metadata_parquet(parquet_path, _update)
             observe_store(parquet_path, kind="processing_state_metadata")
         except Exception as exc:
+            if phase["value"] == "read":
+                self.logger.warning("Unable to read metadata parquet %s: %s", parquet_path, exc)
+                return
+            if phase["value"] != "write":
+                raise
             observe("extract_exception", path=parquet_path, error=exc, warning=True, continuation="legacy_state_unchanged")
             self.logger.warning("Failed to persist processing state to %s: %s", parquet_path, exc)

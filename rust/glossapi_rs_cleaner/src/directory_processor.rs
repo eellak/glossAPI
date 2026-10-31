@@ -194,7 +194,7 @@ where
     }
 
     // Release the GIL before starting Rayon tasks to avoid deadlock
-    _py.allow_threads(|| {
+    _py.detach(|| {
         pool.install(|| {
             md_files.par_iter().for_each(|md_file_path| {
                 let config_clone = Arc::clone(&operation_config);
@@ -203,7 +203,7 @@ where
                 match fs::read_to_string(md_file_path) {
                     Ok(content) => {
                         // Re-acquire the GIL only when needed for Python operations
-                        Python::with_gil(|py_thread| {
+                        Python::attach(|py_thread| {
                             match file_operation(
                                 py_thread,
                                 md_file_path.clone(),
@@ -291,7 +291,7 @@ pub fn generate_analysis_report_for_directory(
     output_dir_cleaned_files_str: Option<&str>,
     scripts_to_keep: Vec<String>,
     num_threads: usize,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     generate_analysis_report_with_evidence(py, input_dir_str, output_csv_path_str,
         output_dir_cleaned_files_str, scripts_to_keep, num_threads, None)
 }
@@ -300,7 +300,7 @@ pub fn generate_analysis_report_with_evidence(
     py: Python, input_dir_str: &str, output_csv_path_str: Option<&str>,
     output_dir_cleaned_files_str: Option<&str>, scripts_to_keep: Vec<String>,
     num_threads: usize, evidence_directory: Option<&str>,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let debug_logging = std::env::var_os("GLOSSAPI_RS_DEBUG").is_some();
 
     // Single policy builder shared with `clean_text` / `clean_text_with_stats`.
@@ -388,7 +388,7 @@ pub fn generate_analysis_report_with_evidence(
 
     let analysis_phase_start = std::time::Instant::now();
 
-    py.allow_threads(|| {
+    py.detach(|| {
         pool.install(|| {
             md_files.par_iter().for_each(|md_file_path| {
                 let progress_counter = Arc::clone(&progress_counter);
@@ -644,7 +644,7 @@ pub fn batch_clean_markdown_files(
     output_dir: &str,
     scripts_to_keep: Vec<String>,
     num_threads: usize,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     // Debug prints
     println!(
         "INFO: Starting batch_clean_markdown_files with {} threads",
@@ -771,7 +771,7 @@ pub fn process_directory_native(
     output_dir: &str,
     scripts_to_keep: Vec<String>,
     num_threads: usize,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     // This is a wrapper around batch_clean_markdown_files for backward compatibility
     batch_clean_markdown_files(py, input_dir, output_dir, scripts_to_keep, num_threads)
 }
@@ -825,12 +825,12 @@ pub fn batch_generate_table_summary_csv(
 
     // Corrected GIL handling: py.allow_threads is outermost for the parallel section.
     // The `pool.install` closure itself should be Send.
-    let results: Vec<FileTableSummary> = py.allow_threads(|| {
+    let results: Vec<FileTableSummary> = py.detach(|| {
         pool.install(|| {
             md_files
                 .par_iter()
                 .filter_map(|md_file_path| {
-                    Python::with_gil(|py_thread_token| match fs::read_to_string(md_file_path) {
+                    Python::attach(|py_thread_token| match fs::read_to_string(md_file_path) {
                         Ok(content) => {
                             match table_analysis_module::analyze_table_file_op(
                                 py_thread_token,
@@ -926,7 +926,7 @@ pub fn batch_generate_detailed_table_report_csv(
     input_dir_str: &str,
     output_csv_path_str: &str,
     num_threads: usize,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     // Return PyDict summary
     println!(
         "Starting detailed table report generation for CSV: {}",
@@ -987,7 +987,7 @@ pub fn batch_generate_detailed_table_report_csv(
                     .into_iter()
                     .map(|issue_obj| {
                         // Assuming issue_obj is Py<TableIssue>, need to borrow to access fields
-                        let issue = issue_obj.as_ref(py_token).borrow();
+                        let issue = issue_obj.borrow(py_token);
                         DetailedTableIssueReportEntry {
                             file_path: relative_path_str.clone(),
                             issue_description: issue.description.clone(), // Clone if String

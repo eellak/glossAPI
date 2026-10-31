@@ -3087,7 +3087,7 @@ class CleanPhaseMixin:
         from pathlib import Path
         import shutil
         import pandas as pd
-        from glossapi.parquet_schema import ParquetSchema
+        from glossapi.parquet_schema import ParquetSchema, update_metadata_parquet
 
         if input_dir is None:
             input_dir = self.markdown_dir
@@ -3367,35 +3367,39 @@ class CleanPhaseMixin:
 
             parquet_path.parent.mkdir(parents=True, exist_ok=True)
 
-            df = self._load_metrics_dataframe(parquet_path, df_metrics.get("filename"))
-            self._ensure_metric_columns(
-                df,
-                {
-                    "mojibake_badness_score": pd.NA,
-                    "mojibake_latin_percentage": pd.NA,
-                    "percentage_greek": pd.NA,
-                    "greek_badness_score": pd.NA,
-                    "greek_latin_percentage": pd.NA,
-                    "rejection_reason": pd.NA,
-                    "char_count_no_comments": pd.NA,
-                    "is_empty": pd.NA,
-                },
-            )
+            # One locked read-modify-write (K2 native): the metrics are merged into the rows read under the lock.
+            def _merge_mojibake(current):
+                df = (current if parquet_path.exists()
+                      else self._load_metrics_dataframe(parquet_path, df_metrics.get("filename")))
+                self._ensure_metric_columns(
+                    df,
+                    {
+                        "mojibake_badness_score": pd.NA,
+                        "mojibake_latin_percentage": pd.NA,
+                        "percentage_greek": pd.NA,
+                        "greek_badness_score": pd.NA,
+                        "greek_latin_percentage": pd.NA,
+                        "rejection_reason": pd.NA,
+                        "char_count_no_comments": pd.NA,
+                        "is_empty": pd.NA,
+                    },
+                )
 
-            df = self._merge_metric_dataframe(
-                df,
-                df_metrics[
-                    [
-                        "filename",
-                        "mojibake_badness_score",
-                        "mojibake_latin_percentage",
-                        "percentage_greek",
-                        "char_count_no_comments",
-                        "is_empty",
-                    ]
-                ],
-            )
-            parquet_schema.write_metadata_parquet(df, parquet_path)
+                return self._merge_metric_dataframe(
+                    df,
+                    df_metrics[
+                        [
+                            "filename",
+                            "mojibake_badness_score",
+                            "mojibake_latin_percentage",
+                            "percentage_greek",
+                            "char_count_no_comments",
+                            "is_empty",
+                        ]
+                    ],
+                )
+
+            update_metadata_parquet(parquet_path, _merge_mojibake)
             self.logger.info("Mojibake metrics updated in %s", parquet_path)
 
         # ----- Noise-metrics scoring (Rust) -----
@@ -3442,27 +3446,31 @@ class CleanPhaseMixin:
                         parquet_path,
                     )
                 else:
-                    df = self._load_metrics_dataframe(parquet_path)
-                    self._ensure_metric_columns(
-                        df,
-                        {
-                            "greek_badness_score": pd.NA,
-                            "greek_latin_percentage": pd.NA,
-                            "polytonic_ratio": pd.NA,
-                            "rejection_reason": pd.NA,
-                        },
-                    )
-                    updates = df_scores[
-                        [
-                            "filename",
-                            "greek_badness_score",
-                            "greek_latin_percentage",
-                            "polytonic_ratio",
-                            "rejection_reason",
+                    # One locked read-modify-write (K2 native).
+                    def _merge_noise(df):
+                        if not parquet_path.exists():
+                            pd.read_parquet(parquet_path)  # raises the same missing-file error as before
+                        self._ensure_metric_columns(
+                            df,
+                            {
+                                "greek_badness_score": pd.NA,
+                                "greek_latin_percentage": pd.NA,
+                                "polytonic_ratio": pd.NA,
+                                "rejection_reason": pd.NA,
+                            },
+                        )
+                        updates = df_scores[
+                            [
+                                "filename",
+                                "greek_badness_score",
+                                "greek_latin_percentage",
+                                "polytonic_ratio",
+                                "rejection_reason",
+                            ]
                         ]
-                    ]
-                    df = self._merge_metric_dataframe(df, updates)
-                    parquet_schema.write_metadata_parquet(df, parquet_path)
+                        return self._merge_metric_dataframe(df, updates)
+
+                    update_metadata_parquet(parquet_path, _merge_noise)
                     self.logger.info("Noise metrics filled in %s", parquet_path)
         except Exception as e:
             observe("clean_noise_scoring_failed", error=e, status="failed", continuation="existing_metrics")
@@ -3470,190 +3478,200 @@ class CleanPhaseMixin:
 
         # Determine good / bad list based on enriched metrics
         if parquet_path.exists():
-            df_final = pd.read_parquet(parquet_path)
-            self._ensure_metric_columns(
-                df_final,
-                {
-                    "mojibake_badness_score": pd.NA,
-                    "mojibake_latin_percentage": pd.NA,
-                    "percentage_greek": pd.NA,
-                    "greek_badness_score": pd.NA,
-                    "greek_latin_percentage": pd.NA,
-                    "char_count_no_comments": pd.NA,
-                    "is_empty": pd.NA,
-                },
-            )
-            # --- tidy schema ---
-            df_final.rename(columns={
-                "badness_score": "mojibake_badness_score",
-                "percentage_latin": "mojibake_latin_percentage",
-                "mojibake_latin_percentage": "latin_percentage",  # ADD THIS
-                "rejection_reason": "filter"                      # ADD THIS
-            }, inplace=True, errors="ignore")
+            # One locked read-modify-write (K2 native): the filter/OCR decisions are computed from and written into
+            # the rows read under the metadata lock.
+            final = {}
 
-            # drop duplicate pandas merge suffixes and keep clean names
-            df_final = df_final.loc[:, ~df_final.columns.str.endswith('_x')]
-            df_final.columns = df_final.columns.str.replace('_y$','', regex=True)
+            def _finalize(df_final):
+                if not parquet_path.exists():
+                    pd.read_parquet(parquet_path)  # raises the same missing-file error as before
+                self._ensure_metric_columns(
+                    df_final,
+                    {
+                        "mojibake_badness_score": pd.NA,
+                        "mojibake_latin_percentage": pd.NA,
+                        "percentage_greek": pd.NA,
+                        "greek_badness_score": pd.NA,
+                        "greek_latin_percentage": pd.NA,
+                        "char_count_no_comments": pd.NA,
+                        "is_empty": pd.NA,
+                    },
+                )
+                # --- tidy schema ---
+                df_final.rename(columns={
+                    "badness_score": "mojibake_badness_score",
+                    "percentage_latin": "mojibake_latin_percentage",
+                    "mojibake_latin_percentage": "latin_percentage",  # ADD THIS
+                    "rejection_reason": "filter"                      # ADD THIS
+                }, inplace=True, errors="ignore")
 
-            # round Greek scores for readability
-            for _col in ("greek_badness_score", "greek_latin_percentage"):
-                if _col in df_final.columns:
-                    df_final[_col] = pd.to_numeric(df_final[_col], errors="coerce").round(3)
-            if "polytonic_ratio" in df_final.columns:
-                df_final["polytonic_ratio"] = df_final["polytonic_ratio"].round(2)
+                # drop duplicate pandas merge suffixes and keep clean names
+                df_final = df_final.loc[:, ~df_final.columns.str.endswith('_x')]
+                df_final.columns = df_final.columns.str.replace('_y$','', regex=True)
 
-            # drop any leftover placeholder columns to avoid duplicates
-            df_final.drop(columns=["badness_score", "percentage_latin"], errors="ignore", inplace=True)
-            # ADD: Drop unwanted columns
-            df_final.drop(columns=["greek_latin_percentage", "badness_before", "badness_after"], errors="ignore", inplace=True)
+                # round Greek scores for readability
+                for _col in ("greek_badness_score", "greek_latin_percentage"):
+                    if _col in df_final.columns:
+                        df_final[_col] = pd.to_numeric(df_final[_col], errors="coerce").round(3)
+                if "polytonic_ratio" in df_final.columns:
+                    df_final["polytonic_ratio"] = df_final["polytonic_ratio"].round(2)
 
-            # ensure no duplicate column names
-            df_final = df_final.loc[:, ~df_final.columns.duplicated()]
+                # drop any leftover placeholder columns to avoid duplicates
+                df_final.drop(columns=["badness_score", "percentage_latin"], errors="ignore", inplace=True)
+                # ADD: Drop unwanted columns
+                df_final.drop(columns=["greek_latin_percentage", "badness_before", "badness_after"], errors="ignore", inplace=True)
 
-            def _collapse_measure(df: pd.DataFrame, base: str) -> None:
-                cols = [col for col in df.columns if col == base or col.startswith(f"{base}_")]
-                if not cols:
-                    return
-                collapsed = None
-                for col in cols:
-                    values = pd.to_numeric(df[col], errors="coerce")
-                    collapsed = values if collapsed is None else collapsed.combine_first(values)
-                df[base] = collapsed
-                for col in cols:
-                    if col != base:
-                        df.drop(columns=col, inplace=True, errors="ignore")
+                # ensure no duplicate column names
+                df_final = df_final.loc[:, ~df_final.columns.duplicated()]
 
-            _collapse_measure(df_final, "char_count_no_comments")
-            _collapse_measure(df_final, "page_count")
+                def _collapse_measure(df: pd.DataFrame, base: str) -> None:
+                    cols = [col for col in df.columns if col == base or col.startswith(f"{base}_")]
+                    if not cols:
+                        return
+                    collapsed = None
+                    for col in cols:
+                        values = pd.to_numeric(df[col], errors="coerce")
+                        collapsed = values if collapsed is None else collapsed.combine_first(values)
+                    df[base] = collapsed
+                    for col in cols:
+                        if col != base:
+                            df.drop(columns=col, inplace=True, errors="ignore")
 
-            if "char_count_no_comments" in df_final.columns:
-                df_final["char_count_no_comments"] = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce")
-            if "page_count" in df_final.columns:
-                df_final["page_count"] = pd.to_numeric(df_final["page_count"], errors="coerce")
+                _collapse_measure(df_final, "char_count_no_comments")
+                _collapse_measure(df_final, "page_count")
 
-            df_final["filter"] = "ok"
-            df_final["needs_ocr"] = False
-            if "is_empty" in df_final.columns:
-                df_final["is_empty"] = df_final["is_empty"].fillna(False).astype(bool)
-            else:
-                df_final["is_empty"] = False
+                if "char_count_no_comments" in df_final.columns:
+                    df_final["char_count_no_comments"] = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce")
+                if "page_count" in df_final.columns:
+                    df_final["page_count"] = pd.to_numeric(df_final["page_count"], errors="coerce")
 
-            filename_series = df_final.get("filename")
-            if filename_series is None:
-                pdf_mask = pd.Series(False, index=df_final.index)
-            else:
-                pdf_mask = filename_series.astype(str).str.lower().str.endswith(".pdf")
-                pdf_mask = pdf_mask.fillna(False)
-
-            def _append_reason(mask: pd.Series, reason: str, *, requires_ocr: bool) -> None:
-                if df_final.empty:
-                    return
-                if not isinstance(mask, pd.Series):
-                    mask = pd.Series(mask, index=df_final.index)
-                mask = mask.fillna(False)
-                applicable = (mask & pdf_mask).fillna(False)
-                if not bool(applicable.any()):
-                    return
-                reason_code = {"non_greek_text": "clean_non_greek", "non_greek_readable": "clean_readable_non_greek", "is_empty": "clean_empty", "extract_failed": "clean_extract_failed", "ocr_noise": "clean_ocr_noise"}.get(reason, "clean_mojibake" if reason.startswith("mojibake") else "clean_short_document" if reason.endswith("_short") else "clean_short_text")
-                observe(reason_code, filter_token=reason, needs_ocr=requires_ocr, filenames=df_final.loc[applicable, "filename"].astype(str).tolist())
-                current = df_final.loc[applicable, "filter"].astype(str)
-
-                def _merge_reason(value: str) -> str:
-                    if value == "ok" or not value:
-                        return reason
-                    parts = [part for part in value.split(";") if part]
-                    if reason not in parts:
-                        parts.append(reason)
-                    return ";".join(parts)
-
-                df_final.loc[applicable, "filter"] = current.apply(_merge_reason)
-                if requires_ocr:
-                    needs_targets = applicable
-                    if "ocr_success" in df_final.columns:
-                        success_mask = df_final["ocr_success"].fillna(False)
-                        needs_targets = needs_targets & ~success_mask
-                    df_final.loc[needs_targets, "needs_ocr"] = True
-
-            df_final = _enrich_extraction_metrics(df_final, self.output_dir, input_dir)
-
-            try:
-                empty_threshold_int = int(empty_char_threshold) if empty_char_threshold is not None else 0
-            except Exception:
-                empty_threshold_int = 0
-            if empty_threshold_int < 0:
-                empty_threshold_int = 0
-            try:
-                min_pages = int(empty_min_pages) if empty_min_pages is not None else 0
-            except Exception:
-                min_pages = 0
-            if min_pages < 0:
-                min_pages = 0
-
-            raw_moj = df_final.get("mojibake_badness_score")
-            if isinstance(raw_moj, pd.Series):
-                mojibake_series = pd.to_numeric(raw_moj, errors="coerce")
-            else:
-                mojibake_series = pd.Series(np.nan, index=df_final.index, dtype="float64")
-            if mojibake_series.notna().any():
-                # Token policy: every OCR-trigger writes a filter tag.
-                # Keep original label for compatibility with tests and downstream tools.
-                _append_reason(mojibake_series > 0.1, "mojibake>0.1", requires_ocr=True)
-
-            raw_gr = df_final.get("greek_badness_score")
-            if isinstance(raw_gr, pd.Series):
-                greek_series = pd.to_numeric(raw_gr, errors="coerce")
-            else:
-                greek_series = pd.Series(np.nan, index=df_final.index, dtype="float64")
-            if greek_series.notna().any():
-                # Greek script gate: keep threshold (>60) as-is.
-                # Use canonical token expected by tests and downstream tools.
-                readable = _readable_non_greek_mask(df_final)
-                _append_reason(greek_series > 60, "non_greek_text", requires_ocr=False)
-                _append_reason(readable, "non_greek_readable", requires_ocr=False)
-                _append_reason((greek_series > 60) & ~readable,
-                               "non_greek_text", requires_ocr=True)
-
-            if "char_count_no_comments" in df_final.columns:
-                # Preserve NaN to avoid treating unknown counts as zero
-                char_series = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce")
-                page_series_raw = df_final.get("page_count")
-                if page_series_raw is not None:
-                    page_series = pd.to_numeric(page_series_raw, errors="coerce")
+                df_final["filter"] = "ok"
+                df_final["needs_ocr"] = False
+                if "is_empty" in df_final.columns:
+                    df_final["is_empty"] = df_final["is_empty"].fillna(False).astype(bool)
                 else:
-                    page_series = pd.Series(np.nan, index=df_final.index, dtype="float64")
-                page_series = page_series.fillna(min_pages if min_pages else 0)
+                    df_final["is_empty"] = False
 
-                zero_mask = char_series <= 0
-                zero_pdf = (zero_mask & pdf_mask).fillna(False)
-                if bool(zero_pdf.any()):
-                    df_final.loc[zero_pdf.index, "is_empty"] = df_final.loc[zero_pdf.index, "is_empty"] | zero_pdf
-                if empty_threshold_int == 0:
-                    zeros = int(zero_pdf.sum())
-                    if zeros:
-                        self.logger.info("Empty text check: %d files have zero characters", zeros)
-                    # Strict-empty safeguard: rename token to "is_empty" and trigger OCR.
-                    _append_reason(zero_pdf, "is_empty", requires_ocr=True)
-                elif empty_threshold_int > 0:
-                    low_mask = char_series < empty_threshold_int
-                    long_mask = page_series >= max(1, min_pages)
-                    _append_reason(low_mask & long_mask, f"empty_text<{empty_threshold_int}", requires_ocr=True)
-                    if min_pages > 0:
-                        _append_reason(low_mask & ~long_mask, f"empty_text<{empty_threshold_int}_short", requires_ocr=False)
-                    total_low = int(low_mask.fillna(False).sum())
-                    long_low = int((low_mask & long_mask).fillna(False).sum())
-                    self.logger.info(
-                        "Empty text check: %d files below %d chars; %d have >= %d pages",
-                        total_low,
-                        empty_threshold_int,
-                        long_low,
-                        min_pages,
-                    )
+                filename_series = df_final.get("filename")
+                if filename_series is None:
+                    pdf_mask = pd.Series(False, index=df_final.index)
+                else:
+                    pdf_mask = filename_series.astype(str).str.lower().str.endswith(".pdf")
+                    pdf_mask = pdf_mask.fillna(False)
 
-            df_final["needs_ocr"] = df_final["needs_ocr"].fillna(False).astype(bool)
-            df_final = _attach_page_quality_routes(df_final, self.output_dir / "json" / "metrics")
+                def _append_reason(mask: pd.Series, reason: str, *, requires_ocr: bool) -> None:
+                    if df_final.empty:
+                        return
+                    if not isinstance(mask, pd.Series):
+                        mask = pd.Series(mask, index=df_final.index)
+                    mask = mask.fillna(False)
+                    applicable = (mask & pdf_mask).fillna(False)
+                    if not bool(applicable.any()):
+                        return
+                    reason_code = {"non_greek_text": "clean_non_greek", "non_greek_readable": "clean_readable_non_greek", "is_empty": "clean_empty", "extract_failed": "clean_extract_failed", "ocr_noise": "clean_ocr_noise"}.get(reason, "clean_mojibake" if reason.startswith("mojibake") else "clean_short_document" if reason.endswith("_short") else "clean_short_text")
+                    observe(reason_code, filter_token=reason, needs_ocr=requires_ocr, filenames=df_final.loc[applicable, "filename"].astype(str).tolist())
+                    current = df_final.loc[applicable, "filter"].astype(str)
+
+                    def _merge_reason(value: str) -> str:
+                        if value == "ok" or not value:
+                            return reason
+                        parts = [part for part in value.split(";") if part]
+                        if reason not in parts:
+                            parts.append(reason)
+                        return ";".join(parts)
+
+                    df_final.loc[applicable, "filter"] = current.apply(_merge_reason)
+                    if requires_ocr:
+                        needs_targets = applicable
+                        if "ocr_success" in df_final.columns:
+                            success_mask = df_final["ocr_success"].fillna(False)
+                            needs_targets = needs_targets & ~success_mask
+                        df_final.loc[needs_targets, "needs_ocr"] = True
+
+                df_final = _enrich_extraction_metrics(df_final, self.output_dir, input_dir)
+
+                try:
+                    empty_threshold_int = int(empty_char_threshold) if empty_char_threshold is not None else 0
+                except Exception:
+                    empty_threshold_int = 0
+                if empty_threshold_int < 0:
+                    empty_threshold_int = 0
+                try:
+                    min_pages = int(empty_min_pages) if empty_min_pages is not None else 0
+                except Exception:
+                    min_pages = 0
+                if min_pages < 0:
+                    min_pages = 0
+
+                raw_moj = df_final.get("mojibake_badness_score")
+                if isinstance(raw_moj, pd.Series):
+                    mojibake_series = pd.to_numeric(raw_moj, errors="coerce")
+                else:
+                    mojibake_series = pd.Series(np.nan, index=df_final.index, dtype="float64")
+                if mojibake_series.notna().any():
+                    # Token policy: every OCR-trigger writes a filter tag.
+                    # Keep original label for compatibility with tests and downstream tools.
+                    _append_reason(mojibake_series > 0.1, "mojibake>0.1", requires_ocr=True)
+
+                raw_gr = df_final.get("greek_badness_score")
+                if isinstance(raw_gr, pd.Series):
+                    greek_series = pd.to_numeric(raw_gr, errors="coerce")
+                else:
+                    greek_series = pd.Series(np.nan, index=df_final.index, dtype="float64")
+                if greek_series.notna().any():
+                    # Greek script gate: keep threshold (>60) as-is.
+                    # Use canonical token expected by tests and downstream tools.
+                    readable = _readable_non_greek_mask(df_final)
+                    _append_reason(greek_series > 60, "non_greek_text", requires_ocr=False)
+                    _append_reason(readable, "non_greek_readable", requires_ocr=False)
+                    _append_reason((greek_series > 60) & ~readable,
+                                   "non_greek_text", requires_ocr=True)
+
+                if "char_count_no_comments" in df_final.columns:
+                    # Preserve NaN to avoid treating unknown counts as zero
+                    char_series = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce")
+                    page_series_raw = df_final.get("page_count")
+                    if page_series_raw is not None:
+                        page_series = pd.to_numeric(page_series_raw, errors="coerce")
+                    else:
+                        page_series = pd.Series(np.nan, index=df_final.index, dtype="float64")
+                    page_series = page_series.fillna(min_pages if min_pages else 0)
+
+                    zero_mask = char_series <= 0
+                    zero_pdf = (zero_mask & pdf_mask).fillna(False)
+                    if bool(zero_pdf.any()):
+                        df_final.loc[zero_pdf.index, "is_empty"] = df_final.loc[zero_pdf.index, "is_empty"] | zero_pdf
+                    if empty_threshold_int == 0:
+                        zeros = int(zero_pdf.sum())
+                        if zeros:
+                            self.logger.info("Empty text check: %d files have zero characters", zeros)
+                        # Strict-empty safeguard: rename token to "is_empty" and trigger OCR.
+                        _append_reason(zero_pdf, "is_empty", requires_ocr=True)
+                    elif empty_threshold_int > 0:
+                        low_mask = char_series < empty_threshold_int
+                        long_mask = page_series >= max(1, min_pages)
+                        _append_reason(low_mask & long_mask, f"empty_text<{empty_threshold_int}", requires_ocr=True)
+                        if min_pages > 0:
+                            _append_reason(low_mask & ~long_mask, f"empty_text<{empty_threshold_int}_short", requires_ocr=False)
+                        total_low = int(low_mask.fillna(False).sum())
+                        long_low = int((low_mask & long_mask).fillna(False).sum())
+                        self.logger.info(
+                            "Empty text check: %d files below %d chars; %d have >= %d pages",
+                            total_low,
+                            empty_threshold_int,
+                            long_low,
+                            min_pages,
+                        )
+
+                df_final["needs_ocr"] = df_final["needs_ocr"].fillna(False).astype(bool)
+                df_final = _attach_page_quality_routes(df_final, self.output_dir / "json" / "metrics")
+
+                final.update(empty_threshold_int=empty_threshold_int, min_pages=min_pages)
+                return df_final
 
             # persist cleaned parquet
-            parquet_schema.write_metadata_parquet(df_final, parquet_path)
+            df_final = update_metadata_parquet(parquet_path, _finalize)
+            empty_threshold_int, min_pages = final["empty_threshold_int"], final["min_pages"]
             if drop_bad:
                 good_df = df_final[df_final["needs_ocr"] == False]
                 filenames = good_df.get("filename", pd.Series(dtype=str))
@@ -3705,7 +3723,7 @@ class CleanPhaseMixin:
         - debug mode writes annotated markdown and a structured match index under
           ``debug_output_dir`` (default: ``self.output_dir / "debug"``)
         """
-        from glossapi.parquet_schema import ParquetSchema
+        from glossapi.parquet_schema import ParquetSchema, update_metadata_parquet
 
         adapter_profile = adapters_enabled()
         adapter_ocr_scores = None
@@ -4028,44 +4046,48 @@ class CleanPhaseMixin:
             "ocr_repeat_suspicious_line_ratio",
         ]
 
-        df = self._load_metrics_dataframe(parquet_path, df_updates.get("filename"))
-        self._ensure_metric_columns(
-            df,
-            {
-                "filter": "ok",
-                "percentage_greek": pd.NA,
-                "latin_percentage": pd.NA,
-                "polytonic_ratio": pd.NA,
-                "ocr_noise_suspect": False,
-                "ocr_noise_flags": "",
-                "ocr_repeat_phrase_run_max": pd.NA,
-                "ocr_repeat_line_run_max": pd.NA,
-                "ocr_repeat_suspicious_line_count": pd.NA,
-                "ocr_repeat_suspicious_line_ratio": pd.NA,
-            },
-        )
-        df = self._merge_metric_dataframe(df, df_updates[update_columns])
+        # One locked read-modify-write (K2 native): the OCR metrics are merged into the rows read under the lock.
+        def _merge_ocr_metrics(current):
+            df = (current if parquet_path.exists()
+                  else self._load_metrics_dataframe(parquet_path, df_updates.get("filename")))
+            self._ensure_metric_columns(
+                df,
+                {
+                    "filter": "ok",
+                    "percentage_greek": pd.NA,
+                    "latin_percentage": pd.NA,
+                    "polytonic_ratio": pd.NA,
+                    "ocr_noise_suspect": False,
+                    "ocr_noise_flags": "",
+                    "ocr_repeat_phrase_run_max": pd.NA,
+                    "ocr_repeat_line_run_max": pd.NA,
+                    "ocr_repeat_suspicious_line_count": pd.NA,
+                    "ocr_repeat_suspicious_line_ratio": pd.NA,
+                },
+            )
+            df = self._merge_metric_dataframe(df, df_updates[update_columns])
 
-        if "filter" not in df.columns:
-            df["filter"] = "ok"
-        else:
-            df["filter"] = df["filter"].fillna("ok").astype(str)
+            if "filter" not in df.columns:
+                df["filter"] = "ok"
+            else:
+                df["filter"] = df["filter"].fillna("ok").astype(str)
 
-        suspect_mask = df["ocr_noise_suspect"].fillna(False).astype(bool)
-        if bool(suspect_mask.any()):
-            current = df.loc[suspect_mask, "filter"].astype(str)
+            suspect_mask = df["ocr_noise_suspect"].fillna(False).astype(bool)
+            if bool(suspect_mask.any()):
+                current = df.loc[suspect_mask, "filter"].astype(str)
 
-            def _append_ocr_noise(value: str) -> str:
-                if value == "ok" or not value:
-                    return "ocr_noise"
-                tokens = [token for token in value.split(";") if token]
-                if "ocr_noise" not in tokens:
-                    tokens.append("ocr_noise")
-                return ";".join(tokens)
+                def _append_ocr_noise(value: str) -> str:
+                    if value == "ok" or not value:
+                        return "ocr_noise"
+                    tokens = [token for token in value.split(";") if token]
+                    if "ocr_noise" not in tokens:
+                        tokens.append("ocr_noise")
+                    return ";".join(tokens)
 
-            df.loc[suspect_mask, "filter"] = current.apply(_append_ocr_noise)
+                df.loc[suspect_mask, "filter"] = current.apply(_append_ocr_noise)
+            return df
 
-        parquet_schema.write_metadata_parquet(df, parquet_path)
+        df = update_metadata_parquet(parquet_path, _merge_ocr_metrics)
         self.logger.info("OCR metrics updated in %s", parquet_path)
 
         filenames = df.get("filename", pd.Series(dtype=str))

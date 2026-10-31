@@ -10,11 +10,10 @@ use rayon::ThreadPoolBuilder;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex}; // Mutex will be needed for collecting report_entries if done from parallel loop
+use std::sync::{Arc, Mutex, LazyLock}; // Mutex will be needed for collecting report_entries if done from parallel loop
 use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir;
 
-use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::cleaning_module;
@@ -48,9 +47,9 @@ struct FinalReportEntry {
     is_empty: bool,
 }
 
-static HTML_COMMENT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<!--.*?-->").unwrap());
-static INLINE_DISPLAY_MATH_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(\\\[.*?\\\])|(\\\(.*?\\\))|(\$\$.*?\$\$)").unwrap());
+static HTML_COMMENT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<!--.*?-->").unwrap());
+static INLINE_DISPLAY_MATH_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(\\\[.*?\\\])|(\\\(.*?\\\))|(\$\$.*?\$\$)").unwrap());
 
 fn strip_latex_envs(mut text: String) -> String {
     const LATEX_ENVS: [&str; 11] = [

@@ -59,40 +59,60 @@ class SectionPhaseMixin:
         else:
             # Fallback path: derive good filenames from parquet metadata
             self.logger.info("No good_files from clean(); using parquet filter/ocr_success if available")
-            from glossapi.parquet_schema import ParquetSchema
+            from glossapi.parquet_schema import ParquetSchema, update_metadata_parquet
             parquet_schema = ParquetSchema({'url_column': self.downloader_config.get('url_column', 'url')})
             parquet_path = self._resolve_metadata_parquet(parquet_schema, ensure=True, search_input=True)
 
             if parquet_path is not None and parquet_path.exists():
                 try:
-                    df_meta = pd.read_parquet(parquet_path)
-                    mask = pd.Series(False, index=df_meta.index)
-                    if 'filter' in df_meta.columns:
-                        mask = mask | (df_meta['filter'] == 'ok')
-                    if 'ocr_success' in df_meta.columns:
-                        mask = mask | (df_meta['ocr_success'].fillna(False))
-                    good_rows = df_meta[mask]
-                    # Legacy fallback: if nothing selected yet, try 'extraction' == 'good'
-                    if good_rows.empty and 'extraction' in df_meta.columns:
-                        legacy_rows = df_meta[df_meta['extraction'] == 'good']
-                        if not legacy_rows.empty:
-                            good_rows = legacy_rows
-                    if not good_rows.empty and 'filename' in good_rows.columns:
-                        good_filenames = [os.path.splitext(fn)[0] for fn in good_rows['filename'].astype(str).tolist() if fn]
-                        self.logger.info(f"Selected {len(good_filenames)} files via metadata from {parquet_path}")
-                        # Update processing_stage for selected rows
-                        try:
-                            if 'processing_stage' not in df_meta.columns:
-                                df_meta['processing_stage'] = pd.NA
-                            sel_idx = good_rows.index
-                            df_meta.loc[sel_idx, 'processing_stage'] = df_meta.loc[sel_idx, 'processing_stage'].apply(
-                                lambda x: (str(x) + ',section') if (pd.notna(x) and 'section' not in str(x)) else ('download,extract,section' if pd.isna(x) else x)
-                            )
-                            # Write back in-place
-                            self._cache_metadata_parquet(parquet_path)
-                            parquet_schema.write_metadata_parquet(df_meta, parquet_path)
-                        except Exception as e:
-                            self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
+                    # One locked read-modify-write (K2 native): select from and update the rows read under the lock.
+                    # Failure handling is unchanged: read/selection errors reach the handler below; a failed
+                    # processing_stage update or write only logs and keeps the selection.
+                    phase = {"value": "select"}
+                    selected = {}
+
+                    def _update(df_meta):
+                        if not parquet_path.exists():
+                            pd.read_parquet(parquet_path)  # raises the same missing-file error as before
+                        mask = pd.Series(False, index=df_meta.index)
+                        if 'filter' in df_meta.columns:
+                            mask = mask | (df_meta['filter'] == 'ok')
+                        if 'ocr_success' in df_meta.columns:
+                            mask = mask | (df_meta['ocr_success'].fillna(False))
+                        good_rows = df_meta[mask]
+                        # Legacy fallback: if nothing selected yet, try 'extraction' == 'good'
+                        if good_rows.empty and 'extraction' in df_meta.columns:
+                            legacy_rows = df_meta[df_meta['extraction'] == 'good']
+                            if not legacy_rows.empty:
+                                good_rows = legacy_rows
+                        if not good_rows.empty and 'filename' in good_rows.columns:
+                            selected['names'] = [os.path.splitext(fn)[0] for fn in good_rows['filename'].astype(str).tolist() if fn]
+                            self.logger.info(f"Selected {len(selected['names'])} files via metadata from {parquet_path}")
+                            # Update processing_stage for selected rows
+                            phase["value"] = "update"
+                            try:
+                                if 'processing_stage' not in df_meta.columns:
+                                    df_meta['processing_stage'] = pd.NA
+                                sel_idx = good_rows.index
+                                df_meta.loc[sel_idx, 'processing_stage'] = df_meta.loc[sel_idx, 'processing_stage'].apply(
+                                    lambda x: (str(x) + ',section') if (pd.notna(x) and 'section' not in str(x)) else ('download,extract,section' if pd.isna(x) else x)
+                                )
+                                # Write back in-place
+                                self._cache_metadata_parquet(parquet_path)
+                            except Exception as e:
+                                self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
+                                return None
+                            return df_meta
+                        return None
+
+                    try:
+                        update_metadata_parquet(parquet_path, _update)
+                    except Exception as e:
+                        if phase["value"] != "update":
+                            raise
+                        self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
+                    if 'names' in selected:
+                        good_filenames = selected['names']
                 except Exception as e:
                     observe("section_metadata_unavailable", path=parquet_path, error=e)
                     self.logger.warning(f"Error reading parquet file {parquet_path}: {e}")

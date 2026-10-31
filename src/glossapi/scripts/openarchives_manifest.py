@@ -1,7 +1,7 @@
 """Backend-independent OpenArchives download manifest preparation."""
 from pathlib import Path
 import pandas as pd
-from glossapi.parquet_schema import ParquetSchema
+from glossapi.parquet_schema import ParquetSchema, update_metadata_parquet
 
 DEFAULT_DOWNLOAD_CONCURRENCY = 24
 DEFAULT_DOWNLOAD_TIMEOUT = 60
@@ -60,10 +60,15 @@ def _normalize_download_results(
     return merged
 
 
-def _write_canonical_metadata(work_root: Path, df: pd.DataFrame) -> Path:
+def _write_canonical_metadata(work_root: Path, df: pd.DataFrame, *, only_if_missing: bool = False) -> Path:
     schema = ParquetSchema({"url_column": "url"})
     canonical = work_root / "download_results" / "download_results.parquet"
     canonical.parent.mkdir(parents=True, exist_ok=True)
     normalized = schema.normalize_metadata_frame(df)
-    schema.write_metadata_parquet(normalized, canonical)
+    if only_if_missing:
+        # Create the seed inside the metadata lock (K2 native): an existing file, possibly written concurrently,
+        # is kept rather than replaced.
+        update_metadata_parquet(canonical, lambda current: None if canonical.exists() else normalized)
+    else:
+        schema.write_metadata_parquet(normalized, canonical)
     return canonical

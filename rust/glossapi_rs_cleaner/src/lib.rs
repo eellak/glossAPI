@@ -71,9 +71,10 @@ use md_verify::{verify_md_preview_equivalent_py, verify_md_structural_py};
 use pipeline_module::run_complete_pipeline; // Bring the #[pyfunction] into scope
 use pyo3::prelude::*;
 
-// Python module definition
-#[pymodule]
-fn glossapi_rs_cleaner(_py: Python, m: &PyModule) -> PyResult<()> {
+// Python module definition. gil_used = true keeps the 0.19 contract (the module requires the GIL): PyO3 0.28+
+// would otherwise declare free-threaded support, which has not been audited.
+#[pymodule(gil_used = true)]
+fn glossapi_rs_cleaner(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Registering the new pipeline function (now directly as it's a #[pyfunction])
     m.add_function(wrap_pyfunction!(run_complete_pipeline, m)?)?;
 

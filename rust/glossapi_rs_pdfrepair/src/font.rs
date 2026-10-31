@@ -1,5 +1,5 @@
+use std::sync::LazyLock;
 use anyhow::{anyhow, bail, Result};
-use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 #[derive(Deserialize)]
@@ -19,7 +19,7 @@ struct Tables {
     charsets: Vec<Vec<Vec<u8>>>,
     greek: BTreeSet<u32>,
 }
-static TABLES: Lazy<Tables> = Lazy::new(|| {
+static TABLES: LazyLock<Tables> = LazyLock::new(|| {
     let t: EncodedTables =
         serde_json::from_str(include_str!("../fixtures/font_tables.json")).unwrap();
     Tables {

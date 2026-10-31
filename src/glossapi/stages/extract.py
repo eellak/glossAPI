@@ -11,6 +11,18 @@ from .contracts import PackageRequirement, PlannedOperation, StagePlan, StageRes
 from .execution import failed_result, freeze_inputs, outputs_in, run_fenced, sha256_file
 from .receipts import capture_backend_observations
 
+
+def wordlist_identity(path):
+    """Identity of the configured Greek word list (GLOSSAPI_GREEK_WORDLIST).
+
+    None when unset; the file's sha256 when it exists; a fixed ``missing:<path as given>`` marker when the setting names
+    a file that does not exist. A missing list leaves the dictionary rates null, as before the ledger (K2 native
+    coordinator decision), instead of failing the document.
+    """
+    if not path:
+        return None
+    return sha256_file(path) if Path(path).is_file() else 'missing:' + path
+
 _worker_extractors = {}
 
 
@@ -109,7 +121,7 @@ class ExtractStage:
                 raise ValueError("input_hash_changed")
             extractor._stage_source_provenance = {"path": serialized_source_path or str(source.path), "sha256": source.sha256}
             dictionary_path = os.environ.get("GLOSSAPI_GREEK_WORDLIST")
-            dictionary_hash = sha256_file(dictionary_path) if dictionary_path else None
+            dictionary_hash = wordlist_identity(dictionary_path)
             with capture_backend_observations() as observations:
                 if request.operation == "extract.page_quality":
                     from ..page_quality import page_quality
@@ -141,7 +153,7 @@ class ExtractStage:
                     success = extractor._process_file_chunked(source.path, markdown, markdown / "timeout_files")
                 else:
                     success = extractor._process_single_document(source.path, output_dir=markdown, timeout_dir=markdown / "timeout_files")
-            if dictionary_path and sha256_file(dictionary_path) != dictionary_hash:
+            if dictionary_path and wordlist_identity(dictionary_path) != dictionary_hash:
                 raise ValueError("Input dictionary changed during extraction")
             outputs = outputs_in(root, required)
             missing = set(required) - {output.kind for output in outputs}

@@ -637,8 +637,15 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         from ..section_model import model_files
         # A neutral classifier contributes its manifest and every declared file (K2 W2b).
         semantic_files=[*model_files(corpus.section_classifier_model_path),Path(corpus.extraction_model_path)]
-        if os.environ.get('GLOSSAPI_GREEK_WORDLIST'):semantic_files.append(Path(os.environ['GLOSSAPI_GREEK_WORDLIST']))
-        settings={**settings,'semantic_files':[{'path':str(path.resolve()),'sha256':sha256_file(path)} for path in semantic_files if path.is_file()]}
+        wordlist=os.environ.get('GLOSSAPI_GREEK_WORDLIST')
+        if wordlist:semantic_files.append(Path(wordlist))
+        identity=[{'path':str(path.resolve()),'sha256':sha256_file(path)} for path in semantic_files if path.is_file()]
+        if wordlist and not Path(wordlist).is_file():
+            # A configured but missing word list: extraction proceeds without it (null rates) and the run identity
+            # records the fixed marker (K2 native coordinator decision); present files keep their existing entries.
+            from .extract import wordlist_identity
+            identity.append({'path':wordlist,'sha256':wordlist_identity(wordlist)})
+        settings={**settings,'semantic_files':identity}
     result,replays=prepare_streaming(corpus,files,workers=workers,stages=stages,
         settings={**settings,'publication_barriers':publication_stages},
         resume=resume,retry_failed=retry_failed,observer=observer,writer=corpus._scheduler_writer,credentials=credentials)
@@ -666,8 +673,9 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         metadata=Path(corpus.output_dir)/'download_results/download_results.parquet'
         if not metadata.exists():
             import pandas as pd
-            from ..parquet_schema import ParquetSchema
-            ParquetSchema().write_metadata_parquet(pd.DataFrame({'filename':pd.Series(dtype='str')}),metadata)
+            from ..parquet_schema import update_metadata_parquet
+            # Create only if still missing inside the metadata lock (K2 native): never replace a concurrent writer's file.
+            update_metadata_parquet(metadata,lambda current:None if metadata.exists() else pd.DataFrame({'filename':pd.Series(dtype='str')}))
         writer=corpus._scheduler_writer
         with writer.transaction():
             for version, in writer.connection.execute('SELECT DISTINCT version_id FROM tasks WHERE run_id=? AND version_id IS NOT NULL',(result['run_id'],)).fetchall():

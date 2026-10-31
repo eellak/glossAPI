@@ -321,3 +321,50 @@ def test_concurrent_ensure_metadata_parquet_keeps_every_writers_rows(tmp_path):
     assert frame.loc[frame.filename == 'seed.pdf', 'url'].tolist() == ['https://example.org/seed.pdf']
     assert not (tmp_path / 'download_results' / 'download_results.parquet').exists()
     assert sorted(p.name for p in (tmp_path / 'download_results').iterdir()) == ['existing.parquet']
+
+
+# ---------------------------------------------------------------- K2 native: migrated read-modify-write callers
+
+MIGRATED = '''
+import sys, time
+from pathlib import Path
+import glossapi.parquet_schema as schema
+base, writer, writers = Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+# Widen the race as the ensure test does: staggered starts, and earlier writers hold the write longest. A caller that
+# reads outside the lock (before K2 native) then replaces the file with a stale merge and loses rows.
+name = '_write_metadata_parquet_locked' if hasattr(schema, '_write_metadata_parquet_locked') else '_write_metadata_parquet'
+real = getattr(schema, name)
+def slow(*args, **kwargs):
+    time.sleep(0.08 * (writers - writer))
+    return real(*args, **kwargs)
+setattr(schema, name, slow)
+time.sleep(0.04 * writer)
+if writer % 2 == 0:  # caller 1: OCR math triage, appends this writer's row
+    from glossapi.ocr.utils.triage import update_download_results_parquet
+    assert update_download_results_parquet(base, f't{writer}', {'formula_total': writer}, '2A') is not None
+else:  # caller 2: the extraction checkpoint, adds a row for a processed stem
+    from glossapi.corpus.corpus_state import _ProcessingStateManager
+    _ProcessingStateManager(base / 'markdown' / '.processing_state.pkl').save({f's{writer}'}, set())
+'''
+
+
+def test_two_migrated_callers_concurrently_keep_every_row(tmp_path):
+    """Two callers migrated to `update_metadata_parquet` (OCR math triage and the extraction checkpoint) run in
+    interleaved processes against one metadata parquet: every writer's row and value survives. On 718edae both
+    read outside the lock and this loses rows (red evidence in reviews/k2_native/)."""
+    (tmp_path / 'markdown').mkdir()
+    (tmp_path / 'download_results').mkdir()
+    pd.DataFrame({'url': ['https://example.org/seed.pdf'], 'filename': ['seed.pdf']}).to_parquet(
+        tmp_path / 'download_results' / 'download_results.parquet', index=False)
+    writers = 6
+    processes = [_spawn(MIGRATED, tmp_path, writer, writers) for writer in range(writers)]
+    for process in processes:
+        _, err = process.communicate(timeout=120)
+        assert process.returncode == 0, err
+    frame = pd.read_parquet(tmp_path / 'download_results' / 'download_results.parquet')
+    expected = {'seed.pdf'} | {f't{w}.pdf' for w in range(0, writers, 2)} | {f's{w}.pdf' for w in range(1, writers, 2)}
+    assert set(frame['filename']) == expected and len(frame) == len(expected)
+    triaged = frame[frame.filename.str.match(r't\d')]
+    assert dict(zip(triaged.filename, triaged.formula_total.astype(int))) == {f't{w}.pdf': w for w in range(0, writers, 2)}
+    assert set(frame.loc[frame.filename.str.match(r's\d'), 'extract_status']) == {'success'}
+    assert frame.loc[frame.filename == 'seed.pdf', 'url'].tolist() == ['https://example.org/seed.pdf']

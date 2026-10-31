@@ -426,6 +426,12 @@ class StreamingScheduler:
         frozen_settings=json.loads(self.writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(run_row['settings_sha256'],)).fetchone()[0])
         for binding in frozen_settings.get('semantic_files',[]):
             path=Path(binding['path'])
+            if binding['sha256'].startswith('missing:'):
+                # A configured word list that was missing at freeze time (K2 native): it must still be missing.
+                from .extract import wordlist_identity
+                if wordlist_identity(binding['path'])!=binding['sha256']:
+                    raise ValueError('Frozen model/dictionary input changed; create an amended run')
+                continue
             if not path.is_file() or sha256_file(path)!=binding['sha256']:
                 raise ValueError('Frozen model/dictionary input changed; create an amended run')
         from .disk_budget import DiskBudget, require_disk_guard

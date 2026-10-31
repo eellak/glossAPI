@@ -11,7 +11,7 @@ from typing import List, Optional, Set
 import pandas as pd
 
 from ..._naming import canonical_stem
-from ...parquet_schema import ParquetSchema
+from ...parquet_schema import ParquetSchema, update_metadata_parquet
 from .context import CorpusOcrContext
 from ..corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 
@@ -77,8 +77,16 @@ def build_ocr_selection(
     parquet_schema = ParquetSchema({"url_column": context.url_column})
     parquet_path = context._resolve_metadata_parquet(parquet_schema, ensure=True, search_input=True)
     if parquet_path and parquet_path.exists():
-        df = pd.read_parquet(parquet_path)
-        if "filename" in df.columns and "needs_ocr" in df.columns:
+        # One locked read-modify-write (K2 native): the unflagged-route counts are written into the rows read under
+        # the lock; the selection below uses exactly those rows.
+        selection = {}
+
+        def _update(df):
+            if not parquet_path.exists():
+                pd.read_parquet(parquet_path)  # raises the same missing-file error as before
+            selection["df"] = df
+            if "filename" not in df.columns or "needs_ocr" not in df.columns:
+                return None
             flagged = df["needs_ocr"].fillna(False).astype(bool)
 
             def route_count(value: object) -> int:
@@ -93,7 +101,13 @@ def build_ocr_selection(
 
             routed_counts = df.get("ocr_pages", pd.Series("", index=df.index)).map(route_count)
             df["ocr_pages_unflagged_count"] = routed_counts.where(~flagged, 0).astype("int64")
-            parquet_schema.write_metadata_parquet(df, parquet_path)
+            selection.update(flagged=flagged, routed_counts=routed_counts)
+            return df
+
+        update_metadata_parquet(parquet_path, _update)
+        df = selection["df"]
+        if "flagged" in selection:
+            flagged, routed_counts = selection["flagged"], selection["routed_counts"]
             selected = flagged | ((routed_counts > 0) & (page_routing == "all"))
             bad_files = df.loc[selected, "filename"].dropna().astype(str).tolist()
         if "ocr_success" in df.columns:

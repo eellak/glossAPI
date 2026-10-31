@@ -1,22 +1,13 @@
-// CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Item 5: pyo3 0.19's
-// `#[pymethods]` macro emits non-local `impl` blocks that newer
-// Rust flags via `non_local_definitions`. Upgrading pyo3 is a
-// separate change — silence the lint at module level so the build
-// is warning-clean against the pinned pyo3 version.
-#![allow(non_local_definitions)]
-
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 use pyo3::prelude::*;
 use regex::Regex;
 
-lazy_static! {
-    // Regular expressions for table detection
-    static ref TABLE_SEPARATOR_REGEX: Regex = Regex::new(r"^[\s]*\|[\s]*[-:]+[\s]*\|").unwrap();
-    static ref TABLE_ROW_REGEX: Regex = Regex::new(r"^[\s]*\|.*\|[\s]*$").unwrap();
-    // Regex to identify a potential table header (similar to a row, but used contextually)
-    // For simplicity, we assume a header looks like a normal table row.
-    // More sophisticated header detection might be needed if headers can be multi-line or have distinct patterns.
-}
+// Regular expressions for table detection
+static TABLE_SEPARATOR_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\s]*\|[\s]*[-:]+[\s]*\|").unwrap());
+static TABLE_ROW_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[\s]*\|.*\|[\s]*$").unwrap());
+// Regex to identify a potential table header (similar to a row, but used contextually)
+// For simplicity, we assume a header looks like a normal table row.
+// More sophisticated header detection might be needed if headers can be multi-line or have distinct patterns.
 
 #[pyclass]
 #[derive(Debug, Clone)]
@@ -36,13 +27,24 @@ pub struct TableIssue {
 }
 
 // New struct for richer return type from core logic
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TableScan {
     pub total_tables: usize,
     pub issues: Vec<Py<TableIssue>>,
 }
 
-#[allow(non_local_definitions)]
+// PyO3 0.30 gates `Clone for Py<T>` behind the `py-clone` feature; clone the references explicitly with the GIL
+// held (what pyo3 0.19's `Py::clone` did when the GIL was held). Only the `Clone` bound of the directory-processor
+// output type needs this; the values are moved, not cloned, at runtime.
+impl Clone for TableScan {
+    fn clone(&self) -> Self {
+        Python::attach(|py| TableScan {
+            total_tables: self.total_tables,
+            issues: self.issues.iter().map(|issue| issue.clone_ref(py)).collect(),
+        })
+    }
+}
+
 #[pymethods]
 impl TableIssue {
     #[new]

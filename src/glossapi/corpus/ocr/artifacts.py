@@ -93,7 +93,7 @@ def persist_ocr_success(
     filenames: List[str],
     backend_norm: str,
 ) -> List[str]:
-    from ...parquet_schema import ParquetSchema
+    from ...parquet_schema import ParquetSchema, update_metadata_parquet
 
     success_files: List[str] = []
     # OCR dispatch always writes here; clean() rebinds context.markdown_dir.
@@ -109,16 +109,21 @@ def persist_ocr_success(
     parquet_schema = ParquetSchema({"url_column": context.url_column})
     parquet_path = context._resolve_metadata_parquet(parquet_schema, ensure=True, search_input=True)
     if parquet_path and parquet_path.exists():
-        df_meta = pd.read_parquet(parquet_path)
-        df_meta = apply_ocr_success_updates(
-            df_meta,
-            filenames=success_files,
-            markdown_dir=markdown_dir,
-            metrics_dir=context.output_dir / "json" / "metrics",
-            backend_norm=backend_norm,
-        )
-        context._cache_metadata_parquet(parquet_path)
-        parquet_schema.write_metadata_parquet(df_meta, parquet_path)
+        # One locked read-modify-write (K2 native): the OCR flags are merged into the rows read under the lock.
+        def _update(df_meta):
+            if not parquet_path.exists():
+                pd.read_parquet(parquet_path)  # raises the same missing-file error as before
+            df_meta = apply_ocr_success_updates(
+                df_meta,
+                filenames=success_files,
+                markdown_dir=markdown_dir,
+                metrics_dir=context.output_dir / "json" / "metrics",
+                backend_norm=backend_norm,
+            )
+            context._cache_metadata_parquet(parquet_path)
+            return df_meta
+
+        update_metadata_parquet(parquet_path, _update)
         # Nested clean wrappers restore the latest committed projection. Seal
         # OCR-owned fields first so their refresh cannot restore pre-OCR flags.
         from ...stages.products import active_journal

@@ -71,7 +71,6 @@ Note: after adding these fields, bump the Python bindings accordingly and propag
 */
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use glossapi_rs_common::{is_combining_mark, is_greek, scan_script_metrics, ScriptScanner};
-use once_cell::sync::Lazy;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
@@ -82,7 +81,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, LazyLock};
 use unicode_normalization::UnicodeNormalization;
 use walkdir::WalkDir;
 // Avoid heavy regex for table detection; use lightweight checks instead
@@ -109,9 +108,9 @@ const NUMERIC_BLOCK_SEED_MIN_ATOMS: usize = 8;
 // Baseline for short words per 1000 Greek characters (empirically ~26 on clean texts)
 const SHORT_BASELINE_PER_1000: f64 = 26.0;
 
-static TOKEN_CATEGORY_SPEC_CACHE: Lazy<
+static TOKEN_CATEGORY_SPEC_CACHE: LazyLock<
     Mutex<std::collections::HashMap<PathBuf, Arc<Vec<CompiledTokenCategorySpec>>>>,
-> = Lazy::new(|| Mutex::new(std::collections::HashMap::new()));
+> = LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
 #[inline]
 fn to_lower_fast(cp: u32) -> u32 {
@@ -4625,5 +4624,65 @@ mod tests {
         assert_eq!(rows[0].match_count, 2);
         assert_eq!(rows[0].per_category_match_count.get("glyph_font_like").copied(), Some(2));
         assert!(!nonexistent.exists(), "write_files=false must not create the output dir");
+    }
+}
+
+/// K2 native (U2c, unicode-normalization 0.1.25 -> 0.1.26): Greek counterexample gate. The NFC/NFD expectations
+/// come from an independent oracle (CPython `unicodedata`, Unicode 14.0.0; canonical normalization of these code
+/// points is stable across Unicode versions); the `hybrid_normalize_body` expectations were recorded with 0.1.25
+/// and pin this crate's own use (`to_lowercase` + final-sigma fold + NFD + alphanumeric filter; note that Rust keeps
+/// U+0345, which is Alphabetic).
+#[cfg(test)]
+mod greek_normalization_counterexamples {
+    use unicode_normalization::UnicodeNormalization;
+
+    const NFC_NFD: &[(&str, &str, &str)] = &[
+        // polytonic, precomposed
+        ("\u{1f18}\u{3bd} \u{1f00}\u{3c1}\u{3c7}\u{1fc7} \u{1f26}\u{3bd} \u{1f41} \u{3bb}\u{3cc}\u{3b3}\u{3bf}\u{3c2}", "\u{1f18}\u{3bd} \u{1f00}\u{3c1}\u{3c7}\u{1fc7} \u{1f26}\u{3bd} \u{1f41} \u{3bb}\u{3cc}\u{3b3}\u{3bf}\u{3c2}", "\u{395}\u{313}\u{3bd} \u{3b1}\u{313}\u{3c1}\u{3c7}\u{3b7}\u{342}\u{345} \u{3b7}\u{313}\u{342}\u{3bd} \u{3bf}\u{314} \u{3bb}\u{3bf}\u{301}\u{3b3}\u{3bf}\u{3c2}"),
+        // capitals with prosgegrammeni
+        ("\u{1fbc} \u{1f88} \u{1fa8} \u{1f8f} \u{1ffc}", "\u{1fbc} \u{1f88} \u{1fa8} \u{1f8f} \u{1ffc}", "\u{391}\u{345} \u{391}\u{313}\u{345} \u{3a9}\u{313}\u{345} \u{391}\u{314}\u{342}\u{345} \u{3a9}\u{345}"),
+        // accented capitals (tonos) and dialytika
+        ("\u{386} \u{388} \u{389} \u{38a} \u{38c} \u{38e} \u{38f} \u{3aa} \u{3ab} \u{390} \u{3b0}", "\u{386} \u{388} \u{389} \u{38a} \u{38c} \u{38e} \u{38f} \u{3aa} \u{3ab} \u{390} \u{3b0}", "\u{391}\u{301} \u{395}\u{301} \u{397}\u{301} \u{399}\u{301} \u{39f}\u{301} \u{3a5}\u{301} \u{3a9}\u{301} \u{399}\u{308} \u{3a5}\u{308} \u{3b9}\u{308}\u{301} \u{3c5}\u{308}\u{301}"),
+        // decomposed capitals compose (NFC) to the tonos / varia / polytonic forms
+        ("\u{391}\u{301} \u{395}\u{300} \u{3a9}\u{313}\u{342}\u{345}", "\u{386} \u{1fc8} \u{1fae}", "\u{391}\u{301} \u{395}\u{300} \u{3a9}\u{313}\u{342}\u{345}"),
+        // combining-mark order: ypogegrammeni (ccc 240) reorders after psili/acute (ccc 230)
+        ("\u{3b1}\u{345}\u{313}\u{301}", "\u{1f84}", "\u{3b1}\u{313}\u{301}\u{345}"),
+        // equal ccc keeps the given order (acute before psili does not compose to U+1F04)
+        ("\u{3b1}\u{301}\u{313}", "\u{3ac}\u{313}", "\u{3b1}\u{301}\u{313}"),
+        ("\u{3c9}\u{342}\u{314}\u{345}", "\u{1ff7}\u{314}", "\u{3c9}\u{342}\u{314}\u{345}"),
+        // final sigma and capitals are normalization-invariant
+        ("\u{3c3}\u{3bf}\u{3c6}\u{3af}\u{3b1}\u{3c2} \u{3c2} \u{3a3} \u{3a3}\u{39f}\u{3a6}\u{399}\u{391}\u{3a3}", "\u{3c3}\u{3bf}\u{3c6}\u{3af}\u{3b1}\u{3c2} \u{3c2} \u{3a3} \u{3a3}\u{39f}\u{3a6}\u{399}\u{391}\u{3a3}", "\u{3c3}\u{3bf}\u{3c6}\u{3b9}\u{301}\u{3b1}\u{3c2} \u{3c2} \u{3a3} \u{3a3}\u{39f}\u{3a6}\u{399}\u{391}\u{3a3}"),
+        // singleton decompositions: prosgegrammeni, ano teleia, greek question mark
+        ("\u{1fbe} \u{387} \u{37e} \u{b7}", "\u{3b9} \u{b7} ; \u{b7}", "\u{3b9} \u{b7} ; \u{b7}"),
+        // oxia letters fold to tonos letters
+        ("\u{1f71} \u{1f73} \u{1f75} \u{1f77} \u{1f79} \u{1f7b} \u{1f7d} \u{1fbb}", "\u{3ac} \u{3ad} \u{3ae} \u{3af} \u{3cc} \u{3cd} \u{3ce} \u{386}", "\u{3b1}\u{301} \u{3b5}\u{301} \u{3b7}\u{301} \u{3b9}\u{301} \u{3bf}\u{301} \u{3c5}\u{301} \u{3c9}\u{301} \u{391}\u{301}"),
+        // symbol forms keep their identity under canonical normalization
+        ("\u{3d2}\u{301} \u{3d3} \u{3d4} \u{3d0} \u{3d1} \u{3d5} \u{3d6} \u{3f0} \u{3f1} \u{3f2} \u{3f5}", "\u{3d3} \u{3d3} \u{3d4} \u{3d0} \u{3d1} \u{3d5} \u{3d6} \u{3f0} \u{3f1} \u{3f2} \u{3f5}", "\u{3d2}\u{301} \u{3d2}\u{301} \u{3d2}\u{308} \u{3d0} \u{3d1} \u{3d5} \u{3d6} \u{3f0} \u{3f1} \u{3f2} \u{3f5}"),
+        ("\u{390}\u{3b0}", "\u{390}\u{3b0}", "\u{3b9}\u{308}\u{301}\u{3c5}\u{308}\u{301}"),
+    ];
+
+    #[test]
+    fn nfc_and_nfd_match_the_oracle_on_greek() {
+        for (input, nfc, nfd) in NFC_NFD {
+            assert_eq!(input.nfc().collect::<String>(), *nfc, "NFC of {input:?}");
+            assert_eq!(input.nfd().collect::<String>(), *nfd, "NFD of {input:?}");
+            // idempotence and round trip
+            assert_eq!(nfd.nfc().collect::<String>(), *nfc, "NFC(NFD) of {input:?}");
+            assert_eq!(nfc.nfd().collect::<String>(), *nfd, "NFD(NFC) of {input:?}");
+        }
+    }
+
+    #[test]
+    fn hybrid_normalization_of_greek_is_unchanged() {
+        let cases: &[(&str, &str)] = &[
+            ("\u{1f18}\u{3bd} \u{1f00}\u{3c1}\u{3c7}\u{1fc7} \u{1f26}\u{3bd} \u{1f41} \u{3bb}\u{3cc}\u{3b3}\u{3bf}\u{3c2}", "\u{3b5}\u{3bd}\u{3b1}\u{3c1}\u{3c7}\u{3b7}\u{345}\u{3b7}\u{3bd}o\u{3bb}o\u{3b3}o\u{3c3}"),
+            ("\u{3a3}\u{39f}\u{3a6}\u{399}\u{391}\u{3a3} \u{3c3}\u{3bf}\u{3c6}\u{3af}\u{3b1}\u{3c2}", "\u{3c3}o\u{3c6}\u{3b9}\u{3b1}\u{3c3}\u{3c3}o\u{3c6}\u{3b9}\u{3b1}\u{3c3}"),
+            ("\u{1fbc} \u{1f88} \u{3aa}\u{301} \u{3b0}", "\u{3b1}\u{345}\u{3b1}\u{345}\u{3b9}\u{3c5}"),
+            ("\u{3b1}\u{345}\u{313}\u{301} \u{3ba}\u{3cc}\u{3c3}\u{3bc}\u{3bf}\u{3c2}", "\u{3b1}\u{345}ko\u{3c3}\u{3bc}o\u{3c3}"),
+            ("\u{1f0c}\u{3b8}\u{3c9}\u{3c2}\u{b7}\u{1f6e}", "\u{3b1}\u{3b8}\u{3c9}\u{3c3}\u{3c9}"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(super::hybrid_normalize_body(input), *expected, "hybrid_normalize_body({input:?})");
+        }
     }
 }

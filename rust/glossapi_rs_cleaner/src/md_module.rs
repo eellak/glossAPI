@@ -25,52 +25,50 @@
 //! rule: all transforms whose correctness depends on CommonMark / GFM
 //! grammar live here; ONE detector per concept, many consumers.
 
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 use regex::Regex;
 use std::collections::HashMap;
 
 use crate::normalize;
 
-lazy_static! {
-    /// Matches a standalone CommonMark horizontal-rule (`<hr/>` in the
-    /// rendered output) — runs of `-` / `_` / `*` of length ≥4 on a line
-    /// that contains only those chars (plus optional leading/trailing
-    /// whitespace). Also matches the markdown-escaped underscore run
-    /// `\_\_\_\_` that appears in EU legislative corpus docs — the
-    /// escape preserves the same thematic-break render.
-    ///
-    /// Threshold is ≥4 (not ≥3) so the rewriter only fires when a
-    /// collapse actually reduces characters — `---` / `___` / `***`
-    /// are already canonical and produce no-op rewrites, which is fine,
-    /// but keeping the threshold at ≥4 documents that intent.
-    ///
-    /// Intentionally does NOT match `=` runs (`====` is a setext heading
-    /// marker, not an HR), Unicode em-dash / horizontal-bar / box-drawing
-    /// (these parse as literal paragraphs, not HRs, under CommonMark).
-    /// Transforming them to `---` would CHANGE preview rendering and
-    /// violate the Phase A invariant — verifier catches it.
-    pub static ref SEPARATOR_LINE_REGEX: Regex = Regex::new(
-        r"^[ \t]*(?:-{4,}|_{4,}|\*{4,})[ \t]*$",
-    )
-    .unwrap();
+/// Matches a standalone CommonMark horizontal-rule (`<hr/>` in the
+/// rendered output) — runs of `-` / `_` / `*` of length ≥4 on a line
+/// that contains only those chars (plus optional leading/trailing
+/// whitespace). Also matches the markdown-escaped underscore run
+/// `\_\_\_\_` that appears in EU legislative corpus docs — the
+/// escape preserves the same thematic-break render.
+///
+/// Threshold is ≥4 (not ≥3) so the rewriter only fires when a
+/// collapse actually reduces characters — `---` / `___` / `***`
+/// are already canonical and produce no-op rewrites, which is fine,
+/// but keeping the threshold at ≥4 documents that intent.
+///
+/// Intentionally does NOT match `=` runs (`====` is a setext heading
+/// marker, not an HR), Unicode em-dash / horizontal-bar / box-drawing
+/// (these parse as literal paragraphs, not HRs, under CommonMark).
+/// Transforming them to `---` would CHANGE preview rendering and
+/// violate the Phase A invariant — verifier catches it.
+pub static SEPARATOR_LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^[ \t]*(?:-{4,}|_{4,}|\*{4,})[ \t]*$",
+)
+.unwrap());
 
-    /// CommonMark thematic-break recognizer used for reflow hard-break
-    /// detection. Uses the spec threshold of ≥3 chars (different from
-    /// `SEPARATOR_LINE_REGEX`, which only fires on ≥4 runs because it
-    /// is the *rewrite* rule). Recognizing ≥3 here is required so:
-    ///
-    /// - Our own canonical output `---` (produced by
-    ///   `normalize_separator_line`) is still detected as a hard break
-    ///   by `reflow_paragraphs`, preventing the cleaner from fusing
-    ///   the HR line with an adjacent paragraph.
-    /// - Setext heading markers `---` / `===` are preserved — joining
-    ///   `---` with a following paragraph would demote an H2 to a
-    ///   regular paragraph, breaking preview.
-    static ref HR_HARD_BREAK_REGEX: Regex = Regex::new(
-        r"^[ \t]{0,3}(?:-{3,}|_{3,}|(?:\\_){3,}|\*{3,}|={3,})[ \t]*$",
-    )
-    .unwrap();
-}
+/// CommonMark thematic-break recognizer used for reflow hard-break
+/// detection. Uses the spec threshold of ≥3 chars (different from
+/// `SEPARATOR_LINE_REGEX`, which only fires on ≥4 runs because it
+/// is the *rewrite* rule). Recognizing ≥3 here is required so:
+///
+/// - Our own canonical output `---` (produced by
+///   `normalize_separator_line`) is still detected as a hard break
+///   by `reflow_paragraphs`, preventing the cleaner from fusing
+///   the HR line with an adjacent paragraph.
+/// - Setext heading markers `---` / `===` are preserved — joining
+///   `---` with a following paragraph would demote an H2 to a
+///   regular paragraph, breaking preview.
+static HR_HARD_BREAK_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"^[ \t]{0,3}(?:-{3,}|_{3,}|(?:\\_){3,}|\*{3,}|={3,})[ \t]*$",
+)
+.unwrap());
 
 // ---------------------------------------------------------------------------
 // CommonMark indentation helper.

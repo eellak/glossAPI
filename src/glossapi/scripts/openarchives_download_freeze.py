@@ -53,7 +53,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     metadata_path = work_root / "download_results" / "download_results.parquet"
     if not metadata_path.exists():
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        _write_canonical_metadata(work_root, manifest_df)
+        _write_canonical_metadata(work_root, manifest_df, only_if_missing=True)
 
     if args.dry_run:
         return 0

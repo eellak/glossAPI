@@ -341,7 +341,7 @@ pub fn non_empty_line_stats(text: &str) -> (usize, usize, usize) {
 /// Python-exposed `analyze_charset(text) -> dict` with all counts +
 /// derived ratios. Caller applies thresholds.
 #[pyfunction]
-pub fn analyze_charset(py: Python<'_>, text: &str) -> PyResult<PyObject> {
+pub fn analyze_charset(py: Python<'_>, text: &str) -> PyResult<Py<PyAny>> {
     let c = count_charsets(text);
     let r = CharsetRatios::from_counts(&c);
     let d = PyDict::new(py);

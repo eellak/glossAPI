@@ -51,6 +51,7 @@ use noise_metrics::{
     score_markdown_file_internal, score_text_detailed_internal, score_texts_detailed_internal,
 };
 use pyo3::prelude::*;
+use pyo3::IntoPyObjectExt;
 use pyo3::types::PyDict;
 use pyo3::types::PyTuple;
 
@@ -65,6 +66,7 @@ fn score_markdown_file(path: &str) -> PyResult<f64> {
 /// Compute badness scores for all `.md` files under `input_dir` in parallel.
 /// The result is a list of `(file_path, score, latin_percentage)` tuples.
 #[pyfunction]
+#[pyo3(signature = (input_dir, n_threads=None))]
 fn score_markdown_directory(
     input_dir: &str,
     n_threads: Option<usize>,
@@ -106,36 +108,36 @@ fn score_markdown_file_detailed(py: Python<'_>, path: &str) -> PyResult<Py<PyTup
     let tup = PyTuple::new(
         py,
         vec![
-            score.into_py(py),
-            latin_pct.into_py(py),
-            table_ratio.into_py(py),
-            poly_ratio.into_py(py),
-            (len_greek as u128).into_py(py),
-            (total_words as u128).into_py(py),
-            (v_pen as u128).into_py(py),
-            (c_pen as u128).into_py(py),
-            (bad_dbl as u128).into_py(py),
-            (misplaced_sigma as u128).into_py(py),
-            (invalid_bigram as u128).into_py(py),
-            (long_word_count as u128).into_py(py),
-            (longest_word as u128).into_py(py),
-            (short_word_count as u128).into_py(py),
-            (max_run as u128).into_py(py),
-            v_rate.into_py(py),
-            c_rate.into_py(py),
-            d_rate.into_py(py),
-            sigma_end_rate.into_py(py),
-            bigram_rate.into_py(py),
-            long_word_rate.into_py(py),
-            short_ratio.into_py(py),
-            short_pen.into_py(py),
-            flags.into_py(py),
+            score.into_py_any(py)?,
+            latin_pct.into_py_any(py)?,
+            table_ratio.into_py_any(py)?,
+            poly_ratio.into_py_any(py)?,
+            (len_greek as u128).into_py_any(py)?,
+            (total_words as u128).into_py_any(py)?,
+            (v_pen as u128).into_py_any(py)?,
+            (c_pen as u128).into_py_any(py)?,
+            (bad_dbl as u128).into_py_any(py)?,
+            (misplaced_sigma as u128).into_py_any(py)?,
+            (invalid_bigram as u128).into_py_any(py)?,
+            (long_word_count as u128).into_py_any(py)?,
+            (longest_word as u128).into_py_any(py)?,
+            (short_word_count as u128).into_py_any(py)?,
+            (max_run as u128).into_py_any(py)?,
+            v_rate.into_py_any(py)?,
+            c_rate.into_py_any(py)?,
+            d_rate.into_py_any(py)?,
+            sigma_end_rate.into_py_any(py)?,
+            bigram_rate.into_py_any(py)?,
+            long_word_rate.into_py_any(py)?,
+            short_ratio.into_py_any(py)?,
+            short_pen.into_py_any(py)?,
+            flags.into_py_any(py)?,
         ],
-    );
-    Ok(tup.into())
+    )?;
+    Ok(tup.unbind())
 }
 
-fn detailed_score_tuple(py: Python<'_>, metrics: noise_metrics::DetailedScore) -> Py<PyTuple> {
+fn detailed_score_tuple(py: Python<'_>, metrics: noise_metrics::DetailedScore) -> PyResult<Py<PyTuple>> {
     let (
         score,
         latin_pct,
@@ -165,39 +167,39 @@ fn detailed_score_tuple(py: Python<'_>, metrics: noise_metrics::DetailedScore) -
     PyTuple::new(
         py,
         vec![
-            score.into_py(py),
-            latin_pct.into_py(py),
-            table_ratio.into_py(py),
-            poly_ratio.into_py(py),
-            (len_greek as u128).into_py(py),
-            (total_words as u128).into_py(py),
-            (v_pen as u128).into_py(py),
-            (c_pen as u128).into_py(py),
-            (bad_dbl as u128).into_py(py),
-            (misplaced_sigma as u128).into_py(py),
-            (invalid_bigram as u128).into_py(py),
-            (long_word_count as u128).into_py(py),
-            (longest_word as u128).into_py(py),
-            (short_word_count as u128).into_py(py),
-            (max_run as u128).into_py(py),
-            v_rate.into_py(py),
-            c_rate.into_py(py),
-            d_rate.into_py(py),
-            sigma_end_rate.into_py(py),
-            bigram_rate.into_py(py),
-            long_word_rate.into_py(py),
-            short_ratio.into_py(py),
-            short_pen.into_py(py),
-            flags.into_py(py),
+            score.into_py_any(py)?,
+            latin_pct.into_py_any(py)?,
+            table_ratio.into_py_any(py)?,
+            poly_ratio.into_py_any(py)?,
+            (len_greek as u128).into_py_any(py)?,
+            (total_words as u128).into_py_any(py)?,
+            (v_pen as u128).into_py_any(py)?,
+            (c_pen as u128).into_py_any(py)?,
+            (bad_dbl as u128).into_py_any(py)?,
+            (misplaced_sigma as u128).into_py_any(py)?,
+            (invalid_bigram as u128).into_py_any(py)?,
+            (long_word_count as u128).into_py_any(py)?,
+            (longest_word as u128).into_py_any(py)?,
+            (short_word_count as u128).into_py_any(py)?,
+            (max_run as u128).into_py_any(py)?,
+            v_rate.into_py_any(py)?,
+            c_rate.into_py_any(py)?,
+            d_rate.into_py_any(py)?,
+            sigma_end_rate.into_py_any(py)?,
+            bigram_rate.into_py_any(py)?,
+            long_word_rate.into_py_any(py)?,
+            short_ratio.into_py_any(py)?,
+            short_pen.into_py_any(py)?,
+            flags.into_py_any(py)?,
         ],
     )
-    .into()
+    .map(Bound::unbind)
 }
 
 #[pyfunction]
 fn score_text_detailed(py: Python<'_>, text: &str) -> PyResult<Py<PyTuple>> {
-    let metrics = py.allow_threads(|| score_text_detailed_internal(text));
-    Ok(detailed_score_tuple(py, metrics))
+    let metrics = py.detach(|| score_text_detailed_internal(text));
+    detailed_score_tuple(py, metrics)
 }
 
 #[pyfunction]
@@ -208,17 +210,18 @@ fn score_texts_detailed(
     n_threads: Option<usize>,
 ) -> PyResult<Vec<Py<PyTuple>>> {
     let rows = py
-        .allow_threads(move || score_texts_detailed_internal(texts, n_threads))
+        .detach(move || score_texts_detailed_internal(texts, n_threads))
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
     let mut out: Vec<Py<PyTuple>> = Vec::with_capacity(rows.len());
     for metrics in rows {
-        out.push(detailed_score_tuple(py, metrics));
+        out.push(detailed_score_tuple(py, metrics)?);
     }
     Ok(out)
 }
 
 /// Detailed scores for directory: returns a list of Python tuples with path followed by all metrics
 #[pyfunction]
+#[pyo3(signature = (input_dir, n_threads=None))]
 fn score_markdown_directory_detailed(
     py: Python<'_>,
     input_dir: &str,
@@ -259,34 +262,34 @@ fn score_markdown_directory_detailed(
         let tup = PyTuple::new(
             py,
             vec![
-                path.into_py(py),
-                score.into_py(py),
-                latin_pct.into_py(py),
-                table_ratio.into_py(py),
-                poly_ratio.into_py(py),
-                (len_greek as u128).into_py(py),
-                (total_words as u128).into_py(py),
-                (v_pen as u128).into_py(py),
-                (c_pen as u128).into_py(py),
-                (bad_dbl as u128).into_py(py),
-                (misplaced_sigma as u128).into_py(py),
-                (invalid_bigram as u128).into_py(py),
-                (long_word_count as u128).into_py(py),
-                (longest_word as u128).into_py(py),
-                (short_word_count as u128).into_py(py),
-                (max_run as u128).into_py(py),
-                v_rate.into_py(py),
-                c_rate.into_py(py),
-                d_rate.into_py(py),
-                sigma_end_rate.into_py(py),
-                bigram_rate.into_py(py),
-                long_word_rate.into_py(py),
-                short_ratio.into_py(py),
-                short_pen.into_py(py),
-                flags.into_py(py),
+                path.into_py_any(py)?,
+                score.into_py_any(py)?,
+                latin_pct.into_py_any(py)?,
+                table_ratio.into_py_any(py)?,
+                poly_ratio.into_py_any(py)?,
+                (len_greek as u128).into_py_any(py)?,
+                (total_words as u128).into_py_any(py)?,
+                (v_pen as u128).into_py_any(py)?,
+                (c_pen as u128).into_py_any(py)?,
+                (bad_dbl as u128).into_py_any(py)?,
+                (misplaced_sigma as u128).into_py_any(py)?,
+                (invalid_bigram as u128).into_py_any(py)?,
+                (long_word_count as u128).into_py_any(py)?,
+                (longest_word as u128).into_py_any(py)?,
+                (short_word_count as u128).into_py_any(py)?,
+                (max_run as u128).into_py_any(py)?,
+                v_rate.into_py_any(py)?,
+                c_rate.into_py_any(py)?,
+                d_rate.into_py_any(py)?,
+                sigma_end_rate.into_py_any(py)?,
+                bigram_rate.into_py_any(py)?,
+                long_word_rate.into_py_any(py)?,
+                short_ratio.into_py_any(py)?,
+                short_pen.into_py_any(py)?,
+                flags.into_py_any(py)?,
             ],
-        );
-        out.push(tup.into());
+        )?;
+        out.push(tup.unbind());
     }
     Ok(out)
 }
@@ -543,7 +546,7 @@ fn find_numeric_debug_page_spans(
     min_repeat_steps: u64,
     min_same_digit_steps: u64,
 ) -> PyResult<Vec<Py<PyDict>>> {
-    let spans = py.allow_threads(|| {
+    let spans = py.detach(|| {
         find_numeric_debug_page_spans_internal(
             page,
             min_progress_steps,
@@ -571,7 +574,7 @@ fn find_word_repeat_spans(
     min_period: usize,
     window: usize,
 ) -> PyResult<Vec<Py<PyDict>>> {
-    let spans = py.allow_threads(|| {
+    let spans = py.detach(|| {
         find_word_repeat_spans_internal(normalized_text, rep_threshold, min_period, window)
     });
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(spans.len());
@@ -589,7 +592,7 @@ fn find_word_repeat_spans(
 
 #[pyfunction]
 fn find_hybrid_repeat_spans(py: Python<'_>, analysis_text: &str) -> PyResult<Vec<Py<PyDict>>> {
-    let spans = py.allow_threads(|| find_hybrid_repeat_spans_internal(analysis_text));
+    let spans = py.detach(|| find_hybrid_repeat_spans_internal(analysis_text));
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(spans.len());
     for span in spans {
         let item = PyDict::new(py);
@@ -616,7 +619,7 @@ fn find_labeled_shared_repeat_spans(
     min_period: usize,
     window: usize,
 ) -> PyResult<Vec<Py<PyDict>>> {
-    let spans = py.allow_threads(|| {
+    let spans = py.detach(|| {
         find_labeled_shared_repeat_spans_internal(analysis_text, rep_threshold, min_period, window)
     });
     let mut out: Vec<Py<PyDict>> = Vec::with_capacity(spans.len());
@@ -635,7 +638,7 @@ fn find_labeled_shared_repeat_spans(
 
 #[pyfunction]
 fn evaluate_page_character_noise(py: Python<'_>, page: &str) -> PyResult<Py<PyDict>> {
-    let metrics = py.allow_threads(|| evaluate_page_character_noise_internal(page));
+    let metrics = py.detach(|| evaluate_page_character_noise_internal(page));
     let item = PyDict::new(py);
     item.set_item("total_chars", metrics.total_chars)?;
     item.set_item("bad_char_count", metrics.bad_char_count)?;
@@ -647,8 +650,10 @@ fn evaluate_page_character_noise(py: Python<'_>, page: &str) -> PyResult<Py<PyDi
     Ok(item.into())
 }
 
-#[pymodule]
-fn glossapi_rs_noise(_py: Python, m: &PyModule) -> PyResult<()> {
+// gil_used = true keeps the 0.19 contract (the module requires the GIL): PyO3 0.28+ would otherwise declare
+// free-threaded support, which has not been audited.
+#[pymodule(gil_used = true)]
+fn glossapi_rs_noise(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(score_markdown_file, m)?)?;
     m.add_function(wrap_pyfunction!(score_markdown_directory, m)?)?;
     m.add_function(wrap_pyfunction!(score_markdown_file_detailed, m)?)?;

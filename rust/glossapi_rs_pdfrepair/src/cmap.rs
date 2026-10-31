@@ -1,9 +1,9 @@
+use std::sync::LazyLock;
 use anyhow::{anyhow, bail, Result};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::BTreeMap;
-static COMMENTS: Lazy<Regex> = Lazy::new(|| Regex::new(r"%[^\r\n]*").unwrap());
-static TOKENS: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^<>]*>|\[|\]|[^\s<>\[\]]+").unwrap());
+static COMMENTS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"%[^\r\n]*").unwrap());
+static TOKENS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^<>]*>|\[|\]|[^\s<>\[\]]+").unwrap());
 pub fn tokens(b: &[u8]) -> Vec<String> {
     let s = String::from_utf8_lossy(b);
     let s = COMMENTS.replace_all(&s, "");

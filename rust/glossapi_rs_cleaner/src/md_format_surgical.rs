@@ -654,7 +654,7 @@ pub fn format_surgical_checked_with_oracles(
 pub fn format_surgical_checked_py(
     py: pyo3::Python<'_>,
     md: &str,
-) -> pyo3::PyResult<pyo3::PyObject> {
+) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
     use pyo3::types::PyDict;
     let r = format_surgical_checked(md);
     let d = PyDict::new(py);
@@ -669,7 +669,7 @@ pub fn format_surgical_checked_py(
 /// PyO3 entry for the policy struct — returns a dict of the current
 /// defaults so callers / scorecards can log what was in effect.
 #[pyfunction]
-pub fn phase_a_policy_py(py: pyo3::Python<'_>) -> pyo3::PyResult<pyo3::PyObject> {
+pub fn phase_a_policy_py(py: pyo3::Python<'_>) -> pyo3::PyResult<pyo3::Py<pyo3::PyAny>> {
     use pyo3::types::PyDict;
     let p = PhaseAPolicy::default();
     let d = PyDict::new(py);

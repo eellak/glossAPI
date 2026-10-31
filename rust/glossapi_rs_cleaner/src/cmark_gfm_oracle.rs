@@ -239,7 +239,7 @@ use pyo3::types::PyDict;
 /// - `first_diff`: diagnostic snippet if not identical
 /// - `error`: string if binary unavailable / subprocess failed
 #[pyfunction]
-pub fn cmark_gfm_verify_py(py: Python<'_>, input: &str, output: &str) -> PyResult<PyObject> {
+pub fn cmark_gfm_verify_py(py: Python<'_>, input: &str, output: &str) -> PyResult<Py<PyAny>> {
     let d = PyDict::new(py);
     if !is_available() {
         d.set_item("is_available", false)?;

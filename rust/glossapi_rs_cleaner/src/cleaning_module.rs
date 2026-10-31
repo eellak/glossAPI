@@ -1,11 +1,11 @@
+use std::sync::LazyLock;
 use aho_corasick::AhoCorasick;
 use glossapi_rs_common::scan_script_metrics;
 use htmlentity::entity::{decode, ICodedDataTrait};
-use lazy_static::lazy_static;
 use memchr::memchr; // For Step 5.1
 use memchr::memmem;
-use once_cell::sync::Lazy;
 use pyo3::prelude::*;
+use pyo3::IntoPyObjectExt;
 use regex::Regex;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet}; // For optimizing comment search in strip_tags_custom
@@ -127,157 +127,154 @@ impl PhaseAMode {
     }
 }
 
-lazy_static! {
-    // Regular expressions for detection (compiled once) - Most are now unused
-    // pub static ref GLYPH_TAG_REGEX_RAW: Regex = Regex::new(r"(?:^|\s)glyph<c=\d+,font=/[^>]+>(?:\s|$)").unwrap();
-    // pub static ref GLYPH_TAG_REGEX_HTML: Regex = Regex::new(r"(?:^|\s)glyph&lt;c=\d+,font=/[^>]+&gt;(?:\s|$)").unwrap();
-    // pub static ref ANY_TAG_REGEX: Regex = Regex::new(r"(?:^|\s)<[^>]*>(?:\s|$)").unwrap();
-    // pub static ref IS_COMMENT_REGEX: Regex = Regex::new(r"^<!--").unwrap(); // Replaced by direct byte check
-    // pub static ref HTML_ENTITY_REGEX: Regex = Regex::new(r"&[a-zA-Z]+;|&#\d+;|&lt;|&gt;|&amp;").unwrap(); // Replaced by htmlentity crate
+// Regular expressions for detection (compiled once) - Most are now unused
+// pub static ref GLYPH_TAG_REGEX_RAW: Regex = Regex::new(r"(?:^|\s)glyph<c=\d+,font=/[^>]+>(?:\s|$)").unwrap();
+// pub static ref GLYPH_TAG_REGEX_HTML: Regex = Regex::new(r"(?:^|\s)glyph&lt;c=\d+,font=/[^>]+&gt;(?:\s|$)").unwrap();
+// pub static ref ANY_TAG_REGEX: Regex = Regex::new(r"(?:^|\s)<[^>]*>(?:\s|$)").unwrap();
+// pub static ref IS_COMMENT_REGEX: Regex = Regex::new(r"^<!--").unwrap(); // Replaced by direct byte check
+// pub static ref HTML_ENTITY_REGEX: Regex = Regex::new(r"&[a-zA-Z]+;|&#\d+;|&lt;|&gt;|&amp;").unwrap(); // Replaced by htmlentity crate
 
-    // Regex for HTML comments (captures the whole comment) - STILL USED
-    pub static ref COMMENT_REGEX: Regex = Regex::new(r"<!--.*?-->").unwrap();
-    pub static ref DOT_LEADER_RUN_REGEX: Regex = Regex::new(r"\.{4,}").unwrap();
-    /// Three-or-more consecutive newlines. Collapsed to exactly two
-    /// (one blank line) at the end of `core_clean_text_with_stats_with_mode`.
-    /// CommonMark renders any number of blank lines as one block
-    /// separator, so this collapse is lossless under preview. Catches
-    /// the pattern where per-char strip empties adjacent single-char
-    /// lines (e.g. PUA bracket glyphs not in the Adobe Symbol fold map)
-    /// and the surrounding `\n\n` separators accumulate.
-    pub static ref BLANK_LINE_RUN_REGEX: Regex = Regex::new(r"\n{3,}").unwrap();
-    // Unified Rule B regex per CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25
-    // Points 1+4+5. Single regex covering ALL PostScript-glyph and
-    // PDF-font residue patterns. Every alternative is anchored on
-    // structural punctuation (`<`, `/`, `+`, `=`, digits) — NO bare-
-    // word matches.
-    //
-    //   GLYPH<…>, GLYPH(…), glyph[…]          — structured forms, up to 200 chars
-    //   glyph<c=…,font=/…>                    — verbose forward form
-    //   <c=…,font=/…>glyph                    — reversed-order form
-    //   /[A-Z]{6}+FontName                    — PDF font subset
-    //   /uni<hex 4-6>                         — Unicode codepoint reference
-    //   /g<digits> or /gid<digits>            — glyph index
-    //
-    // Rule A's 50 PostScript glyph-name LITERALS (/space, /period,
-    // /hyphenminus, …, CID+) are kept as a separate Aho-Corasick
-    // engine (RULE_A_LITERALS_AC below) for speed but contribute to
-    // the SAME count + coverage line-drop gate (Point 5).
-    pub static ref PDF_GLYPH_NAME_REGEX: Regex = Regex::new(
-        r"(?i)GLYPH<[^>]{1,200}>|GLYPH\([^)]{1,200}\)|glyph\[[^\]]{1,200}\]|glyph<c=\d+,font=/[^>]+>|<c=\d+,font=/[^>]+>glyph|/[A-Z]{6}\+[A-Z][A-Za-z0-9-]+|/uni[0-9A-Fa-f]{4,6}|/g(?:id)?\d+"
-    ).unwrap();
+// Regex for HTML comments (captures the whole comment) - STILL USED
+pub static COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<!--.*?-->").unwrap());
+pub static DOT_LEADER_RUN_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\.{4,}").unwrap());
+/// Three-or-more consecutive newlines. Collapsed to exactly two
+/// (one blank line) at the end of `core_clean_text_with_stats_with_mode`.
+/// CommonMark renders any number of blank lines as one block
+/// separator, so this collapse is lossless under preview. Catches
+/// the pattern where per-char strip empties adjacent single-char
+/// lines (e.g. PUA bracket glyphs not in the Adobe Symbol fold map)
+/// and the surrounding `\n\n` separators accumulate.
+pub static BLANK_LINE_RUN_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
+// Unified Rule B regex per CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25
+// Points 1+4+5. Single regex covering ALL PostScript-glyph and
+// PDF-font residue patterns. Every alternative is anchored on
+// structural punctuation (`<`, `/`, `+`, `=`, digits) — NO bare-
+// word matches.
+//
+//   GLYPH<…>, GLYPH(…), glyph[…]          — structured forms, up to 200 chars
+//   glyph<c=…,font=/…>                    — verbose forward form
+//   <c=…,font=/…>glyph                    — reversed-order form
+//   /[A-Z]{6}+FontName                    — PDF font subset
+//   /uni<hex 4-6>                         — Unicode codepoint reference
+//   /g<digits> or /gid<digits>            — glyph index
+//
+// Rule A's 50 PostScript glyph-name LITERALS (/space, /period,
+// /hyphenminus, …, CID+) are kept as a separate Aho-Corasick
+// engine (RULE_A_LITERALS_AC below) for speed but contribute to
+// the SAME count + coverage line-drop gate (Point 5).
+pub static PDF_GLYPH_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"(?i)GLYPH<[^>]{1,200}>|GLYPH\([^)]{1,200}\)|glyph\[[^\]]{1,200}\]|glyph<c=\d+,font=/[^>]+>|<c=\d+,font=/[^>]+>glyph|/[A-Z]{6}\+[A-Z][A-Za-z0-9-]+|/uni[0-9A-Fa-f]{4,6}|/g(?:id)?\d+"
+).unwrap());
 
-    pub static ref BARE_PDF_GLYPH_STEM_REGEX: Regex =
-        Regex::new(r"(?i)\b(?:GLYPH)+\b").unwrap();
+pub static BARE_PDF_GLYPH_STEM_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(?:GLYPH)+\b").unwrap());
 
-    // Regex for HTML/XML tags (for cleaning, non-comment tags) - Replaced by strip_tags_custom
-    // pub static ref ANY_TAG_CLEANING_REGEX: Regex = Regex::new(r"<[^>]*>").unwrap();
+// Regex for HTML/XML tags (for cleaning, non-comment tags) - Replaced by strip_tags_custom
+// pub static ref ANY_TAG_CLEANING_REGEX: Regex = Regex::new(r"<[^>]*>").unwrap();
 
-    // Central HashMap for character scripts
-    pub static ref SCRIPT_SETS: HashMap<String, HashSet<char>> = {
-        let mut map = HashMap::new();
+// Central HashMap for character scripts
+pub static SCRIPT_SETS: LazyLock<HashMap<String, HashSet<char>>> = LazyLock::new(|| {
+    let mut map = HashMap::new();
 
-        map.insert("latin".to_string(), "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".chars().collect());
+    map.insert("latin".to_string(), "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".chars().collect());
 
-        let mut greek_chars = HashSet::new();
-        for code in 0x0370..0x03E2 { if let Some(c) = std::char::from_u32(code) { greek_chars.insert(c); }}
-        for code in 0x03F0..0x0400 { if let Some(c) = std::char::from_u32(code) { greek_chars.insert(c); }}
-        // Polytonic Greek range U+1F00..U+2000 (Greek Extended block).
-        // Explicit so a future edit cannot silently move it to `unusual`.
-        for code in 0x1F00..0x2000 { if let Some(c) = std::char::from_u32(code) { greek_chars.insert(c); }}
-        let accented_greek = "άέήίόύώΆΈΉΊΌΎΏϊϋΪΫΐΰ";
-        for c in accented_greek.chars() { greek_chars.insert(c); }
-        greek_chars.insert('\u{00B5}'); // Add MICRO SIGN
-        map.insert("greek".to_string(), greek_chars);
+    let mut greek_chars = HashSet::new();
+    for code in 0x0370..0x03E2 { if let Some(c) = std::char::from_u32(code) { greek_chars.insert(c); }}
+    for code in 0x03F0..0x0400 { if let Some(c) = std::char::from_u32(code) { greek_chars.insert(c); }}
+    // Polytonic Greek range U+1F00..U+2000 (Greek Extended block).
+    // Explicit so a future edit cannot silently move it to `unusual`.
+    for code in 0x1F00..0x2000 { if let Some(c) = std::char::from_u32(code) { greek_chars.insert(c); }}
+    let accented_greek = "άέήίόύώΆΈΉΊΌΎΏϊϋΪΫΐΰ";
+    for c in accented_greek.chars() { greek_chars.insert(c); }
+    greek_chars.insert('\u{00B5}'); // Add MICRO SIGN
+    map.insert("greek".to_string(), greek_chars);
 
-        let french_specific = "àâçéèêëîïôùûüÿæœÀÂÇÉÈÊËÎÏÔÙÛÜŸÆŒ«»";
-        map.insert("french".to_string(), french_specific.chars().collect());
+    let french_specific = "àâçéèêëîïôùûüÿæœÀÂÇÉÈÊËÎÏÔÙÛÜŸÆŒ«»";
+    map.insert("french".to_string(), french_specific.chars().collect());
 
-        let spanish_specific = "áéíóúüñÁÉÍÓÚÜÑ¿¡";
-        map.insert("spanish".to_string(), spanish_specific.chars().collect());
+    let spanish_specific = "áéíóúüñÁÉÍÓÚÜÑ¿¡";
+    map.insert("spanish".to_string(), spanish_specific.chars().collect());
 
-        let punctuation = ".,;:!?()[]{}\'\"&@#$%^*_-+=|\\<>/~`";
-        map.insert("punctuation".to_string(), punctuation.chars().collect());
+    let punctuation = ".,;:!?()[]{}\'\"&@#$%^*_-+=|\\<>/~`";
+    map.insert("punctuation".to_string(), punctuation.chars().collect());
 
-        let digits = "0123456789";
-        map.insert("numbers".to_string(), digits.chars().collect());
+    let digits = "0123456789";
+    map.insert("numbers".to_string(), digits.chars().collect());
 
-        let common_symbols = "€£¥©®™°§";
-        let mut common_symbols_set: HashSet<char> = common_symbols.chars().collect();
-        // Wave-2 (Case 12): widen common_symbols with math / arrows /
-        // geometric-shapes / super-subscripts / letterlike. CS + math +
-        // bilingual theses carry these as legitimate content; stripping
-        // them to strip mojibake is a false economy.
-        // - U+2070..U+209F super/subscripts
-        // - U+2100..U+214F letterlike (ℓ ™ ℵ etc.)
-        // - U+2190..U+21FF arrows
-        // - U+2200..U+22FF math operators
-        // - U+2500..U+257F box drawing (table-border chars)
-        // - U+25A0..U+25FF geometric shapes (bullets, markers)
-        for range in &[
-            (0x2070u32, 0x209Fu32),
-            (0x2100u32, 0x214Fu32),
-            (0x2190u32, 0x21FFu32),
-            (0x2200u32, 0x22FFu32),
-            (0x2500u32, 0x257Fu32),
-            (0x25A0u32, 0x25FFu32),
-        ] {
-            for cp in range.0..=range.1 {
-                if let Some(c) = std::char::from_u32(cp) {
-                    common_symbols_set.insert(c);
-                }
+    let common_symbols = "€£¥©®™°§";
+    let mut common_symbols_set: HashSet<char> = common_symbols.chars().collect();
+    // Wave-2 (Case 12): widen common_symbols with math / arrows /
+    // geometric-shapes / super-subscripts / letterlike. CS + math +
+    // bilingual theses carry these as legitimate content; stripping
+    // them to strip mojibake is a false economy.
+    // - U+2070..U+209F super/subscripts
+    // - U+2100..U+214F letterlike (ℓ ™ ℵ etc.)
+    // - U+2190..U+21FF arrows
+    // - U+2200..U+22FF math operators
+    // - U+2500..U+257F box drawing (table-border chars)
+    // - U+25A0..U+25FF geometric shapes (bullets, markers)
+    for range in &[
+        (0x2070u32, 0x209Fu32),
+        (0x2100u32, 0x214Fu32),
+        (0x2190u32, 0x21FFu32),
+        (0x2200u32, 0x22FFu32),
+        (0x2500u32, 0x257Fu32),
+        (0x25A0u32, 0x25FFu32),
+    ] {
+        for cp in range.0..=range.1 {
+            if let Some(c) = std::char::from_u32(cp) {
+                common_symbols_set.insert(c);
             }
         }
-        map.insert("common_symbols".to_string(), common_symbols_set);
+    }
+    map.insert("common_symbols".to_string(), common_symbols_set);
 
-        let mut unusual_chars = HashSet::new();
-        // Per CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 3:
-        //
-        //   - Latin-1 Supplement (U+0080..U+00FF): KEEP entirely.
-        //     French/Spanish/German/Italian/Nordic accented letters
-        //     plus the few formatting symbols (¬ ¦ ¨ ª ¶) — all
-        //     European content, none belong in `unusual`.
-        //   - Latin Extended-A (U+0100..U+017F): KEEP entirely.
-        //     Polish/Czech/Slovak/Hungarian/Croatian/Romanian-most/
-        //     Turkish/Maltese/Welsh — all European-language content.
-        //   - Latin Extended-B (U+0180..U+024F): STRIP, EXCEPT the
-        //     Romanian comma-below allowlist {Ș, ș, Ț, ț}. Mostly
-        //     Vietnamese / African / IPA-like / Greek-CID-mojibake.
-        //   - IPA Extensions: STRIP.
-        //   - Latin Extended Additional: STRIP (Vietnamese).
-        //   - Coptic: STRIP (not modern Greek corpus content).
-        //   - Cyrillic + Cyrillic Supp (U+0400..U+052F): KEEP entirely.
-        //     Russian/Bulgarian/Serbian/Ukrainian/Macedonian — all
-        //     European-language content the corpus may carry.
-        //
-        // Dense-residue mojibake (where these European-allowed chars
-        // appear in clustered Greek-CID extraction-failure runs) is
-        // caught at LINE granularity by Rule B + R1∪R2, not at
-        // per-char granularity here.
-        const ROMANIAN_ALLOWLIST: [u32; 4] = [0x0218, 0x0219, 0x021A, 0x021B];
-        for code in 0x0180..0x0250 {
-            if ROMANIAN_ALLOWLIST.contains(&code) {
-                continue;
-            }
-            unusual_chars.extend(std::char::from_u32(code));
+    let mut unusual_chars = HashSet::new();
+    // Per CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25 Point 3:
+    //
+    //   - Latin-1 Supplement (U+0080..U+00FF): KEEP entirely.
+    //     French/Spanish/German/Italian/Nordic accented letters
+    //     plus the few formatting symbols (¬ ¦ ¨ ª ¶) — all
+    //     European content, none belong in `unusual`.
+    //   - Latin Extended-A (U+0100..U+017F): KEEP entirely.
+    //     Polish/Czech/Slovak/Hungarian/Croatian/Romanian-most/
+    //     Turkish/Maltese/Welsh — all European-language content.
+    //   - Latin Extended-B (U+0180..U+024F): STRIP, EXCEPT the
+    //     Romanian comma-below allowlist {Ș, ș, Ț, ț}. Mostly
+    //     Vietnamese / African / IPA-like / Greek-CID-mojibake.
+    //   - IPA Extensions: STRIP.
+    //   - Latin Extended Additional: STRIP (Vietnamese).
+    //   - Coptic: STRIP (not modern Greek corpus content).
+    //   - Cyrillic + Cyrillic Supp (U+0400..U+052F): KEEP entirely.
+    //     Russian/Bulgarian/Serbian/Ukrainian/Macedonian — all
+    //     European-language content the corpus may carry.
+    //
+    // Dense-residue mojibake (where these European-allowed chars
+    // appear in clustered Greek-CID extraction-failure runs) is
+    // caught at LINE granularity by Rule B + R1∪R2, not at
+    // per-char granularity here.
+    const ROMANIAN_ALLOWLIST: [u32; 4] = [0x0218, 0x0219, 0x021A, 0x021B];
+    for code in 0x0180..0x0250 {
+        if ROMANIAN_ALLOWLIST.contains(&code) {
+            continue;
         }
-        for code in 0x0250..0x02B0 { unusual_chars.extend(std::char::from_u32(code)); } // IPA Extensions
-        for code in 0x1E00..0x1F00 { unusual_chars.extend(std::char::from_u32(code)); } // Latin Extended Additional
-        for code in 0x03E2..0x03F0 { unusual_chars.extend(std::char::from_u32(code)); } // Coptic from Greek block
-        for code in 0x2C80..0x2D00 { unusual_chars.extend(std::char::from_u32(code)); } // Dedicated Coptic block
-        // Armenian, Hebrew, Arabic, Georgian, Math Alphanumeric Greek etc.
-        // are INTENTIONALLY NOT stripped here. Policy (2026-04-21): we only
-        // add a range to `unusual` (strip) when the codepoints carry no
-        // semantic meaning — i.e., noise. For meaningful scripts not in
-        // Apertus's vocab we should FOLD (e.g., Math Alphanumeric Greek →
-        // regular Greek, handled in `normalize::fold_codepoint`), not
-        // strip. For Armenian/Hebrew/Arabic/Georgian, Apertus's multilingual
-        // training covers them; they should be preserved as-is.
-        map.insert("unusual".to_string(), unusual_chars);
+        unusual_chars.extend(std::char::from_u32(code));
+    }
+    for code in 0x0250..0x02B0 { unusual_chars.extend(std::char::from_u32(code)); } // IPA Extensions
+    for code in 0x1E00..0x1F00 { unusual_chars.extend(std::char::from_u32(code)); } // Latin Extended Additional
+    for code in 0x03E2..0x03F0 { unusual_chars.extend(std::char::from_u32(code)); } // Coptic from Greek block
+    for code in 0x2C80..0x2D00 { unusual_chars.extend(std::char::from_u32(code)); } // Dedicated Coptic block
+    // Armenian, Hebrew, Arabic, Georgian, Math Alphanumeric Greek etc.
+    // are INTENTIONALLY NOT stripped here. Policy (2026-04-21): we only
+    // add a range to `unusual` (strip) when the codepoints carry no
+    // semantic meaning — i.e., noise. For meaningful scripts not in
+    // Apertus's vocab we should FOLD (e.g., Math Alphanumeric Greek →
+    // regular Greek, handled in `normalize::fold_codepoint`), not
+    // strip. For Armenian/Hebrew/Arabic/Georgian, Apertus's multilingual
+    // training covers them; they should be preserved as-is.
+    map.insert("unusual".to_string(), unusual_chars);
 
-        map
-    };
-}
+    map
+});
 
 // `BAD_LINE_AC` was deleted in CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25
 // Point 4. Its structural triggers (`GLYPH<`, `glyph<c=`, `font=/`,
@@ -295,7 +292,7 @@ lazy_static! {
 // gate — a line of 20× `/space` markers reaches the count + coverage
 // threshold and drops as a CMap dump, while a line with 1-2 stray
 // markers continues to pass through with the markers stripped.
-static RULE_A_LITERALS_AC: Lazy<AhoCorasick> = Lazy::new(|| {
+static RULE_A_LITERALS_AC: LazyLock<AhoCorasick> = LazyLock::new(|| {
     // LeftmostLongest prevents `/hyphen` from eating the `/hyphen` prefix
     // of `/hyphenminus` (leaving "minus" residue). Same concern for
     // `/plus` vs `/plusminus`, `/dagger` vs `/daggerdbl`, `/registered`
@@ -1527,7 +1524,7 @@ pub fn clean_text_with_stats(
     latex_char_threshold: usize,
     latex_line_threshold: usize,
     phase_a_mode: &str,
-) -> PyResult<(String, PyObject)> {
+) -> PyResult<(String, Py<PyAny>)> {
     use pyo3::types::PyDict;
     // Wave-2 (2026-04-23): LaTeX repetition cropping runs BEFORE the
     // cleaner's main passes, so OCR-hallucinated repetitions inside
@@ -1721,13 +1718,14 @@ pub fn perform_text_analysis(
 /// However, its internal call now uses the slimmed-down analysis.
 /// If this function is ONLY used by the CSV generation, it could be removed or simplified further.
 #[pyfunction]
+#[pyo3(signature = (text, scripts_to_keep, calculate_specific_counts, min_chars_for_comment=None))]
 pub fn analyze_text(
     py: Python,
     text: &str,
     scripts_to_keep: Vec<String>,
     calculate_specific_counts: bool,
     min_chars_for_comment: Option<usize>,
-) -> PyResult<HashMap<String, PyObject>> {
+) -> PyResult<HashMap<String, Py<PyAny>>> {
     let mut allowed_chars = HashSet::new();
     for key in &scripts_to_keep {
         if let Some(script_set) = SCRIPT_SETS.get(key) {
@@ -1756,25 +1754,25 @@ pub fn analyze_text(
     let mut results = HashMap::new();
     results.insert(
         "original_total_chars".to_string(),
-        analysis_result.original_total_chars.to_object(py),
+        analysis_result.original_total_chars.into_py_any(py)?,
     );
     results.insert(
         "cleaned_total_chars".to_string(),
-        analysis_result.cleaned_total_chars.to_object(py),
+        analysis_result.cleaned_total_chars.into_py_any(py)?,
     );
     results.insert(
         "original_non_whitespace_chars".to_string(),
         analysis_result
             .original_non_whitespace_chars
             .unwrap_or(0)
-            .to_object(py),
+            .into_py_any(py)?,
     );
     results.insert(
         "cleaned_non_whitespace_chars".to_string(),
         analysis_result
             .cleaned_non_whitespace_chars_after_clean
             .unwrap_or(0)
-            .to_object(py),
+            .into_py_any(py)?,
     );
 
     // The definition of removed_chars_count for the old badness_score was (original_total_chars - cleaned_total_chars).
@@ -1784,7 +1782,7 @@ pub fn analyze_text(
         .saturating_sub(analysis_result.cleaned_total_chars);
     results.insert(
         "removed_chars_count_total".to_string(),
-        removed_chars_count_total.to_object(py),
+        removed_chars_count_total.into_py_any(py)?,
     );
 
     // Add the two badness scores
@@ -1793,14 +1791,14 @@ pub fn analyze_text(
         analysis_result
             .badness_score_all_chars
             .unwrap_or(0.0)
-            .to_object(py),
+            .into_py_any(py)?,
     );
     results.insert(
         "badness_score_non_ws".to_string(),
         analysis_result
             .badness_score_non_ws
             .unwrap_or(0.0)
-            .to_object(py),
+            .into_py_any(py)?,
     );
 
     // The old "badness_score" key used original_total_chars - cleaned_total_chars / original_non_whitespace_chars.
@@ -1810,7 +1808,7 @@ pub fn analyze_text(
 
     if calculate_specific_counts {
         if let Some(greek_count) = analysis_result.greek_char_count_after_clean {
-            results.insert("greek_chars_cleaned".to_string(), greek_count.to_object(py));
+            results.insert("greek_chars_cleaned".to_string(), greek_count.into_py_any(py)?);
             if analysis_result
                 .cleaned_non_whitespace_chars_after_clean
                 .unwrap_or(0)
@@ -1823,14 +1821,14 @@ pub fn analyze_text(
                     * 100.0;
                 results.insert(
                     "percentage_greek_cleaned".to_string(),
-                    percentage_greek.to_object(py),
+                    percentage_greek.into_py_any(py)?,
                 );
             } else {
-                results.insert("percentage_greek_cleaned".to_string(), 0.0.to_object(py));
+                results.insert("percentage_greek_cleaned".to_string(), 0.0.into_py_any(py)?);
             }
         }
         if let Some(latin_count) = analysis_result.latin_char_count_after_clean {
-            results.insert("latin_chars_cleaned".to_string(), latin_count.to_object(py));
+            results.insert("latin_chars_cleaned".to_string(), latin_count.into_py_any(py)?);
             if analysis_result
                 .cleaned_non_whitespace_chars_after_clean
                 .unwrap_or(0)
@@ -1843,17 +1841,17 @@ pub fn analyze_text(
                     * 100.0;
                 results.insert(
                     "percentage_latin_cleaned".to_string(),
-                    percentage_latin.to_object(py),
+                    percentage_latin.into_py_any(py)?,
                 );
             } else {
-                results.insert("percentage_latin_cleaned".to_string(), 0.0.to_object(py));
+                results.insert("percentage_latin_cleaned".to_string(), 0.0.into_py_any(py)?);
             }
         }
     }
 
     results.insert(
         "cleaned_text".to_string(),
-        analysis_result.cleaned_text_content.to_object(py),
+        analysis_result.cleaned_text_content.into_py_any(py)?,
     );
 
     Ok(results)

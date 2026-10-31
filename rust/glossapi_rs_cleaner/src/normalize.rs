@@ -13,44 +13,40 @@
 //!
 //! All helpers are pure functions. Wire-in happens inside `core_clean_text`.
 
-use lazy_static::lazy_static;
+use std::sync::LazyLock;
 use regex::Regex;
 use std::collections::HashMap;
 
-lazy_static! {
-    /// Two or more U+2026 ellipsis chars.
-    pub static ref ELLIPSIS_RUN_REGEX: Regex = Regex::new(r"…{2,}").unwrap();
+/// Two or more U+2026 ellipsis chars.
+pub static ELLIPSIS_RUN_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"…{2,}").unwrap());
 
-    /// Two or more ASCII spaces or tabs — cheap presence check before we
-    /// run the tiered bucket rewriter.
-    pub static ref WHITESPACE_RUN_REGEX: Regex = Regex::new(r"[ \t]{2,}").unwrap();
+/// Two or more ASCII spaces or tabs — cheap presence check before we
+/// run the tiered bucket rewriter.
+pub static WHITESPACE_RUN_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t]{2,}").unwrap());
 
-    /// Two or more ASCII dots — cheap presence check for dot-run tiered
-    /// bucket rewriting.
-    pub static ref DOT_RUN_2PLUS_REGEX: Regex = Regex::new(r"\.{2,}").unwrap();
+/// Two or more ASCII dots — cheap presence check for dot-run tiered
+/// bucket rewriting.
+pub static DOT_RUN_2PLUS_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\.{2,}").unwrap());
 
-    /// URL-ish raw token detector used to avoid normalizing punctuation
-    /// runs inside links / host paths.
-    pub static ref URL_LIKE_TOKEN_REGEX: Regex =
-        Regex::new(r"(?i)^(?:[a-z][a-z0-9+.-]*://\S+|www\.\S+|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/\S*)$").unwrap();
+/// URL-ish raw token detector used to avoid normalizing punctuation
+/// runs inside links / host paths.
+pub static URL_LIKE_TOKEN_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^(?:[a-z][a-z0-9+.-]*://\S+|www\.\S+|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/\S*)$").unwrap());
 
-    /// Inline HTML comments are intentional placeholders in this corpus
-    /// (`<!-- image -->`, `<!-- text-missing -->`, etc.). Punctuation
-    /// bucketing must not rewrite their `--` delimiters.
-    pub static ref HTML_COMMENT_REGEX: Regex = Regex::new(r"<!--.*?-->").unwrap();
+/// Inline HTML comments are intentional placeholders in this corpus
+/// (`<!-- image -->`, `<!-- text-missing -->`, etc.). Punctuation
+/// bucketing must not rewrite their `--` delimiters.
+pub static HTML_COMMENT_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<!--.*?-->").unwrap());
 
-    /// `&gt`, `&lt`, `&amp` NOT followed by `;` or alphanumeric.
-    ///
-    /// Rust's `regex` crate has no look-ahead, so we capture the following
-    /// context char (end-of-line, or a non-alphanumeric / non-`;` byte) and
-    /// preserve it in the replacement closure.
-    pub static ref MALFORMED_ENTITY_REGEX: Regex =
-        Regex::new(r"&(gt|lt|amp)($|[^a-zA-Z0-9;])").unwrap();
+/// `&gt`, `&lt`, `&amp` NOT followed by `;` or alphanumeric.
+///
+/// Rust's `regex` crate has no look-ahead, so we capture the following
+/// context char (end-of-line, or a non-alphanumeric / non-`;` byte) and
+/// preserve it in the replacement closure.
+pub static MALFORMED_ENTITY_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"&(gt|lt|amp)($|[^a-zA-Z0-9;])").unwrap());
 
-    // (SEPARATOR_LINE_REGEX moved to md_module.rs alongside
-    // normalize_separator_line — it's MD-syntax-aware and lives with
-    // the Phase A transforms.)
-}
+// (SEPARATOR_LINE_REGEX moved to md_module.rs alongside
+// normalize_separator_line — it's MD-syntax-aware and lives with
+// the Phase A transforms.)
 
 // ---------------------------------------------------------------------------
 // Character fold
@@ -1383,157 +1379,153 @@ mod tests {
 // filter loop, so recovered chars survive per-char filtering.
 // ---------------------------------------------------------------------------
 
-lazy_static! {
-    /// HTML named entities → literal chars (Case 4). Conservative: only
-    /// the entities we've actually seen in openarchives / web-extracted
-    /// Greek corpus docs. Adding more is cheap but should be driven by
-    /// corpus evidence, not speculation.
-    static ref HTML_NAMED_ENTITY_MAP: HashMap<&'static str, &'static str> = {
-        let mut m = HashMap::new();
-        m.insert("amp", "&");
-        m.insert("lt", "<");
-        m.insert("gt", ">");
-        m.insert("quot", "\"");
-        m.insert("apos", "'");
-        m.insert("nbsp", "\u{00A0}");
-        m.insert("copy", "©");
-        m.insert("reg", "®");
-        m.insert("trade", "™");
-        m.insert("euro", "€");
-        m.insert("pound", "£");
-        m.insert("yen", "¥");
-        m.insert("sect", "§");
-        m.insert("deg", "°");
-        m.insert("laquo", "«");
-        m.insert("raquo", "»");
-        m.insert("hellip", "…");
-        m.insert("mdash", "—");
-        m.insert("ndash", "–");
-        m.insert("lsquo", "\u{2018}");
-        m.insert("rsquo", "\u{2019}");
-        m.insert("ldquo", "\u{201C}");
-        m.insert("rdquo", "\u{201D}");
-        m.insert("middot", "·");
-        m.insert("bull", "•");
-        m
-    };
+/// HTML named entities → literal chars (Case 4). Conservative: only
+/// the entities we've actually seen in openarchives / web-extracted
+/// Greek corpus docs. Adding more is cheap but should be driven by
+/// corpus evidence, not speculation.
+static HTML_NAMED_ENTITY_MAP: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
+    let mut m = HashMap::new();
+    m.insert("amp", "&");
+    m.insert("lt", "<");
+    m.insert("gt", ">");
+    m.insert("quot", "\"");
+    m.insert("apos", "'");
+    m.insert("nbsp", "\u{00A0}");
+    m.insert("copy", "©");
+    m.insert("reg", "®");
+    m.insert("trade", "™");
+    m.insert("euro", "€");
+    m.insert("pound", "£");
+    m.insert("yen", "¥");
+    m.insert("sect", "§");
+    m.insert("deg", "°");
+    m.insert("laquo", "«");
+    m.insert("raquo", "»");
+    m.insert("hellip", "…");
+    m.insert("mdash", "—");
+    m.insert("ndash", "–");
+    m.insert("lsquo", "\u{2018}");
+    m.insert("rsquo", "\u{2019}");
+    m.insert("ldquo", "\u{201C}");
+    m.insert("rdquo", "\u{201D}");
+    m.insert("middot", "·");
+    m.insert("bull", "•");
+    m
+});
 
-    /// Named-entity pattern: `&name;` where name is a short alphanumeric
-    /// token. Doesn't swallow text if the entity name isn't recognised —
-    /// the replacer checks the map and falls back to the original.
-    static ref HTML_NAMED_ENTITY_REGEX: Regex =
-        Regex::new(r"&([A-Za-z][A-Za-z0-9]{1,10});").unwrap();
+/// Named-entity pattern: `&name;` where name is a short alphanumeric
+/// token. Doesn't swallow text if the entity name isn't recognised —
+/// the replacer checks the map and falls back to the original.
+static HTML_NAMED_ENTITY_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"&([A-Za-z][A-Za-z0-9]{1,10});").unwrap());
 
-    /// Numeric HTML entity: `&#1234;` (decimal) or `&#x1F600;` (hex).
-    static ref HTML_NUMERIC_ENTITY_REGEX: Regex =
-        Regex::new(r"&#(x[0-9A-Fa-f]+|[0-9]+);").unwrap();
+/// Numeric HTML entity: `&#1234;` (decimal) or `&#x1F600;` (hex).
+static HTML_NUMERIC_ENTITY_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"&#(x[0-9A-Fa-f]+|[0-9]+);").unwrap());
 
-    // GLYPH_MARKER_REGEX deleted in CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25
-    // Point 4: superseded by `cleaning_module::PDF_GLYPH_NAME_REGEX`,
-    // which covers the same patterns (GLYPH<…>, /uniXXXX, /gN) plus
-    // `glyph<c=…,font=/…>`, reversed `<c=…,font=/…>glyph`, and PDF
-    // font subsets, AND drives the per-line count+coverage gate in
-    // `apply_glyph_span_strip_and_rule_b`.
+// GLYPH_MARKER_REGEX deleted in CLEANER_PIPELINE_CLEANUP_PLAN_2026-04-25
+// Point 4: superseded by `cleaning_module::PDF_GLYPH_NAME_REGEX`,
+// which covers the same patterns (GLYPH<…>, /uniXXXX, /gN) plus
+// `glyph<c=…,font=/…>`, reversed `<c=…,font=/…>glyph`, and PDF
+// font subsets, AND drives the per-line count+coverage gate in
+// `apply_glyph_span_strip_and_rule_b`.
 
-    /// Inline base64-encoded image data URIs that PDF extractors (e.g.
-    /// Docling) produce when they encounter embedded raster images. The
-    /// payload — `[A-Za-z0-9+/=]+` — can be hundreds of KB on a single
-    /// MD line, polluting the corpus with binary garbage that contributes
-    /// nothing to tokenizer training. We strip the entire markdown image
-    /// node and replace with the upstream-standard `<!-- image -->`
-    /// placeholder so position is preserved without the payload.
-    ///
-    /// Pattern shape: `![alt-text](data:image/jpg;base64,/9j/4AAQ…)`.
-    /// The alt-text is non-greedy, the MIME type is permissive
-    /// (`image/jpg`, `image/jpeg`, `image/png`, `image/gif` all observed
-    /// in the v7 corpus), and the base64 payload accepts the full RFC-4648
-    /// alphabet plus `=` padding plus whitespace breaks (some extractors
-    /// hard-wrap the base64 every 76 cols).
-    ///
-    /// `(?s)` (dotall) so the payload can span multiple lines if the
-    /// extractor wrapped it. Lower bound 200 chars for the base64
-    /// payload — a legit favicon-shaped data URI is typically much
-    /// smaller, while Docling's Image-N inlines are all multi-KB.
-    /// No upper bound (the bounded quantifier blew the regex DFA size
-    /// limit at 16 MB; unbounded keeps the compiled NFA small).
-    static ref BASE64_IMAGE_REGEX: Regex = Regex::new(
-        r"(?s)!\[[^\]]{0,500}\]\(data:image/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]{200,}\)"
-    ).unwrap();
+/// Inline base64-encoded image data URIs that PDF extractors (e.g.
+/// Docling) produce when they encounter embedded raster images. The
+/// payload — `[A-Za-z0-9+/=]+` — can be hundreds of KB on a single
+/// MD line, polluting the corpus with binary garbage that contributes
+/// nothing to tokenizer training. We strip the entire markdown image
+/// node and replace with the upstream-standard `<!-- image -->`
+/// placeholder so position is preserved without the payload.
+///
+/// Pattern shape: `![alt-text](data:image/jpg;base64,/9j/4AAQ…)`.
+/// The alt-text is non-greedy, the MIME type is permissive
+/// (`image/jpg`, `image/jpeg`, `image/png`, `image/gif` all observed
+/// in the v7 corpus), and the base64 payload accepts the full RFC-4648
+/// alphabet plus `=` padding plus whitespace breaks (some extractors
+/// hard-wrap the base64 every 76 cols).
+///
+/// `(?s)` (dotall) so the payload can span multiple lines if the
+/// extractor wrapped it. Lower bound 200 chars for the base64
+/// payload — a legit favicon-shaped data URI is typically much
+/// smaller, while Docling's Image-N inlines are all multi-KB.
+/// No upper bound (the bounded quantifier blew the regex DFA size
+/// limit at 16 MB; unbounded keeps the compiled NFA small).
+static BASE64_IMAGE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+    r"(?s)!\[[^\]]{0,500}\]\(data:image/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]{200,}\)"
+).unwrap());
 
-    /// Adobe Symbol font PUA → real Unicode (Case 10a). 100% of the
-    /// top-30 PUA chars observed on openarchives 01500_pct0033_… were
-    /// recovered to real Greek / math chars via this mapping.
-    /// Reference: Adobe Symbol Encoding Vector.
-    static ref ADOBE_SYMBOL_PUA_MAP: HashMap<char, &'static str> = {
-        let mut m = HashMap::new();
-        // ASCII-mirrored positions (F020..F07E): shift back to ASCII
-        // code for punctuation + digits.
-        m.insert('\u{F020}', " "); m.insert('\u{F021}', "!");
-        m.insert('\u{F023}', "#"); m.insert('\u{F025}', "%");
-        m.insert('\u{F026}', "&"); m.insert('\u{F028}', "(");
-        m.insert('\u{F029}', ")"); m.insert('\u{F02A}', "*");
-        m.insert('\u{F02B}', "+"); m.insert('\u{F02C}', ",");
-        m.insert('\u{F02D}', "-"); m.insert('\u{F02E}', ".");
-        m.insert('\u{F02F}', "/"); m.insert('\u{F030}', "0");
-        m.insert('\u{F031}', "1"); m.insert('\u{F032}', "2");
-        m.insert('\u{F033}', "3"); m.insert('\u{F034}', "4");
-        m.insert('\u{F035}', "5"); m.insert('\u{F036}', "6");
-        m.insert('\u{F037}', "7"); m.insert('\u{F038}', "8");
-        m.insert('\u{F039}', "9"); m.insert('\u{F03A}', ":");
-        m.insert('\u{F03B}', ";"); m.insert('\u{F03C}', "<");
-        m.insert('\u{F03D}', "="); m.insert('\u{F03E}', ">");
-        m.insert('\u{F03F}', "?");
-        m.insert('\u{F05B}', "["); m.insert('\u{F05D}', "]");
-        // Greek letters (F041..F057 upper, F061..F077 lower — Symbol
-        // ordering). These are the positions where Adobe Symbol
-        // emits Greek letters when a PDF embeds the font.
-        m.insert('\u{F041}', "Α"); m.insert('\u{F042}', "Β");
-        m.insert('\u{F043}', "Χ"); m.insert('\u{F044}', "Δ");
-        m.insert('\u{F045}', "Ε"); m.insert('\u{F046}', "Φ");
-        m.insert('\u{F047}', "Γ"); m.insert('\u{F048}', "Η");
-        m.insert('\u{F049}', "Ι"); m.insert('\u{F04A}', "ϑ");
-        m.insert('\u{F04B}', "Κ"); m.insert('\u{F04C}', "Λ");
-        m.insert('\u{F04D}', "Μ"); m.insert('\u{F04E}', "Ν");
-        m.insert('\u{F04F}', "Ο"); m.insert('\u{F050}', "Π");
-        m.insert('\u{F051}', "Θ"); m.insert('\u{F052}', "Ρ");
-        m.insert('\u{F053}', "Σ"); m.insert('\u{F054}', "Τ");
-        m.insert('\u{F055}', "Υ"); m.insert('\u{F057}', "Ω");
-        m.insert('\u{F058}', "Ξ"); m.insert('\u{F059}', "Ψ");
-        m.insert('\u{F05A}', "Ζ");
-        m.insert('\u{F061}', "α"); m.insert('\u{F062}', "β");
-        m.insert('\u{F063}', "χ"); m.insert('\u{F064}', "δ");
-        m.insert('\u{F065}', "ε"); m.insert('\u{F066}', "φ");
-        m.insert('\u{F067}', "γ"); m.insert('\u{F068}', "η");
-        m.insert('\u{F069}', "ι"); m.insert('\u{F06A}', "ϕ");
-        m.insert('\u{F06B}', "κ"); m.insert('\u{F06C}', "λ");
-        m.insert('\u{F06D}', "μ"); m.insert('\u{F06E}', "ν");
-        m.insert('\u{F06F}', "ο"); m.insert('\u{F070}', "π");
-        m.insert('\u{F071}', "θ"); m.insert('\u{F072}', "ρ");
-        m.insert('\u{F073}', "σ"); m.insert('\u{F074}', "τ");
-        m.insert('\u{F075}', "υ"); m.insert('\u{F077}', "ω");
-        m.insert('\u{F078}', "ξ"); m.insert('\u{F079}', "ψ");
-        m.insert('\u{F07A}', "ζ");
-        // Math relations / operators commonly used in Greek math docs.
-        m.insert('\u{F0A3}', "≤"); m.insert('\u{F0B3}', "≥");
-        m.insert('\u{F0B9}', "≠"); m.insert('\u{F0AE}', "→");
-        m.insert('\u{F0AC}', "←"); m.insert('\u{F0AD}', "↑");
-        m.insert('\u{F0AF}', "↓"); m.insert('\u{F0DE}', "⇒");
-        m.insert('\u{F0DC}', "⇐"); m.insert('\u{F0DB}', "⇔");
-        m.insert('\u{F0CE}', "∈"); m.insert('\u{F0CF}', "∉");
-        m.insert('\u{F0CD}', "⊄"); m.insert('\u{F0C7}', "∩");
-        m.insert('\u{F0C8}', "∪"); m.insert('\u{F0C5}', "⊗");
-        m.insert('\u{F0C9}', "⊃"); m.insert('\u{F0CB}', "⊂");
-        m.insert('\u{F0CC}', "⊆"); m.insert('\u{F0D1}', "∠");
-        m.insert('\u{F0D2}', "∇"); m.insert('\u{F0D4}', "∏");
-        m.insert('\u{F0D5}', "√"); m.insert('\u{F0D6}', "·");
-        m.insert('\u{F0D7}', "¬"); m.insert('\u{F0D8}', "∧");
-        m.insert('\u{F0D9}', "∨"); m.insert('\u{F0DA}', "⇔");
-        m.insert('\u{F0E5}', "∞"); m.insert('\u{F0E6}', "∫");
-        m.insert('\u{F0E8}', "∑"); m.insert('\u{F0B4}', "×");
-        m.insert('\u{F0B8}', "÷"); m.insert('\u{F0B1}', "±");
-        m
-    };
-}
+/// Adobe Symbol font PUA → real Unicode (Case 10a). 100% of the
+/// top-30 PUA chars observed on openarchives 01500_pct0033_… were
+/// recovered to real Greek / math chars via this mapping.
+/// Reference: Adobe Symbol Encoding Vector.
+static ADOBE_SYMBOL_PUA_MAP: LazyLock<HashMap<char, &'static str>> = LazyLock::new(|| {
+    let mut m = HashMap::new();
+    // ASCII-mirrored positions (F020..F07E): shift back to ASCII
+    // code for punctuation + digits.
+    m.insert('\u{F020}', " "); m.insert('\u{F021}', "!");
+    m.insert('\u{F023}', "#"); m.insert('\u{F025}', "%");
+    m.insert('\u{F026}', "&"); m.insert('\u{F028}', "(");
+    m.insert('\u{F029}', ")"); m.insert('\u{F02A}', "*");
+    m.insert('\u{F02B}', "+"); m.insert('\u{F02C}', ",");
+    m.insert('\u{F02D}', "-"); m.insert('\u{F02E}', ".");
+    m.insert('\u{F02F}', "/"); m.insert('\u{F030}', "0");
+    m.insert('\u{F031}', "1"); m.insert('\u{F032}', "2");
+    m.insert('\u{F033}', "3"); m.insert('\u{F034}', "4");
+    m.insert('\u{F035}', "5"); m.insert('\u{F036}', "6");
+    m.insert('\u{F037}', "7"); m.insert('\u{F038}', "8");
+    m.insert('\u{F039}', "9"); m.insert('\u{F03A}', ":");
+    m.insert('\u{F03B}', ";"); m.insert('\u{F03C}', "<");
+    m.insert('\u{F03D}', "="); m.insert('\u{F03E}', ">");
+    m.insert('\u{F03F}', "?");
+    m.insert('\u{F05B}', "["); m.insert('\u{F05D}', "]");
+    // Greek letters (F041..F057 upper, F061..F077 lower — Symbol
+    // ordering). These are the positions where Adobe Symbol
+    // emits Greek letters when a PDF embeds the font.
+    m.insert('\u{F041}', "Α"); m.insert('\u{F042}', "Β");
+    m.insert('\u{F043}', "Χ"); m.insert('\u{F044}', "Δ");
+    m.insert('\u{F045}', "Ε"); m.insert('\u{F046}', "Φ");
+    m.insert('\u{F047}', "Γ"); m.insert('\u{F048}', "Η");
+    m.insert('\u{F049}', "Ι"); m.insert('\u{F04A}', "ϑ");
+    m.insert('\u{F04B}', "Κ"); m.insert('\u{F04C}', "Λ");
+    m.insert('\u{F04D}', "Μ"); m.insert('\u{F04E}', "Ν");
+    m.insert('\u{F04F}', "Ο"); m.insert('\u{F050}', "Π");
+    m.insert('\u{F051}', "Θ"); m.insert('\u{F052}', "Ρ");
+    m.insert('\u{F053}', "Σ"); m.insert('\u{F054}', "Τ");
+    m.insert('\u{F055}', "Υ"); m.insert('\u{F057}', "Ω");
+    m.insert('\u{F058}', "Ξ"); m.insert('\u{F059}', "Ψ");
+    m.insert('\u{F05A}', "Ζ");
+    m.insert('\u{F061}', "α"); m.insert('\u{F062}', "β");
+    m.insert('\u{F063}', "χ"); m.insert('\u{F064}', "δ");
+    m.insert('\u{F065}', "ε"); m.insert('\u{F066}', "φ");
+    m.insert('\u{F067}', "γ"); m.insert('\u{F068}', "η");
+    m.insert('\u{F069}', "ι"); m.insert('\u{F06A}', "ϕ");
+    m.insert('\u{F06B}', "κ"); m.insert('\u{F06C}', "λ");
+    m.insert('\u{F06D}', "μ"); m.insert('\u{F06E}', "ν");
+    m.insert('\u{F06F}', "ο"); m.insert('\u{F070}', "π");
+    m.insert('\u{F071}', "θ"); m.insert('\u{F072}', "ρ");
+    m.insert('\u{F073}', "σ"); m.insert('\u{F074}', "τ");
+    m.insert('\u{F075}', "υ"); m.insert('\u{F077}', "ω");
+    m.insert('\u{F078}', "ξ"); m.insert('\u{F079}', "ψ");
+    m.insert('\u{F07A}', "ζ");
+    // Math relations / operators commonly used in Greek math docs.
+    m.insert('\u{F0A3}', "≤"); m.insert('\u{F0B3}', "≥");
+    m.insert('\u{F0B9}', "≠"); m.insert('\u{F0AE}', "→");
+    m.insert('\u{F0AC}', "←"); m.insert('\u{F0AD}', "↑");
+    m.insert('\u{F0AF}', "↓"); m.insert('\u{F0DE}', "⇒");
+    m.insert('\u{F0DC}', "⇐"); m.insert('\u{F0DB}', "⇔");
+    m.insert('\u{F0CE}', "∈"); m.insert('\u{F0CF}', "∉");
+    m.insert('\u{F0CD}', "⊄"); m.insert('\u{F0C7}', "∩");
+    m.insert('\u{F0C8}', "∪"); m.insert('\u{F0C5}', "⊗");
+    m.insert('\u{F0C9}', "⊃"); m.insert('\u{F0CB}', "⊂");
+    m.insert('\u{F0CC}', "⊆"); m.insert('\u{F0D1}', "∠");
+    m.insert('\u{F0D2}', "∇"); m.insert('\u{F0D4}', "∏");
+    m.insert('\u{F0D5}', "√"); m.insert('\u{F0D6}', "·");
+    m.insert('\u{F0D7}', "¬"); m.insert('\u{F0D8}', "∧");
+    m.insert('\u{F0D9}', "∨"); m.insert('\u{F0DA}', "⇔");
+    m.insert('\u{F0E5}', "∞"); m.insert('\u{F0E6}', "∫");
+    m.insert('\u{F0E8}', "∑"); m.insert('\u{F0B4}', "×");
+    m.insert('\u{F0B8}', "÷"); m.insert('\u{F0B1}', "±");
+    m
+});
 
 /// Decode HTML entities (Case 4): `&amp; &lt; &gt; &quot; &apos; &nbsp;`
 /// + named entities in the map above + numeric (decimal `&#38;` and

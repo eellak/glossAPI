@@ -1112,7 +1112,7 @@ class ExtractPhaseMixin:
 
     def _finalize_font_repair_metadata(self, input_files: List[Path]) -> None:
         """Merge worker repair sidecars once in the stage controller and summarize."""
-        from ..parquet_schema import ParquetSchema
+        from ..parquet_schema import ParquetSchema, update_metadata_parquet
 
         defaults = {"font_repair_status": "skipped", "font_repair_backend": "unknown", "font_repair_fonts": 0,
                     "font_repair_valid_rate_before": None, "font_repair_valid_rate_after": None}
@@ -1141,23 +1141,29 @@ class ExtractPhaseMixin:
             schema = ParquetSchema({"url_column": self.url_column})
             parquet = schema.ensure_metadata_parquet(self.output_dir)
             if parquet is not None:
-                df = pd.read_parquet(parquet)
-                for key, value in defaults.items():
-                    if key not in df.columns:
-                        df[key] = value
-                for key, value in (("extract_status", "unknown"), ("page_count", pd.NA),
-                                   ("extraction_mode", ""), ("extraction_backend", "")):
-                    if key not in df.columns:
-                        df[key] = value
-                for filename, repair in updates.items():
-                    mask = df["filename"] == filename
-                    for key, value in repair.items():
-                        df.loc[mask, key] = value
-                df["page_count"] = pd.to_numeric(df["page_count"], errors="coerce").astype("Int64")
-                df["font_repair_fonts"] = pd.to_numeric(df["font_repair_fonts"], errors="coerce").fillna(0).astype("int64")
-                for key in ("font_repair_valid_rate_before", "font_repair_valid_rate_after"):
-                    df[key] = pd.to_numeric(df[key], errors="coerce").astype("float64")
-                schema.write_metadata_parquet(df, parquet)
+                # One locked read-modify-write (K2 native): the repair fields are merged into the rows read under
+                # the lock, so a concurrent writer's rows are kept.
+                def _update(df):
+                    if not parquet.exists():
+                        pd.read_parquet(parquet)  # raises the same missing-file error as before
+                    for key, value in defaults.items():
+                        if key not in df.columns:
+                            df[key] = value
+                    for key, value in (("extract_status", "unknown"), ("page_count", pd.NA),
+                                       ("extraction_mode", ""), ("extraction_backend", "")):
+                        if key not in df.columns:
+                            df[key] = value
+                    for filename, repair in updates.items():
+                        mask = df["filename"] == filename
+                        for key, value in repair.items():
+                            df.loc[mask, key] = value
+                    df["page_count"] = pd.to_numeric(df["page_count"], errors="coerce").astype("Int64")
+                    df["font_repair_fonts"] = pd.to_numeric(df["font_repair_fonts"], errors="coerce").fillna(0).astype("int64")
+                    for key in ("font_repair_valid_rate_before", "font_repair_valid_rate_after"):
+                        df[key] = pd.to_numeric(df[key], errors="coerce").astype("float64")
+                    return df
+
+                update_metadata_parquet(parquet, _update)
         except Exception as exc:
             self.logger.warning("Failed to merge font repair metadata: %s", exc)
         self.logger.info("Font repair summary: %s", " ".join(f"{key}={value}" for key, value in counts.items()))
