@@ -634,7 +634,9 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         publication_stages.insert(0,'download')
     if not resume:
         import os
-        semantic_files=[Path(corpus.section_classifier_model_path),Path(corpus.extraction_model_path)]
+        from ..section_model import model_files
+        # A neutral classifier contributes its manifest and every declared file (K2 W2b).
+        semantic_files=[*model_files(corpus.section_classifier_model_path),Path(corpus.extraction_model_path)]
         if os.environ.get('GLOSSAPI_GREEK_WORDLIST'):semantic_files.append(Path(os.environ['GLOSSAPI_GREEK_WORDLIST']))
         settings={**settings,'semantic_files':[{'path':str(path.resolve()),'sha256':sha256_file(path)} for path in semantic_files if path.is_file()]}
     result,replays=prepare_streaming(corpus,files,workers=workers,stages=stages,

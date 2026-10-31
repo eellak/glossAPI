@@ -1,0 +1,8 @@
+# Producer environment of the one-time neutral export (tools/export_section_classifier.py), Python 3.11.
+# The shipped pickle loads only under scikit-learn 1.6.1 (it fails under 1.7.2: decision memo W2b, section 3).
+# These are the versions that produced src/glossapi/models/section_classifier/ (manifest.json "producer").
+scikit-learn==1.6.1
+joblib==1.6.0
+numpy==2.4.6
+scipy==1.17.1
+threadpoolctl==3.7.0

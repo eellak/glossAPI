@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-PACKAGES = ("core", "download", "browser", "layout", "ocr", "annotate")
+PACKAGES = ("core", "download", "browser", "layout", "ocr", "annotate", "annotate-legacy")
 DEVICES = ("cpu", "cuda126", "cuda132", "mps")
 TORCH_VERSION = "2.14.1"
 TORCHVISION_VERSION = "0.29.1"

@@ -9,7 +9,7 @@ RUN_TESTS=0
 INSTALL_ARGS=()
 usage() {
   cat <<'EOF'
-Usage: setup_glossapi.sh [core|download|browser|layout|annotate ...] [options]
+Usage: setup_glossapi.sh [core|download|browser|layout|annotate|annotate-legacy ...] [options]
 Default: core only. Layout defaults to cpu.
   --packages NAMES       Comma-separated optional packages
   --device DEVICE        cpu | cuda126 | cuda132 | mps (layout only)

@@ -29,8 +29,6 @@ GlossExtract()
 
 
 @pytest.mark.parametrize(('module', 'missing', 'extra'), [
-    ('glossapi.gloss_section_classifier', 'joblib', 'annotate'),
-    ('glossapi.gloss_section_classifier', 'sklearn', 'annotate'),
     ('glossapi.gloss_downloader', 'aiohttp', 'download'),
     ('glossapi.gloss_browser_downloader', 'PIL', 'browser'),
     ('glossapi.ocr.docling.pipeline', 'docling', 'layout'),
@@ -58,13 +56,17 @@ else:
 
 
 @pytest.mark.parametrize(('module', 'replaced', 'needs'), [
-    ('glossapi.gloss_section_classifier', 'dask', ('sklearn', 'joblib')),
+    ('glossapi.gloss_section_classifier', 'dask', ()),
+    ('glossapi.gloss_section_classifier', 'sklearn', ()),
+    ('glossapi.gloss_section_classifier', 'joblib', ()),
+    ('glossapi.section_model', 'sklearn', ()),
     ('glossapi.gloss_downloader', 'aiofiles', ('aiohttp',)),
     ('glossapi.gloss_downloader', 'tenacity', ('aiohttp',)),
     ('glossapi.gloss_browser_downloader', 'aiofiles', ('aiohttp', 'PIL')),
 ])
 def test_replaced_packages_are_not_imported(module, replaced, needs):
-    """K2: dask, aiofiles and tenacity were replaced by own code; their absence must not matter."""
+    """K2: dask, aiofiles, tenacity and (W2b) scikit-learn/joblib inference were replaced by own code; their
+    absence must not matter."""
     for name in needs:
         pytest.importorskip(name)
     result = isolated(f'''
@@ -80,21 +82,73 @@ assert {replaced!r} not in sys.modules
     assert result.returncode == 0, result.stderr
 
 
-def test_annotation_missing_extra_fails_before_input_checks(tmp_path):
-    result = isolated(f'''
+BLOCK_LEGACY = '''
 import importlib.abc, sys
-class MissingAnnotate(importlib.abc.MetaPathFinder):
+class MissingLegacy(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {{'joblib','dask','sklearn'}}:
+        if fullname.split('.')[0] in {'joblib','dask','sklearn','scipy','threadpoolctl'}:
             raise ModuleNotFoundError('absent', name=fullname)
-sys.meta_path.insert(0, MissingAnnotate())
+sys.meta_path.insert(0, MissingLegacy())
+'''
+
+
+def _sections(path):
+    import pandas as pd
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([dict(filename='doc', id=i, header=h, section=s, section_length=len(s), section_propo=len(s),
+                       has_table=t, has_list=False) for i, (h, s, t) in enumerate([
+        ('Εισαγωγή', 'Μικρό κείμενο για τον έλεγχο της ταξινόμησης.', False),
+        ('Περιεχόμενα', '\n'.join(f'| Κεφάλαιο {i} | {i * 7} |' for i in range(1, 12)), True),
+        ('Βιβλιογραφία', 'Παπαδόπουλος, Α. (2001). Ένα βιβλίο. Αθήνα.', False)], start=1)]).to_parquet(path, index=False)
+
+
+def test_default_annotation_runs_with_sklearn_joblib_and_scipy_blocked(tmp_path):
+    """K2 W2b: the packaged neutral model annotates with the legacy stack unimportable, and never loads it."""
+    from glossapi import Corpus
+    probe = Corpus(tmp_path, tmp_path / 'out')
+    _sections(probe.sections_parquet)
+    result = isolated(BLOCK_LEGACY + f'''
 from glossapi import Corpus
+import pandas as pd
+corpus = Corpus({str(tmp_path)!r}, {str(tmp_path / 'out')!r})
+corpus.annotate()
+labels = pd.read_parquet(corpus.classified_parquet).sort_values('id').predicted_section.tolist()
+assert labels == ['άλλο', 'π', 'β'], labels
+assert corpus.fully_annotated_parquet.is_file()
+loaded = sorted(n for n in sys.modules if n.split('.')[0] in ('sklearn', 'joblib', 'scipy', 'dask', 'threadpoolctl'))
+assert not loaded, loaded
+''')
+    assert result.returncode == 0, result.stderr
+
+
+def test_legacy_joblib_model_without_extra_names_annotate_legacy(tmp_path):
+    """An explicit *.joblib model needs scikit-learn 1.6.1; without it the error names glossapi[annotate-legacy]."""
+    from glossapi import Corpus
+    import glossapi
+    model = Path(glossapi.__file__).resolve().parent / 'models/section_classifier.joblib'
+    probe = Corpus(tmp_path, tmp_path / 'out', section_classifier_model_path=model)
+    _sections(probe.sections_parquet)
+    result = isolated(BLOCK_LEGACY + f'''
+from glossapi import Corpus
+from glossapi.gloss_section_classifier import GlossSectionClassifier
 try:
-    Corpus({str(tmp_path)!r}, {str(tmp_path / 'out')!r}).annotate()
+    GlossSectionClassifier().load_model({str(model)!r})
 except ImportError as exc:
-    assert 'glossapi[annotate]' in str(exc), str(exc)
+    assert 'glossapi[annotate-legacy]' in str(exc), str(exc)
 else:
-    raise AssertionError('missing annotation extra was swallowed')
+    raise AssertionError('legacy model loaded without scikit-learn')
+try:
+    GlossSectionClassifier().build_pipeline()
+except ImportError as exc:
+    assert 'glossapi[annotate-legacy]' in str(exc), str(exc)
+else:
+    raise AssertionError('training pipeline built without scikit-learn')
+try:
+    Corpus({str(tmp_path)!r}, {str(tmp_path / 'out')!r}, section_classifier_model_path={str(model)!r}).annotate()
+except (ImportError, ValueError) as exc:
+    assert 'glossapi[annotate-legacy]' in str(exc), str(exc)
+else:
+    raise AssertionError('missing annotate-legacy extra was swallowed')
 ''')
     assert result.returncode == 0, result.stderr
 

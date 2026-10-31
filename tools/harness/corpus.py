@@ -123,7 +123,7 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1, debug=
                    manifest_sha256=sha256(manifest), environment=environment(), stages={}, complete=False)
     write_json(root/"run.json", receipt)
     began = time.perf_counter()
-    corpus = Corpus(empty, out, section_classifier_model_path=REPO/"src/glossapi/models/section_classifier.joblib",
+    corpus = Corpus(empty, out, section_classifier_model_path=REPO/"src/glossapi/models/section_classifier",
                     extraction_model_path=REPO/"src/glossapi/models/kmeans_weights.joblib")
     corpus._shadow_ledger_enabled = enabled
     corpus._retention_settings={'debug':debug,'memory_saving':'normal'}

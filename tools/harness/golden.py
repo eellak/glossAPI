@@ -112,7 +112,7 @@ def document_job(row, data, root, profile):
         return result
     write_json(jobroot / 'document.json', result)
     os.environ['GLOSSAPI_CONVERSION_LOG_FILE'] = str(jobroot / 'conversion.log')
-    corpus = Corpus(empty, out, section_classifier_model_path=REPO / 'src/glossapi/models/section_classifier.joblib',
+    corpus = Corpus(empty, out, section_classifier_model_path=REPO / 'src/glossapi/models/section_classifier',
                     extraction_model_path=REPO / 'src/glossapi/models/kmeans_weights.joblib')
     calls = {'extract': lambda: corpus.extract(input_format='pdf', file_paths=[source], phase1_backend='safe' if profile == 'text-layer' else 'docling',
                     accel_type='CPU', num_threads=1, skip_existing=False, batched=False, repair_fonts=True,

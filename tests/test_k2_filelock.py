@@ -233,3 +233,91 @@ else:
                             env={**os.environ, 'PYTHONPATH': os.pathsep.join(sys.path)})
     assert result.returncode == 0, result.stderr
 
+
+
+# ---------------------------------------------------------------- K2 batch 3: read-modify-write isolation
+
+UPDATE = '''
+import sys, time
+from pathlib import Path
+import pandas as pd
+from glossapi.parquet_schema import ParquetSchema, update_metadata_parquet
+target, writer, rows, ready, mode, total = Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), Path(sys.argv[4]), sys.argv[5], int(sys.argv[6])
+mine = pd.DataFrame({'filename': [f'w{writer}-r{i}.pdf' for i in range(rows)], 'url': [''] * rows})
+def barrier():
+    (ready / str(writer)).touch()
+    while len(list(ready.iterdir())) < total:
+        time.sleep(0.005)
+if mode == 'locked':
+    def add(current):
+        time.sleep(0.02)  # hold the critical section while the other writers queue on the lock
+        return pd.concat([current, mine], ignore_index=True)
+    update_metadata_parquet(target, add)
+else:  # the unlocked pattern this replaces: read, then a (locked) write
+    current = pd.read_parquet(target) if target.exists() else pd.DataFrame()
+    barrier()
+    ParquetSchema().write_metadata_parquet(pd.concat([current, mine], ignore_index=True), target)
+'''
+
+
+@pytest.mark.parametrize('mode', ['locked', 'unlocked-control'])
+def test_concurrent_writers_adding_distinct_rows_keep_every_row(tmp_path, mode):
+    """N writers each add distinct rows. The locked read-modify-write keeps all of them; the control (read
+    outside the lock, as before K2 batch 3) loses rows, so the test is not vacuous."""
+    target, ready = tmp_path / 'download_results.parquet', tmp_path / 'ready'
+    ready.mkdir()
+    pd.DataFrame({'filename': ['seed.pdf'], 'url': ['']}).to_parquet(target, index=False)
+    writers, rows = 6, 4
+    # The control's barrier makes every writer read before any writes (deterministic loss without the lock).
+    processes = [_spawn(UPDATE, target, writer, rows, ready, 'locked' if mode == 'locked' else 'unlocked', writers)
+                 for writer in range(writers)]
+    for process in processes:
+        _, err = process.communicate(timeout=120)
+        assert process.returncode == 0, err
+    names = set(pd.read_parquet(target)['filename'])
+    expected = {'seed.pdf'} | {f'w{w}-r{i}.pdf' for w in range(writers) for i in range(rows)}
+    if mode == 'locked':
+        assert names == expected
+        assert len(pd.read_parquet(target)) == len(expected)
+    else:
+        assert names < expected and len(expected - names) >= rows, 'the unlocked control unexpectedly kept every row'
+
+
+ENSURE = '''
+import sys, time
+from pathlib import Path
+import pandas as pd
+import glossapi.parquet_schema as schema
+base, writer, writers = Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+# Delay each writer's write after its scan; earlier writers wait longest, which reverses the write order.
+# Before K2 batch 3 the write (the only locked part) came after an unlocked read, so a late writer replaced the
+# file with its stale merge; now the read, merge and write are one critical section.
+name = '_write_metadata_parquet_locked' if hasattr(schema, '_write_metadata_parquet_locked') else '_write_metadata_parquet'
+real = getattr(schema, name)
+def slow(*args, **kwargs):
+    time.sleep(0.08 * (writers - writer))
+    return real(*args, **kwargs)
+setattr(schema, name, slow)
+time.sleep(0.04 * writer)
+(base / 'markdown' / f'doc{writer}.md').write_text('κείμενο', encoding='utf-8')
+assert schema.ParquetSchema().ensure_metadata_parquet(base) == base / 'download_results' / 'existing.parquet'
+'''
+
+
+def test_concurrent_ensure_metadata_parquet_keeps_every_writers_rows(tmp_path):
+    """`ensure_metadata_parquet` merges its artifact rows into an existing metadata parquet. The existing file
+    is now read inside the lock: concurrent writers with interleaved reads keep every document."""
+    (tmp_path / 'markdown').mkdir()
+    (tmp_path / 'download_results').mkdir()
+    pd.DataFrame({'url': ['https://example.org/seed.pdf'], 'filename': ['seed.pdf']}).to_parquet(
+        tmp_path / 'download_results' / 'existing.parquet', index=False)
+    writers = 6
+    processes = [_spawn(ENSURE, tmp_path, writer, writers) for writer in range(writers)]
+    for process in processes:
+        _, err = process.communicate(timeout=120)
+        assert process.returncode == 0, err
+    frame = pd.read_parquet(tmp_path / 'download_results' / 'existing.parquet')
+    assert set(frame['filename']) == {'seed.pdf'} | {f'doc{w}.pdf' for w in range(writers)}
+    assert frame.loc[frame.filename == 'seed.pdf', 'url'].tolist() == ['https://example.org/seed.pdf']
+    assert not (tmp_path / 'download_results' / 'download_results.parquet').exists()
+    assert sorted(p.name for p in (tmp_path / 'download_results').iterdir()) == ['existing.parquet']

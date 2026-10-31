@@ -31,7 +31,7 @@ def test_reference_pins_match_pyproject_and_default_groups_include_them():
     assert {'include-group': 'test'} in groups['dev']
     flat = [entry for entry in groups['test'] if isinstance(entry, str)]
     # The oracles are pinned only once, in the reference group.
-    assert not any(re.match(r'(tenacity|aiofiles|dask|pypdf|fonttools)\b', entry, re.I) for entry in flat)
+    assert not any(re.match(r'(tenacity|aiofiles|dask|pypdf|fonttools|scikit-learn)\b', entry, re.I) for entry in flat)
     assert not any(entry.lower().startswith('psutil') for entry in flat), 'psutil has no consumer'
 
 

@@ -115,8 +115,9 @@ class Corpus(
         if section_classifier_model_path:
             self.section_classifier_model_path = Path(section_classifier_model_path)
         else:
-            # Use the packaged default model (glossapi/models)
-            self.section_classifier_model_path = PACKAGED_MODELS_DIR / "section_classifier.joblib"
+            # The packaged default: the neutral export (glossapi/models/section_classifier/, own inference,
+            # no scikit-learn). Explicit *.joblib paths use the legacy loader (glossapi[annotate-legacy]).
+            self.section_classifier_model_path = PACKAGED_MODELS_DIR / "section_classifier"
         
         # Handle extraction model path
         if extraction_model_path:

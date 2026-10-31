@@ -1,7 +1,8 @@
 """Pinned reference packages for the parity/oracle tests (pyproject `reference` dependency group).
 
-The oracles are the libraries K2 replaced or kept only as references: tenacity, aiofiles and dask
-(replaced by own code) and pypdf/fontTools (the Python font-repair reference). Runtime installs no
+The oracles are the libraries K2 replaced or kept only as references: tenacity, aiofiles, dask and
+scikit-learn (replaced by own code; scikit-learn 1.6.1 scores the shipped joblib model as the oracle of
+the neutral section classifier) and pypdf/fontTools (the Python font-repair reference). Runtime installs no
 longer pull them in. Where the group is expected to be installed (the default `test`/`dev` groups,
 `setup_glossapi.sh --run-tests`, checkpoint runs) set ``GLOSSAPI_REFERENCE_REQUIRED=1``: a missing
 package or a different version then fails the test instead of silently skipping its oracle.
@@ -22,6 +23,7 @@ PINS = {
     "dask": ("dask", "2026.8.0"),
     "pypdf": ("pypdf", "6.21.3"),
     "fontTools": ("fonttools", "4.68.0"),
+    "sklearn": ("scikit-learn", "1.6.1"),
 }
 
 

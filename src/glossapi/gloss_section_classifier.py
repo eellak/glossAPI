@@ -8,20 +8,32 @@ from .ledger.encoding import file_hash, typed_value
 import numpy as np
 import pandas as pd
 from .optional_dependencies import optional_dependencies
-
-with optional_dependencies("annotate"):
-    import joblib
-    from sklearn.pipeline import Pipeline
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.compose import ColumnTransformer
-    from sklearn.svm import LinearSVC
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import confusion_matrix, classification_report
-    from sklearn.preprocessing import FunctionTransformer
 from typing import Dict
+
+# K2 W2b: the packaged default model is the neutral export (glossapi.section_model: numpy only). scikit-learn and
+# joblib are needed only for explicitly supplied legacy *.joblib models and for training, from the
+# `annotate-legacy` extra, and are imported only there.
+LEGACY_EXTRA = "annotate-legacy"
+
+
+def _legacy_joblib():
+    with optional_dependencies(LEGACY_EXTRA):
+        import joblib
+        import sklearn  # noqa: F401  (the legacy pickles need scikit-learn 1.6.1)
+    return joblib
+
+
+def _model_sha256(model_path):
+    """The joblib file hash, or the manifest hash of a neutral model (which binds every model file)."""
+    if not model_path:
+        return None
+    from .section_model import stage_input
+    path = stage_input(model_path)
+    return file_hash(path) if os.path.isfile(path) else None
 
 
 # Define the combine_text function outside of the class for compatibility
+# (legacy pickles reference glossapi.gloss_section_classifier.combine_text by import path).
 def combine_text(df):
     """
     Combine header and section text into a single text field for analysis.
@@ -88,8 +100,14 @@ class GlossSectionClassifier:
             raise ValueError("Model file path is required. Please specify a valid model path.")
                 
         self.logger.info(f"Loading model from: {model_file}")
+        from . import section_model
         try:
-            self.loaded_model = joblib.load(model_file)
+            if section_model.is_neutral(model_file):
+                # Neutral directory (or its manifest.json): own inference, no pickle.
+                self.loaded_model = section_model.load(model_file)
+            else:
+                # Explicit legacy *.joblib pickle: scikit-learn 1.6.1 from glossapi[annotate-legacy].
+                self.loaded_model = _legacy_joblib().load(model_file)
             self.clf_pipeline = self.loaded_model
             return self.loaded_model
         except Exception as e:
@@ -107,6 +125,12 @@ class GlossSectionClassifier:
         and includes binary features (has_table, has_list). Now with better handling
         of edge cases like empty arrays.
         """
+        with optional_dependencies(LEGACY_EXTRA):
+            from sklearn.pipeline import Pipeline
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            from sklearn.compose import ColumnTransformer
+            from sklearn.svm import LinearSVC
+            from sklearn.preprocessing import FunctionTransformer
         # Create a custom TF-IDF vectorizer that can handle empty arrays
         class RobustTfidfVectorizer(TfidfVectorizer):
             def transform(self, X):
@@ -155,6 +179,10 @@ class GlossSectionClassifier:
         Returns:
             sklearn.pipeline.Pipeline: The trained classifier pipeline
         """
+        with optional_dependencies(LEGACY_EXTRA):
+            from sklearn.model_selection import train_test_split
+            from sklearn.metrics import confusion_matrix, classification_report
+        joblib = _legacy_joblib()
         self.logger.info(f"Loading training data from {csv_file}...")
         df_train = pd.read_csv(csv_file)
         self.logger.info(f"Loaded training data with {len(df_train)} rows.")
@@ -383,7 +411,7 @@ class GlossSectionClassifier:
         # run compute_likely_index_for_section on the section text (without the header) and override
         # the predicted label with "π" if detected.
         self.logger.info("Adjusting predictions based on index detection and cumulative thresholds...")
-        observe("legacy_observed", annotation_model_labels=typed_value(df_final[[column for column in ("id", "row_id", "filename", "predicted_section") if column in df_final.columns]].to_dict("records")), model_path=str(model_path), model_sha256=file_hash(model_path) if model_path and os.path.isfile(model_path) else None)
+        observe("legacy_observed", annotation_model_labels=typed_value(df_final[[column for column in ("id", "row_id", "filename", "predicted_section") if column in df_final.columns]].to_dict("records")), model_path=str(model_path), model_sha256=_model_sha256(model_path))
         df_final = self._adjust_predictions_with_index_detection(df_final, length_threshold=300, propo_threshold=300)
         
         self.logger.info("Writing merged and adjusted predictions to final output Parquet file...")

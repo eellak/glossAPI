@@ -20,7 +20,11 @@ class AnnotateStage:
         self.section_keys=section_keys or {}
 
     def packages(self,specification):
-        return (PackageRequirement('annotate',('scikit-learn==1.6.1','joblib>=1.0.0')),)
+        # The packaged neutral model needs only core numpy (K2 W2b); an explicit legacy *.joblib model needs
+        # scikit-learn 1.6.1 from the annotate-legacy extra.
+        if specification.settings.get('classifier_model_format')=='joblib':
+            return (PackageRequirement('annotate-legacy',('scikit-learn==1.6.1','joblib>=1.0.0')),)
+        return ()
 
     def plan(self,documents,*,settings):
         return StagePlan((),('annotation_all_sections_and_model',))
@@ -31,7 +35,15 @@ class AnnotateStage:
     def finalize(self,request,*,reporter):
         request.work_directory.mkdir(parents=True,exist_ok=True)
         try:
+            from .. import section_model
+            model_source=request.inputs[1].path
             request=freeze_inputs(request)
+            model_summary=None
+            if section_model.is_neutral(request.inputs[1].path):
+                # The manifest is the stage input and binds every model file by hash; freeze those files
+                # beside the frozen manifest, verified against it.
+                section_model.freeze_beside(model_source,request.inputs[1].path)
+                model_summary=section_model.manifest_summary(request.inputs[1].path)
             from ..corpus.phase_annotate import AnnotatePhaseMixin
             import pandas as pd
             view=copy.copy(self.corpus)
@@ -82,8 +94,10 @@ class AnnotateStage:
             paths.extend((str(path.relative_to(request.work_directory)),'annotation_partition')
                 for path in sorted(Path(str(view.classified_parquet)+'.tmp').rglob('*')) if path.is_file())
             warnings=[item for item in observations if not item.get('details',{}).get('annotation_model_labels')]
+            model_identity={'model_format':'joblib','model_source_sha256':request.inputs[1].sha256} if model_summary is None else {
+                'model_format':model_summary['model_format'],'model_source_sha256':model_summary['source_model_sha256']}
             return generation_outputs(request,paths,reason='annotate_completed',decisions=({'sections_input_sha256':request.inputs[0].sha256,
-                'model_sha256':request.inputs[1].sha256,'mapping':request.settings['mapping'],'document_types':request.settings['document_types'],
+                'model_sha256':request.inputs[1].sha256,**model_identity,'mapping':request.settings['mapping'],'document_types':request.settings['document_types'],
                 'lineage':lineage,'backend_observations':warnings},))
         except Exception as error:
             return failed_result(request,'annotation_schema_invalid',error)
@@ -98,6 +112,8 @@ def annotate_products(corpus,annotation_type,fully_annotate):
         observe('annotation_sections_missing',path=corpus.sections_parquet,status='skipped');return
     if not corpus.section_classifier_model_path.exists():
         observe('annotation_model_missing',path=corpus.section_classifier_model_path,status='skipped');return
+    from .. import section_model
+    model_input=section_model.stage_input(corpus.section_classifier_model_path)
     from .products import active_journal
     from ..ledger.encoding import unpack_evidence
     journal=active_journal();keys={};key_evidence={}
@@ -115,9 +131,10 @@ def annotate_products(corpus,annotation_type,fully_annotate):
                     keys[decision['compatibility_filename']]=decision['section_keys']
                     key_evidence[decision['compatibility_filename']]=digest
     result,workspace=execute_aggregate(corpus,AnnotateStage(corpus,keys),[
-        ('sections_parquet',section_input),('classifier_model',corpus.section_classifier_model_path)],
+        ('sections_parquet',section_input),('classifier_model',model_input)],
         StageSpecification('annotate.batch',('sections_parquet','classifier_model'),('classified_parquet','generation_manifest'),
             settings={'annotation_type':annotation_type,'fully_annotate':fully_annotate,'mapping':corpus.annotation_mapping,
+                'classifier_model_format':section_model.model_format(corpus.section_classifier_model_path),
                 'document_types':corpus.filename_to_doctype,'section_key_evidence':key_evidence,'batch_barrier':True}))
     if result.status!='ok':
         raise ValueError(result.error.message if result.error else result.reason_code)

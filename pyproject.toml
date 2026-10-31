@@ -36,8 +36,8 @@ classifiers = [
 glossapi = "glossapi.cli:main"
 
 [dependency-groups]
-# Pinned oracles for the parity tests: the packages K2 replaced (tenacity, aiofiles, dask) and the
-# Python font-repair reference (pypdf, fontTools). Runtime installs never need them. Tests read the
+# Pinned oracles for the parity tests: the packages K2 replaced (tenacity, aiofiles, dask, and scikit-learn
+# for section-classifier inference, W2b) and the Python font-repair reference (pypdf, fontTools). Runtime installs never need them. Tests read the
 # same pins from tests/reference_oracles.py; with GLOSSAPI_REFERENCE_REQUIRED=1 a missing or
 # different oracle fails instead of skipping.
 reference = [
@@ -46,6 +46,7 @@ reference = [
     "dask[dataframe]==2026.8.0",
     "pypdf==6.21.3",
     "fonttools==4.68.0",
+    "scikit-learn==1.6.1",
 ]
 test = [
     "pytest>=9.2.0,<10",
@@ -100,6 +101,7 @@ browser = {file = ["dependency_setup/extra-browser.txt"]}
 layout = {file = ["dependency_setup/extra-layout.txt"]}
 docling = {file = ["dependency_setup/extra-docling.txt"]}
 annotate = {file = ["dependency_setup/extra-annotate.txt"]}
+annotate-legacy = {file = ["dependency_setup/extra-annotate-legacy.txt"]}
 font-repair = {file = ["dependency_setup/extra-font-repair.txt"]}
 docs = {file = ["dependency_setup/extra-docs.txt"]}
 ocr = {file = ["src/glossapi/ocr_package.txt"]}

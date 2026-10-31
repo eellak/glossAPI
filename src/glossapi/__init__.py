@@ -6,7 +6,6 @@ __all__ = [
     'GlossSection',
     'GlossSectionClassifier',
     'Corpus',
-    'Sampler',
     'Section',
     'GlossDownloader',
     'BrowserGlossDownloader',
@@ -20,9 +19,6 @@ def __getattr__(name: str):
     if name == 'GlossSectionClassifier':
         from .gloss_section_classifier import GlossSectionClassifier  # type: ignore
         return GlossSectionClassifier
-    if name == 'Sampler':
-        from .sampler import Sampler  # type: ignore
-        return Sampler
     if name == 'GlossSection':
         from .gloss_section import GlossSection  # type: ignore
         return GlossSection

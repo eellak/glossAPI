@@ -179,23 +179,44 @@ def _parquet_lock(path: Path) -> Iterator[None]:
             pass
 
 
-def _write_metadata_parquet(df: pd.DataFrame, parquet_path: Path) -> None:
+def _write_metadata_parquet_locked(df: pd.DataFrame, parquet_path: Path) -> None:
+    """Write + atomic replace; the caller holds ``_parquet_lock(parquet_path)``."""
     prepared = _prepare_metadata_frame(df)
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     pa_mod, pq_mod = _ensure_pyarrow()
     table = pa_mod.Table.from_pandas(prepared, preserve_index=False)
     tmp_path = parquet_path.with_suffix(parquet_path.suffix + f".{uuid.uuid4().hex}.tmp")
-    with _parquet_lock(parquet_path):
+    try:
+        pq_mod.write_table(table, tmp_path)
+        os.replace(tmp_path, parquet_path)
+        observe_store(parquet_path, kind="metadata_parquet")
+    finally:
         try:
-            pq_mod.write_table(table, tmp_path)
-            os.replace(tmp_path, parquet_path)
-            observe_store(parquet_path, kind="metadata_parquet")
-        finally:
-            try:
-                if tmp_path.exists():
-                    tmp_path.unlink()
-            except Exception:
-                pass
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except Exception:
+            pass
+
+
+def _write_metadata_parquet(df: pd.DataFrame, parquet_path: Path) -> None:
+    parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    with _parquet_lock(parquet_path):
+        _write_metadata_parquet_locked(df, parquet_path)
+
+
+def update_metadata_parquet(parquet_path: Union[str, Path], update) -> pd.DataFrame:
+    """Locked read-modify-write of a metadata parquet: read, ``update(frame) -> frame``, write, one critical section.
+
+    ``update`` receives the current rows (an empty frame when the file does not exist yet) and returns the rows to
+    write; returning ``None`` writes nothing. Concurrent writers cannot lose each other's rows: each reads only
+    after the previous writer replaced the file."""
+    parquet_path = Path(parquet_path)
+    with _parquet_lock(parquet_path):
+        current = pd.read_parquet(parquet_path) if parquet_path.exists() else pd.DataFrame()
+        updated = update(current)
+        if updated is not None:
+            _write_metadata_parquet_locked(updated, parquet_path)
+        return current if updated is None else updated
 
 
 class ParquetSchema:
@@ -583,22 +604,19 @@ class ParquetSchema:
         download_results_dir.mkdir(parents=True, exist_ok=True)
         logger = logging.getLogger(__name__)
 
-        existing_df = pd.DataFrame()
-        target_path: Optional[Path] = None
-        existing_candidates = sorted(
-            f
-            for f in download_results_dir.glob("*.parquet")
-            if ".partial." not in f.name and f.name != parquet_path.name
-        )
-        if existing_candidates:
-            candidate = existing_candidates[0]
+        def _candidates() -> List[Path]:
+            return sorted(
+                f
+                for f in download_results_dir.glob("*.parquet")
+                if ".partial." not in f.name and f.name != parquet_path.name
+            )
+
+        def _read_existing(candidate: Path) -> pd.DataFrame:
             try:
-                existing_df = pd.read_parquet(candidate)
-                target_path = candidate
+                return pd.read_parquet(candidate)
             except Exception as exc:
                 logger.debug("Failed to read existing metadata parquet %s: %s", candidate, exc)
-                existing_df = pd.DataFrame()
-                target_path = candidate
+                return pd.DataFrame()
 
         defaults: Dict[str, Any] = {
             self.url_column: "",
@@ -849,6 +867,27 @@ class ParquetSchema:
         if not df_records.empty:
             df_records.sort_values(by="filename", inplace=True)
 
+        # The artifact scan above is this writer's evidence. The existing parquet is read, merged and replaced
+        # inside one locked section (K2 batch 3), so a concurrent writer's rows are never overwritten by a merge
+        # based on an older read. The canonical file and the candidate are re-checked under the lock.
+        while True:
+            existing_candidates = _candidates()
+            target_path: Optional[Path] = existing_candidates[0] if existing_candidates else None
+            with _parquet_lock(target_path or parquet_path):
+                if parquet_path.exists():
+                    return parquet_path
+                current = _candidates()
+                if (current[0] if current else None) != target_path:
+                    continue  # another writer created a candidate meanwhile: lock that one instead
+                existing_df = _read_existing(target_path) if target_path is not None else pd.DataFrame()
+                return self._merge_metadata_locked(
+                    df_records, existing_df, target_path, parquet_path, defaults, ordered_columns,
+                    extraction_columns, base_dir, logger)
+
+    @staticmethod
+    def _merge_metadata_locked(df_records, existing_df, target_path, parquet_path, defaults, ordered_columns,
+                               extraction_columns, base_dir, logger):
+        """Merge this writer's artifact rows into the existing rows and write; the caller holds the lock."""
         if target_path is not None:
             combined = df_records
             if combined.empty and not existing_df.empty:
@@ -879,7 +918,7 @@ class ParquetSchema:
                     combined[column] = default
             combined = combined.reindex(columns=ordered_columns, fill_value=pd.NA)
             combined.sort_values(by="filename", inplace=True)
-            _write_metadata_parquet(combined, target_path)
+            _write_metadata_parquet_locked(combined, target_path)
             logger.info(
                 "Updated existing metadata parquet with %d row(s): %s",
                 len(combined),
@@ -895,7 +934,7 @@ class ParquetSchema:
             return None
 
         df_records.sort_values(by="filename", inplace=True)
-        _write_metadata_parquet(df_records, parquet_path)
+        _write_metadata_parquet_locked(df_records, parquet_path)
         logger.info(
             "Synthesised metadata parquet with %d row(s): %s",
             len(df_records),

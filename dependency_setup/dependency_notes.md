@@ -40,7 +40,15 @@ origins and root-wheel RECORD hashes (editable installs verify source origins).
   Silicon `cpu` and `mps` use normal PyPI wheels. These choices install packages;
   they do not select the device of a later extraction run. CUDA needs compatible
   NVIDIA hardware and a driver supporting the chosen runtime.
-- `annotate`: the existing classifier, retaining **scikit-learn 1.6.1**.
+- `annotate`: no extra packages. The packaged section classifier is a neutral export
+  (`glossapi/models/section_classifier/`: JSON manifest, vocabulary, float64 weights, hash-checked) scored by
+  glossAPI's own numpy inference (`glossapi.section_model`); scikit-learn and joblib are not imported. The extra
+  name is kept so existing `glossapi[annotate]` installs keep resolving.
+- `annotate-legacy`: **scikit-learn 1.6.1** and joblib, needed only to load an explicitly supplied `*.joblib`
+  model (`section_classifier_model_path=...joblib`) or to train (`GlossSectionClassifier.train_from_csv`).
+  Without it those paths fail with an error naming `glossapi[annotate-legacy]`. The neutral model is produced
+  once from the shipped pickle by `tools/export_section_classifier.py` in the environment of
+  `tools/export_section_classifier.requirements.txt`.
 
 Core installs contain no torch or Docling. PDFium remains `>=4.30,<5`; pass
 `--pypdfium2-version 4.30.0` to reproduce the qualified PDFium baseline. Direct

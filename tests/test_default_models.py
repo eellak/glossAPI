@@ -36,14 +36,14 @@ def annotation_events(corpus):
 
 def test_default_constructor_resolves_packaged_models(tmp_path):
     corpus = Corpus(tmp_path / 'input', tmp_path / 'out')
-    assert corpus.section_classifier_model_path == PACKAGED / 'section_classifier.joblib'
+    # K2 W2b: the packaged default is the neutral section-classifier directory (own inference, no sklearn).
+    assert corpus.section_classifier_model_path == PACKAGED / 'section_classifier'
+    assert (corpus.section_classifier_model_path / 'manifest.json').is_file()
     assert corpus.extraction_model_path == PACKAGED / 'kmeans_weights.joblib'
-    assert corpus.section_classifier_model_path.is_file()
     assert corpus.extraction_model_path.is_file()
 
 
 def test_default_constructor_annotates_with_packaged_model(tmp_path):
-    pytest.importorskip('sklearn')
     corpus = Corpus(tmp_path / 'input', tmp_path / 'out')
     rows = sections_fixture(corpus)
     corpus.annotate()
@@ -56,7 +56,6 @@ def test_default_constructor_annotates_with_packaged_model(tmp_path):
 
 
 def test_default_constructor_run_annotates_and_exports(tmp_path):
-    pytest.importorskip('sklearn')
     pytest.importorskip('glossapi_rs_cleaner')
     from test_ledger_stages import simple_pdf
     source = simple_pdf(tmp_path / 'source.pdf')
@@ -90,7 +89,7 @@ def test_missing_packaged_default_is_recorded_as_skipped(tmp_path, monkeypatch):
     empty.mkdir()
     monkeypatch.setattr(corpus_orchestrator, 'PACKAGED_MODELS_DIR', empty)
     corpus = Corpus(tmp_path / 'input', tmp_path / 'out')
-    assert corpus.section_classifier_model_path == empty / 'section_classifier.joblib'
+    assert corpus.section_classifier_model_path == empty / 'section_classifier'
     sections_fixture(corpus)
     assert corpus.annotate() is None
     assert not corpus.classified_parquet.exists()

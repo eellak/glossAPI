@@ -69,7 +69,7 @@ class AnnotatePhaseMixin:
             self.logger.warning(
                 "No section-classifier model found at %s. "
                 "If you are running from a git checkout (not the pip package), make sure the "
-                "'models/section_classifier.joblib' file is present or pass "
+                "'models/section_classifier/' neutral model directory is present or pass "
                 "section_classifier_model_path explicitly. Skipping annotation.",
                 self.section_classifier_model_path
             )

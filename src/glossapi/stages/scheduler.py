@@ -39,7 +39,9 @@ def execution_environment():
             binaries=list(path.parent.glob('*.so')) if path.suffix=='.py' else [path]
             native[name]=[sha256_file(binary) for binary in sorted(binaries)]
     packages=sorted((distribution.metadata['Name'],distribution.version) for distribution in importlib.metadata.distributions())
-    models=[{'path':str(path.relative_to(root)),'sha256':sha256_file(path)} for path in sorted(root.rglob('*.joblib'))]
+    # Every packaged model file (the neutral section-classifier directory included, K2 W2b) and any *.joblib.
+    model_paths=set(root.rglob('*.joblib'))|{path for path in (root/'models').rglob('*') if path.is_file() and '__pycache__' not in path.parts}
+    models=[{'path':str(path.relative_to(root)),'sha256':sha256_file(path)} for path in sorted(model_paths)]
     environment={name:os.environ.get(name) for name in ('GLOSSAPI_IMAGES_SCALE','GLOSSAPI_FORMULA_BATCH',
         'DOCLING_ARTIFACTS_PATH','OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','RAYON_NUM_THREADS',
         'GLOSSAPI_OCR_TOOLKIT_SOURCE','GREEKOCR_SEGMENTER_MODEL_DIR')}

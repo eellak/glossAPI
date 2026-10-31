@@ -65,6 +65,8 @@ nanonets/
 ocr_models/
 deepseek-ocr-2-model/
 models/
+# Packaged glossAPI models are source (the joblib pickles and the neutral section-classifier export, K2 W2b).
+!src/glossapi/models/
 
 # Noise analysis reports
 glossapi_noise_analysis_report.md

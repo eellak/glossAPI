@@ -55,25 +55,55 @@ def _text(path: Path, page_index: int = 0) -> str:
             page.close()
 
 
+# TrueType fonts for the Greek fixture, in preference order: macOS first (the fixture the Mac runs have always
+# used), then fonts present on Linux nodes and CI images. GLOSSAPI_TEST_GREEK_FONT names one explicitly.
+GREEK_FIXTURE_FONTS = (
+    '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
+    '/Library/Fonts/Arial Unicode.ttf',
+    '/System/Library/Fonts/Supplemental/Arial.ttf',
+    '/System/Library/Fonts/Supplemental/Times New Roman.ttf',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # Debian/Ubuntu fonts-dejavu-core
+    '/usr/share/fonts/dejavu/DejaVuSans.ttf',  # Fedora/RHEL dejavu-sans-fonts
+    '/usr/share/fonts/TTF/DejaVuSans.ttf',  # Arch ttf-dejavu
+    '/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf',
+    '/usr/share/fonts/truetype/freefont/FreeSans.ttf',
+    '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf',
+)
+GREEK_FIXTURE_TEXT = 'αβγδε θή'
+
+
+def fixture_fonts_required() -> bool:
+    """CI mode (CI or GLOSSAPI_REFERENCE_REQUIRED set): a missing covering font fails instead of skipping."""
+    return any(os.environ.get(name, '').strip().lower() in {'1', 'true', 'yes'} for name in ('CI', 'GLOSSAPI_REFERENCE_REQUIRED'))
+
+
+def greek_fixture_font(text: str = GREEK_FIXTURE_TEXT):
+    """The first candidate TrueType font whose cmap covers every character of ``text`` -> (path, TTFont)."""
+    explicit = os.environ.get('GLOSSAPI_TEST_GREEK_FONT')
+    tried = []
+    for path in ([explicit] if explicit else []) + list(GREEK_FIXTURE_FONTS):
+        if not Path(path).is_file():
+            continue
+        candidate = TTFont(path)
+        cmap = candidate.getBestCmap() or {}
+        missing = sorted({char for char in text if ord(char) not in cmap})
+        if not missing and 'glyf' in candidate:
+            return path, candidate
+        tried.append(f'{path} (missing {"".join(missing)!r})' if missing else f'{path} (not TrueType outlines)')
+        candidate.close()
+        if path == explicit:
+            raise AssertionError(f'GLOSSAPI_TEST_GREEK_FONT={explicit} does not cover {text!r}: {tried[-1]}')
+    message = (f'No TrueType font covering {text!r} for the Greek fixture; tried {tried or "none present"} of '
+               f'{list(GREEK_FIXTURE_FONTS)}. Install fonts-dejavu-core or set GLOSSAPI_TEST_GREEK_FONT.')
+    if fixture_fonts_required():
+        pytest.fail(message, pytrace=False)
+    pytest.skip(message)
+
+
 @pytest.fixture(scope="module")
 def greek_fixture(tmp_path_factory):
-    candidates = [
-        '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
-        '/Library/Fonts/Arial Unicode.ttf',
-        '/System/Library/Fonts/Supplemental/Arial.ttf',
-        '/System/Library/Fonts/Supplemental/Times New Roman.ttf',
-    ]
-    text = 'αβγδε θή'
-    font = None
-    for path in candidates:
-        if Path(path).exists():
-            candidate = TTFont(path)
-            if all(ord(char) in (candidate.getBestCmap() or {}) for char in text):
-                font = candidate
-                break
-            candidate.close()
-    if font is None:
-        pytest.skip('No requested local TrueType font with Greek coverage is available')
+    text = GREEK_FIXTURE_TEXT
+    _, font = greek_fixture_font(text)
     directory = tmp_path_factory.mktemp('greek-font')
     options = subset.Options()
     options.glyph_names = True
@@ -838,3 +868,28 @@ def test_real_fonttools_warning_is_quiet_and_counted(greek_fixture, tmp_path):
         assert native['category'] == record['category']
         assert native['warning_counts']['fontTools'] == 0
         assert native['warning_count'] == sum(native['warning_counts'].values())
+
+
+def test_greek_fixture_font_choice_coverage_and_ci_failure(monkeypatch, tmp_path):
+    """K2 batch 3: Linux fonts (DejaVuSans) are candidates; coverage is checked per character; in CI mode a
+    missing covering font fails clearly instead of skipping the Greek-fixture tests."""
+    import _pytest.outcomes
+    monkeypatch.delenv('GLOSSAPI_TEST_GREEK_FONT', raising=False)
+    assert any('DejaVuSans.ttf' in path for path in GREEK_FIXTURE_FONTS)
+    found = [path for path in GREEK_FIXTURE_FONTS if Path(path).is_file()]
+    if found:
+        path, font = greek_fixture_font()
+        assert path in found and all(ord(c) in font.getBestCmap() for c in GREEK_FIXTURE_TEXT)
+        font.close()
+        with pytest.raises((_pytest.outcomes.Skipped, _pytest.outcomes.Failed), match='missing'):
+            greek_fixture_font('αβ\u0378')  # an unassigned code point: no font maps it (DejaVuSans maps emoji)
+    monkeypatch.setattr(sys.modules[__name__], 'GREEK_FIXTURE_FONTS', (str(tmp_path / 'absent.ttf'),))
+    for name in ('CI', 'GLOSSAPI_REFERENCE_REQUIRED'):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(_pytest.outcomes.Skipped, match='No TrueType font covering'):
+        greek_fixture_font()
+    for name in ('CI', 'GLOSSAPI_REFERENCE_REQUIRED'):
+        monkeypatch.setenv(name, 'true' if name == 'CI' else '1')
+        with pytest.raises(_pytest.outcomes.Failed, match='Install fonts-dejavu-core'):
+            greek_fixture_font()
+        monkeypatch.delenv(name)
