@@ -136,10 +136,29 @@ def _prepare_metadata_frame(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def metadata_path_identity(path: Union[str, Path]) -> Path:
+    """The one canonical identity of a metadata parquet path (CP-K2c F1): absolute, ``..`` folded, directory and file
+    symlinks resolved (``os.path.realpath``). The lock file, the write target of the locked writers and every
+    same-file decision derive from it, so two spellings of one file can never take different locks or branches."""
+    return Path(os.path.realpath(os.path.abspath(os.path.expanduser(os.fspath(path)))))
+
+
+def same_metadata_file(first: Union[str, Path], second: Union[str, Path]) -> bool:
+    """Whether two paths name the same metadata parquet: ``os.path.samefile`` when both exist (also catches
+    case-insensitive spellings and hard links), else equal canonical identities."""
+    if os.path.exists(first) and os.path.exists(second):
+        return os.path.samefile(first, second)
+    return metadata_path_identity(first) == metadata_path_identity(second)
+
+
 @contextmanager
 def _parquet_lock(path: Path) -> Iterator[None]:
-    """Serialize writers via file-based lock, falling back to atomic rename."""
+    """Serialize writers via file-based lock, falling back to atomic rename.
 
+    The lock file sits next to the canonical identity of ``path`` (``metadata_path_identity``), whatever spelling the
+    caller used. Hard links of one file are not unified (declared; samefile decides same-file branches)."""
+
+    path = metadata_path_identity(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
     if FileLock is not None:
@@ -179,8 +198,9 @@ def _parquet_lock(path: Path) -> Iterator[None]:
             pass
 
 
-def _write_metadata_parquet_locked(df: pd.DataFrame, parquet_path: Path) -> None:
-    """Write + atomic replace; the caller holds ``_parquet_lock(parquet_path)``."""
+def _write_metadata_parquet_locked(df: pd.DataFrame, parquet_path: Path, observed: Optional[Path] = None) -> None:
+    """Write + atomic replace; the caller holds ``_parquet_lock(parquet_path)``. ``observed``: the caller's spelling
+    recorded by the journal when ``parquet_path`` is the canonical identity."""
     prepared = _prepare_metadata_frame(df)
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     pa_mod, pq_mod = _ensure_pyarrow()
@@ -189,7 +209,7 @@ def _write_metadata_parquet_locked(df: pd.DataFrame, parquet_path: Path) -> None
     try:
         pq_mod.write_table(table, tmp_path)
         os.replace(tmp_path, parquet_path)
-        observe_store(parquet_path, kind="metadata_parquet")
+        observe_store(observed or parquet_path, kind="metadata_parquet")
     finally:
         try:
             if tmp_path.exists():
@@ -201,7 +221,7 @@ def _write_metadata_parquet_locked(df: pd.DataFrame, parquet_path: Path) -> None
 def _write_metadata_parquet(df: pd.DataFrame, parquet_path: Path) -> None:
     parquet_path.parent.mkdir(parents=True, exist_ok=True)
     with _parquet_lock(parquet_path):
-        _write_metadata_parquet_locked(df, parquet_path)
+        _write_metadata_parquet_locked(df, metadata_path_identity(parquet_path), observed=parquet_path)
 
 
 def _write_serialized_locked(df: pd.DataFrame, parquet_path: Path, serialize) -> None:
@@ -228,17 +248,52 @@ def update_metadata_parquet(parquet_path: Union[str, Path], update, *, serialize
 
     ``serialize(frame, temporary_path)``, when given, writes the bytes instead of the normalising metadata writer, so
     a caller that always wrote its file with its own serializer (``DataFrame.to_parquet``, a plain pyarrow table)
-    keeps its bytes; the file is still replaced atomically inside the lock (CP-K2a F1)."""
-    parquet_path = Path(parquet_path)
+    keeps its bytes; the file is still replaced atomically inside the lock (CP-K2a F1).
+
+    Lock, read and replacement all use ``metadata_path_identity(parquet_path)`` (CP-K2c F1): any spelling of the file
+    (``..``, a symlinked directory, a symlink to the file) locks and replaces the same file."""
+    given = Path(parquet_path)
+    parquet_path = metadata_path_identity(given)
     with _parquet_lock(parquet_path):
         current = pd.read_parquet(parquet_path) if parquet_path.exists() else pd.DataFrame()
         updated = update(current)
         if updated is not None:
             if serialize is None:
-                _write_metadata_parquet_locked(updated, parquet_path)
+                _write_metadata_parquet_locked(updated, parquet_path, observed=given)
             else:
                 _write_serialized_locked(updated, parquet_path, serialize)
         return current if updated is None else updated
+
+
+def replace_metadata_parquet(parquet_path: Union[str, Path], frame: pd.DataFrame, *, serialize=None) -> None:
+    """Replace a parquet whole with ``frame`` (no read), atomically, under its canonical lock: for a writer whose
+    output is an explicit new artifact (a distinct target of ``rewrite_metadata_parquet``)."""
+    given = Path(parquet_path)
+    parquet_path = metadata_path_identity(given)
+    with _parquet_lock(parquet_path):
+        if serialize is None:
+            _write_metadata_parquet_locked(frame, parquet_path, observed=given)
+        else:
+            _write_serialized_locked(frame, parquet_path, serialize)
+
+
+def rewrite_metadata_parquet(source: Union[str, Path], target: Union[str, Path], transform, *, serialize=None) -> pd.DataFrame:
+    """Read ``source``, ``transform(frame) -> frame``, write ``target``; returns the written frame (CP-K2c F1).
+
+    The same-file decision is made here, once, by ``same_metadata_file``, so a caller cannot get it wrong: when
+    ``target`` is ``source`` under any spelling, the read, transform and atomic replace are one locked read-modify-write
+    of that file (a concurrent locked commit is transformed, never overwritten). A genuinely distinct ``target`` is an
+    explicit new artifact: ``source`` is read as it is, ``target`` is replaced whole, atomically, under its own lock.
+    A missing ``source`` raises the same error as ``pd.read_parquet``."""
+    if same_metadata_file(source, target):
+        def _in_place(current):
+            if not os.path.exists(source):
+                pd.read_parquet(source)  # the missing-file error the direct read raised
+            return transform(current)
+        return update_metadata_parquet(source, _in_place, serialize=serialize)
+    frame = transform(pd.read_parquet(source))
+    replace_metadata_parquet(target, frame, serialize=serialize)
+    return frame
 
 
 def pandas_parquet(frame: pd.DataFrame, path: Path) -> None:
@@ -252,9 +307,17 @@ def merge_owned_rows(current: pd.DataFrame, rows: pd.DataFrame, key: str, owned=
     The result is ``rows`` in their order; columns only ``current`` has are joined onto them by ``key`` (another
     writer's fields of the same document), and ``current`` rows whose key is neither in ``rows`` nor in ``owned``
     (keys this operation wrote before and now replaces) are appended unchanged. With nothing concurrent (``current``
-    holds only this operation's earlier rows and no other column) the result is ``rows`` itself."""
-    if current.empty or key not in current.columns or key not in rows.columns:
+    holds only this operation's earlier rows and no other column) the result is ``rows`` itself.
+
+    Rule (CP-K2c F2): a merge never drops a current row or column it cannot match. When ``current`` (or ``rows``) has
+    no ``key`` column — e.g. the keyless downloader shape ``download_success``/``download_error``/``filename_base``,
+    which ``find_metadata_parquet`` selects — no row can be matched, so every current row is kept, after ``rows``,
+    with all its columns. Preserving is chosen over refusing: refusing would leave this operation's results
+    unpublished and need a caller recovery path, while appending loses nothing and is visible to the next reader."""
+    if current.empty:
         return rows
+    if key not in current.columns or key not in rows.columns:
+        return pd.concat([rows, current], ignore_index=True)
     published = set(rows[key].dropna().tolist())
     extra = [column for column in current.columns if column not in rows.columns]
     result = rows

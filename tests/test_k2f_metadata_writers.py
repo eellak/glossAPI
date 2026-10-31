@@ -8,6 +8,7 @@ tests pin the published bytes to the serializer each writer used before, so noth
 import threading
 
 import pandas as pd
+import pytest
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -221,25 +222,148 @@ def test_openarchives_publication_without_concurrency_writes_the_previous_bytes(
 
 # ------------------------------------------------------------------ in-place filename_base precompute
 
-def test_in_place_filename_base_precompute_serializes_with_a_concurrent_writer(tmp_path, monkeypatch):
+def _alias(target, kind):
+    """``target`` under another spelling of the same file (CP-K2c F1)."""
+    if kind == 'literal':
+        return target
+    if kind == 'dotdot':
+        return target.parent / '..' / target.parent.name / target.name
+    if kind == 'dir-symlink':
+        link = target.parent.parent / 'linked_results'
+        link.symlink_to(target.parent, target_is_directory=True)
+        return link / target.name
+    if kind == 'file-symlink':
+        link = target.parent / 'manifest-link.parquet'
+        link.symlink_to(target)
+        return link
+    raise ValueError(kind)
+
+
+@pytest.mark.parametrize('spelling', ['literal', 'dotdot', 'dir-symlink'])
+@pytest.mark.parametrize('side', ['output', 'input'])
+def test_in_place_filename_base_precompute_serializes_with_a_concurrent_writer(tmp_path, monkeypatch, spelling, side):
+    """In place under any spelling of the same file (CP-K2a F1; CP-K2c F1: on 7ad4962 the ``..`` and symlinked-directory
+    spellings took the unlocked direct write and lost the concurrent row and column)."""
     from glossapi.gloss_downloader import GlossDownloader
+    from glossapi.parquet_schema import ParquetSchema
     target = tmp_path / 'download_results/manifest.parquet'
     target.parent.mkdir()
-    pd.DataFrame({'url': ['https://example.invalid/a.pdf']}).to_parquet(target, index=False)
+    pd.DataFrame({'url': ['https://example.invalid/old.pdf'], 'filename': ['old.pdf']}).to_parquet(target, index=False)
+    alias = _alias(target, spelling)
+    assert alias.samefile(target) and (spelling == 'literal' or alias.absolute() != target.absolute())
+    assert ParquetSchema().find_metadata_parquet(tmp_path / 'download_results') == target
+    source, output = (target, alias) if side == 'output' else (alias, target)
     downloader = GlossDownloader(url_column='url', output_dir=str(tmp_path / 'out'))
     real = GlossDownloader.ensure_filename_base
-    started, writer = threading.Event(), []
+    writers, errors = [], []
+
+    def commit():
+        try:
+            update_metadata_parquet(target, lambda current: pd.concat([current, pd.DataFrame({
+                'url': ['https://example.invalid/concurrent.pdf'], 'filename': ['concurrent.pdf'], 'triage': ['committed']})],
+                ignore_index=True))
+        except BaseException as error:
+            errors.append(error)
 
     def ensure(self, frame):
         # The transform has read the file; a second writer tries to commit now.
-        thread = threading.Thread(target=lambda: (started.set(), _commit_concurrent_row(target)))
-        thread.start(); writer.append(thread); started.wait(2)
-        thread.join(0.3)
+        thread = threading.Thread(target=commit)
+        writers.append(thread); thread.start(); thread.join(0.3)
         return real(self, frame)
 
     monkeypatch.setattr(GlossDownloader, 'ensure_filename_base', ensure)
-    downloader.precompute_filename_base_to_parquet(target)
-    writer[0].join(5)
+    try:
+        downloader.precompute_filename_base_to_parquet(source, None if spelling == 'literal' and side == 'output' else output)
+    finally:
+        for thread in writers:
+            thread.join(5)
+        downloader.close_logs()
+    assert not errors and not any(thread.is_alive() for thread in writers)
     final = pd.read_parquet(target)
-    assert 'concurrent.pdf' in final.filename.tolist()  # 9d5d372: overwritten by the transform of the older read
+    assert set(final.filename) == {'old.pdf', 'concurrent.pdf'}  # 9d5d372 (literal) / 7ad4962 (aliases): ['old.pdf']
+    assert final.loc[final.filename == 'concurrent.pdf', 'triage'].tolist() == ['committed']
     assert final.filename_base.notna().any()
+    assert not target.is_symlink() and not list(target.parent.glob('*.tmp')) and not list(target.parent.glob('*.lock'))
+
+
+def test_distinct_precompute_output_is_an_explicit_new_artifact(tmp_path):
+    """A genuinely distinct output: the input is never rewritten; the output is replaced whole (atomic, locked)."""
+    from glossapi.gloss_downloader import GlossDownloader
+    source = tmp_path / 'download_results/manifest.parquet'
+    source.parent.mkdir()
+    pd.DataFrame({'url': ['https://example.invalid/a.pdf']}).to_parquet(source, index=False)
+    before = source.read_bytes()
+    output = tmp_path / 'derived/manifest.parquet'
+    output.parent.mkdir()
+    pd.DataFrame({'stale': [1]}).to_parquet(output, index=False)
+    downloader = GlossDownloader(url_column='url', output_dir=str(tmp_path / 'out'))
+    try:
+        frame = downloader.precompute_filename_base_to_parquet(source, output)
+    finally:
+        downloader.close_logs()
+    assert source.read_bytes() == before
+    written = pd.read_parquet(output)
+    assert 'stale' not in written.columns and written.filename_base.notna().all() and len(frame) == len(written)
+    expected = tmp_path / 'expected.parquet'
+    frame.to_parquet(expected, index=False)
+    assert output.read_bytes() == expected.read_bytes()  # the previous direct ``to_parquet`` bytes
+
+
+@pytest.mark.parametrize('spelling', ['dotdot', 'dir-symlink', 'file-symlink'])
+def test_every_spelling_takes_the_same_lock_and_names_the_same_file(tmp_path, spelling):
+    from filelock import FileLock, Timeout
+    from glossapi.parquet_schema import _parquet_lock, metadata_path_identity, same_metadata_file
+    target = tmp_path / 'download_results/download_results.parquet'
+    target.parent.mkdir()
+    pd.DataFrame({'filename': ['a.pdf']}).to_parquet(target, index=False)
+    alias = _alias(target, spelling)
+    assert same_metadata_file(alias, target) and metadata_path_identity(alias) == metadata_path_identity(target)
+    assert not same_metadata_file(target, tmp_path / 'download_results/other.parquet')
+    assert same_metadata_file(target.parent / '..' / 'download_results' / 'missing.parquet', target.parent / 'missing.parquet')
+    with _parquet_lock(alias):
+        with pytest.raises(Timeout):  # the literal spelling's lock is the one held
+            FileLock(str(metadata_path_identity(target)) + '.lock').acquire(timeout=0.2)
+    # a writer through the alias replaces the real file, never the link
+    update_metadata_parquet(alias, lambda current: pd.concat([current, pd.DataFrame({'filename': ['b.pdf']})], ignore_index=True))
+    assert pd.read_parquet(target).filename.tolist() == ['a.pdf', 'b.pdf'] and not target.is_symlink()
+    if spelling == 'file-symlink':
+        assert alias.is_symlink()
+
+
+# ------------------------------------------------------------------ merge rule: never drop an unmatched row/column
+
+def test_openarchives_merge_keeps_foreign_rows_when_current_lacks_filename(tmp_path):
+    """CP-K2c F2 (the reviewer's probe): the keyless downloader shape is selectable metadata; on 7ad4962 the merge
+    treated it as empty and deleted the foreign row and its committed column."""
+    from glossapi.parquet_schema import ParquetSchema
+    from glossapi.scripts.openarchives_manifest import _write_canonical_metadata
+    target = tmp_path / 'download_results' / 'download_results.parquet'
+    update_metadata_parquet(target, lambda current: pd.DataFrame({
+        'url': ['https://example.invalid/foreign.pdf'], 'download_success': [True],
+        'download_error': [''], 'filename_base': ['FOREIGN_001'], 'triage': ['committed']}))
+    assert ParquetSchema().find_metadata_parquet(tmp_path) == target
+    rows = pd.DataFrame({'url': ['https://example.invalid/new.pdf'], 'filename': ['NEW_001.pdf'], 'download_success': [True]})
+    _write_canonical_metadata(tmp_path, rows, replaces_filenames=['NEW_001.pdf'])
+    final = pd.read_parquet(target)
+    assert final.url.tolist() == ['https://example.invalid/new.pdf', 'https://example.invalid/foreign.pdf']
+    assert final.loc[final.url.str.contains('foreign'), 'triage'].tolist() == ['committed']
+    assert {'download_error', 'filename_base', 'triage'} <= set(final.columns)
+
+
+def test_merge_owned_rows_never_drops_an_unmatched_current_row_or_column():
+    from glossapi.parquet_schema import merge_owned_rows
+    rows = pd.DataFrame({'filename': ['a.pdf', 'b.pdf'], 'download_success': [True, False]})
+    keyless = pd.DataFrame({'download_success': [True], 'download_error': [''], 'filename_base': ['X_001'], 'triage': ['t']})
+    merged = merge_owned_rows(keyless, rows, 'filename', owned={'a.pdf'})
+    assert len(merged) == 3 and merged.iloc[:2].filename.tolist() == ['a.pdf', 'b.pdf']
+    assert merged.iloc[2][['download_error', 'filename_base', 'triage']].tolist() == ['', 'X_001', 't']
+    # rows without the key: nothing matchable either; every current row is kept
+    current = pd.DataFrame({'filename': ['c.pdf'], 'extract_status': ['ok']})
+    assert merge_owned_rows(current, rows.drop(columns=['filename']), 'filename').filename.tolist()[-1] == 'c.pdf'
+    # keyed: null keys and unowned keys are kept, owned keys absent from rows are dropped, foreign columns joined
+    current = pd.DataFrame({'filename': ['a.pdf', 'old.pdf', None, 'z.pdf'], 'triage': ['ta', 'to', 'tn', 'tz']})
+    merged = merge_owned_rows(current, rows, 'filename', owned={'old.pdf'})
+    assert merged.filename.tolist()[:2] == ['a.pdf', 'b.pdf'] and merged.triage.tolist()[0] == 'ta'
+    assert set(merged.triage.dropna()) == {'ta', 'tn', 'tz'} and 'old.pdf' not in merged.filename.tolist()
+    # nothing concurrent: the rows themselves
+    assert merge_owned_rows(pd.DataFrame(), rows, 'filename') is rows

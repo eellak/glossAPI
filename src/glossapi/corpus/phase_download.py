@@ -77,7 +77,7 @@ class DownloadPhaseMixin:
         from ..gloss_downloader import (GlossDownloader, RESOURCE_IDENTITY_COLUMN, frame_identities,
                                         persisted_download_frame)
         from ..ledger.urls import is_keyed_key, register_setting_secrets, register_url, was_redacted
-        from ..parquet_schema import pandas_parquet, update_metadata_parquet
+        from ..parquet_schema import pandas_parquet, same_metadata_file, update_metadata_parquet
         BrowserGlossDownloader = None
 
         # If input_parquet not specified, find parquet files in input_dir
@@ -395,7 +395,7 @@ class DownloadPhaseMixin:
         published = []
         def _publish(current):
             base = current
-            if (existing_results_path is not None and Path(existing_results_path) != output_parquet
+            if (existing_results_path is not None and not same_metadata_file(existing_results_path, output_parquet)
                     and not existing_results.empty):
                 # Rows resumed from the partial checkpoint or another results file belong to this publication.
                 if base.empty:

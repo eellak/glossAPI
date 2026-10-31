@@ -523,18 +523,11 @@ class GlossDownloader:
 
             return df
 
-        from .parquet_schema import pandas_parquet, update_metadata_parquet
-        if out_path.absolute() == input_parquet.absolute():
-            # In place (CP-K2a F1): read, transform and atomically replace inside the metadata lock, so a concurrent
-            # locked writer's commit is never overwritten by a transform of an older read.
-            def _in_place(current):
-                if not input_parquet.exists():
-                    pd.read_parquet(input_parquet)  # the same missing-file error as before
-                return _transform(current)
-            df = update_metadata_parquet(input_parquet, _in_place, serialize=pandas_parquet)
-        else:
-            df = _transform(pd.read_parquet(input_parquet))
-            df.to_parquet(out_path, index=False)
+        from .parquet_schema import pandas_parquet, rewrite_metadata_parquet
+        # In place (output = input under any spelling: ``..``, a symlinked directory or file) the read, transform and
+        # atomic replace are one locked read-modify-write; a distinct output is an explicit new artifact replaced
+        # whole under its own lock (CP-K2a F1, CP-K2c F1: the same-file decision lives in the shared helper).
+        df = rewrite_metadata_parquet(input_parquet, out_path, _transform, serialize=pandas_parquet)
         self.logger.info(f"Precomputed filename_base and updated parquet at {out_path}")
         return df
     
