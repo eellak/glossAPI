@@ -117,7 +117,11 @@ class ExtractStage:
         observations = []
         original_provenance = getattr(extractor, "_stage_source_provenance", None)
         try:
-            if sha256_file(source.path) != source.sha256 or source.path.stat().st_size != source.bytes:
+            # Hash once per byte stream (K4(c) R4): a snapshot this worker froze moments ago was hashed while its bytes
+            # were written (freeze_inputs, same producer scope); only an input this process did not write is re-read.
+            from .execution import produced_hash
+            written = produced_hash(source.path)
+            if (written != (source.sha256, source.bytes) and sha256_file(source.path) != source.sha256) or source.path.stat().st_size != source.bytes:
                 raise ValueError("input_hash_changed")
             extractor._stage_source_provenance = {"path": serialized_source_path or str(source.path), "sha256": source.sha256}
             dictionary_path = os.environ.get("GLOSSAPI_GREEK_WORDLIST")

@@ -64,12 +64,71 @@ def seal_output_hashes(result, root):
 
 
 def copy_hashed(source, destination):
-    """Hash the bytes being copied, without reading the new product again."""
+    """Hash the bytes being copied, without reading the new product again.
+
+    A destination that is a hard link (it may share its inode with a managed
+    file, K4(c) decision 3) is unlinked first, so the copy never writes
+    through a shared inode. Other destinations keep the in-place write.
+    """
+    import stat as _stat
+    destination=Path(destination)
+    try:info=os.lstat(destination)
+    except FileNotFoundError:info=None
+    if info is not None and _stat.S_ISREG(info.st_mode) and info.st_nlink>1:
+        os.unlink(destination)
     digest=hashlib.sha256();size=0
-    with Path(source).open('rb') as reader, Path(destination).open('wb') as writer:
+    with Path(source).open('rb') as reader, destination.open('wb') as writer:
         for block in iter(lambda:reader.read(1024*1024),b''):
             writer.write(block);digest.update(block);size+=len(block)
     return remember_written_hash(destination,digest.hexdigest(),size)
+
+
+# Private outputs a run keeps (recovery frontiers, evidence); everything else private and intermediate is released.
+RETAINED_PRIVATE_KINDS=frozenset(('download_payload','worker_receipt','generation_manifest','ocr_native','ocr_page_state'))
+
+
+def links_released_copies(journal, retention_class, kind):
+    """True when a compatibility product may share the inode of its private source (K4(c) decision 3).
+
+    Only with debug=off, and only for a private intermediate that this run
+    releases after publication: once released, the product is the file's only
+    name, so no retained managed file stays aliased to a user-visible path.
+    """
+    settings=getattr(journal,'retention_settings',None) or {}
+    return (journal is not None and settings.get('debug','off')=='off' and retention_class=='intermediate'
+            and kind not in RETAINED_PRIVATE_KINDS)
+
+
+def link_published(source, destination, sha256, size):
+    """Publish ``source`` at ``destination`` as a hard link (atomic rename of a fresh link).
+
+    The registered producer hash is reused: no new byte stream exists, so the
+    bytes are not hashed again (hash once per byte stream). Returns None when
+    the filesystem cannot link (other device, link limit, unsupported); the
+    caller then copies.
+    """
+    import uuid
+    source=Path(source);destination=Path(destination)
+    if destination.suffix=='.parquet' or destination.is_symlink():
+        return None  # metadata-shaped or symlinked destinations keep their own publication rules
+    info=source.lstat()
+    import stat as _stat
+    if not _stat.S_ISREG(info.st_mode) or info.st_size!=size:
+        raise ValueError('Product changed during final publication')
+    try:current=destination.lstat()
+    except FileNotFoundError:current=None
+    if current is not None and (current.st_dev,current.st_ino)==(info.st_dev,info.st_ino):
+        # Already this inode (e.g. republished after a kill): rename() between two links of
+        # one file is a no-op that would leave the temporary name behind.
+        return remember_written_hash(destination,sha256,size)
+    temporary=destination.parent/('.'+destination.name+'.'+uuid.uuid4().hex+'.link')
+    try:os.link(source,temporary,follow_symlinks=False)
+    except OSError:return None
+    try:os.replace(temporary,destination)
+    finally:
+        # Defensive: a same-inode rename leaves the source name in place.
+        if os.path.lexists(temporary):os.unlink(temporary)
+    return remember_written_hash(destination,sha256,size)
 
 
 def checked_path(root, relative):

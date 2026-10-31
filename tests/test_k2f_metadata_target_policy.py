@@ -484,6 +484,9 @@ EXPECTED = {
     ('glossapi/parquet_schema.py', 'pandas_parquet', '.to_parquet'): (1, SERIALIZER),
     ('glossapi/parquet_schema.py', 'ParquetSchema.create_basic_metadata_parquet', '.write_table'): (1, SERIALIZER),
     ('glossapi/parquet_schema.py', 'ParquetSchema.write_parquet', '.write_table'): (1, SERIALIZER),
+    ('glossapi/stages/execution.py', 'link_published', 'os.replace'):
+        (1, 'K4(c) decision 3: atomic rename of a fresh hard link of a private intermediate onto its per-document '
+            'compatibility product; never a .parquet or symlinked destination (it returns None and the caller copies)'),
     ('glossapi/stages/products.py', '_publish_products_locked', 'os.replace'):
         (1, 'product publication; metadata-shaped products are written to the metadata_target-resolved physical '
             'path held by publish_products (or by a caller passing physical=), checked below'),

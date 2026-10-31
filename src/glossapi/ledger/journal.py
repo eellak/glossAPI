@@ -599,6 +599,10 @@ def shadow_stage(stage, operation=None):
             writer = provided_writer or (LedgerWriter(Path(self.output_dir) / "corpus.sqlite3", code_revision=code_revision()) if own_writer else parent.writer)
             try:
                 journal = ResultJournal(writer, self, stage, operation or f"{stage}.{function.__name__}", parameters)
+                if own_writer:
+                    # This phase owns the writer: its close is the run-close barrier.
+                    writer.barrier_context = {'run_id': journal.run_id, 'debug': journal.retention_settings.get('debug', 'off')}
+                    writer.retained_intermediates = journal.retention_settings.get('debug', 'off') == 'on'
                 token = _active_journal.set(journal)
                 result, error = None, None
                 try:

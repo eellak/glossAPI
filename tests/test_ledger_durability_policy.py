@@ -54,10 +54,10 @@ def test_delete_barrier_precedes_unlink_and_compacts_only_after_completion(tmp_p
         controller.declare(file,[task])
         original_barrier=writer.durable_barrier
         calls=[]
-        def barrier():
+        def barrier(*args,**options):
             assert path.exists()
             assert writer.connection.execute("SELECT COUNT(*) FROM retention_events WHERE file_id=?",(file,)).fetchone()[0]>=2
-            original_barrier();calls.append('durable')
+            original_barrier(*args,**options);calls.append('durable')
         monkeypatch.setattr(writer,'durable_barrier',barrier)
         unlink=os.unlink
         def checked_unlink(*args,**kwargs):
@@ -164,7 +164,7 @@ with LedgerWriter(root/'corpus.sqlite3') as writer:
   writer.finish(run,task,attempt,status='ok',reason_code='clean_completed')
  controller=RetentionController(writer,root,run)
  controller.declare(file,[task])
- writer.durable_barrier=lambda:os.kill(os.getpid(),signal.SIGKILL)
+ writer.durable_barrier=lambda *args,**options:os.kill(os.getpid(),signal.SIGKILL)
  controller.delete_many([file])
 '''
     result=subprocess.run([sys.executable,'-c',code,str(tmp_path)])
@@ -172,7 +172,7 @@ with LedgerWriter(root/'corpus.sqlite3') as writer:
     with LedgerWriter(tmp_path/'corpus.sqlite3') as writer:
         run=writer.connection.execute('SELECT run_id FROM runs').fetchone()[0]
         barriers=[];barrier=writer.durable_barrier
-        def record_barrier():barrier();barriers.append('durable')
+        def record_barrier(*args,**options):barrier(*args,**options);barriers.append('durable')
         monkeypatch.setattr(writer,'durable_barrier',record_barrier)
         unlink=os.unlink
         def checked_unlink(*args,**kwargs):

@@ -43,7 +43,7 @@ def _load_syncfs():
     return function
 
 
-_SYNCFS=_load_syncfs()
+_SYNCFS=_load_syncfs()  # kept for diagnostics; barriers never call syncfs (K4(c) decision 1)
 
 
 def sync_filesystem(descriptor):
@@ -57,8 +57,10 @@ def sync_filesystem(descriptor):
 class SyncBatch:
     """One durability flush for a batch of changed files and directories.
 
-    With syncfs this is one call per filesystem. Otherwise each registered file
-    and then each registered directory is fsynced exactly once per batch.
+    Each registered file and then each registered directory is fsynced exactly
+    once per batch. A batch never flushes the whole filesystem (syncfs): the
+    durability contract makes durable exactly the paths a barrier depends on
+    (K4(c) coordinator decision 1).
     """
     def __init__(self):
         self.descriptors={}
@@ -75,15 +77,10 @@ class SyncBatch:
         finally:os.close(descriptor)
 
     def flush(self):
-        if _SYNCFS is not None:
-            devices={}
-            for (device,_),(descriptor,_) in self.descriptors.items():devices.setdefault(device,descriptor)
-            for descriptor in devices.values():sync_filesystem(descriptor)
-            return
-        for descriptor,directory in self.descriptors.values():
-            if not directory:os.fsync(descriptor)
-        for descriptor,directory in self.descriptors.values():
-            if directory:os.fsync(descriptor)
+        files=[descriptor for descriptor,directory in self.descriptors.values() if not directory]
+        directories=[descriptor for descriptor,directory in self.descriptors.values() if directory]
+        fsync_all(files)
+        fsync_all(directories)
 
     def close(self):
         for descriptor,_ in self.descriptors.values():os.close(descriptor)
@@ -91,6 +88,37 @@ class SyncBatch:
 
     def __enter__(self):return self
     def __exit__(self,*args):self.close()
+
+
+def _fsync_path(path):
+    try:descriptor=os.open(path,os.O_RDONLY)
+    except FileNotFoundError:return  # Missing observations are diagnosed by verification/resume.
+    try:os.fsync(descriptor)
+    finally:os.close(descriptor)
+
+
+def _map_bounded(function,items):
+    """Run function over items on at most 8 threads (fsync releases the GIL; ext4 groups the journal commits)."""
+    items=list(items)
+    if len(items)<4:return [function(item) for item in items]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(8,len(items))) as pool:
+        return list(pool.map(function,items))
+
+
+def fsync_all(descriptors):
+    """fsync every descriptor; concurrent calls let the filesystem group its journal commits."""
+    descriptors=list(descriptors)
+    if len(descriptors)<4:
+        for descriptor in descriptors:os.fsync(descriptor)
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(8,len(descriptors))) as pool:
+        for _ in pool.map(os.fsync,descriptors):pass
+
+
+# Outputs that are never released within a run: recovery frontiers and evidence.
+_RETAINED_PRIVATE_KINDS=frozenset(('download_payload','worker_receipt','generation_manifest','ocr_native','ocr_page_state'))
 
 
 def utc_now():
@@ -208,6 +236,11 @@ class LedgerWriter:
         self._planned_reader_maps = {}
         self.snapshot_cache = set()
         self.produced_files = {}
+        # Set by the owning run: {'run_id','debug'}; selects per-barrier records or one run summary.
+        self.barrier_context = None
+        # debug=on keeps intermediates: their copies may rely on the retained private source.
+        self.retained_intermediates = False
+        self.barrier_totals = dict(barrier_count=0,file_count=0,byte_count=0,directory_count=0,unlink_count=0,flush_ns=0,by_reason={})
         self.lock = os.open(self.path.parent, os.O_RDONLY)
         try:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -273,7 +306,13 @@ class LedgerWriter:
                 f'SELECT COALESCE(MAX(event_id),0) FROM {table}').fetchone()[0] for table in event_tables)
             self.connection.execute("PRAGMA journal_mode=WAL")
             self.connection.execute("PRAGMA synchronous=NORMAL")
+            # Writeback, not representation: a larger page cache keeps the hot
+            # index pages in process, and fewer, larger checkpoints rewrite each
+            # hot page (and fsync the database) less often. Records are unchanged.
+            self.connection.execute("PRAGMA cache_size=-65536")
+            self.connection.execute("PRAGMA wal_autocheckpoint=16384")
             self._durable_files=set()
+            self._durable_directories={}
             self.file_catalog()
             self.connection.owner_writer=self
         except BaseException:
@@ -345,52 +384,155 @@ class LedgerWriter:
             pop_identity_root(self._identity_root)
             self._identity_root = None
 
-    def durable_barrier(self):
-        """Flush immutable managed products and their parents before a FULL commit.
+    def durable_barrier(self, unlinking=(), *, private=False, reason=None):
+        """Make durable exactly what a pending unlink (or the run close) depends on, then FULL-commit.
 
         Ordinary WAL commits protect process death. This is the explicit disk
-        boundary used before unlink and at run end. The cache is by immutable
-        registration, never by stat metadata and never used to bypass a hash.
+        boundary used before unlink and at run end (amended durability contract,
+        K4(c) coordinator decisions 1-3):
+        - ``unlinking`` empty (run close): every present managed file not yet
+          made durable, except a byte copy whose retained managed source is (or
+          becomes, in this barrier) durable;
+        - ``unlinking`` given: the present byte copies of the files to be
+          unlinked (same producer attempt and hash, i.e. the user-visible bytes
+          that replace them) and, unless ``private``, every output of an attempt
+          that read them (the outputs that replace a deleted source or product);
+        - ``private`` (bulk release of private scratch after its last planned
+          reader): private scratch is never made durable; the stage reruns
+          after a crash.
+        Each file is fsynced, then each changed parent directory inside the
+        corpus, then the ledger commits with synchronous=FULL. No syncfs.
+        The cache is by immutable registration, never by stat metadata and
+        never used to bypass a hash.
         """
         self._owner(transaction=False)
         if self.connection.in_transaction:
             raise LedgerError('Durability barrier requires a committed observation')
+        import time as _time
+        began=_time.monotonic_ns()
+        catalog=self.file_catalog()
+        unlinking=set(unlinking)
+        if unlinking:
+            selected=self._barrier_dependents(catalog,unlinking,private)
+        else:
+            selected=[row for row in catalog.values() if row['ownership']=='managed' and row['presence']=='present'
+                and row['file_id'] not in self._durable_files]
+        selected=self._without_durable_copies(catalog,selected,unlinking)
         from urllib.parse import unquote, urlsplit
         import stat
-        directories=set()
-        synchronized=[];paths=[];devices={}
-        for row in self.file_catalog().values():
-            if row['ownership']!='managed' or row['presence']!='present':continue
-            file_id,uri=row['file_id'],row['uri']
-            if file_id in self._durable_files:continue
-            path=Path(unquote(urlsplit(uri).path))
+        root=self.path.parent
+        directories=set();synchronized=[];paths=[];covered_bytes=0
+        for row in selected:
+            path=Path(unquote(urlsplit(row['uri']).path))
             try:info=os.stat(path)
             except OSError:continue  # Missing observations are diagnosed by verification/resume.
             if not stat.S_ISREG(info.st_mode):continue
-            devices.setdefault(info.st_dev,path)
-            paths.append(path)
-            directories.update(parent for parent in path.parents if parent.is_relative_to(self.path.parent))
-            synchronized.append(file_id)
-        if _SYNCFS is not None:
-            # One flush per filesystem covers every listed file and parent
-            # directory of this batch; the FULL commit below follows it.
-            for directory in directories:devices.setdefault(os.stat(directory).st_dev,directory)
-            with SyncBatch() as batch:
-                for path in devices.values():batch.add_path(path)
-                batch.flush()
-        else:
-            for path in paths:
-                with path.open('rb') as stream:os.fsync(stream.fileno())
-            for directory in sorted(directories,key=lambda path:len(path.parts),reverse=True):
-                descriptor=os.open(directory,os.O_RDONLY)
-                try:os.fsync(descriptor)
-                finally:os.close(descriptor)
+            paths.append(path);covered_bytes+=info.st_size
+            directories.update(parent for parent in path.parents if parent.is_relative_to(root))
+            synchronized.append(row['file_id'])
+        # Each path is opened, flushed and closed by one task, so at most a pool's worth of descriptors is open.
+        _map_bounded(_fsync_path,paths)
+        ordered=sorted(directories,key=lambda path:len(path.parts),reverse=True)
+        started=_time.time_ns()
+        cache=self._durable_directories
+        def flush_directory(directory):
+            try:descriptor=os.open(directory,os.O_RDONLY)
+            except OSError:return None
+            try:
+                info=os.fstat(descriptor)
+                key=(info.st_dev,info.st_ino);state=(info.st_mtime_ns,info.st_ctime_ns)
+                # A directory whose entries are unchanged since its last fsync needs none. Directory
+                # times are coarse (one clock tick), so the skip is trusted only for a state that was
+                # already more than a second old when that fsync started.
+                cached=cache.get(key)
+                if cached and cached[0]==state and max(state)<cached[1]-1_000_000_000:return None
+                os.fsync(descriptor)
+                return key,state
+            finally:os.close(descriptor)
+        # Deepest first: a parent is flushed after the entries below it.
+        flushed=[]
+        for depth in sorted({len(path.parts) for path in ordered},reverse=True):
+            flushed.extend(item for item in _map_bounded(flush_directory,[path for path in ordered if len(path.parts)==depth]) if item)
+        for key,state in flushed:cache[key]=(state,started)
+        synced_directories=len(flushed)
+        flushed_ns=_time.monotonic_ns()-began
+        record=dict(reason=reason or ('run_close' if not unlinking else 'private_release' if private else 'policy_delete'),
+            file_count=len(synchronized),byte_count=covered_bytes,directory_count=synced_directories,unlink_count=len(unlinking),flush_ns=flushed_ns)
+        context=self.barrier_context
+        summary=self._barrier_totals(record)
         self.connection.execute('PRAGMA synchronous=FULL')
         try:
             with self.transaction():
-                self.connection.execute('UPDATE ledger_info SET singleton=singleton WHERE singleton=1')
+                if context and context.get('debug')=='on':
+                    # debug=on: every barrier names the files it covered.
+                    self.event(context['run_id'],event_kind='retention',reason_code='durability_barrier',message='barrier',
+                        details={**record,'file_ids':sorted(synchronized)})
+                elif context and not unlinking:
+                    # debug=off: one summary of this writer's barriers, written by the run-close barrier.
+                    self.event(context['run_id'],event_kind='retention',reason_code='durability_barrier',message='barrier_summary',details=summary)
+                else:
+                    self.connection.execute('UPDATE ledger_info SET singleton=singleton WHERE singleton=1')
         finally:self.connection.execute('PRAGMA synchronous=NORMAL')
         self._durable_files.update(synchronized)
+
+    def _barrier_totals(self,record):
+        totals=self.barrier_totals
+        totals['barrier_count']+=1
+        for key in ('file_count','byte_count','directory_count','unlink_count','flush_ns'):totals[key]+=record[key]
+        by=totals['by_reason'].setdefault(record['reason'],dict(barrier_count=0,file_count=0,byte_count=0))
+        by['barrier_count']+=1;by['file_count']+=record['file_count'];by['byte_count']+=record['byte_count']
+        return {key:(dict(value) if isinstance(value,dict) else value) for key,value in totals.items()}
+
+    def _files_of_attempts(self,attempts):
+        """file_ids produced by these attempts (indexed lookup; the catalog supplies current presence)."""
+        attempts=[value for value in attempts if value]
+        found=[]
+        for offset in range(0,len(attempts),500):
+            chunk=attempts[offset:offset+500]
+            found.extend(value for value, in self.connection.execute(
+                'SELECT file_id FROM files WHERE producer_attempt_id IN ('+','.join('?'*len(chunk))+')',chunk))
+        return found
+
+    def _barrier_dependents(self,catalog,unlinking,private):
+        """Files a pending unlink depends on (see durable_barrier)."""
+        bindings={}
+        for file_id in unlinking:
+            row=catalog.get(file_id)
+            if row and row['producer_attempt_id']:bindings.setdefault((row['producer_attempt_id'],row['sha256']),set()).add(row['uri'])
+        readers=set()
+        if not private:
+            identifiers=list(unlinking)
+            for offset in range(0,len(identifiers),500):
+                chunk=identifiers[offset:offset+500]
+                readers.update(value for value, in self.connection.execute(
+                    'SELECT DISTINCT attempt_id FROM attempt_inputs WHERE file_id IN ('+','.join('?'*len(chunk))+')',chunk))
+        selected=[]
+        for file_id in dict.fromkeys(self._files_of_attempts(sorted({producer for producer,_ in bindings}|readers))):
+            row=catalog.get(file_id)
+            if (row is None or row['ownership']!='managed' or row['presence']!='present' or file_id in self._durable_files
+                    or file_id in unlinking):continue
+            # A user-visible byte copy (outside the private tree) of a file being unlinked.
+            copy=(row['producer_attempt_id'],row['sha256']) in bindings and '/.glossapi/' not in row['uri'] and row['uri'] not in bindings[(row['producer_attempt_id'],row['sha256'])]
+            if copy or row['producer_attempt_id'] in readers:selected.append(row)
+        return selected
+
+    def _without_durable_copies(self,catalog,selected,unlinking):
+        """Decision 3: a byte copy of a retained managed source needs no flush of its own once that source is durable."""
+        artifacts='/.glossapi/artifacts/'
+        producers={row['producer_attempt_id'] for row in selected if artifacts not in row['uri'] and row['producer_attempt_id']}
+        if not producers:return selected
+        chosen={row['file_id'] for row in selected}
+        sources={}
+        for file_id in self._files_of_attempts(sorted(producers)):
+            row=catalog.get(file_id)
+            if (row is not None and row['ownership']=='managed' and row['presence']=='present' and artifacts in row['uri']
+                    and file_id not in unlinking
+                    and (row['retention_class']!='intermediate' or row['kind'] in _RETAINED_PRIVATE_KINDS or self.retained_intermediates)
+                    and (file_id in self._durable_files or file_id in chosen)):
+                sources.setdefault((row['producer_attempt_id'],row['sha256']),[]).append(row['uri'])
+        if not sources:return selected
+        return [row for row in selected if not (artifacts not in row['uri']
+                and any(uri!=row['uri'] for uri in sources.get((row['producer_attempt_id'],row['sha256']),())))]
 
     def __enter__(self): return self
     def __exit__(self, *args): self.close()
@@ -528,9 +670,11 @@ class LedgerWriter:
         digest = hashlib.sha256(encoded.encode()).hexdigest()
         if digest in self.snapshot_cache:
             return digest
-        stored=encode_json(encoded) if self.connection.compact else encoded
         if getattr(self.connection,'storage_version',0)>=3:
             stored=self.connection.encode_snapshot(value,lambda common:self.snapshot('shared_config',{'kind':'shared_config','value':common}))
+        else:
+            # The v2 frame only; v3 never stores it, so it is not computed there.
+            stored=encode_json(encoded) if self.connection.compact else encoded
         # The snapshot key hashes the full logical value, independent of storage.
         self.connection.execute("INSERT OR IGNORE INTO snapshots VALUES(?,?,1,?)",(digest,kind,stored))
         self.snapshot_cache.add(digest)

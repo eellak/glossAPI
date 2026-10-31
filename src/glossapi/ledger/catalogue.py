@@ -1,5 +1,5 @@
 """Versioned status/reason vocabulary; details retain original backend tokens."""
-CATALOGUE_VERSION = 4  # 3: source_unavailable (CP-LEDGER F3); 4: source_inventory_bound (cycle-2 F4)
+CATALOGUE_VERSION = 5  # 3: source_unavailable (CP-LEDGER F3); 4: source_inventory_bound (cycle-2 F4); 5: durability_barrier (K4(c))
 STAGES = frozenset(("download", "extract", "clean", "ocr", "math", "sections", "annotate", "export"))
 STATUSES = frozenset(("planned", "running", "ok", "skipped", "failed"))
 TERMINAL_STATUSES = frozenset(("ok", "skipped", "failed"))
@@ -70,6 +70,7 @@ REASON_CODES = frozenset((
     'download_timeout',
     'download_url_column_missing',
     'duplicate_content',
+    'durability_barrier',
     'duplicate_url',
     'export_canonical_markdown_missing',
     'export_completed',

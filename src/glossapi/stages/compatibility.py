@@ -127,8 +127,11 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
                 data = serialized_payload.encode('utf-8')
                 mirror_hashes[relative] = (hashlib.sha256(data).hexdigest(), len(data))
             else:
-                from .execution import copy_hashed
-                digest, size = copy_hashed(path, destination)
+                from .execution import copy_hashed, link_published, links_released_copies
+                linked = None
+                if output.sha256 and isinstance(journal, ResultJournal) and links_released_copies(journal, output.retention_class, output.kind):
+                    linked = link_published(path, destination, output.sha256, output.bytes)
+                digest, size = linked or copy_hashed(path, destination)
                 if output.sha256 and (digest, size) != (output.sha256, output.bytes):
                     raise ValueError('Product changed during final publication')
                 mirror_hashes[relative] = (digest, size)
@@ -224,7 +227,11 @@ def materialize_stage_outputs(corpus, result, workspace, paths):
             if fact is None:
                 raise ValueError('Cannot materialize unregistered stage output')
             claimed = claim_publication(corpus, destination, fact['version_id'])
-        digest, size = copy_hashed(path, destination)
+        from .execution import link_published, links_released_copies
+        linked = None
+        if fact is not None and links_released_copies(journal, fact['retention_class'], fact['kind']):
+            linked = link_published(path, destination, fact['sha256'], fact['bytes'])
+        digest, size = linked or copy_hashed(path, destination)
         claimed()
         if isinstance(journal, ResultJournal):
             if (digest,size)!=(fact['sha256'],fact['bytes']):

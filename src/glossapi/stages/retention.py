@@ -323,7 +323,7 @@ class RetentionController:
                 with self.writer.transaction():
                     intent = self.writer.event(self.run_id,event_kind='retention',reason_code='delete_planned',
                         file_id=file_id,version_id=row['version_id'],details=self._compact_receipt({**details,'identity':list(identity)}))
-                self.writer.durable_barrier()
+                self.writer.durable_barrier([file_id,*(alias[0] for alias in aliases)])
                 self.fault('after_intent', file_id)
             # Pins and leases can only change through this writer. Recheck the
             # path identity under the same opened directory immediately before unlink.
@@ -430,7 +430,7 @@ class RetentionController:
         if not intents:
             if file_ids:self._prune_completed_policies()
             return
-        self.writer.durable_barrier()
+        self.writer.durable_barrier([file_id for file_id,_ in intents])
         for offset in range(0,len(intents),128):
             self._directory_syncs=SyncBatch()
             try:
@@ -460,7 +460,7 @@ class RetentionController:
         # The dead writer may have committed its NORMAL intent and died while
         # flushing consumers, before its FULL barrier. Never infer durability
         # merely from a visible intent after process death.
-        if intents:self.writer.durable_barrier()
+        if intents:self.writer.durable_barrier([row[1] for row in intents])
         return sum(self.delete(row[1],recovering=row[0]) for row in intents)
 
     def seal(self, rows):
@@ -660,11 +660,22 @@ def retire_downloaded_sources(writer,root,run_id,settings):
         controller.delete_many([row['file_id'] for row in rows])
 
 
-def _unlink_private_file(controller, row, intent, directories):
+def _hard_linked_copies(controller):
+    """(producer attempt, sha256) -> present managed copies outside the private tree (decision 3 hard links)."""
+    private=(controller.root/'.glossapi/artifacts').as_uri()+'/'
+    copies={}
+    for row in controller.writer.file_catalog().values():
+        if row['ownership']=='managed' and row['presence']=='present' and row['producer_attempt_id'] and not row['uri'].startswith(private):
+            copies.setdefault((row['producer_attempt_id'],row['sha256']),[]).append(row)
+    return copies
+
+
+def _unlink_private_file(controller, row, intent, copies):
     """Unlink only a producer-owned, unexposed regular private file; no rehash.
 
-    The changed parent is registered in directories; the caller flushes each
-    directory once before the batch that records these deletions commits.
+    A private file may share its inode only with the registered public copies
+    of the same producer attempt and bytes (the compatibility product published
+    by hard link, decision 3); any other extra link is ambiguous.
     """
     path = file_path(row)
     private = controller.root/'.glossapi/artifacts'
@@ -680,13 +691,19 @@ def _unlink_private_file(controller, row, intent, directories):
                 child=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=descriptor)
                 os.close(descriptor);descriptor=child
             info=os.stat(relative.name,dir_fd=descriptor,follow_symlinks=False)
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1:
+            links=1
+            if stat.S_ISREG(info.st_mode) and info.st_nlink>1:
+                # One count per distinct path: a resumed publication can register the same copy again.
+                for uri in sorted({copy['uri'] for copy in copies.get((row['producer_attempt_id'],row['sha256']),())}):
+                    try:other=file_path({'uri':uri}).lstat()
+                    except OSError:continue
+                    if (other.st_dev,other.st_ino)==(info.st_dev,info.st_ino):links+=1
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink!=links:
                 raise ValueError('Private scratch identity is ambiguous')
             os.unlink(relative.name,dir_fd=descriptor)
-            directories.add(descriptor)
             controller.fault('after_unlink',row['file_id'])
         except FileNotFoundError:
-            directories.add(descriptor)
+            pass
         controller.writer.event(controller.run_id,event_kind='artifact',reason_code='deleted',
             file_id=row['file_id'],version_id=row['version_id'],
             details={'private_release_intent':intent})
@@ -698,17 +715,19 @@ def _finish_private_release(controller, intent, detail):
     connection=controller.connection
     manifest=json.loads(connection.execute('SELECT json FROM snapshots WHERE sha256=?',
         (detail['manifest_sha256'],)).fetchone()[0])
-    from ..ledger.writer import SyncBatch
+    # Private scratch released within the run is never made durable, neither
+    # its bytes nor its unlink (K4(c) decision 2): after a crash the release
+    # intent is recovered (a missing file is an observed unlink) and the stage
+    # reruns from kept inputs. The intent itself committed with FULL first.
+    copies=_hard_linked_copies(controller)
+    catalog=controller.writer.file_catalog()
     for offset in range(0,len(manifest['file_ids']),128):
-        with SyncBatch() as directories:
-            with controller.writer.batch():
-                for file_id in manifest['file_ids'][offset:offset+128]:
-                    row=connection.execute('SELECT * FROM current_file_state WHERE file_id=?',(file_id,)).fetchone()
-                    if row['presence']=='deleted':continue
-                    _unlink_private_file(controller,row,intent,directories)
-                # One flush per changed directory (or filesystem) per batch,
-                # before this transaction commits the batch's deletions.
-                directories.flush()
+        with controller.writer.batch():
+            for file_id in manifest['file_ids'][offset:offset+128]:
+                # The owner's append-driven catalog holds current presence (control state, not byte proof).
+                row=catalog.get(file_id) or connection.execute('SELECT * FROM current_file_state WHERE file_id=?',(file_id,)).fetchone()
+                if row['presence']=='deleted':continue
+                _unlink_private_file(controller,row,intent,copies)
     with controller.writer.transaction():
         controller.writer.event(controller.run_id,event_kind='retention',reason_code='delete_completed',
             message='private_stage_release',details={**detail,'intent_event_id':intent})
@@ -745,7 +764,7 @@ def release_private_scratch(controller, rows):
                 intent=controller.writer.event(controller.run_id,event_kind='retention',reason_code='delete_planned',
                     message='private_stage_release',details=detail)
                 releases.append((intent,detail,files))
-        controller.writer.durable_barrier()
+        controller.writer.durable_barrier([row['file_id'] for _,_,files in releases for row in files],private=True)
     for intent,detail,files in releases:
         controller.fault('after_intent', files[0]['file_id'])
         _finish_private_release(controller,intent,detail)
@@ -764,7 +783,12 @@ def recover_private_releases(controller):
         if not completed:pending.append((intent,json.loads(encoded)))
     # A dead writer may have committed its NORMAL intent without its FULL
     # barrier; only an unfinished release needs that barrier before unlink.
-    if pending:controller.writer.durable_barrier()
+    if pending:
+        released=[]
+        for intent,detail in pending:
+            manifest=json.loads(connection.execute('SELECT json FROM snapshots WHERE sha256=?',(detail['manifest_sha256'],)).fetchone()[0])
+            released.extend(manifest['file_ids'])
+        controller.writer.durable_barrier(released,private=True)
     for intent,detail in pending:_finish_private_release(controller,intent,detail)
 
 
