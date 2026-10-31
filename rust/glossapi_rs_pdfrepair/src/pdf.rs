@@ -729,8 +729,8 @@ pub fn decode(o: &Obj) -> Result<Vec<u8>> {
             let cols = p.get("Columns").int().max(1);
             let colors = p.get("Colors").int().max(1);
             let bits = p.get("BitsPerComponent").int().max(8);
-            let row = (cols * colors * bits + 7) / 8;
-            let bpp = (colors * bits + 7) / 8;
+            let row = (cols * colors * bits).div_ceil(8);
+            let bpp = (colors * bits).div_ceil(8);
             if pred >= 10 {
                 let mut out = vec![];
                 let mut prev = vec![0u8; row];

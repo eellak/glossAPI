@@ -239,8 +239,7 @@ fn cmap(b: &[u8]) -> Result<BTreeMap<u32, usize>> {
             let keys = (0..256)
                 .map(|i| u16b(b, 6 + i * 2))
                 .collect::<Result<Vec<_>>>()?;
-            for hi in 0..256 {
-                let key = keys[hi];
+            for (hi, &key) in keys.iter().enumerate() {
                 let p = 518 + key;
                 let first = u16b(b, p)?;
                 let count = u16b(b, p + 2)?;
@@ -509,9 +508,8 @@ pub fn glyphs(b: &[u8], kind: &str) -> Result<Glyphs> {
         match format {
             0x10000 => {
                 has_names = true;
-                for i in 0..ng.min(TABLES.post.len()) {
-                    names[i] = TABLES.post[i].clone()
-                }
+                let n = ng.min(TABLES.post.len());
+                names[..n].clone_from_slice(&TABLES.post[..n]);
             }
             0x20000 => {
                 has_names = true;
@@ -540,10 +538,10 @@ pub fn glyphs(b: &[u8], kind: &str) -> Result<Glyphs> {
             }
             0x25000 => {
                 has_names = true;
-                for i in 0..ng {
+                for (i, name) in names.iter_mut().enumerate() {
                     let delta = slice(t, 32 + i, 1)?[0] as i8;
                     let idx = (i as i32 + delta as i32) as usize;
-                    names[i] = TABLES
+                    *name = TABLES
                         .post
                         .get(idx)
                         .ok_or_else(|| anyhow!("Invalid post name"))?

@@ -146,7 +146,10 @@ class ExtractStage:
                 extractor._font_repair_deadlines = {}
                 extractor._font_repair_records = {}
                 extractor._font_repair_output_dir = markdown
+                extractor._preflight_page_counts = {}
                 page_count = extractor._get_pdf_page_count(source.path)
+                # Open the source for its page count once: the font-repair budget reuses this count.
+                extractor._preflight_page_counts[str(source.path.resolve())] = page_count
                 chunked = (not extractor.use_pypdfium_backend and page_count is not None
                     and page_count > extractor.long_pdf_page_threshold and not getattr(extractor, "page_range", None))
                 if chunked:
@@ -212,3 +215,4 @@ class ExtractStage:
             return failed_result(request, "input_hash_changed" if str(error) == "input_hash_changed" else "output_schema_invalid", error, decisions=({"backend_observations": observations},))
         finally:
             extractor._stage_source_provenance = original_provenance
+            extractor._preflight_page_counts = {}

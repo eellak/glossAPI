@@ -193,6 +193,8 @@ class GlossExtract:
         self._font_repair_originals = {}
         self._font_repair_deadlines = {}
         self._font_repair_output_dir = None
+        # Page counts the stage adapter already read for this run (resolved path -> count); see run_prepared.
+        self._preflight_page_counts = {}
         # Timeout budget for text-layer extraction scales with page count
         self.per_page_timeout_s = 20
         # Default to layout-only extraction; OCR is enabled explicitly by callers
@@ -817,7 +819,13 @@ class GlossExtract:
         if baseline <= 0:
             baseline = per_page
         if page_count is None and file_path is not None:
-            page_count = self._get_pdf_page_count(file_path)
+            # Reuse the count the stage preflight (run_prepared) read from this same file in this same call,
+            # instead of opening the PDF a second time; without one, count the pages here, as before.
+            counted = getattr(self, "_preflight_page_counts", None)
+            if counted:
+                page_count = counted.get(str(Path(file_path).resolve()))
+            if page_count is None:
+                page_count = self._get_pdf_page_count(file_path)
         if page_count is None or page_count <= 0:
             return baseline
         budget = max(int(page_count) * per_page, per_page)
@@ -1504,6 +1512,7 @@ class GlossExtract:
         self._font_repair_paths = {}
         self._font_repair_originals = {}
         self._font_repair_deadlines = {}
+        self._preflight_page_counts = {}
         output_dir = Path(output_dir)
         self._font_repair_output_dir = output_dir
         output_dir.mkdir(parents=True, exist_ok=True)

@@ -7,7 +7,7 @@ does not require importing heavy extraction components.
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from . import reports
 
@@ -17,6 +17,9 @@ class RepairBackend:
     name: str
     analyze_pdf: Callable
     repair_pdf: Callable
+    # Optional analyse-once path: returns (report, analysis); repair_pdf(..., analysis=analysis) then neither
+    # re-inspects fonts nor re-samples text. None when the backend has no such path (the Python reference).
+    analyze_for_repair: Optional[Callable] = None
 
 
 def get_backend(name: str | None = None) -> RepairBackend:
@@ -42,11 +45,18 @@ def get_backend(name: str | None = None) -> RepairBackend:
     def analyze(path):
         return report(reports.PdfFontReport, native.analyze_pdf(str(path)))
 
-    def repair(src, dst, *, protected_sources=()):
-        return report(reports.RepairResult, native.repair_pdf(
-            str(src), str(dst), [str(p) for p in protected_sources]))
+    def analyze_for_repair(path):
+        payload, analysis = native.analyze_for_repair(str(path))
+        return report(reports.PdfFontReport, payload), analysis
 
-    return RepairBackend("rust", analyze, repair)
+    def repair(src, dst, *, protected_sources=(), analysis=None):
+        args = (str(src), str(dst), [str(p) for p in protected_sources])
+        return report(reports.RepairResult,
+                      native.repair_pdf(*args) if analysis is None else native.repair_pdf(*args, analysis))
+
+    # An extension built before the analyse-once API keeps the two-pass path.
+    once = analyze_for_repair if hasattr(native, "analyze_for_repair") else None
+    return RepairBackend("rust", analyze, repair, once)
 
 
 def analyze_pdf(path: str | Path) -> reports.PdfFontReport:

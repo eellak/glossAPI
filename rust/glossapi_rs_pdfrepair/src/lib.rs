@@ -1,6 +1,7 @@
 mod cmap;
 mod font;
 mod pdf;
+mod text;
 use anyhow::{anyhow, bail, Result};
 use pdf::{decode, serialize, Obj, Pdf};
 use serde::{Deserialize, Serialize};
@@ -46,7 +47,7 @@ pub struct RepairResult {
     pub written: bool,
     pub error: Option<String>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Sample {
     pub pages: usize,
     pub sampled_pages: Vec<usize>,
@@ -77,10 +78,9 @@ fn descendant(pdf: &mut Pdf, f: &Obj) -> Result<Obj> {
             .ok_or_else(|| anyhow!("Missing DescendantFonts"))?,
     )
 }
-fn embedded(
-    pdf: &mut Pdf,
-    f: &Obj,
-) -> Result<(BTreeMap<u32, String>, Option<String>, bool, Option<String>)> {
+/// (code -> Unicode from the embedded program, program kind, embedded, reason it cannot be used)
+type Embedded = (BTreeMap<u32, String>, Option<String>, bool, Option<String>);
+fn embedded(pdf: &mut Pdf, f: &Obj) -> Result<Embedded> {
     let subtype = f.get("Subtype").name();
     let d = if subtype == "Type0" {
         descendant(pdf, f)?
@@ -252,7 +252,14 @@ fn embedded(
     };
     Ok((mapping, Some(kind), true, reason))
 }
+#[cfg(test)]
+thread_local! {
+    /// Font inspections on this thread (tests prove a repair from an analysis inspects nothing again).
+    static INSPECTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 fn inspect(pdf: &mut Pdf, r: &Obj, f: &Obj) -> (FontReport, BTreeMap<u32, String>) {
+    #[cfg(test)]
+    INSPECTIONS.with(|c| c.set(c.get() + 1));
     let mut report = FontReport {
         font_name: if f.has("BaseFont") {
             pdf.get(f, "BaseFont").unwrap_or(Obj::Null).name()
@@ -397,10 +404,32 @@ pub fn document_category(fonts: &[FontReport], has_text: bool) -> String {
         "mixed".into()
     }
 }
-pub fn analyze_with_sample(
+/// One document's font analysis, kept so `repair_with_analysis` neither re-parses fonts nor re-samples text.
+/// It holds the parsed source bytes; a repair refuses a source whose bytes no longer match them.
+pub struct Analysis {
+    path: String,
+    pdf: Pdf,
+    fonts: Vec<(Obj, FontReport, BTreeMap<u32, String>)>,
+    has_text: bool,
+}
+impl Analysis {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+/// The text-presence sample decided natively from content-stream text operators (no PDFium callback).
+fn native_sample(pdf: &mut Pdf, _path: &str) -> Result<Sample> {
+    text::native_sample(pdf)
+}
+/// Analyse a document once with the native text sample. The `Analysis` is `None` exactly when the report
+/// carries an error.
+pub fn analyze_for_repair(path: &str) -> (PdfFontReport, Option<Analysis>) {
+    analyze_inner(path, native_sample)
+}
+fn analyze_inner(
     path: &str,
-    sampler: impl FnOnce(&str) -> Result<Sample>,
-) -> PdfFontReport {
+    sampler: impl FnOnce(&mut Pdf, &str) -> Result<Sample>,
+) -> (PdfFontReport, Option<Analysis>) {
     let mut r = PdfFontReport {
         path: path.into(),
         category: "unsupported".into(),
@@ -409,37 +438,45 @@ pub fn analyze_with_sample(
         fonts: vec![],
         error: None,
     };
-    let res = (|| -> Result<()> {
+    let res = (|| -> Result<Analysis> {
         let mut pdf = Pdf::open(path)?;
-        let sample = sampler(path)?;
+        let sample = sampler(&mut pdf, path)?;
         r.pages = sample.pages;
         r.sampled_pages = sample.sampled_pages;
+        let mut fonts = vec![];
         for (reference, f) in pdf.fonts()? {
-            r.fonts.push(inspect(&mut pdf, &reference, &f).0)
+            let (report, mut mapping) = inspect(&mut pdf, &reference, &f);
+            if !report.repair_possible {
+                mapping.clear() // only repairable fonts need their mapping again
+            }
+            r.fonts.push(report.clone());
+            fonts.push((reference, report, mapping));
         }
         r.category = document_category(&r.fonts, sample.has_text);
-        Ok(())
+        Ok(Analysis {
+            path: path.into(),
+            pdf,
+            fonts,
+            has_text: sample.has_text,
+        })
     })();
-    if let Err(e) = res {
-        r.error = Some(error(e))
+    match res {
+        Ok(a) => (r, Some(a)),
+        Err(e) => {
+            r.error = Some(error(e));
+            (r, None)
+        }
     }
-    r
 }
-fn subprocess_sample(path: &str) -> Result<Sample> {
-    let python = std::env::var("GLOSSAPI_PDFREPAIR_PYTHON").unwrap_or_else(|_| "python3".into());
-    let out = std::process::Command::new(python)
-        .args(["-m", "glossapi.pdf_repair.rust_backend", "--sample", path])
-        .output()?;
-    if !out.status.success() {
-        bail!(
-            "PDFium sample failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        )
-    }
-    Ok(serde_json::from_slice(&out.stdout)?)
+/// Analysis with a caller-supplied text sample (an external renderer, or fixed samples in tests).
+pub fn analyze_with_sample(
+    path: &str,
+    sampler: impl FnOnce(&str) -> Result<Sample>,
+) -> PdfFontReport {
+    analyze_inner(path, |_, p| sampler(p)).0
 }
 pub fn analyze(path: &str) -> PdfFontReport {
-    analyze_with_sample(path, subprocess_sample)
+    analyze_for_repair(path).0
 }
 fn resolved(path: &Path) -> Result<PathBuf> {
     if path.exists() {
@@ -483,11 +520,61 @@ pub fn protect(target: &Path, sources: &[PathBuf]) -> Result<()> {
     }
     Ok(())
 }
+/// Repair with a caller-supplied text sample (an external renderer, or fixed samples in tests).
 pub fn repair_with_sample(
     src: &str,
     dst: &str,
     sources: &[PathBuf],
     sampler: impl FnOnce(&str) -> Result<Sample>,
+) -> RepairResult {
+    repair_inner(src, dst, sources, |_, p| sampler(p))
+}
+fn repair_inner(
+    src: &str,
+    dst: &str,
+    sources: &[PathBuf],
+    sampler: impl FnOnce(&mut Pdf, &str) -> Result<Sample>,
+) -> RepairResult {
+    let mut owned = None;
+    repair_core(src, dst, sources, |src| {
+        let mut pdf = Pdf::open(src)?;
+        let sample = sampler(&mut pdf, src)?;
+        let mut fonts = vec![];
+        for (reference, f) in pdf.fonts()? {
+            let (report, mapping) = inspect(&mut pdf, &reference, &f);
+            fonts.push((reference, report, mapping));
+        }
+        Ok(owned.insert(Analysis {
+            path: src.into(),
+            pdf,
+            fonts,
+            has_text: sample.has_text,
+        }))
+    })
+}
+/// Repair from a prior `analyze_for_repair` of the same source: no second font inspection or text sample.
+/// Refused (as a result error) when `src` is not the analysed path or its bytes changed since the analysis.
+pub fn repair_with_analysis(
+    src: &str,
+    dst: &str,
+    sources: &[PathBuf],
+    analysis: &mut Analysis,
+) -> RepairResult {
+    repair_core(src, dst, sources, |src| {
+        if src != analysis.path {
+            bail!("Repair source {src} is not the analysed PDF {}", analysis.path)
+        }
+        if std::fs::read(src)? != analysis.pdf.bytes {
+            bail!("Source PDF changed since its analysis: {src}")
+        }
+        Ok(analysis)
+    })
+}
+fn repair_core<'a>(
+    src: &str,
+    dst: &str,
+    sources: &[PathBuf],
+    load: impl FnOnce(&str) -> Result<&'a mut Analysis>,
 ) -> RepairResult {
     let mut r = RepairResult {
         src: src.into(),
@@ -504,17 +591,17 @@ pub fn repair_with_sample(
         sources.push(src.into());
         let target = Path::new(dst);
         protect(target, &sources)?;
-        let mut pdf = Pdf::open(src)?;
-        let sample = sampler(src)?;
+        let analysis = load(src)?;
+        let pdf = &mut analysis.pdf;
         let mut changes = BTreeMap::new();
         let mut next = pdf.size();
-        for (reference, f) in pdf.fonts()? {
-            let (report, m) = inspect(&mut pdf, &reference, &f);
+        for (reference, report, m) in &analysis.fonts {
+            let report = report.clone();
             if report.repair_possible {
                 let id = report
                     .object_id
                     .ok_or_else(|| anyhow!("Direct font dictionary"))?;
-                let stream = cmap::make(&m, if report.subtype == "Type0" { 2 } else { 1 })?;
+                let stream = cmap::make(m, if report.subtype == "Type0" { 2 } else { 1 })?;
                 changes.insert(
                     (next, 0),
                     serialize(&Obj::Stream(
@@ -524,14 +611,14 @@ pub fn repair_with_sample(
                 );
                 let original = pdf.object_bytes(id)?;
                 let updated = pdf::splice_tounicode(&original, next)?;
-                let generation = if let Obj::Ref(_, g) = reference { g } else { 0 };
+                let generation = if let Obj::Ref(_, g) = reference { *g } else { 0 };
                 changes.insert((id, generation), updated);
                 next += 1;
                 r.repaired_fonts += 1;
             }
             r.fonts.push(report);
         }
-        r.category = document_category(&r.fonts, sample.has_text);
+        r.category = document_category(&r.fonts, analysis.has_text);
         let mut bytes = pdf.bytes.clone();
         if !changes.is_empty() {
             bytes.push(10);
@@ -603,53 +690,84 @@ pub fn repair_with_sample(
     }
     r
 }
+/// Standalone repair (own analysis, native text sample).
+pub fn repair_protected(src: &str, dst: &str, sources: &[PathBuf]) -> RepairResult {
+    repair_inner(src, dst, sources, native_sample)
+}
 pub fn repair(src: &str, dst: &str) -> RepairResult {
-    repair_with_sample(src, dst, &[], subprocess_sample)
+    repair_protected(src, dst, &[])
 }
 #[cfg(all(feature = "python", not(test)))]
 mod python {
     use super::*;
     use pyo3::prelude::*;
-    fn sample(py: Python<'_>, path: &str) -> Result<Sample> {
-        let m = py
-            .import("glossapi.pdf_repair.rust_backend")
-            .map_err(|e| anyhow!("{e}"))?;
-        let s = m
-            .getattr("_sample_json")
-            .and_then(|f| f.call1((path,)))
-            .and_then(|o| o.extract::<String>())
-            .map_err(|e| anyhow!("{e}"))?;
-        Ok(serde_json::from_str(&s)?)
-    }
     fn dict(py: Python<'_>, r: &impl Serialize) -> PyResult<Py<PyAny>> {
         let s = serde_json::to_string(r)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(py.import("json")?.getattr("loads")?.call1((s,))?.unbind())
     }
-    #[pyfunction]
-    fn analyze_pdf(py: Python<'_>, path: &str) -> PyResult<Py<PyAny>> {
-        dict(py, &analyze_with_sample(path, |p| sample(py, p)))
+    /// Opaque result of `analyze_for_repair`, accepted by `repair_pdf(..., analysis=)`.
+    #[pyclass(module = "glossapi_rs_pdfrepair", frozen)]
+    struct PdfAnalysis(std::sync::Mutex<Analysis>);
+    #[pymethods]
+    impl PdfAnalysis {
+        #[getter]
+        fn path(&self) -> String {
+            self.0.lock().map(|a| a.path().to_string()).unwrap_or_default()
+        }
     }
     #[pyfunction]
-    #[pyo3(signature=(src,dst,protected_sources=Vec::new()))]
+    fn analyze_pdf(py: Python<'_>, path: &str) -> PyResult<Py<PyAny>> {
+        dict(py, &analyze(path))
+    }
+    /// `(report dict, PdfAnalysis | None)`: the analysis is None exactly when the report has an error.
+    #[pyfunction(name = "analyze_for_repair")]
+    fn py_analyze_for_repair(py: Python<'_>, path: &str) -> PyResult<(Py<PyAny>, Option<Py<PdfAnalysis>>)> {
+        let (report, analysis) = super::analyze_for_repair(path);
+        let handle = match analysis {
+            Some(a) => Some(Py::new(py, PdfAnalysis(std::sync::Mutex::new(a)))?),
+            None => None,
+        };
+        Ok((dict(py, &report)?, handle))
+    }
+    #[pyfunction]
+    #[pyo3(signature=(src,dst,protected_sources=Vec::new(),analysis=None))]
     fn repair_pdf(
         py: Python<'_>,
         src: &str,
         dst: &str,
         protected_sources: Vec<String>,
+        analysis: Option<Bound<'_, PdfAnalysis>>,
     ) -> PyResult<Py<PyAny>> {
-        dict(
-            py,
-            &repair_with_sample(
-                src,
-                dst,
-                &protected_sources
-                    .into_iter()
-                    .map(PathBuf::from)
-                    .collect::<Vec<_>>(),
-                |p| sample(py, p),
-            ),
-        )
+        let sources = protected_sources
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        match analysis {
+            Some(a) => {
+                let mut guard = a
+                    .get()
+                    .0
+                    .lock()
+                    .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("PdfAnalysis lock poisoned"))?;
+                dict(py, &repair_with_analysis(src, dst, &sources, &mut guard))
+            }
+            None => dict(py, &repair_protected(src, dst, &sources)),
+        }
+    }
+    /// Diagnostics for the equality gates: per-page native text presence for every page.
+    #[pyfunction]
+    fn _native_page_flags_json(path: &str) -> PyResult<String> {
+        let mut pdf = Pdf::open(path).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let s = text::page_flags(&mut pdf).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        serde_json::to_string(&s).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+    /// Diagnostics for the equality gates: the native text sample, shaped like `_sample_json`'s JSON.
+    #[pyfunction]
+    fn _native_sample_json(path: &str) -> PyResult<String> {
+        let mut pdf = Pdf::open(path).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let s = text::native_sample(&mut pdf).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        serde_json::to_string(&s).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
     }
     // gil_used = true keeps the 0.19 contract (the module requires the GIL); PyO3 0.28+ would otherwise declare
     // free-threaded support, which has not been audited (abi3 builds cannot load on free-threaded Python anyway).
@@ -657,6 +775,10 @@ mod python {
     fn glossapi_rs_pdfrepair(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(analyze_pdf, m)?)?;
         m.add_function(wrap_pyfunction!(repair_pdf, m)?)?;
+        m.add_function(wrap_pyfunction!(py_analyze_for_repair, m)?)?;
+        m.add_function(wrap_pyfunction!(_native_sample_json, m)?)?;
+        m.add_function(wrap_pyfunction!(_native_page_flags_json, m)?)?;
+        m.add_class::<PdfAnalysis>()?;
         Ok(())
     }
 }
@@ -804,6 +926,84 @@ mod tests {
             }
             std::fs::remove_file(dst).unwrap();
         }
+    }
+    fn fixture(name: &str) -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("fixtures/review/{name}.pdf"))
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("k5a-once-{}-{tag}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+    fn json<T: Serialize>(v: &T) -> String {
+        serde_json::to_string(v).unwrap()
+    }
+    #[test]
+    fn repair_from_analysis_equals_two_pass_repair_and_inspects_nothing_again() {
+        for name in [
+            "duplicate_post_names",
+            "encoded_pdf_name",
+            "encoded_pdf_name_compressed",
+            "encoded_pdf_name_missing_tounicode",
+            "format3_collision_wrong_gid",
+            "lowercase_agl",
+            "name_decoding_valid_utf8",
+        ] {
+            let src = fixture(name);
+            let d = scratch(name);
+            let (a, b) = (d.join("two-pass.pdf"), d.join("once.pdf"));
+            let two_pass = repair_inner(&src, a.to_str().unwrap(), &[], native_sample);
+            let (report, analysis) = analyze_for_repair(&src);
+            let mut analysis = analysis.expect("analysis");
+            assert_eq!(json(&report), json(&analyze_with_sample(&src, |p| {
+                let mut pdf = Pdf::open(p)?;
+                text::native_sample(&mut pdf)
+            })));
+            let before = INSPECTIONS.with(|c| c.get());
+            let once = repair_with_analysis(&src, b.to_str().unwrap(), &[], &mut analysis);
+            assert_eq!(INSPECTIONS.with(|c| c.get()), before, "{name}: repair re-inspected fonts");
+            assert_eq!(json(&once.fonts), json(&two_pass.fonts), "{name}");
+            assert_eq!((once.category.as_str(), once.repaired_fonts, once.written, &once.error),
+                (two_pass.category.as_str(), two_pass.repaired_fonts, two_pass.written, &two_pass.error), "{name}");
+            assert_eq!(std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap(), "{name}");
+            assert_eq!(report.category, once.category, "{name}");
+            std::fs::remove_dir_all(d).unwrap();
+        }
+    }
+    #[test]
+    fn repair_from_analysis_refuses_other_or_changed_sources() {
+        let d = scratch("refuse");
+        let src = d.join("src.pdf");
+        std::fs::copy(fixture("encoded_pdf_name"), &src).unwrap();
+        let src = src.to_str().unwrap().to_string();
+        let (_, analysis) = analyze_for_repair(&src);
+        let mut analysis = analysis.unwrap();
+        let other = fixture("duplicate_post_names");
+        let r = repair_with_analysis(&other, d.join("o.pdf").to_str().unwrap(), &[], &mut analysis);
+        assert!(!r.written && r.error.as_deref().unwrap().contains("not the analysed PDF"), "{:?}", r.error);
+        let mut bytes = std::fs::read(&src).unwrap();
+        bytes.extend(b"% appended\n");
+        std::fs::write(&src, bytes).unwrap();
+        let r = repair_with_analysis(&src, d.join("c.pdf").to_str().unwrap(), &[], &mut analysis);
+        assert!(!r.written && r.error.as_deref().unwrap().contains("changed since its analysis"), "{:?}", r.error);
+        assert!(!d.join("c.pdf").exists());
+        // Protection still applies before anything else.
+        let r = repair_with_analysis(&src, &src, &[], &mut analysis);
+        assert!(r.error.as_deref().unwrap().contains("overwrite source"), "{:?}", r.error);
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn analysis_error_has_no_handle() {
+        let d = scratch("bad");
+        let p = d.join("bad.pdf");
+        std::fs::write(&p, b"<html>503</html>").unwrap();
+        let (report, analysis) = analyze_for_repair(p.to_str().unwrap());
+        assert!(report.error.is_some() && analysis.is_none());
+        std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
     fn cmap_ranges() {
