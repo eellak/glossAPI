@@ -27,6 +27,7 @@ from ..gloss_section import GlossSection
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch
+from glossapi.parquet_schema import MetadataPolicyError
 
 
 class SectionPhaseMixin:
@@ -107,12 +108,16 @@ class SectionPhaseMixin:
 
                     try:
                         update_metadata_parquet(parquet_path, _update)
+                    except MetadataPolicyError:
+                        raise  # policy refusals are never swallowed (CP-K2e F5)
                     except Exception as e:
                         if phase["value"] != "update":
                             raise
                         self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
                     if 'names' in selected:
                         good_filenames = selected['names']
+                except MetadataPolicyError:
+                    raise  # policy refusals are never swallowed (CP-K2e F5)
                 except Exception as e:
                     observe("section_metadata_unavailable", path=parquet_path, error=e)
                     self.logger.warning(f"Error reading parquet file {parquet_path}: {e}")

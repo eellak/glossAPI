@@ -51,6 +51,9 @@ def execute_caller_kernel(corpus,stage,operation,callback):
     result,workspace=execute_aggregate(corpus,adapter,[],StageSpecification(operation+'.caller_kernel',(),('generation_manifest',),
         settings={'kernel_profile':'explicit_caller_override','semantic_reuse_eligible':False}))
     if adapter.error:raise adapter.error
+    # The products are captures of the files the callback changed. Republishing them is guarded (K2F round 4, CP-K2e
+    # F1): metadata destinations go through metadata_target (physical target, lock taken only now, after the callback)
+    # and are refused if they changed after capture, instead of reverting a later commit.
     publish_products(corpus,result,workspace,{a.relative_path:corpus.output_dir/Path(a.relative_path).relative_to('products')
-        for a in result.outputs if a.kind=='caller_kernel_product'})
+        for a in result.outputs if a.kind=='caller_kernel_product'},captured=True)
     return adapter.returned

@@ -66,6 +66,7 @@ from .ocr_render import (
     _build_match_index_rows,
 )
 from .text_surface_metrics import sanitized_char_count
+from glossapi.parquet_schema import MetadataPolicyError
 
 PAGE_SPLIT_MARKER = "<--- Page Split --->"
 WORD_REPEAT_HASH_MASK = (1 << 64) - 1
@@ -3472,6 +3473,8 @@ class CleanPhaseMixin:
 
                     update_metadata_parquet(parquet_path, _merge_noise)
                     self.logger.info("Noise metrics filled in %s", parquet_path)
+        except MetadataPolicyError:
+            raise  # policy refusals are never swallowed (CP-K2e F5)
         except Exception as e:
             observe("clean_noise_scoring_failed", error=e, status="failed", continuation="existing_metrics")
             self.logger.warning("Noise-metrics scoring failed: %s", e)

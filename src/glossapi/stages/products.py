@@ -166,21 +166,57 @@ def generation_outputs(request, paths, *, decisions=(), reason='legacy_observed'
     return StageResult(request.task_id,request.attempt_id,request.lease_token,'ok',reason,tuple(outputs),tuple(decisions),metrics or {})
 
 
-def publish_products(corpus,result,workspace,products,*,retire=(),physical=None):
+def publish_products(corpus,result,workspace,products,*,retire=(),physical=None,captured=False):
     """Publish mirrors, then one ledger transaction selecting all immutable files.
 
     ``physical`` (``{relative: path}``): the file the bytes are atomically written to when it differs from the
-    recorded destination, i.e. a metadata target resolved and locked by ``parquet_schema.metadata_target`` (K2F round
-    3); the ledger still records the destination as given."""
+    recorded destination, i.e. a metadata target resolved and locked by ``parquet_schema.metadata_target`` by a caller
+    that holds it (K2F round 3); the ledger still records the destination as given.
+
+    Every other product whose generation bytes are a selectable metadata parquet (``selectable_metadata_parquet``) is
+    published through ``metadata_target`` here (K2F round 4, CP-K2e F1): its resolved physical target is locked (all
+    such locks taken in path order before the first replacement) and replaced, so a symlinked metadata file keeps its
+    link and a hard-linked one is refused. ``captured=True`` means the products are captures of their own destinations
+    (the caller-kernel adapter): a metadata destination that no longer holds the captured bytes when its lock is held
+    (a commit after capture, or a removal) raises ``MetadataStaleGenerationError`` before anything is replaced, instead
+    of reverting that commit. No metadata lock is held while the generation is produced, so a callback's own metadata
+    writes never nest inside it."""
     if result.status != 'ok':
         if result.status == 'skipped':
             return
         raise RuntimeError(f'{result.reason_code}: {result.error.message if result.error else "failed product generation"}')
+    from contextlib import ExitStack
+    from ..parquet_schema import MetadataStaleGenerationError,metadata_target,resolve_metadata_target,selectable_metadata_parquet
+    from .execution import sha256_file
     journal=active_journal()
+    with ExitStack() as held:
+        written_paths=dict(physical or {})
+        guarded=sorted((relative for relative in products if relative not in written_paths
+                        and selectable_metadata_parquet(checked_path(workspace,relative))),
+                       key=lambda relative:str(resolve_metadata_target(Path(products[relative]).absolute())))
+        locked={}
+        for relative in guarded:
+            # Two product spellings of one physical file (e.g. a symlink and its target, both seen as changed) take its
+            # lock once and publish to the same physical path.
+            physical_target=resolve_metadata_target(Path(products[relative]).absolute())
+            if physical_target not in locked:
+                locked[physical_target]=held.enter_context(metadata_target(Path(products[relative]).absolute()))
+            written_paths[relative]=locked[physical_target]
+        if captured:
+            for relative in guarded:
+                live=written_paths[relative]
+                if not live.is_file() or sha256_file(live)!=sha256_file(checked_path(workspace,relative)):
+                    raise MetadataStaleGenerationError(
+                        f'{products[relative]} changed after its generation was captured; republishing the capture would '
+                        'revert that commit, so nothing was published (the live file keeps the newer bytes).')
+        _publish_products_locked(corpus,result,workspace,products,journal,retire,written_paths)
+
+
+def _publish_products_locked(corpus,result,workspace,products,journal,retire,written_paths):
     selected=[]
     for relative,destination in products.items():
         source=checked_path(workspace,relative); destination=Path(destination).absolute()
-        written=Path((physical or {}).get(relative,destination))
+        written=Path(written_paths.get(relative,destination))
         written.parent.mkdir(parents=True,exist_ok=True)
         registered=journal.writer.connection.execute('SELECT sha256,bytes FROM files WHERE producer_attempt_id=? AND uri=?',(result.attempt_id,source.as_uri())).fetchone() if journal else None
         with tempfile.NamedTemporaryFile(dir=written.parent,prefix='.'+written.name+'.',delete=False) as stream:

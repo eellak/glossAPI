@@ -42,6 +42,7 @@ from .ocr.artifacts import (
     apply_ocr_success_updates as _apply_ocr_success_updates,
 )
 from .ocr.targets import normalize_ocr_target_filenames as _normalize_ocr_target_filenames
+from glossapi.parquet_schema import MetadataPolicyError
 
 
 class OcrMathPhaseMixin:
@@ -726,6 +727,8 @@ class OcrMathPhaseMixin:
                     rec = recommend_phase(summary)
                 update_download_results_parquet(self.output_dir, stem, summary, rec, url_column=self.url_column)
                 self.logger.info("Triage: %s -> %s", stem, rec)
+            except MetadataPolicyError:
+                raise  # policy refusals are never swallowed (CP-K2e F5)
             except Exception as e:
                 observe("math_triage_failed", path=mpath, error=e, legacy_stem=stem, status="failed")
                 self.logger.warning("Triage failed for %s: %s", stem, e)

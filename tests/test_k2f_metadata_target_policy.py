@@ -336,92 +336,273 @@ def test_download_publication_keeps_exact_integers_of_rows_it_does_not_replace(t
     assert stored.loc[stored.filename == 'old.pdf', 'foreign_id'].tolist() == [BIG]
 
 
+# ------------------------------------------------------------------ round 4: generic publishers (CP-K2e F1, F5)
+
+MetadataStaleGenerationError = getattr(_schema, 'MetadataStaleGenerationError', _Missing)
+MetadataDestinationError = getattr(_schema, 'MetadataDestinationError', _Missing)
+
+
+def _seed_metadata(root):
+    path = root / 'download_results/download_results.parquet'
+    path.parent.mkdir(parents=True)
+    pd.DataFrame({'filename': ['old.pdf'], 'url': ['u'], 'foreign_id': pd.Series([BIG], dtype='int64')}).to_parquet(path, index=False)
+    return path
+
+
+def test_caller_kernel_republication_preserves_a_metadata_file_symlink(tmp_path):
+    """CP-K2e F1 (reviewer probe 1): the callback updates a symlinked metadata file; the adapter's republication goes
+    through metadata_target, so the link survives and the physical file holds the callback's bytes. The callback runs
+    with no metadata lock held (no nested acquisition)."""
+    from glossapi import Corpus
+    from glossapi.stages.caller_kernel import execute_caller_kernel
+    corpus = Corpus(tmp_path, tmp_path)
+    alias = _seed_metadata(tmp_path)
+    physical = tmp_path / 'physical.parquet'
+    alias.rename(physical)
+    alias.symlink_to(physical)
+    free = []
+
+    def callback():
+        with FileLock(str(resolve_metadata_target(alias)) + '.lock', timeout=0):
+            free.append(True)  # nobody holds the metadata lock while the callback runs
+        update_metadata_parquet(alias, lambda current: current.assign(triage='callback'))
+        return 'done'
+
+    assert execute_caller_kernel(corpus, 'clean', 'clean', callback) == 'done'
+    assert free and alias.is_symlink() and alias.samefile(physical)  # 6bb0faf: link replaced by a second file
+    final = pd.read_parquet(physical)
+    assert final.triage.tolist() == ['callback'] and final.foreign_id.tolist() == [BIG]
+
+
+def test_caller_kernel_republication_refuses_to_revert_a_commit_after_capture(tmp_path, monkeypatch):
+    """CP-K2e F1 (reviewer probe 2): a locked commit lands after the generation captured the file and before its
+    republication. 6bb0faf republished the stale capture and lost ``concurrent.pdf``; now the republication is refused
+    under the lock with MetadataStaleGenerationError and the live file keeps the commit."""
+    from glossapi import Corpus
+    import glossapi.stages.caller_kernel as caller_kernel
+    corpus = Corpus(tmp_path, tmp_path)
+    target = _seed_metadata(tmp_path)
+    real = caller_kernel.execute_aggregate
+
+    def interleave(*args, **kwargs):
+        result = real(*args, **kwargs)  # the callback's bytes are in the generation now
+        update_metadata_parquet(target, lambda current: _schema.lossless_concat([
+            current, pd.DataFrame({'filename': ['concurrent.pdf'], 'url': ['v']})]))
+        return result
+
+    monkeypatch.setattr(caller_kernel, 'execute_aggregate', interleave)
+    with pytest.raises(MetadataStaleGenerationError, match='changed after its generation was captured'):
+        caller_kernel.execute_caller_kernel(corpus, 'clean', 'clean', lambda: update_metadata_parquet(
+            target, lambda current: current.assign(triage='callback')))
+    final = pd.read_parquet(target)
+    assert final.filename.tolist() == ['old.pdf', 'concurrent.pdf'] and final.triage.tolist()[0] == 'callback'
+
+
+def test_caller_kernel_republication_without_concurrency_publishes(tmp_path):
+    from glossapi import Corpus
+    from glossapi.stages.caller_kernel import execute_caller_kernel
+    corpus = Corpus(tmp_path, tmp_path)
+    target = _seed_metadata(tmp_path)
+    execute_caller_kernel(corpus, 'clean', 'clean', lambda: update_metadata_parquet(target, lambda c: c.assign(triage='x')))
+    assert pd.read_parquet(target).triage.tolist() == ['x'] and not list(target.parent.glob('*.lock'))
+
+
+@pytest.mark.parametrize('spelling', ['literal', 'file-symlink', 'new-download-results-name'])
+def test_cli_export_refuses_a_metadata_destination(tmp_path, spelling):
+    """CP-K2e F1 (CLI): the exporter never writes metadata; a destination resolving to an existing metadata parquet,
+    or to a ``download_results/*.parquet`` name, is refused before anything is written."""
+    from glossapi.cli import _export
+    target = _seed_metadata(tmp_path)
+    before = target.read_bytes()
+    if spelling == 'literal':
+        destination = target
+    elif spelling == 'file-symlink':
+        destination = tmp_path / 'export-link.parquet'
+        destination.symlink_to(target)
+    else:
+        destination = target.parent / 'download_results_new.parquet'
+    with pytest.raises(MetadataDestinationError):
+        _export(destination, {'rows': [{'filename': 'new.pdf', 'url': 'v'}]}, 'parquet')
+    assert target.read_bytes() == before
+    if spelling == 'file-symlink':
+        assert destination.is_symlink()
+    if spelling == 'new-download-results-name':
+        assert not destination.exists()
+
+
+def test_cli_export_to_an_ordinary_path_still_works(tmp_path):
+    from glossapi.cli import _export
+    receipt = _export(tmp_path / 'report.parquet', {'rows': [{'filename': 'new.pdf', 'url': 'v'}]}, 'parquet')
+    assert receipt['rows'] == 1 and pd.read_parquet(tmp_path / 'report.parquet').filename.tolist() == ['new.pdf']
+
+
+def test_triage_propagates_hard_link_refusal(tmp_path):
+    """CP-K2e F5 (reviewer probe): ``update_download_results_parquet`` returned None for a hard-linked target."""
+    from glossapi.ocr.utils.triage import update_download_results_parquet
+    path = _seed_metadata(tmp_path)
+    os.link(path, tmp_path / 'alias.parquet')
+    before = path.read_bytes()
+    with pytest.raises(MetadataAliasError):
+        update_download_results_parquet(tmp_path, 'new', {}, 'stop')
+    assert path.read_bytes() == before
+
+
+def test_processing_state_save_propagates_hard_link_refusal(tmp_path):
+    """The other broad legacy handlers re-raise policy errors too (corpus_state shown; the static test checks all)."""
+    from glossapi.corpus.corpus_state import _ProcessingStateManager
+    path = _seed_metadata(tmp_path)
+    os.link(path, tmp_path / 'alias.parquet')
+    manager = _ProcessingStateManager(tmp_path / 'state.pkl')
+    manager.base_dir = tmp_path
+    with pytest.raises(MetadataAliasError):
+        manager.save({'new'}, set())
+    assert path.samefile(tmp_path / 'alias.parquet')
+
+
 # ------------------------------------------------------------------ static: no writer bypasses the choke point
 
 SRC = Path(_schema.__file__).resolve().parents[1]  # the imported package's src/ (so a red run scans the old tree)
 CHOKE_WRITERS = {'_write_metadata_parquet_locked', '_write_serialized_locked', '_copy_file_locked'}
 HELPERS = {'update_metadata_parquet', 'replace_metadata_parquet', 'rewrite_metadata_parquet'}
-WRITES = {('os', 'replace'), ('os', 'rename'), ('shutil', 'copyfile'), ('shutil', 'copy'), ('shutil', 'copy2'), ('shutil', 'move')}
-# Every direct file write in src/, by (module, enclosing scope, call): how it relates to the metadata policy.
+WRITE_FUNCTIONS = {'os.replace', 'os.rename', 'shutil.copyfile', 'shutil.copy', 'shutil.copy2', 'shutil.move',
+                   'pyarrow.parquet.write_table', 'pyarrow.parquet.ParquetWriter'}
+WRITE_METHODS = {'to_parquet': '.to_parquet', 'write_table': '.write_table', 'ParquetWriter': 'ParquetWriter'}
 CHOKE = 'choke point: the replacement of the target yielded by metadata_target'
-SERIALIZER = 'serializer passed as serialize= to a metadata helper (writes only the helper temporary file)'
+SERIALIZER = 'serializer passed as serialize= to a metadata helper; writes only to its path parameter (AST-checked)'
 SECTIONS = 'section-level parquet (section column): find_metadata_parquet skips it; not a metadata target'
 DOCUMENTS = 'document / PDF / binary payload files, not parquet metadata'
 STAGEWORK = 'copy into a stage work directory or ledger area (immutable generation input / recovery), not a live target'
+# Every concrete direct file write in src/: (module, enclosing scope, call) -> (count of call sites, reason). Counts are
+# exact, so a second write in an allowlisted scope fails (CP-K2e F6); calls are matched after import-alias resolution.
 EXPECTED = {
-    ('glossapi/parquet_schema.py', '_write_metadata_parquet_locked', '.write_table'): CHOKE,
-    ('glossapi/parquet_schema.py', '_write_metadata_parquet_locked', 'os.replace'): CHOKE,
-    ('glossapi/parquet_schema.py', '_write_serialized_locked', 'os.replace'): CHOKE,
-    ('glossapi/parquet_schema.py', '_copy_file_locked', 'os.replace'): CHOKE,
-    ('glossapi/parquet_schema.py', '_copy_file_locked', 'shutil.copyfile'): CHOKE,
-    ('glossapi/parquet_schema.py', 'pandas_parquet', '.to_parquet'): SERIALIZER,
-    ('glossapi/parquet_schema.py', 'ParquetSchema.create_basic_metadata_parquet', '.write_table'): SERIALIZER,
-    ('glossapi/parquet_schema.py', 'ParquetSchema.write_parquet', '.write_table'): SERIALIZER,
-    ('glossapi/stages/products.py', 'publish_products', 'os.replace'):
-        'product mirror publication; the metadata projection passes physical= from metadata_target (checked below)',
+    ('glossapi/parquet_schema.py', '_write_metadata_parquet_locked', '.write_table'): (1, CHOKE),
+    ('glossapi/parquet_schema.py', '_write_metadata_parquet_locked', 'os.replace'): (1, CHOKE),
+    ('glossapi/parquet_schema.py', '_write_serialized_locked', 'os.replace'): (1, CHOKE),
+    ('glossapi/parquet_schema.py', '_copy_file_locked', 'os.replace'): (1, CHOKE),
+    ('glossapi/parquet_schema.py', '_copy_file_locked', 'shutil.copyfile'): (1, CHOKE),
+    ('glossapi/parquet_schema.py', 'pandas_parquet', '.to_parquet'): (1, SERIALIZER),
+    ('glossapi/parquet_schema.py', 'ParquetSchema.create_basic_metadata_parquet', '.write_table'): (1, SERIALIZER),
+    ('glossapi/parquet_schema.py', 'ParquetSchema.write_parquet', '.write_table'): (1, SERIALIZER),
+    ('glossapi/stages/products.py', '_publish_products_locked', 'os.replace'):
+        (1, 'product publication; metadata-shaped products are written to the metadata_target-resolved physical '
+            'path held by publish_products (or by a caller passing physical=), checked below'),
     ('glossapi/gloss_downloader.py', 'GlossDownloader._download_files_async._write_checkpoint', '.to_parquet'):
-        'download_results_<input>.partial.parquet checkpoint: excluded by find_metadata_parquet (.partial.), single owner',
+        (1, 'download_results_<input>.partial.parquet checkpoint: excluded by find_metadata_parquet (.partial.), single owner'),
     ('glossapi/gloss_downloader.py', 'GlossDownloader._download_files_async._write_checkpoint', 'os.replace'):
-        'atomic replace of that .partial. checkpoint',
+        (1, 'atomic replace of that .partial. checkpoint'),
     ('glossapi/gloss_downloader.py', 'GlossDownloader._download_files_async_per_domain._write_checkpoint', '.to_parquet'):
-        'download_results_<input>.partial.parquet checkpoint: excluded by find_metadata_parquet (.partial.), single owner',
+        (1, 'download_results_<input>.partial.parquet checkpoint: excluded by find_metadata_parquet (.partial.), single owner'),
     ('glossapi/gloss_downloader.py', 'GlossDownloader._download_files_async_per_domain._write_checkpoint', 'os.replace'):
-        'atomic replace of that .partial. checkpoint',
+        (1, 'atomic replace of that .partial. checkpoint'),
     ('glossapi/gloss_downloader.py', 'GlossDownloader._download_files_async_per_domain.maybe_log_and_write_progress', 'os.replace'):
-        'domain_progress.json',
-    ('glossapi/gloss_downloader.py', 'GlossDownloader._mark_domain_ssl_insecure', 'os.replace'): 'downloader TLS policy state file',
-    ('glossapi/gloss_downloader.py', 'GlossDownloader._move_temp_file_to_final', 'os.rename'): DOCUMENTS,
-    ('glossapi/gloss_downloader.py', 'GlossDownloader._move_temp_file_to_final', 'os.replace'): DOCUMENTS,
-    ('glossapi/gloss_downloader.py', 'GlossDownloader._retain_superseded_request_body', 'os.replace'): DOCUMENTS,
-    ('glossapi/gloss_browser_downloader.py', 'BrowserGlossDownloader._write_recovered_file', 'os.replace'): DOCUMENTS,
+        (1, 'domain_progress.json'),
+    ('glossapi/gloss_downloader.py', 'GlossDownloader._mark_domain_ssl_insecure', 'os.replace'): (1, 'downloader TLS policy state file'),
+    ('glossapi/gloss_downloader.py', 'GlossDownloader._move_temp_file_to_final', 'os.rename'): (1, DOCUMENTS),
+    ('glossapi/gloss_downloader.py', 'GlossDownloader._move_temp_file_to_final', 'os.replace'): (1, DOCUMENTS),
+    ('glossapi/gloss_downloader.py', 'GlossDownloader._retain_superseded_request_body', 'os.replace'): (1, DOCUMENTS),
+    ('glossapi/gloss_browser_downloader.py', 'BrowserGlossDownloader._write_recovered_file', 'os.replace'): (1, DOCUMENTS),
     ('glossapi/scripts/openarchives_ocr_merge.py', 'main', '.to_parquet'):
-        'DECLARED EXCEPTION (GAPS K2F-G2): offline operator merge; output = master would be an unlocked in-place rewrite',
-    ('glossapi/scripts/openarchives_ocr_merge.py', '_copy_once', 'shutil.copy2'): DOCUMENTS,
-    ('glossapi/annotation_partitions.py', 'predict_partitions', '.write_table'): SECTIONS,
-    ('glossapi/annotation_partitions.py', 'predict_partitions.flush', '.write_table'): SECTIONS,
-    ('glossapi/annotation_partitions.py', 'predict_partitions.flush', 'ParquetWriter'): SECTIONS,
-    ('glossapi/corpus/phase_annotate.py', 'AnnotatePhaseMixin._add_document_types', '.to_parquet'): SECTIONS,
-    ('glossapi/corpus/phase_annotate.py', 'AnnotatePhaseMixin.annotate', '.to_parquet'): SECTIONS,
-    ('glossapi/corpus/phase_sections.py', 'SectionPhaseMixin.section', '.to_parquet'): SECTIONS,
-    ('glossapi/gloss_section_classifier.py', 'GlossSectionClassifier._process_predictions', '.to_parquet'): SECTIONS,
-    ('glossapi/gloss_section_classifier.py', 'GlossSectionClassifier.fully_annotate', '.to_parquet'): SECTIONS,
-    ('glossapi/gloss_section.py', 'GlossSection.to_parquet', '.write_table'): SECTIONS,
-    ('glossapi/gloss_section.py', 'GlossSection.to_parquet', 'ParquetWriter'): SECTIONS,
-    ('glossapi/stages/sections.py', 'SectionsStage.finalize', '.write_table'): SECTIONS,
-    ('glossapi/stages/sections.py', 'SectionsStage.finalize', 'ParquetWriter'): SECTIONS,
+        (1, 'DECLARED EXCEPTION (GAPS K2F-G2): offline operator merge; output = master would be an unlocked in-place rewrite'),
+    ('glossapi/scripts/openarchives_ocr_merge.py', '_copy_once', 'shutil.copy2'): (1, DOCUMENTS),
+    ('glossapi/annotation_partitions.py', 'predict_partitions', '.write_table'): (1, SECTIONS),
+    ('glossapi/annotation_partitions.py', 'predict_partitions.flush', '.write_table'): (2, SECTIONS),
+    ('glossapi/annotation_partitions.py', 'predict_partitions.flush', 'ParquetWriter'): (1, SECTIONS),
+    ('glossapi/corpus/phase_annotate.py', 'AnnotatePhaseMixin._add_document_types', '.to_parquet'): (1, SECTIONS),
+    ('glossapi/corpus/phase_annotate.py', 'AnnotatePhaseMixin.annotate', '.to_parquet'): (3, SECTIONS),
+    ('glossapi/corpus/phase_sections.py', 'SectionPhaseMixin.section', '.to_parquet'): (1, SECTIONS),
+    ('glossapi/gloss_section_classifier.py', 'GlossSectionClassifier._process_predictions', '.to_parquet'): (1, SECTIONS),
+    ('glossapi/gloss_section_classifier.py', 'GlossSectionClassifier.fully_annotate', '.to_parquet'): (1, SECTIONS),
+    ('glossapi/gloss_section.py', 'GlossSection.to_parquet', '.write_table'): (1, SECTIONS),
+    ('glossapi/gloss_section.py', 'GlossSection.to_parquet', 'ParquetWriter'): (1, SECTIONS),
+    ('glossapi/stages/sections.py', 'SectionsStage.finalize', '.write_table'): (1, SECTIONS),
+    ('glossapi/stages/sections.py', 'SectionsStage.finalize', 'ParquetWriter'): (1, SECTIONS),
     ('glossapi/stages/run.py', 'prepare_streaming', '.to_parquet'):
-        '.glossapi/source-manifests (excluded from find_metadata_parquet), new unique directory',
-    ('glossapi/cli.py', '_export', '.write_table'): 'explicit CLI export to a caller path (temporary + atomic replace), no read',
-    ('glossapi/cli.py', '_export', 'os.replace'): 'explicit CLI export to a caller path (temporary + atomic replace), no read',
-    ('glossapi/corpus/corpus_skiplist.py', '_SkiplistManager.add', 'os.replace'): 'skiplist text file',
-    ('glossapi/corpus/phase_extract.py', 'ExtractPhaseMixin.extract', 'shutil.copy2'): DOCUMENTS,
-    ('glossapi/page_quality.py', 'write_page_quality', 'os.replace'): 'json/metrics/*.page_quality.json',
-    ('glossapi/pdf_repair/extract.py', 'repair_for_extract', 'os.replace'): DOCUMENTS,
-    ('glossapi/pdf_repair/tounicode.py', 'repair_pdf', 'os.replace'): DOCUMENTS,
-    ('glossapi/pdf_repair/tounicode.py', 'repair_pdf', 'shutil.copyfile'): DOCUMENTS,
-    ('glossapi/scripts/openarchives_pdf_stage_pull.py', 'run', 'os.replace'): DOCUMENTS,
-    ('glossapi/scripts/openarchives_pdf_stage_pull.py', 'write_json', 'os.replace'): 'JSON summary',
-    ('glossapi/scripts/pdf_font_repair.py', '_batch', 'os.replace'): DOCUMENTS,
-    ('glossapi/scripts/pdf_font_repair.py', '_write_record', 'os.replace'): 'JSON repair record',
-    ('glossapi/ledger/importer.py', '_sqlite_snapshot', 'shutil.copyfile'): STAGEWORK,
-    ('glossapi/stages/caller_kernel.py', 'CallerKernelStage.finalize', 'shutil.copyfile'): STAGEWORK,
-    ('glossapi/stages/export.py', 'ExportStage.finalize', 'shutil.copyfile'): STAGEWORK,
-    ('glossapi/stages/metadata.py', 'MetadataProjectionStage.finalize', 'shutil.copyfile'): STAGEWORK,
-    ('glossapi/stages/ocr.py', 'OcrStage._run_document', 'shutil.copy2'): DOCUMENTS,
-    ('glossapi/stages/scheduler.py', 'StreamingScheduler._recover', 'os.rename'): STAGEWORK,
-    ('glossapi/stages/sequential.py', 'SequentialStageRunner.prepare.complete', 'os.rename'): STAGEWORK,
+        (1, '.glossapi/source-manifests (excluded from find_metadata_parquet), new unique directory'),
+    ('glossapi/cli.py', '_export', '.write_table'):
+        (1, 'CLI export to a caller path; a metadata destination is refused with MetadataDestinationError (checked below)'),
+    ('glossapi/cli.py', '_export', 'os.replace'):
+        (1, 'CLI export to a caller path; a metadata destination is refused with MetadataDestinationError (checked below)'),
+    ('glossapi/corpus/corpus_skiplist.py', '_SkiplistManager.add', 'os.replace'): (1, 'skiplist text file'),
+    ('glossapi/corpus/phase_extract.py', 'ExtractPhaseMixin.extract', 'shutil.copy2'): (1, DOCUMENTS),
+    ('glossapi/page_quality.py', 'write_page_quality', 'os.replace'): (1, 'json/metrics/*.page_quality.json'),
+    ('glossapi/pdf_repair/extract.py', 'repair_for_extract', 'os.replace'): (1, DOCUMENTS),
+    ('glossapi/pdf_repair/tounicode.py', 'repair_pdf', 'os.replace'): (1, DOCUMENTS),
+    ('glossapi/pdf_repair/tounicode.py', 'repair_pdf', 'shutil.copyfile'): (1, DOCUMENTS),
+    ('glossapi/scripts/openarchives_pdf_stage_pull.py', 'run', 'os.replace'): (1, DOCUMENTS),
+    ('glossapi/scripts/openarchives_pdf_stage_pull.py', 'write_json', 'os.replace'): (1, 'JSON summary'),
+    ('glossapi/scripts/pdf_font_repair.py', '_batch', 'os.replace'): (1, DOCUMENTS),
+    ('glossapi/scripts/pdf_font_repair.py', '_write_record', 'os.replace'): (1, 'JSON repair record'),
+    ('glossapi/ledger/importer.py', '_sqlite_snapshot', 'shutil.copyfile'): (2, STAGEWORK),
+    ('glossapi/stages/caller_kernel.py', 'CallerKernelStage.finalize', 'shutil.copyfile'):
+        (1, STAGEWORK + '; its republication onto live files goes through publish_products(captured=True)'),
+    ('glossapi/stages/export.py', 'ExportStage.finalize', 'shutil.copyfile'): (1, STAGEWORK),
+    ('glossapi/stages/metadata.py', 'MetadataProjectionStage.finalize', 'shutil.copyfile'): (1, STAGEWORK),
+    ('glossapi/stages/ocr.py', 'OcrStage._run_document', 'shutil.copy2'): (2, DOCUMENTS),
+    ('glossapi/stages/scheduler.py', 'StreamingScheduler._recover', 'os.rename'): (1, STAGEWORK),
+    # found by import-alias resolution (`from shutil import copy2`, `import shutil as _shutil`): source-document copies
+    ('glossapi/corpus/batched_extract.py', 'DoclingAdapter.failure', 'shutil.copy2'): (1, DOCUMENTS + ' (failed PDF to problematic dir)'),
+    ('glossapi/corpus/phase_ocr_math.py', '_gpu_math_worker._quarantine_items', 'shutil.copy2'): (2, DOCUMENTS + ' (quarantined PDFs)'),
+    ('glossapi/gloss_extract.py', 'GlossExtract._process_file_chunked', 'shutil.copy2'): (1, DOCUMENTS + ' (timed-out PDF)'),
+    ('glossapi/gloss_extract.py', 'GlossExtract._process_single_document', 'shutil.copy2'): (1, DOCUMENTS + ' (timed-out PDF)'),
+    ('glossapi/gloss_extract.py', 'GlossExtract._process_single_document_pypdfium', 'shutil.copy2'): (2, DOCUMENTS + ' (timed-out PDF)'),
+    ('glossapi/gloss_extract.py', 'GlossExtract.extract_path', 'shutil.copy2'): (1, DOCUMENTS + ' (problematic PDF)'),
+    ('glossapi/stages/sequential.py', 'SequentialStageRunner.prepare.complete', 'os.rename'): (1, STAGEWORK),
 }
+# Metadata writers whose policy errors legacy broad `except` blocks must re-raise (CP-K2e F5).
+POLICY_WRITERS = {'update_metadata_parquet', 'replace_metadata_parquet', 'rewrite_metadata_parquet', 'write_metadata_parquet',
+                  'ensure_metadata_parquet', 'update_download_results_parquet', 'metadata_target'}
+# Every call of the generic publisher, with how its metadata destinations are handled.
+PUBLISHERS = {
+    ('glossapi/stages/metadata.py', 'seal_metadata_projections'): 'physical= from an enclosing `with metadata_target(...)`',
+    ('glossapi/stages/caller_kernel.py', 'execute_caller_kernel'): 'captured=True: guarded inside publish_products',
+    ('glossapi/stages/annotate.py', '<call>'): 'section-level products; publish_products guards any metadata-shaped one',
+    ('glossapi/stages/export.py', '<call>'): 'export products; publish_products guards any metadata-shaped one',
+    ('glossapi/stages/sections.py', '<call>'): 'sections parquet; publish_products guards any metadata-shaped one',
+}
+
+
+def _aliases(tree):
+    """Local name -> canonical dotted name, from the module's imports (``from shutil import copyfile as publish``,
+    ``import shutil as sh``, ``from pyarrow import parquet as pq``, ...)."""
+    names = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names[alias.asname or alias.name.split('.')[0]] = alias.name if alias.asname else alias.name.split('.')[0]
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            for alias in node.names:
+                names[alias.asname or alias.name] = node.module + '.' + alias.name
+    return names
+
+
+def _dotted(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted(node.value)
+        return base + '.' + node.attr if base else None
+    return None
+
+
+def _write_name(node, aliases):
+    """The canonical write this call performs, or None."""
+    dotted = _dotted(node.func)
+    if dotted:
+        head, _, rest = dotted.partition('.')
+        canonical = aliases.get(head, head) + ('.' + rest if rest else '')
+        canonical = canonical.replace('pyarrow.parquet.', 'pyarrow.parquet.')
+        if canonical in WRITE_FUNCTIONS:
+            return {'pyarrow.parquet.write_table': '.write_table', 'pyarrow.parquet.ParquetWriter': 'ParquetWriter'}.get(canonical, canonical)
+    if isinstance(node.func, ast.Attribute) and node.func.attr in WRITE_METHODS:
+        return WRITE_METHODS[node.func.attr]
+    if isinstance(node.func, ast.Name) and node.func.id in WRITE_METHODS:
+        return WRITE_METHODS[node.func.id]
+    return None
 
 
 def _call_name(node):
     func = node.func
     if isinstance(func, ast.Attribute):
-        if isinstance(func.value, ast.Name) and (func.value.id, func.attr) in WRITES:
-            return func.value.id + '.' + func.attr
-        if func.attr in ('to_parquet', 'write_table'):
-            return '.' + func.attr
-        if func.attr == 'ParquetWriter':
-            return 'ParquetWriter'
         return func.attr
     return func.id if isinstance(func, ast.Name) else None
 
@@ -452,51 +633,129 @@ def _serializer_argument(ancestors):
     return False
 
 
-def test_no_metadata_writer_bypasses_the_choke_point():
+def _writes_only_its_path_parameter(node, ancestors, name):
+    """A serializer writes only to the path parameter of its enclosing lambda/def (not a literal or other path)."""
+    function = next((a for a in reversed(ancestors) if isinstance(a, (ast.Lambda, ast.FunctionDef))), None)
+    if function is None:
+        return False
+    parameters = {argument.arg for argument in function.args.args}
+    position = 0 if name == '.to_parquet' else 1
+    destination = node.args[position] if len(node.args) > position else next(
+        (keyword.value for keyword in node.keywords if keyword.arg in ('path', 'where')), None)
+    return isinstance(destination, ast.Name) and destination.id in parameters
+
+
+def static_problems(src):
     found, problems = {}, []
-    for path in sorted(SRC.rglob('*.py')):
-        module = str(path.relative_to(SRC))
-        for node, scope, ancestors in _walk(ast.parse(path.read_text(), str(path))):
+    for path in sorted(Path(src).rglob('*.py')):
+        module = str(path.relative_to(src))
+        tree = ast.parse(path.read_text(), str(path))
+        aliases = _aliases(tree)
+        for node, scope, ancestors in _walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == 'publish_products' and module == 'glossapi/stages/products.py':
+                if not any(isinstance(call, ast.Call) and _call_name(call) == 'metadata_target' for call in ast.walk(node)):
+                    problems.append('publish_products no longer routes metadata-shaped products through metadata_target')
             if not isinstance(node, ast.Call):
                 continue
-            name = _call_name(node)
             where = '.'.join(scope) or '<module>'
-            if name in ('.to_parquet', '.write_table', 'ParquetWriter') or name in {a + '.' + b for a, b in WRITES}:
+            name = _write_name(node, aliases)
+            if name:
                 key = (module, where, name)
-                found[key] = EXPECTED.get(key, 'UNLISTED')
-                if key not in EXPECTED:
-                    problems.append(f'unlisted direct write {key}: route it through parquet_schema.metadata_target '
-                                    'helpers, or add it here with the reason it is not a metadata target')
-                elif EXPECTED[key] == SERIALIZER and where != 'pandas_parquet' and not _serializer_argument(ancestors):
-                    problems.append(f'{key} is listed as a serializer but is not a serialize= argument of {sorted(HELPERS)}')
+                found[key] = found.get(key, 0) + 1
+                if key in EXPECTED and EXPECTED[key][1] == SERIALIZER:
+                    if where != 'pandas_parquet' and not _serializer_argument(ancestors):
+                        problems.append(f'{key} is listed as a serializer but is not a serialize= argument of {sorted(HELPERS)}')
+                    if not _writes_only_its_path_parameter(node, ancestors, name):
+                        problems.append(f'{key}:{node.lineno} serializer writes to something other than its path parameter')
+            called = _call_name(node)
             # the choke-point writers run only inside `with metadata_target(...)` (or in the ensure merge it calls)
-            if name in CHOKE_WRITERS and not _inside_metadata_target(ancestors) \
+            if called in CHOKE_WRITERS and not _inside_metadata_target(ancestors) \
                     and where not in ('ParquetSchema._merge_metadata_locked',):
-                problems.append(f'{module}:{node.lineno} {name} outside `with metadata_target(...)` ({where})')
-            if name == '_merge_metadata_locked' and not _inside_metadata_target(ancestors):
+                problems.append(f'{module}:{node.lineno} {called} outside `with metadata_target(...)` ({where})')
+            if called == '_merge_metadata_locked' and not _inside_metadata_target(ancestors):
                 problems.append(f'{module}:{node.lineno} _merge_metadata_locked outside `with metadata_target(...)`')
-            if name == 'publish_products' and any(keyword.arg == 'physical' for keyword in node.keywords) \
-                    and not _inside_metadata_target(ancestors):
-                problems.append(f'{module}:{node.lineno} metadata projection publication outside metadata_target')
-            if name == '_parquet_lock' and module != 'glossapi/parquet_schema.py':
+            if called == 'publish_products' and module != 'glossapi/stages/products.py':
+                listed = PUBLISHERS.get((module, where)) or PUBLISHERS.get((module, '<call>'))
+                if listed is None:
+                    problems.append(f'{module}:{node.lineno} unlisted publish_products call ({where})')
+                if any(keyword.arg == 'physical' for keyword in node.keywords) and not _inside_metadata_target(ancestors):
+                    problems.append(f'{module}:{node.lineno} physical= publication outside metadata_target')
+                if module == 'glossapi/stages/caller_kernel.py' and not any(
+                        keyword.arg == 'captured' and isinstance(keyword.value, ast.Constant) and keyword.value.value is True
+                        for keyword in node.keywords):
+                    problems.append(f'{module}:{node.lineno} caller-kernel republication without captured=True')
+            if called in POLICY_WRITERS and module != 'glossapi/parquet_schema.py':
+                for ancestor, child in zip(ancestors, ancestors[1:] + [node]):
+                    if isinstance(ancestor, ast.Try) and child in ancestor.body:
+                        types = [ast.unparse(handler.type) if handler.type else 'BARE' for handler in ancestor.handlers]
+                        broad = [t for t in types if t == 'BARE' or 'Exception' in t or 'ValueError' in t]
+                        if broad and not (types and types[0] == 'MetadataPolicyError'):
+                            problems.append(f'{module}:{node.lineno} {called} inside `try` whose handler {broad[0]} can '
+                                            'swallow MetadataPolicyError (add `except MetadataPolicyError: raise` first)')
+            if called == '_parquet_lock' and module != 'glossapi/parquet_schema.py':
                 problems.append(f'{module}:{node.lineno} uses the raw lock primitive; use metadata_target')
+    for key, count in sorted(found.items()):
+        if key not in EXPECTED:
+            problems.append(f'unlisted direct write {key} x{count}: route it through parquet_schema.metadata_target '
+                            'helpers, or add it here with the reason it is not a metadata target')
+        elif EXPECTED[key][0] != count:
+            problems.append(f'{key}: {count} call sites, {EXPECTED[key][0]} listed (a new write in a listed scope?)')
     stale = sorted(set(EXPECTED) - set(found))
+    if stale:
+        problems.append(f'listed writers no longer present (update the list): {stale}')
+    return problems
+
+
+def test_no_metadata_writer_bypasses_the_choke_point():
+    problems = static_problems(SRC)
     assert not problems, '\n'.join(problems)
-    assert not stale, f'listed writers no longer present (update the list): {stale}'
+
+
+def _shadow(tmp_path, edit=None, extra=None):
+    """A shadow src/ of the imported package (symlinked files), optionally with one file edited and one added."""
+    shadow = tmp_path / 'src'
+    for original in SRC.rglob('*.py'):
+        target = shadow / original.relative_to(SRC)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if edit and original == Path(_schema.__file__).resolve() and edit[0] == 'parquet_schema':
+            text = original.read_text().replace(*edit[1])
+            assert text != original.read_text()
+            target.write_text(text)
+        else:
+            target.symlink_to(original)
+    for name, text in (extra or {}).items():
+        (shadow / name).write_text(text)
+    return shadow
 
 
 def test_the_static_check_catches_a_bypass(tmp_path):
-    """The check is not vacuous: a direct to_parquet in a metadata module, or a choke writer outside the lock, fails."""
-    global SRC
-    package = tmp_path / 'glossapi'
-    package.mkdir()
-    (package / 'bypass.py').write_text('def publish(frame, path):\n    frame.to_parquet(path, index=False)\n')
-    (package / 'raw.py').write_text('from .parquet_schema import _write_serialized_locked\n'
-                                    'def publish(frame, path):\n    _write_serialized_locked(frame, path, None)\n')
-    saved, SRC = SRC, tmp_path
-    try:
-        with pytest.raises(AssertionError) as caught:
-            test_no_metadata_writer_bypasses_the_choke_point()
-    finally:
-        SRC = saved
-    assert 'unlisted direct write' in str(caught.value) and 'outside `with metadata_target' in str(caught.value)
+    """Non-vacuous: a direct to_parquet in a new module and a choke writer outside the lock both fail."""
+    shadow = _shadow(tmp_path, extra={
+        'glossapi/bypass.py': 'def publish(frame, path):\n    frame.to_parquet(path, index=False)\n',
+        'glossapi/raw.py': 'from .parquet_schema import _write_serialized_locked\n'
+                           'def publish(frame, path):\n    _write_serialized_locked(frame, path, None)\n',
+        'glossapi/swallow.py': 'from .parquet_schema import update_metadata_parquet\n'
+                               'def quiet(path):\n    try:\n        update_metadata_parquet(path, lambda c: c)\n'
+                               '    except Exception:\n        return None\n'})
+    problems = '\n'.join(static_problems(shadow))
+    assert 'unlisted direct write' in problems and 'outside `with metadata_target' in problems
+    assert 'can swallow MetadataPolicyError' in problems
+
+
+def test_static_check_catches_an_import_aliased_write(tmp_path):
+    """CP-K2e F6 mutation 1 (the reviewer's control): ``from shutil import copyfile as publish``."""
+    shadow = _shadow(tmp_path, extra={'hidden.py': 'from shutil import copyfile as publish\n'
+                                                  'def overwrite(source, metadata_path):\n'
+                                                  '    publish(source, metadata_path)\n'})
+    problems = static_problems(shadow)
+    assert any('unlisted direct write' in problem and 'shutil.copyfile' in problem for problem in problems), problems
+
+
+def test_static_check_catches_a_second_write_in_an_allowlisted_scope(tmp_path):
+    """CP-K2e F6 mutation 2 (the reviewer's control): a second to_parquet inside ``pandas_parquet``."""
+    shadow = _shadow(tmp_path, edit=('parquet_schema', (
+        '    frame.to_parquet(path, index=False)\n',
+        '    frame.to_parquet(path, index=False)\n'
+        '    frame.to_parquet("download_results/download_results.parquet", index=False)\n')))
+    problems = '\n'.join(static_problems(shadow))
+    assert '2 call sites, 1 listed' in problems and 'other than its path parameter' in problems

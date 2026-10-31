@@ -12,6 +12,7 @@ import pandas as pd
 
 from .._naming import canonical_stem
 from ..parquet_schema import ParquetSchema, update_metadata_parquet
+from glossapi.parquet_schema import MetadataPolicyError
 
 
 def _cell_text(value) -> str:
@@ -73,6 +74,8 @@ class _ProcessingStateManager:
     def _metadata_path(self) -> Optional[Path]:
         try:
             return self.schema.ensure_metadata_parquet(self.base_dir)
+        except MetadataPolicyError:
+            raise  # policy refusals are never swallowed (CP-K2e F5)
         except Exception as exc:
             self.logger.warning("Failed to ensure metadata parquet under %s: %s", self.base_dir, exc)
             return None
@@ -238,6 +241,8 @@ class _ProcessingStateManager:
         try:
             update_metadata_parquet(parquet_path, _update)
             observe_store(parquet_path, kind="processing_state_metadata")
+        except MetadataPolicyError:
+            raise  # policy refusals are never swallowed (CP-K2e F5)
         except Exception as exc:
             if phase["value"] == "read":
                 self.logger.warning("Unable to read metadata parquet %s: %s", parquet_path, exc)

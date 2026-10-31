@@ -137,14 +137,45 @@ def _prepare_metadata_frame(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-class MetadataAliasError(ValueError):
+class MetadataPolicyError(ValueError):
+    """Base of the metadata target policy's typed refusals; legacy broad ``except`` blocks re-raise it (CP-K2e F5)."""
+
+
+class MetadataAliasError(MetadataPolicyError):
     """A metadata parquet target that cannot be written safely: a hard-linked file (atomic replacement would detach
     the other names), or two hard-linked names of one file used as input and output (CP-K2d F2, K2F round 3)."""
 
 
-class MetadataSchemaError(ValueError):
+class MetadataSchemaError(MetadataPolicyError):
     """A merge whose result cannot hold every preserved value exactly (CP-K2d F4); raised before anything is
     replaced."""
+
+
+class MetadataStaleGenerationError(MetadataPolicyError):
+    """A captured generation of a metadata file would be republished over a file that changed after the capture
+    (CP-K2e F1); raised under the lock, before anything is replaced."""
+
+
+class MetadataDestinationError(MetadataPolicyError):
+    """A non-metadata writer (e.g. the CLI exporter) was pointed at a metadata parquet (CP-K2e F1)."""
+
+
+METADATA_SIGNATURES = ({'filename'}, {'download_success', 'download_error', 'filename_base'},
+                       {'filter', 'mojibake_badness_score', 'greek_badness_score'})
+
+
+def selectable_metadata_parquet(path: Union[str, Path]) -> bool:
+    """Whether ``path`` is a parquet ``find_metadata_parquet`` could select: a ``.parquet`` file (not ``.partial.``)
+    whose schema has no ``section`` column and has ``filename``, the downloader signature or the cleaner-metrics
+    signature. Reads only the parquet schema; an unreadable file is not metadata."""
+    candidate = Path(path)
+    if candidate.suffix != '.parquet' or '.partial.' in candidate.name or not candidate.is_file():
+        return False
+    try:
+        names = set(pq.read_schema(candidate).names)
+    except Exception:
+        return False
+    return 'section' not in names and any(signature <= names for signature in METADATA_SIGNATURES)
 
 
 def resolve_metadata_target(path: Union[str, Path]) -> Path:
@@ -1312,6 +1343,8 @@ class ParquetSchema:
             print(f"Created new metadata parquet file at {output_path}")
             return output_path
             
+        except MetadataPolicyError:
+            raise  # policy refusals are never swallowed (CP-K2e F5)
         except Exception as e:
             print(f"Error creating metadata parquet file: {e}")
             return None

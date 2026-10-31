@@ -10,6 +10,7 @@ import pandas as pd
 
 from glossapi._naming import canonical_stem
 from glossapi.parquet_schema import update_metadata_parquet
+from glossapi.parquet_schema import MetadataPolicyError
 
 
 def summarize_math_density_from_metrics(per_page_path: Path) -> dict[str, Any]:
@@ -114,6 +115,8 @@ def update_download_results_parquet(root_dir: Path, filename_stem: str, summary:
 
         update_metadata_parquet(parquet_path, _update)
         return parquet_path
+    except MetadataPolicyError:
+        raise  # policy refusals are never swallowed (CP-K2e F5)
     except Exception:
         return None
 

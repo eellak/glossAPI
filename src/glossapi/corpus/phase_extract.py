@@ -29,6 +29,7 @@ from .._naming import canonical_stem
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch as _maybe_import_torch_fallback
+from glossapi.parquet_schema import MetadataPolicyError
 
 # Wrapper to allow tests to monkeypatch glossapi.corpus._maybe_import_torch.
 def _maybe_import_torch(force: bool = False):
@@ -1164,6 +1165,8 @@ class ExtractPhaseMixin:
                     return df
 
                 update_metadata_parquet(parquet, _update)
+        except MetadataPolicyError:
+            raise  # policy refusals are never swallowed (CP-K2e F5)
         except Exception as exc:
             self.logger.warning("Failed to merge font repair metadata: %s", exc)
         self.logger.info("Font repair summary: %s", " ".join(f"{key}={value}" for key, value in counts.items()))

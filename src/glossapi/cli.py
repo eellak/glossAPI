@@ -94,7 +94,16 @@ def _json_file(path):
 
 
 def _export(path, data, format):
-    """The sole explicit write: atomic export, never a second state store."""
+    """The sole explicit write: atomic export, never a second state store.
+
+    An export is never a metadata writer (K2F round 4, CP-K2e F1): a destination that resolves to an existing metadata
+    parquet (``selectable_metadata_parquet``), or to a ``download_results/*.parquet`` name, is refused with
+    ``MetadataDestinationError`` before anything is written."""
+    from .parquet_schema import MetadataDestinationError, resolve_metadata_target, selectable_metadata_parquet
+    physical = resolve_metadata_target(path)
+    if selectable_metadata_parquet(physical) or (physical.suffix == ".parquet" and physical.parent.name == "download_results"):
+        raise MetadataDestinationError(f"refusing to export over metadata parquet {path} ({physical}); "
+                                       "choose an export path outside the corpus metadata")
     path = Path(path).absolute()
     descriptor, temporary = tempfile.mkstemp(prefix="." + path.name + ".", dir=path.parent)
     os.close(descriptor)
