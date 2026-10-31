@@ -465,6 +465,25 @@ def guide_disagreements(guide):
             problems.append(f"workflow step {row['step']} does not parse: {error}")
     if any(guide['errors'][code]['exit_code'] != exit_code for code, (exit_code, _) in ERRORS.items()):
         problems.append('install error codes differ')
+    # Plan/run and manifest errors (CP-K3 F4): the guide rows equal the owners' registries, and each registry equals
+    # the codes the owner's live functions construct (so a code renamed in the raising code itself is caught).
+    import glossapi.input_manifest as manifest_owner
+    import glossapi.plan_preview as plan_owner
+    for owner in (plan_owner, manifest_owner):
+        for code, row in owner.error_contracts().items():
+            if guide['errors'].get(code) != row:
+                problems.append(f'guide error row for {code} differs from {owner.__name__}.ERRORS')
+        raised = raised_codes(owner)
+        unregistered = sorted(raised - set(owner.ERRORS))
+        if unregistered:
+            problems.append(f'{owner.__name__} raises codes missing from its ERRORS registry (and the guide): {unregistered}')
+        dynamic = plan_owner.PLAN_ERRORS if owner is plan_owner else frozenset()
+        stale = sorted(set(owner.ERRORS) - raised - dynamic)
+        if stale:
+            problems.append(f'{owner.__name__}.ERRORS lists codes it never raises: {stale}')
+    conflict_codes = sorted((plan_owner.PLAN_ERRORS | plan_owner.RUN_BLOCKERS) - set(plan_owner.ERRORS))
+    if conflict_codes:
+        problems.append(f'plan/run conflict codes missing from plan_preview.ERRORS: {conflict_codes}')
     docs = (REPO / 'docs/cli_json_schema.md').read_text()
     missing = [code for code in guide['errors'] if f'`{code}`' not in docs]
     if missing:
@@ -473,6 +492,47 @@ def guide_disagreements(guide):
     if guide['costs']['time_per_page'] != costs['time_per_page'] or guide['costs']['disk'] != costs['disk']:
         problems.append('costs differ from measured_costs.json')
     return problems
+
+
+ERROR_CLASSES = frozenset(('PlanBindingError', 'ManifestError'))
+
+
+def raised_codes(module):
+    """The literal codes ``module``'s live functions pass to its typed error classes (``PlanBindingError('code', ...)``,
+    ``ManifestError('code', ...)``), read from their bytecode, nested functions included. Live objects, not the source
+    file: a function replaced at run time is read as it is now. A computed code (``PlanBindingError(item['code'], ...)``)
+    is not a literal and is checked through the conflict registries instead."""
+    import dis
+    import inspect
+    import types
+
+    def code_objects(code):
+        yield code
+        for constant in code.co_consts:
+            if isinstance(constant, types.CodeType):
+                yield from code_objects(constant)
+
+    functions = []
+    for value in vars(module).values():
+        if inspect.isfunction(value) and value.__module__ == module.__name__:
+            functions.append(value)
+        elif inspect.isclass(value) and value.__module__ == module.__name__:
+            functions.extend(item for item in vars(value).values() if inspect.isfunction(item))
+    codes = set()
+    for function in functions:
+        for code in code_objects(function.__code__):
+            pending = False
+            for instruction in dis.get_instructions(code):
+                if instruction.opname in ('PUSH_NULL', 'PRECALL', 'CACHE', 'NOP'):
+                    continue
+                if pending and instruction.opname == 'LOAD_CONST':
+                    value = instruction.argval
+                    # A call with **details folds its literal positional arguments into one tuple constant.
+                    value = value[0] if isinstance(value, tuple) and value else value
+                    if isinstance(value, str):
+                        codes.add(value)
+                pending = instruction.opname in ('LOAD_GLOBAL', 'LOAD_NAME') and instruction.argval in ERROR_CLASSES
+    return codes
 
 
 def test_guide_is_schema_valid_consistent_and_equals_the_docs_file():

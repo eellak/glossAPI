@@ -29,7 +29,7 @@ Products (separate):
 A versioned input manifest (manifest_version 1) of local paths or URLs with their original metadata; or --files PATH... for a quick plan.
 
 - Each entry names exactly one of: `document_id`, `source_key`, `source_uri`, `path`, `url`.
-- `selection` names the selection_ids to process; other entries are never opened, hashed or processed.
+- `selection` names the selection_ids to process; other entries are never opened, hashed or processed. An empty `selection` selects nothing (run refuses with empty_selection); omit it to process every entry.
 - Any `metadata` (and any other entry field) is carried verbatim to status --file and report.
 - glossAPI does not search or scrape. An LLM that found files elsewhere hands them over in a manifest.
 
@@ -162,16 +162,18 @@ Only measured values. Each entry names its machine, workload, date and evidence 
 | `requirements_unavailable` | install | 2 | glossapi is neither a source checkout nor an installed distribution, so its profiles cannot be read. |
 | `installer_unavailable` | install | 2 | Neither pip (in this interpreter) nor uv (on PATH) is available to run --yes. |
 | `install_command_failed` | install | 2 | An install command exited non-zero; later commands did not run. `data.executed` has the output tail and `data.changes` what changed before the failure. |
+| `device_unsupported_for_stage` | plan, run | 2 | A device choice the stage or machine cannot honour; plan keeps its preview in data. |
 | `device_option_conflict` | plan, run | 2 | A device choice the stage or machine cannot honour; plan keeps its preview in data. |
 | `device_unavailable` | plan, run | 2 | A device choice the stage or machine cannot honour; plan keeps its preview in data. |
-| `device_unsupported_for_stage` | plan, run | 2 | A device choice the stage or machine cannot honour; plan keeps its preview in data. |
 | `missing_capability` | run | 2 | plan exits 0 with execution.ready false and the install commands; run refuses before writing. |
-| `disk_budget_required` | plan, run | 3 | memory_saving=extreme needs --disk-budget-bytes. |
+| `empty_selection` | run | 2 | The manifest selects no entry (selection: [] or an empty document list): plan exits 0 with zero targets, every entry in exclusions and execution.ready false; run refuses before writing. Omit selection to process every entry. |
+| `invalid_plan` | run --plan | 2 | The file is not plan --json output (or its data object). |
 | `plan_hash_mismatch` | run --plan | 2 | The saved plan no longer matches: re-run plan and show the new preview. |
 | `plan_source_changed` | run --plan | 2 | The saved plan no longer matches: re-run plan and show the new preview. |
 | `plan_capability_changed` | run --plan | 2 | The saved plan no longer matches: re-run plan and show the new preview. |
+| `disk_budget_required` | plan, run | 3 | memory_saving=extreme needs --disk-budget-bytes. |
 | `invalid_manifest` | plan, run | 2 | A malformed manifest entry; details.field and details.index say where. |
-| `unsupported_manifest_version` | plan, run | 2 | Only manifest_version 1 exists. |
+| `unsupported_manifest_version` | plan, run | 2 | This glossAPI reads manifest_version 1 only. |
 
 Exit codes: `0` success; `1` ran and found failures (status/run with failed documents; doctor with an error check); run lists each failed task and unavailable source in errors (code = the ledger reason code); `2` a typed error (errors[0].code); `3` a policy or disk conflict, or a run waiting for disk.
 

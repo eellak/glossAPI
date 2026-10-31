@@ -59,14 +59,23 @@ Its data adds to the hashed plan body:
 - `deletion_policy`: what `debug`/`memory_saving` keep, release or delete, after which planned readers, per document;
 - `conflicts`: every conflict with its severity. `error` conflicts fail `plan` itself (exit 2, the preview stays in
   `data`): `device_unsupported_for_stage`, `device_unavailable` (an explicitly chosen device this machine does not
-  have), `device_option_conflict`. `blocking` conflicts (`missing_capability`) keep `plan` at exit 0 with
-  `execution.ready: false` and a warning, and make `run` refuse. `memory_saving=extreme` without a disk budget fails
-  with `disk_budget_required` (exit 3).
+  have), `device_option_conflict`. `blocking` conflicts (`missing_capability`, `empty_selection`) keep `plan` at
+  exit 0 with `execution.ready: false` and a warning, and make `run` refuse. `memory_saving=extreme` without a disk
+  budget fails with `disk_budget_required` (exit 3).
+
+An omitted selection (no `--files`, no `--manifest`) plans every corpus document. A manifest is an explicit selection:
+one that selects nothing (`"selection": []`, or an empty pre-v1 list) plans zero `targets`, lists every entry in
+`exclusions`, and carries the blocking `empty_selection` conflict; `run` refuses it with `empty_selection` (exit 2)
+before the ledger is touched, with `--manifest` and with a saved `--plan` alike.
+
+Every present local target is hashed at planning, including a source the ledger already knows: `targets[].sha256` is
+the content observed now (`documents[].source_observation.sha256`); the ledger's previous hash is kept separately as
+`source_observation.stored_sha256`. An edited, previously processed file therefore plans and runs as a new version.
 
 `run --plan FILE` is bound to the plan identity. Before the ledger is touched it refuses with a typed error when
-the plan body was edited (`plan_hash_mismatch`, for example a changed setting), a planned input changed size,
+the file is not a plan (`invalid_plan`), the plan body was edited (`plan_hash_mismatch`, for example a changed setting), a planned input changed size,
 modification time or bytes, or appeared/disappeared (`plan_source_changed`), the installed capabilities changed
-(`plan_capability_changed`), or a conflict blocks it (`missing_capability`, device codes).
+(`plan_capability_changed`), or a conflict blocks it (`empty_selection`, `missing_capability`, device codes).
 
 ## `capabilities` and `doctor`
 
@@ -166,14 +175,18 @@ Warnings: `nothing_selected`, `installer_unavailable` (dry run), `dependency_che
   (`document_id`, `source_key`, `source_uri`). `metadata` and any other entry fields are the caller's original
   metadata; `status --file` and `report` return them verbatim (`sources[].metadata.manifest_row`).
 - `selection` (optional) names the `selection_id`s to process. Other entries appear in `exclusions` and are never
-  opened, hashed or processed.
+  opened, hashed or processed. An empty `selection` selects nothing (`empty_selection`, see `plan`); omit it to
+  process every entry.
 - `products`: `document_export` adds `export`; `annotated_sections` adds `annotate`.
 - Settings precedence: manifest `settings` < `--settings FILE` < individual flags. Stages, devices and workers given
   both in the manifest and as arguments must agree (`conflicting_request`).
-- A manifest without `manifest_version` (a list or `{"documents": [...]}`) keeps the pre-v1 behaviour. Other versions
+- A manifest without `manifest_version` (a list or `{"documents": [...]}`) keeps the pre-v1 behaviour, except that an
+  empty one selects nothing (`empty_selection`) instead of every corpus document. Other versions
   fail with `unsupported_manifest_version`; malformed entries with `invalid_manifest` and `details.field`/`index`.
 - Python: `glossapi.input_manifest.build_manifest`, `load_manifest`, `write_manifest`; `glossapi.cli.plan_documents`
-  returns the same plan data as `glossapi plan --json`.
+  returns the same plan data as `glossapi plan --json`. `write_manifest` (like `report --output`) resolves its
+  destination first and refuses a hard-linked file (`MetadataAliasError`) or one that resolves to corpus metadata
+  parquet through a symlink or `..` (`MetadataDestinationError`) before writing anything.
 
 ## Changelog
 

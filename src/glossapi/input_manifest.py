@@ -37,6 +37,19 @@ PRODUCTS: Final[dict[str, str]] = {'document_export': 'export', 'annotated_secti
 SELECTOR_KEYS: Final[tuple[str, ...]] = ('document_id', 'source_key', 'source_uri', 'path', 'url')
 TOP_LEVEL_KEYS: Final[frozenset[str]] = frozenset(('manifest_version', 'documents', 'selection', 'stages', 'products', 'devices', 'workers', 'settings', 'producer', 'note'))
 _DEVICE = re.compile(r'cpu|mps|cuda:\d+')
+# THE registry of the typed errors this module raises: code -> (commands, exit code, meaning). The LLM guide renders it
+# through error_contracts(); tests/test_k3b_interface.py checks it against the codes the functions here construct.
+ERRORS: Final[dict[str, tuple[str, int, str]]] = {
+    'invalid_manifest': ('plan, run', 2, 'A malformed manifest entry; details.field and details.index say where.'),
+    'unsupported_manifest_version': ('plan, run', 2, 'This glossAPI reads manifest_version {supported} only.'),
+}
+
+
+def error_contracts() -> dict[str, dict[str, Any]]:
+    """The guide rows of ``ERRORS``, with the supported versions filled in from ``SUPPORTED_VERSIONS``."""
+    supported = ', '.join(map(str, SUPPORTED_VERSIONS))
+    return {code: dict(command=command, exit_code=exit_code, meaning=meaning.format(supported=supported))
+            for code, (command, exit_code, meaning) in ERRORS.items()}
 
 
 class ManifestError(ValueError):
@@ -237,7 +250,8 @@ def write_manifest(manifest: Mapping[str, Any], path: str | os.PathLike[str]) ->
     """Write a manifest as UTF-8 JSON (Greek text stays readable); validates first.
 
     A manifest is never a metadata writer: a path that resolves to corpus metadata parquet is refused with
-    ``MetadataDestinationError`` before anything is written (the metadata target policy, PLAN 2.1)."""
+    ``MetadataDestinationError``, and a hard-linked destination with ``MetadataAliasError``, before anything is written
+    (the metadata target policy, PLAN 2.1; CP-K3 F2)."""
     parse_manifest(dict(manifest))
     from .parquet_schema import refuse_metadata_destination
     refuse_metadata_destination(path, writer='write a manifest')

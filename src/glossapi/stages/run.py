@@ -565,6 +565,10 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         body=plan.get('data',plan)
         if snapshot_hash({key:value for key,value in body.items() if key!='plan_hash'})!=body.get('plan_hash'):
             raise ValueError('Supplied plan hash does not match')
+        if any(item.get('code')=='empty_selection' for item in body.get('conflicts') or ()):
+            # An explicitly empty selection never runs, and never widens to the corpus (CP-K3 F1).
+            from ..plan_preview import refuse_conflicts
+            refuse_conflicts({'conflicts':[item for item in body['conflicts'] if item.get('code')=='empty_selection']})
         from ..ledger.urls import is_keyed_key, source_uri_of_key
         from ..ledger.urls import scrub
         explicit=body.get('explicit_manifest')
@@ -607,7 +611,9 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                 if not path.is_file() or (observation.get('bytes') is not None and
                     (path.stat().st_size,path.stat().st_mtime_ns)!=(observation['bytes'],observation['mtime_ns'])):
                     raise ValueError('Supplied plan source inventory changed')
-                if observation.get('stored_sha256') and sha256_file(path)!=observation['stored_sha256']:
+                # The bytes observed at planning; the stored hash only when the plan observed none (CP-K3 F3).
+                expected=observation.get('sha256') or observation.get('stored_sha256')
+                if expected and sha256_file(path)!=expected:
                     raise ValueError('Supplied plan source hash changed')
         stages=tuple(dict.fromkeys(step['stage'] for document in body['documents'] for step in document['steps']))
         workers={pool['stage']:pool['workers'] for pool in body['pools']}

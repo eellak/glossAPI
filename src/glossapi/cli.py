@@ -121,7 +121,8 @@ def _export(path, data, format):
 
     An export is never a metadata writer (K2F round 4, CP-K2e F1): a destination that resolves to an existing metadata
     parquet (``selectable_metadata_parquet``), or to a ``download_results/*.parquet`` name, is refused with
-    ``MetadataDestinationError`` before anything is written."""
+    ``MetadataDestinationError``, and a hard-linked destination with ``MetadataAliasError``, before anything is
+    written (CP-K3 F2)."""
     from .parquet_schema import refuse_metadata_destination
     refuse_metadata_destination(path, writer="export")
     path = Path(path).absolute()
@@ -204,7 +205,10 @@ def _plan_data(connection, root, *, files=(), manifest=None, stages=None, device
             finally:
                 pop_identity_root(identity_root)
             selectors = [persisted_url(selector) if identity else selector for selector, identity in zip(selectors, identities)]
-        data = plan_view(connection, selectors=selectors, stages=stages, settings=settings, devices=devices, workers=workers,
+        # Only an omitted selection (no manifest, no files) means every corpus document;
+        # a manifest is an explicit selection even when it selects nothing (CP-K3 F1).
+        explicit = parsed is not None or bool(files)
+        data = plan_view(connection, selectors=selectors if explicit else None, stages=stages, settings=settings, devices=devices, workers=workers,
             manifest=parsed.selected if parsed else None, identities=identities,
             exclusions=parsed.exclusions if parsed else None, input_manifest=parsed.describe() if parsed else None)
     return data, parsed
@@ -217,7 +221,9 @@ def plan_documents(corpus=".", *, files=(), manifest=None, stages=None, devices=
     ``manifest`` is a decoded manifest (see glossapi.input_manifest) or a path to a
     JSON file. Typed failures raise ReadRequestError, ManifestError or
     PlanBindingError (each has ``code`` and ``details``); a plan with a request
-    conflict (unsupported or unavailable device) raises ReadRequestError.
+    conflict (unsupported or unavailable device) raises ReadRequestError. A manifest
+    that selects nothing returns zero targets with execution.ready false (blocking
+    conflict ``empty_selection``); running that plan raises PlanBindingError.
     """
     from .plan_preview import plan_errors
     if isinstance(manifest, (str, os.PathLike)):

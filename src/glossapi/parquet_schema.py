@@ -195,9 +195,23 @@ metadata_path_identity = resolve_metadata_target
 
 def refuse_metadata_destination(path: Union[str, 'os.PathLike[str]'], *, writer: str) -> None:
     """A non-metadata writer (the CLI exporter, ``input_manifest.write_manifest``) never writes a metadata target
-    (K2F round 4, CP-K2e F1): a destination that resolves to an existing selectable metadata parquet, or to a
-    ``download_results/*.parquet`` name, raises ``MetadataDestinationError`` before anything is written."""
+    (K2F round 4, CP-K2e F1), under the full metadata-target rule (CP-K3 F2). The destination is resolved to its
+    physical file first (``resolve_metadata_target``: file and directory symlinks, ``..`` in traversal order); then,
+    before anything is written:
+
+    - an existing physical file with more than one name (``st_nlink > 1``) raises ``MetadataAliasError``, whatever
+      its suffix: another name may be a metadata parquet, and a hard link cannot be traced back to it without
+      searching the filesystem, so every hard-linked destination is refused;
+    - a physical file that is a selectable metadata parquet, or a ``download_results/*.parquet`` name, raises
+      ``MetadataDestinationError``."""
     physical = resolve_metadata_target(path)
+    try:
+        links = os.stat(physical).st_nlink
+    except FileNotFoundError:
+        links = 0
+    if links > 1:
+        raise MetadataAliasError(f"refusing to {writer} through {os.fspath(path)} ({physical}): it is hard-linked "
+                                 f"({links} names), and another name may be corpus metadata; choose a new path")
     if selectable_metadata_parquet(physical) or (physical.suffix == '.parquet' and physical.parent.name == 'download_results'):
         raise MetadataDestinationError(f"refusing to {writer} over metadata parquet {os.fspath(path)} ({physical}); "
                                        "choose a path outside the corpus metadata")

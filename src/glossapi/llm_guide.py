@@ -17,10 +17,10 @@ import json
 from typing import Any, Final, cast
 
 from .capabilities import RUN_UNAVAILABLE, STAGE_DEVICE_KINDS, STAGE_ORDER
+from . import input_manifest, plan_preview
 from .input_manifest import MANIFEST_VERSION, PRODUCTS, SELECTOR_KEYS
 from .install_plan import ERRORS as INSTALL_ERRORS
 from .package_catalog import DEVICES, catalog_view, requirement_source, stage_enablement, torch_build
-from .plan_preview import PLAN_ERRORS, RUN_BLOCKERS
 from .schemas import NAMES, SCHEMA_VERSION, load_schema
 from .settings_contract import PLAN_FIXED_NOTE, SETTINGS_CONTRACT, SETTINGS_DEFAULTS
 
@@ -66,18 +66,14 @@ def measured_costs() -> dict[str, Any]:
 
 
 def _cli_errors() -> dict[str, dict[str, Any]]:
-    """Typed errors an LLM meets on the decision path, with exit codes (install from install_plan; plan/run from plan_preview)."""
+    """Typed errors an LLM meets on the decision path, with exit codes, each from the registry of the module that raises
+    it: install from ``install_plan.ERRORS``, plan/run from ``plan_preview.ERRORS``, manifests from
+    ``input_manifest.ERRORS`` (CP-K3 F4)."""
     rows: dict[str, dict[str, Any]] = {code: dict(command='install', exit_code=exit_code, meaning=meaning)
                                        for code, (exit_code, meaning) in INSTALL_ERRORS.items()}
-    for code in sorted(PLAN_ERRORS):
-        rows[code] = dict(command='plan, run', exit_code=2, meaning='A device choice the stage or machine cannot honour; plan keeps its preview in data.')
-    for code in sorted(RUN_BLOCKERS):
-        rows[code] = dict(command='run', exit_code=2, meaning='plan exits 0 with execution.ready false and the install commands; run refuses before writing.')
+    rows.update(plan_preview.error_contracts())
     rows['disk_budget_required'] = dict(command='plan, run', exit_code=3, meaning='memory_saving=extreme needs --disk-budget-bytes.')
-    for code in ('plan_hash_mismatch', 'plan_source_changed', 'plan_capability_changed'):
-        rows[code] = dict(command='run --plan', exit_code=2, meaning='The saved plan no longer matches: re-run plan and show the new preview.')
-    rows['invalid_manifest'] = dict(command='plan, run', exit_code=2, meaning='A malformed manifest entry; details.field and details.index say where.')
-    rows['unsupported_manifest_version'] = dict(command='plan, run', exit_code=2, meaning='Only manifest_version 1 exists.')
+    rows.update(input_manifest.error_contracts())
     return rows
 
 
@@ -139,7 +135,8 @@ def guide_view() -> dict[str, Any]:
             files=dict(how='A versioned input manifest (manifest_version %d) of local paths or URLs with their original metadata; '
                            'or --files PATH... for a quick plan.' % MANIFEST_VERSION,
                        selector_keys=list(SELECTOR_KEYS), required=list(cast(list[str], manifest.get('required', []))),
-                       selection='`selection` names the selection_ids to process; other entries are never opened, hashed or processed.',
+                       selection='`selection` names the selection_ids to process; other entries are never opened, hashed or processed. '
+                                 'An empty `selection` selects nothing (run refuses with empty_selection); omit it to process every entry.',
                        metadata='Any `metadata` (and any other entry field) is carried verbatim to status --file and report.',
                        no_scraping='glossAPI does not search or scrape. An LLM that found files elsewhere hands them over in a manifest.'),
             devices=dict(run_device_kinds={stage: list(kinds) for stage, kinds in STAGE_DEVICE_KINDS.items()},
@@ -169,7 +166,7 @@ def guide_view() -> dict[str, Any]:
         schemas=[dict(name=name, file=f'glossapi/schemas/v{SCHEMA_VERSION}/{name}.json', id=load_schema(name)['$id']) for name in NAMES],
         sources=dict(stages='glossapi.capabilities', packages='glossapi.package_catalog (data/package_catalog/measured.json)',
                      settings='glossapi.settings_contract', manifest='glossapi.input_manifest', costs='glossapi/data/measured_costs.json',
-                     errors='glossapi.install_plan.ERRORS, glossapi.plan_preview'))
+                     errors='glossapi.install_plan.ERRORS, glossapi.plan_preview.ERRORS, glossapi.input_manifest.ERRORS'))
 
 
 def _value(value: Any) -> str:

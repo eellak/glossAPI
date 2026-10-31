@@ -29,9 +29,33 @@ OUTPUT_KINDS: Final[dict[str, tuple[str, ...]]] = {
     'ocr': ('ocr_markdown', 'ocr_metrics'), 'math': (), 'sections': ('section_fragment', 'sections_parquet'),
     'annotate': ('classified_parquet',), 'export': ('export_jsonl',)}
 PRODUCTS: Final[dict[str, str]] = {'export': 'document_export', 'annotate': 'annotated_sections', 'sections': 'sections_parquet'}
-# Conflicts that make ``plan`` itself fail (request errors), and those that only block execution (environment).
+# Conflicts that make ``plan`` itself fail (request errors), and those that only block execution (environment, or an
+# explicitly empty selection).
 PLAN_ERRORS: Final[frozenset[str]] = frozenset(('device_unsupported_for_stage', 'device_option_conflict', 'device_unavailable'))
-RUN_BLOCKERS: Final[frozenset[str]] = frozenset(('missing_capability',))
+RUN_BLOCKERS: Final[frozenset[str]] = frozenset(('empty_selection', 'missing_capability'))
+_DEVICE_MEANING: Final[str] = 'A device choice the stage or machine cannot honour; plan keeps its preview in data.'
+_REPLAN_MEANING: Final[str] = 'The saved plan no longer matches: re-run plan and show the new preview.'
+# THE registry of the typed errors this module raises on the plan/run decision path: code -> (commands, exit code,
+# meaning). The LLM guide renders it (llm_guide._cli_errors); tests/test_k3b_interface.py reads the codes the
+# functions below actually construct and fails when one is missing here, or listed here and never raised.
+ERRORS: Final[dict[str, tuple[str, int, str]]] = {
+    'device_unsupported_for_stage': ('plan, run', 2, _DEVICE_MEANING),
+    'device_option_conflict': ('plan, run', 2, _DEVICE_MEANING),
+    'device_unavailable': ('plan, run', 2, _DEVICE_MEANING),
+    'missing_capability': ('run', 2, 'plan exits 0 with execution.ready false and the install commands; run refuses before writing.'),
+    'empty_selection': ('run', 2, 'The manifest selects no entry (selection: [] or an empty document list): plan exits 0 with zero '
+                        'targets, every entry in exclusions and execution.ready false; run refuses before writing. Omit '
+                        'selection to process every entry.'),
+    'invalid_plan': ('run --plan', 2, 'The file is not plan --json output (or its data object).'),
+    'plan_hash_mismatch': ('run --plan', 2, _REPLAN_MEANING),
+    'plan_source_changed': ('run --plan', 2, _REPLAN_MEANING),
+    'plan_capability_changed': ('run --plan', 2, _REPLAN_MEANING),
+}
+
+
+def error_contracts() -> dict[str, dict[str, Any]]:
+    """The guide rows of ``ERRORS`` (command, exit code, meaning), in registry order."""
+    return {code: dict(command=command, exit_code=exit_code, meaning=meaning) for code, (command, exit_code, meaning) in ERRORS.items()}
 
 
 class PlanBindingError(ValueError):
@@ -113,10 +137,15 @@ def _deletion_policy(documents: list[dict[str, Any]], stages: list[str], setting
 
 def preview_fields(*, documents: list[dict[str, Any]], stages: list[str], requested: list[str], settings: dict[str, Any],
                    pools: list[dict[str, Any]], explicit_devices: dict[str, str], exclusions: list[dict[str, Any]],
-                   input_manifest: dict[str, Any] | None) -> dict[str, Any]:
+                   input_manifest: dict[str, Any] | None, selection_empty: bool = False) -> dict[str, Any]:
+    """``selection_empty``: the caller selected sources explicitly and selected none (CP-K3 F1). The preview then has no
+    target and a blocking ``empty_selection`` conflict; it never falls back to every corpus document."""
     visible = devices()
     capabilities = required_capabilities(stages, settings, pools)
     conflicts: list[dict[str, Any]] = []
+    if selection_empty:
+        conflicts.append(_conflict('empty_selection', 'blocking', 'The selection is explicitly empty: nothing is selected and '
+                                   'nothing runs (omit selection to process every entry)', excluded=len(exclusions)))
     allocation: list[dict[str, Any]] = []
     ocr_settings = stage_settings(settings, 'ocr')
     option_device = cast(dict[str, Any], ocr_settings.get('options') or {}).get('device')
@@ -240,10 +269,15 @@ def refuse_conflicts(body: dict[str, Any]) -> None:
         first = errors[0]
         raise PlanBindingError(cast(str, first['code']), cast(str, first['message']), conflicts=errors)
     blocking = [item for item in cast(list[dict[str, Any]], body.get('conflicts', [])) if item['code'] in RUN_BLOCKERS]
+    empty = [item for item in blocking if item['code'] == 'empty_selection']
+    if empty:
+        raise PlanBindingError('empty_selection', 'The plan selects no document (an explicitly empty selection); nothing runs',
+                               conflicts=empty)
+    blocking = [item for item in blocking if item['code'] == 'missing_capability']
     if blocking:
         commands = sorted({command for item in blocking for command in cast(list[str], item.get('install_commands', []))})
         raise PlanBindingError('missing_capability', 'Missing capabilities: ' + ', '.join(cast(str, item['stage']) for item in blocking) +
                                '. Install: ' + '; '.join(commands), conflicts=blocking, install_commands=commands)
 
 
-__all__ = ['PlanBindingError', 'preview_fields', 'verify_plan_binding', 'refuse_conflicts', 'plan_errors', 'install_command']
+__all__ = ['ERRORS', 'error_contracts', 'PlanBindingError', 'preview_fields', 'verify_plan_binding', 'refuse_conflicts', 'plan_errors', 'install_command']

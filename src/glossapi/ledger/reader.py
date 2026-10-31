@@ -585,10 +585,19 @@ def report_view(connection, *, run=None, stage=None):
                 sources=source_metadata(connection, document_ids, run))
 
 
-def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devices=None, workers=None, manifest=None, identities=None,
+def plan_view(connection=None, *, selectors=None, stages=None, settings=None, devices=None, workers=None, manifest=None, identities=None,
               exclusions=None, input_manifest=None):
     """``identities`` (aligned with ``selectors``) carries precomputed resource
     identities of URL selectors; their selectors are persisted spellings.
+
+    ``selectors=None`` (omitted) selects every corpus document. An explicit
+    selection (a list, even an empty one) is taken literally: an empty list
+    selects nothing and the plan carries the blocking ``empty_selection``
+    conflict, so run refuses it (CP-K3 F1).
+
+    Every present local source is hashed: the plan binds the bytes observed
+    now, also for a ledger-known source whose stored hash (kept separately as
+    ``stored_sha256``) may be stale (CP-K3 F3).
 
     ``exclusions`` lists requested entries that are not processed (for example
     unselected manifest entries), each with its reason; they are never opened.
@@ -611,8 +620,9 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
     from ..stages.retention import resolved_settings, DEBUG_HELP, MEMORY_SAVING_HELP
     try:settings=resolved_settings(settings)
     except ValueError as error:raise ReadRequestError('disk_budget_required',str(error)) from error
-    if not selectors and connection:
-        selectors = [r[0] for r in connection.execute("SELECT document_id FROM documents ORDER BY rowid")]
+    selection_empty = selectors is not None and len(selectors) == 0
+    if selectors is None:
+        selectors = [r[0] for r in connection.execute("SELECT document_id FROM documents ORDER BY rowid")] if connection else []
     documents, inventory, seen = [], [], {}
     exclusions = list(exclusions or [])
     pooled_stages = set(selected_stages)
@@ -648,8 +658,9 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
         source_stat=source_path.stat() if source_path is not None and source_path.is_file() else None
         observation=dict(source_uri=source_uri,bytes=source_stat.st_size if source_stat else None,
             mtime_ns=source_stat.st_mtime_ns if source_stat else None,stored_sha256=version.get('stored_sha256') if version else None)
-        if source_stat is not None and not observation['stored_sha256']:
-            # The exact bytes the plan binds (read only; run refuses if they change).
+        if source_stat is not None:
+            # The exact bytes the plan binds (read only; run refuses if they change),
+            # observed now even when the ledger knows an older hash (CP-K3 F3).
             from ..stages.execution import sha256_file
             try:observation['sha256']=sha256_file(source_path)
             except OSError as error:observation['read_error']=type(error).__name__  # the run records it as unavailable
@@ -692,7 +703,8 @@ def plan_view(connection=None, *, selectors=(), stages=None, settings=None, devi
     from ..plan_preview import preview_fields
     planned_stages = [stage for stage in STAGE_ORDER if stage in pooled_stages]
     preview = preview_fields(documents=documents, stages=planned_stages, requested=list(requested), settings=settings,
-        pools=pools, explicit_devices=dict(devices or {}), exclusions=exclusions, input_manifest=input_manifest)
+        pools=pools, explicit_devices=dict(devices or {}), exclusions=exclusions, input_manifest=input_manifest,
+        selection_empty=selection_empty)
     available = {row["stage"]: row for row in preview["capabilities"]["stages"]}
     def requirement(group):
         rows = [row for row in available.values() if any(item["package_group"] == group for item in row["packages"])]
