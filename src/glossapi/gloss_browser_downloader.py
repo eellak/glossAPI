@@ -18,10 +18,10 @@ from typing import Any, Dict, Optional, Tuple
 from .optional_dependencies import optional_dependencies
 
 with optional_dependencies("browser"):
-    import aiofiles
     import aiohttp
     from PIL import Image
 
+from .download_io import open_binary
 from .download_policy import DownloadPolicy, load_download_policy
 from .gloss_downloader import GlossDownloader
 
@@ -242,7 +242,7 @@ class BrowserGlossDownloader(GlossDownloader):
 
     async def _write_recovered_file(self, row_index: int, filename: str, body: bytes) -> None:
         tmp_path = self.downloads_dir / f".part_browser_{row_index}"
-        async with aiofiles.open(tmp_path, "wb") as handle:
+        async with open_binary(tmp_path, "wb") as handle:
             await handle.write(body)
         final_path = self.downloads_dir / filename
         os.replace(tmp_path, final_path)

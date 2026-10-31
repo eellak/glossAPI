@@ -11,14 +11,31 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex}; // Mutex will be needed for collecting report_entries if done from parallel loop
+use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir;
 
-use chrono;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::cleaning_module;
 use crate::directory_processor; // Add this import
+
+/// Signed nanoseconds since the Unix epoch, or 0 when they do not fit in an i64 (before
+/// 1677-09-21 or after 2262-04-11). Replaces chrono's `Utc::now().timestamp_nanos_opt()
+/// .unwrap_or_default()`, which also gave 0 outside that range; chrono panicked for a clock
+/// set before 1970, where this returns the negative count instead.
+fn unix_timestamp_nanos(now: SystemTime) -> i64 {
+    let nanos = match now.duration_since(UNIX_EPOCH) {
+        Ok(after) => i128::try_from(after.as_nanos()).unwrap_or(i128::MAX),
+        Err(before) => i128::try_from(before.duration().as_nanos()).map_or(i128::MIN, |n| -n),
+    };
+    i64::try_from(nanos).unwrap_or(0)
+}
+
+/// Name of the per-run temporary directory: `text_cleaner_rs_pipeline_<nanoseconds>`.
+fn temp_pipeline_root_name(now: SystemTime) -> String {
+    format!("text_cleaner_rs_pipeline_{}", unix_timestamp_nanos(now))
+}
 
 // Struct for the final 4-column CSV report
 #[derive(Debug, serde::Serialize)] // Added serde::Serialize
@@ -128,10 +145,7 @@ pub fn run_complete_pipeline(
 
     // --- Setup Main Temporary Directory for this Pipeline Run ---
     // Let's use a subdirectory within the system's temp directory for better isolation and cleanup.
-    let temp_pipeline_root_name = format!(
-        "text_cleaner_rs_pipeline_{}",
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    );
+    let temp_pipeline_root_name = temp_pipeline_root_name(SystemTime::now());
     let mut temp_pipeline_root_dir = evidence_directory.map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     temp_pipeline_root_dir.push(temp_pipeline_root_name);
 
@@ -571,5 +585,64 @@ pub fn run_complete_pipeline(
             println!("Rust: REFACTORED STAGED complete pipeline FAILED: {}", e);
             Err(e) // Propagate the error
         }
+    }
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::{temp_pipeline_root_name, unix_timestamp_nanos};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    // chrono stays pinned as a dependency (arrow 50); it is the oracle for every representable time.
+    fn chrono_nanos(time: SystemTime) -> i64 {
+        chrono::DateTime::<chrono::Utc>::from(time).timestamp_nanos_opt().unwrap_or_default()
+    }
+
+    fn after(nanos: u64) -> SystemTime { UNIX_EPOCH + Duration::from_nanos(nanos) }
+    fn before(nanos: u64) -> SystemTime { UNIX_EPOCH - Duration::from_nanos(nanos) }
+
+    #[test]
+    fn epoch_is_zero() {
+        assert_eq!(unix_timestamp_nanos(UNIX_EPOCH), 0);
+        assert_eq!(temp_pipeline_root_name(UNIX_EPOCH), "text_cleaner_rs_pipeline_0");
+    }
+
+    #[test]
+    fn normal_times_match_chrono() {
+        for nanos in [1u64, 999, 1_000_000_000, 1_761_900_000_123_456_789, 1_700_000_000_000_000_001] {
+            assert_eq!(unix_timestamp_nanos(after(nanos)), nanos as i64);
+            assert_eq!(unix_timestamp_nanos(after(nanos)), chrono_nanos(after(nanos)));
+        }
+        let now = SystemTime::now();
+        assert_eq!(unix_timestamp_nanos(now), chrono_nanos(now));
+        assert_eq!(temp_pipeline_root_name(after(42)), "text_cleaner_rs_pipeline_42");
+    }
+
+    #[test]
+    fn before_epoch_is_negative_like_chrono_timestamps() {
+        for nanos in [1u64, 999_999_999, 1_000_000_000, 1_000_000_001, 86_400_000_000_123] {
+            assert_eq!(unix_timestamp_nanos(before(nanos)), -(nanos as i64));
+            assert_eq!(unix_timestamp_nanos(before(nanos)), chrono_nanos(before(nanos)));
+        }
+        assert_eq!(temp_pipeline_root_name(before(5)), "text_cleaner_rs_pipeline_-5");
+    }
+
+    #[test]
+    fn i64_bounds_and_overflow_fall_back_to_zero() {
+        let max = after(i64::MAX as u64);
+        let min = before(1u64 << 63); // i64::MIN nanoseconds
+        assert_eq!(unix_timestamp_nanos(max), i64::MAX);
+        assert_eq!(unix_timestamp_nanos(min), i64::MIN);
+        assert_eq!(chrono_nanos(max), i64::MAX);
+        assert_eq!(chrono_nanos(min), i64::MIN);
+        let over = max + Duration::from_nanos(1);
+        let under = min - Duration::from_nanos(1);
+        assert_eq!(unix_timestamp_nanos(over), 0);
+        assert_eq!(unix_timestamp_nanos(under), 0);
+        assert_eq!(chrono_nanos(over), 0);
+        assert_eq!(chrono_nanos(under), 0);
+        let far = UNIX_EPOCH + Duration::from_secs(400 * 365 * 86_400);
+        assert_eq!(unix_timestamp_nanos(far), 0);
+        assert_eq!(temp_pipeline_root_name(far), "text_cleaner_rs_pipeline_0");
     }
 }

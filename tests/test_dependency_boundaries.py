@@ -31,10 +31,7 @@ GlossExtract()
 @pytest.mark.parametrize(('module', 'missing', 'extra'), [
     ('glossapi.gloss_section_classifier', 'joblib', 'annotate'),
     ('glossapi.gloss_section_classifier', 'sklearn', 'annotate'),
-    ('glossapi.gloss_section_classifier', 'dask', 'annotate'),
     ('glossapi.gloss_downloader', 'aiohttp', 'download'),
-    ('glossapi.gloss_downloader', 'aiofiles', 'download'),
-    ('glossapi.gloss_downloader', 'tenacity', 'download'),
     ('glossapi.gloss_browser_downloader', 'PIL', 'browser'),
     ('glossapi.ocr.docling.pipeline', 'docling', 'layout'),
     ('glossapi.ocr.math.enrich', 'docling_core', 'layout'),
@@ -56,6 +53,29 @@ except ImportError as exc:
     assert {('glossapi[' + extra + ']')!r} in str(exc), str(exc)
 else:
     raise AssertionError('optional package unexpectedly imported')
+''')
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(('module', 'replaced', 'needs'), [
+    ('glossapi.gloss_section_classifier', 'dask', ('sklearn', 'joblib')),
+    ('glossapi.gloss_downloader', 'aiofiles', ('aiohttp',)),
+    ('glossapi.gloss_downloader', 'tenacity', ('aiohttp',)),
+    ('glossapi.gloss_browser_downloader', 'aiofiles', ('aiohttp', 'PIL')),
+])
+def test_replaced_packages_are_not_imported(module, replaced, needs):
+    """K2: dask, aiofiles and tenacity were replaced by own code; their absence must not matter."""
+    for name in needs:
+        pytest.importorskip(name)
+    result = isolated(f'''
+import importlib, importlib.abc, sys
+class Absent(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] == {replaced!r}:
+            raise ModuleNotFoundError('injected absent package', name={replaced!r})
+sys.meta_path.insert(0, Absent())
+importlib.import_module({module!r})
+assert {replaced!r} not in sys.modules
 ''')
     assert result.returncode == 0, result.stderr
 

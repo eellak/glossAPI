@@ -1,3 +1,2 @@
 scikit-learn==1.6.1
 joblib>=1.0.0
-dask[dataframe]>=2022.1.0

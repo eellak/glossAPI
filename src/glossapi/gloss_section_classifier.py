@@ -11,8 +11,6 @@ from .optional_dependencies import optional_dependencies
 
 with optional_dependencies("annotate"):
     import joblib
-    import dask.dataframe as dd
-    from dask.diagnostics import ProgressBar
     from sklearn.pipeline import Pipeline
     from sklearn.feature_extraction.text import TfidfVectorizer
     from sklearn.compose import ColumnTransformer
@@ -43,7 +41,7 @@ class GlossSectionClassifier:
     sections into different types (e.g., introduction, index, bibliography, etc.)
     
     The class provides functionality to train a classifier model, process predictions
-    in parallel using Dask, and annotate document sections based on specific boundary markers.
+    partition by partition, and annotate document sections based on specific boundary markers.
     """
     
     def __init__(self):
@@ -260,19 +258,20 @@ class GlossSectionClassifier:
         return df.groupby('filename', group_keys=False).apply(process_group).loc[:, df.columns]
 
     # -----------------------------------------------------------------------------
-    # Process Predictions Using Dask with Progress Bar and Checkpointing
+    # Process Predictions per Partition with Checkpointing
     # -----------------------------------------------------------------------------
-    def _process_predictions_with_dask(self, input_parquet, output_parquet, model_path=None, pretrained_model=True, n_cpus=4):
+    def _process_predictions(self, input_parquet, output_parquet, model_path=None, pretrained_model=True, n_cpus=4):
         """
-        Process predictions on the input Parquet file using Dask for parallel processing.
+        Predict section labels partition by partition (annotation_partitions) with checkpoint resume.
         
         Args:
             input_parquet (str): Path to the input Parquet file with sections to classify
             output_parquet (str): Path where the classified Parquet file will be saved
             model_path (str, optional): Path to the model file to load
             pretrained_model (bool): If True, use the loaded model; otherwise, use the trained model
-            n_cpus (int, optional): Number of CPU cores to use for parallel processing. Default is 4.
+            n_cpus (int, optional): Sets the partition count (5 per CPU). Default is 4.
         """
+        from . import annotation_partitions as partitions
         if pretrained_model:
             # Ensure the model is loaded
             if model_path is not None:
@@ -283,12 +282,9 @@ class GlossSectionClassifier:
                 self.load_model()  # Load default model
             self.clf_pipeline = self.loaded_model
             
-        # Read all columns from the input Parquet file to preserve them
+        # Read the schema; every column is preserved
         self.logger.info(f"Reading data from Parquet file: {input_parquet}")
-        ddf = dd.read_parquet(input_parquet)
-        
-        # Get list of all columns to preserve them
-        all_columns = ddf.columns.tolist()
+        all_columns = partitions.to_frame(partitions.pq.read_schema(input_parquet).empty_table()).columns.tolist()
         
         # Verify required columns exist
         required_columns = ['id', 'header', 'section', 'has_table', 'has_list']
@@ -297,27 +293,26 @@ class GlossSectionClassifier:
             self.logger.error(f"Missing required columns: {missing_columns}")
             raise ValueError(f"Input parquet file missing required columns: {missing_columns}")
         
-        # Preprocess key columns
-        ddf['header'] = ddf['header'].fillna('')
-        ddf['section'] = ddf['section'].fillna('')
-        ddf['has_table'] = ddf['has_table'].astype(int)
-        ddf['has_list'] = ddf['has_list'].astype(int)
-        
         # Identify already processed rows via output file checkpoint (read only 'id')
         processed_ids = set()
         if os.path.exists(output_parquet):
             try:
                 self.logger.info(f"Found existing output file {output_parquet}. Loading processed IDs...")
-                ddf_existing = dd.read_parquet(output_parquet, columns=['id'])
-                processed_ids = set(ddf_existing['id'].unique().compute().tolist())
+                processed_ids = set(partitions.read_frame(output_parquet, columns=['id'])['id'].unique().tolist())
                 self.logger.info(f"{len(processed_ids)} rows have already been processed.")
             except Exception as e:
                 self.logger.error("Error reading existing output file. Processing all rows.", exc_info=e)
         
+        def prepare(df):
+            # Preprocess key columns, then drop already predicted rows (isin on the small ID set).
+            df['header'] = df['header'].fillna('')
+            df['section'] = df['section'].fillna('')
+            df['has_table'] = df['has_table'].astype(int)
+            df['has_list'] = df['has_list'].astype(int)
+            return df[~df['id'].isin(list(processed_ids))] if processed_ids else df
+        
         if processed_ids:
-            # Filter out already predicted rows using efficient isin on the small set of IDs.
-            ddf = ddf[~ddf['id'].isin(list(processed_ids))]
-            remaining = int(ddf.shape[0].compute())
+            remaining = int((~partitions.read_frame(input_parquet, columns=['id'])['id'].isin(list(processed_ids))).sum())
             self.logger.info(f"Processing only {remaining} remaining rows.")
             
             # Skip processing if no remaining rows
@@ -327,18 +322,10 @@ class GlossSectionClassifier:
         else:
             self.logger.info("No prior progress found; processing all rows.")
         
-        # (Optional) Repartition to a moderate number of partitions
         # Use n_cpus to determine the number of partitions (5 partitions per CPU)
         npartitions = max(5 * n_cpus, 1)  # Ensure at least 1 partition
         self.logger.info(f"Repartitioning data into {npartitions} partitions based on {n_cpus} CPU cores")
-        ddf = ddf.repartition(npartitions=npartitions)
-        ddf = ddf.persist()  # Cache in memory to avoid repeated computations
         
-        # Create metadata that includes the new column "predicted_section"
-        meta = ddf._meta.copy()
-        meta['predicted_section'] = ''
-        
-        # Define a closure that captures self
         prediction_failures = []
         def predict_partition(df):
             # If the dataframe is empty, return it with the predicted_section column added
@@ -363,14 +350,11 @@ class GlossSectionClassifier:
                 
             return df
         
-        self.logger.info("Running predictions in parallel using Dask...")
+        self.logger.info("Running predictions partition by partition...")
         start = time.time()
-        ddf_pred = ddf.map_partitions(predict_partition, meta=meta)
-        
         temp_output = output_parquet + ".tmp"
-        self.logger.info("Writing new predictions to temporary Parquet file with progress bar...")
-        with ProgressBar():
-            ddf_pred.to_parquet(temp_output, write_index=False)
+        self.logger.info("Writing new predictions to temporary Parquet partitions...")
+        partitions.predict_partitions(input_parquet, temp_output, npartitions, prepare, predict_partition)
         end = time.time()
         for failure in prediction_failures:
             observe("annotation_prediction_fallback", reported_error={key:failure[key] for key in ("error_type", "message", "traceback")}, row_ids=failure["row_ids"], fallback_label="άλλο", degraded=True)
@@ -379,8 +363,8 @@ class GlossSectionClassifier:
         # Merge new predictions with existing ones, if any.
         if processed_ids:
             self.logger.info("Merging new predictions with existing progress...")
-            df_existing = dd.read_parquet(output_parquet).compute()
-            df_new = dd.read_parquet(temp_output).compute()
+            df_existing = partitions.read_frame(output_parquet)
+            df_new = partitions.read_frame(temp_output)
             
             # Ensure both dataframes have the same columns for clean merging
             missing_cols_new = [c for c in df_existing.columns if c not in df_new.columns]
@@ -393,7 +377,7 @@ class GlossSectionClassifier:
             
             df_final = pd.concat([df_existing, df_new], ignore_index=True)
         else:
-            df_final = dd.read_parquet(temp_output).compute()
+            df_final = partitions.read_frame(temp_output)
         
         # Post-process predictions: for each article, before the cumulative thresholds are exceeded,
         # run compute_likely_index_for_section on the section text (without the header) and override
@@ -748,8 +732,7 @@ class GlossSectionClassifier:
         self.logger.info(f"Using model from {model_path} for prediction")
         self.load_model(model_path)
         
-        # Process using Dask
-        self._process_predictions_with_dask(input_parquet, output_parquet, model_path=model_path, pretrained_model=True, n_cpus=n_cpus)
+        self._process_predictions(input_parquet, output_parquet, model_path=model_path, pretrained_model=True, n_cpus=n_cpus)
         
         overall_end = time.time()
         self.logger.info(f"Total elapsed time: {overall_end - overall_start:.2f} seconds.")

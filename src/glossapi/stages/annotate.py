@@ -20,7 +20,7 @@ class AnnotateStage:
         self.section_keys=section_keys or {}
 
     def packages(self,specification):
-        return (PackageRequirement('annotate',('scikit-learn==1.6.1','joblib>=1.0.0','dask[dataframe]>=2022.1.0')),)
+        return (PackageRequirement('annotate',('scikit-learn==1.6.1','joblib>=1.0.0')),)
 
     def plan(self,documents,*,settings):
         return StagePlan((),('annotation_all_sections_and_model',))

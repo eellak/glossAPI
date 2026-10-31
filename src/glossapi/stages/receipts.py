@@ -110,8 +110,8 @@ def acquired_receipt(url, path, source_observable):
 
 @asynccontextmanager
 async def recorded_request(session, method, url, *, retry_index=0, route=None, **kwargs):
-    # Match tenacity's configured wait_exponential(1, min=1, max=10).
-    backoff = 0 if retry_index == 0 else min(10, 2 ** (retry_index-1)) * 1000
+    from ..download_io import retry_wait
+    backoff = retry_wait(retry_index) * 1000  # the inner retry loop's wait before this attempt
     with request_receipt(url, retry_index=retry_index, backoff_ms=backoff, route=route):
         async with getattr(session, method)(url, **kwargs) as response:
             yield response

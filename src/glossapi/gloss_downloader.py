@@ -30,8 +30,7 @@ import random
 import logging
 import re
 import string
-with optional_dependencies("download"):
-    import aiofiles
+from .download_io import open_binary, retry_async
 import json
 import ast
 import pandas as pd
@@ -41,8 +40,6 @@ from typing import Dict, List, Tuple, Set, Optional, Any, Iterator, Union
 from dataclasses import dataclass, field
 import mimetypes
 from pathlib import Path
-with optional_dependencies("download"):
-    from tenacity import stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
 import functools
 from email.utils import parsedate_to_datetime
 
@@ -712,7 +709,7 @@ class GlossDownloader:
             str: Path to the written file
         """
         path_to_file = os.path.join(output_path, filename)
-        async with aiofiles.open(path_to_file, 'wb') as file:
+        async with open_binary(path_to_file, 'wb') as file:
             await file.write(content)
         return path_to_file
         
@@ -728,34 +725,23 @@ class GlossDownloader:
         """
         return file_ext.lower() in self.supported_formats
     
+    def _retry(self, operation):
+        """Inner HTTP retry: aiohttp.ClientError/asyncio.TimeoutError, waits 1, 2, 4, 8, 10 s (download_io)."""
+        return retry_async(operation, attempts=self.max_retries, retry_on=(aiohttp.ClientError, asyncio.TimeoutError),
+                           logger=self.logger, level=logging.INFO)
+
     async def make_request(self, session, requester, url, headers, timeout):
-        """Make a request with tenacity retry logic and return content, status, headers"""
-        from tenacity import AsyncRetrying
-        async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(max(1, int(self.max_retries))),
-            wait=wait_exponential(multiplier=1, min=1, max=10),
-            retry=(retry_if_exception_type(aiohttp.ClientError) |
-                   retry_if_exception_type(asyncio.TimeoutError)),
-            before_sleep=before_sleep_log(self.logger, logging.INFO),
-            reraise=True,
-        ):
-            with attempt:
-                if requester == 'get':
-                    async with recorded_request(session, 'get', url, headers=headers, timeout=timeout, retry_index=attempt.retry_state.attempt_number - 1) as response:
-                        observe_http_response(response, url, retry_index=attempt.retry_state.attempt_number - 1)
-                        response.raise_for_status()
-                        content = await response.read()
-                        received_bytes(len(content))
-                        resp_headers = dict(response.headers) if response.headers else {}
-                        return content, response.status, resp_headers
-                else:  # post
-                    async with recorded_request(session, 'post', url, headers=headers, timeout=timeout, retry_index=attempt.retry_state.attempt_number - 1) as response:
-                        observe_http_response(response, url, retry_index=attempt.retry_state.attempt_number - 1)
-                        response.raise_for_status()
-                        content = await response.read()
-                        received_bytes(len(content))
-                        resp_headers = dict(response.headers) if response.headers else {}
-                        return content, response.status, resp_headers
+        """Make a request with the inner retry loop and return content, status, headers"""
+        async def attempt(retry_index):
+            method = 'get' if requester == 'get' else 'post'
+            async with recorded_request(session, method, url, headers=headers, timeout=timeout, retry_index=retry_index) as response:
+                observe_http_response(response, url, retry_index=retry_index)
+                response.raise_for_status()
+                content = await response.read()
+                received_bytes(len(content))
+                resp_headers = dict(response.headers) if response.headers else {}
+                return content, response.status, resp_headers
+        return await self._retry(attempt)
 
     def _ext_from_content_disposition(self, headers: Dict[str, str]) -> Optional[str]:
         """Try to extract file extension from Content-Disposition header"""
@@ -1245,43 +1231,33 @@ class GlossDownloader:
         filename_base: Optional[str],
         referer: Optional[str],
     ) -> Tuple[bool, str, str, str, int]:
-        from tenacity import AsyncRetrying
-
-        async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(max(1, int(self.max_retries))),
-            wait=wait_exponential(multiplier=1, min=1, max=10),
-            retry=(retry_if_exception_type(aiohttp.ClientError) |
-                   retry_if_exception_type(asyncio.TimeoutError)),
-            before_sleep=before_sleep_log(self.logger, logging.INFO),
-            reraise=True,
-        ):
-            with attempt:
-                head = bytearray()
-                async with recorded_request(session, 'get', url, headers=headers, timeout=timeout, retry_index=attempt.retry_state.attempt_number - 1) as response:
-                    observe_http_response(response, url, retry_index=attempt.retry_state.attempt_number - 1)
-                    response.raise_for_status()
-                    resp_headers = dict(response.headers or {})
-                    tmp_path = Path(self.downloads_dir) / f".part_{row_index}"
-                    self._retain_superseded_request_body(tmp_path, url, row_index)
-                    async with aiofiles.open(tmp_path, 'wb') as f:
-                        async for chunk in response.content.iter_chunked(1 << 16):
-                            if chunk:
-                                received_bytes(len(chunk))
-                                if len(head) < (1 << 16):
-                                    need = (1 << 16) - len(head)
-                                    head.extend(chunk[:need])
-                                await f.write(chunk)
-                    return await self._finalize_download_result(
-                        row_index=row_index,
-                        url=url,
-                        resp_headers=resp_headers,
-                        content=bytes(head),
-                        retry_count=retry_count,
-                        filename_base=filename_base,
-                        referer=referer,
-                        tmp_path=tmp_path,
-                    )
-        return False, "", "", "Retry exhaustion", retry_count + 1
+        async def attempt(retry_index):
+            head = bytearray()
+            async with recorded_request(session, 'get', url, headers=headers, timeout=timeout, retry_index=retry_index) as response:
+                observe_http_response(response, url, retry_index=retry_index)
+                response.raise_for_status()
+                resp_headers = dict(response.headers or {})
+                tmp_path = Path(self.downloads_dir) / f".part_{row_index}"
+                self._retain_superseded_request_body(tmp_path, url, row_index)
+                async with open_binary(tmp_path, 'wb') as f:
+                    async for chunk in response.content.iter_chunked(1 << 16):
+                        if chunk:
+                            received_bytes(len(chunk))
+                            if len(head) < (1 << 16):
+                                need = (1 << 16) - len(head)
+                                head.extend(chunk[:need])
+                            await f.write(chunk)
+                return await self._finalize_download_result(
+                    row_index=row_index,
+                    url=url,
+                    resp_headers=resp_headers,
+                    content=bytes(head),
+                    retry_count=retry_count,
+                    filename_base=filename_base,
+                    referer=referer,
+                    tmp_path=tmp_path,
+                )
+        return await self._retry(attempt)
 
     async def _download_via_buffered_request(
         self,

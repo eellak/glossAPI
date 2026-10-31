@@ -30,7 +30,7 @@ installation. Follow the printed uninstall command in that interpreter, then
 rerun the installer. After installation a fresh process verifies native module
 origins and root-wheel RECORD hashes (editable installs verify source origins).
 
-- `download`: aiohttp, aiofiles, Tenacity and YAML support.
+- `download`: aiohttp and YAML support (retries and file writes use the standard library).
 - `browser`: download plus Playwright and Pillow. Browser engines are a separate
   explicit `python -m playwright install chromium` download.
 - `layout`: Docling **2.81.0**, including math/code enrichment. The installer first

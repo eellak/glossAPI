@@ -256,7 +256,7 @@ def test_page_quality_adapter_binds_input_and_effective_profile(tmp_path):
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Node-local HTTP replay gate")
 def test_http_redirect_inner_retry_changed_bytes_and_source_stored_hashes(tmp_path):
-    pytest.importorskip("aiohttp"); pytest.importorskip("aiofiles")
+    pytest.importorskip("aiohttp")
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import threading
     state = {"calls": 0, "body": b"%PDF-1.4\n"+b"x"*70000+b"first"}
@@ -355,7 +355,7 @@ def test_browser_acquisition_marks_unobservable_source_and_keeps_stored_hash(tmp
 
 @pytest.mark.parametrize("outcome,reason", [("exception", "browser_recovery_failed"), ("html", "browser_returned_html"), ("unsupported", "browser_unsupported_format"), ("pdf", "browser_download_completed")])
 def test_browser_adapter_preserves_errors_and_transformation_receipts(tmp_path, monkeypatch, outcome, reason):
-    pytest.importorskip("aiofiles")
+    pytest.importorskip("aiohttp")
     from glossapi.gloss_browser_downloader import BrowserGlossDownloader
     async def recover_source(self, **kwargs):
         return None

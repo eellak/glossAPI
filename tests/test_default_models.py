@@ -44,7 +44,6 @@ def test_default_constructor_resolves_packaged_models(tmp_path):
 
 def test_default_constructor_annotates_with_packaged_model(tmp_path):
     pytest.importorskip('sklearn')
-    pytest.importorskip('dask')
     corpus = Corpus(tmp_path / 'input', tmp_path / 'out')
     rows = sections_fixture(corpus)
     corpus.annotate()
@@ -58,7 +57,6 @@ def test_default_constructor_annotates_with_packaged_model(tmp_path):
 
 def test_default_constructor_run_annotates_and_exports(tmp_path):
     pytest.importorskip('sklearn')
-    pytest.importorskip('dask')
     pytest.importorskip('glossapi_rs_cleaner')
     from test_ledger_stages import simple_pdf
     source = simple_pdf(tmp_path / 'source.pdf')

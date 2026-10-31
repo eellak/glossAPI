@@ -47,7 +47,7 @@ class DownloadStage:
             return failed_result(request,getattr(error,'code','download_exception'),error)
 
     def packages(self, specification):
-        requirements = [PackageRequirement("download", ("aiohttp>=3.14.5,<4", "aiofiles>=23.0.0", "tenacity>=9.2.1,<10", "pyyaml>=6.0"))]
+        requirements = [PackageRequirement("download", ("aiohttp>=3.14.5,<4", "pyyaml>=6.0"))]
         if specification.settings.get("download_mode", "standard") not in ("standard", "http", "default") or specification.settings.get("download_policy") or specification.settings.get("download_policy_file"):
             requirements.append(PackageRequirement("browser", ("playwright>=1.64.1,<2", "Pillow>=10")))
         return tuple(requirements)
