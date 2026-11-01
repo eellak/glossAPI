@@ -603,8 +603,8 @@ def shadow_stage(stage, operation=None):
             parameters.pop("self", None)
             if stage == "download":
                 # Public targets only (PLAN §9): a credential setting is refused before the call is recorded.
-                from .urls import refuse_credential_settings
-                refuse_credential_settings(parameters.get("kwargs"))
+                from .urls import refuse_credentials
+                refuse_credentials(settings=[parameters.get("kwargs")])
             parent = _active_journal.get()
             # Existing spawned backend workers send their results to the parent.
             # Never open a second writable ledger for the same corpus there.

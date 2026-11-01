@@ -657,6 +657,12 @@ def plan_view(connection=None, *, selectors=None, stages=None, settings=None, de
     The exact preview (targets, exclusions, capabilities, device allocation,
     deletion policy, conflicts) is part of the hashed body (K3, PLAN 2.4)."""
     settings = {"debug": "off", "memory_saving": "normal", **(settings or {})}
+    # Public targets only (PLAN §9): every supplied selector, excluded entry and manifest row, and the download
+    # settings, before any resolution can echo a selector; each resolved source below as well.
+    from .urls import refuse_credentials
+    manifest_rows = manifest.get("documents", []) if isinstance(manifest, dict) else manifest if isinstance(manifest, list) else []
+    refuse_credentials(urls=[*(selectors or []), *(item.get("selector") for item in exclusions or []), *manifest_rows],
+                       settings=[settings.get("download")])
     requested = stages or ["extract", "clean", "sections", "export"]
     if any(s not in STAGES for s in requested):
         raise ReadRequestError("invalid_stage", "Unknown stage")
@@ -707,6 +713,7 @@ def plan_view(connection=None, *, selectors=None, stages=None, settings=None, de
             continue
         seen[key] = identifier
         source_uri=source_uri_of_key(key) or selector
+        refuse_credentials(urls=[source_uri, key])  # a known document or key resolves to its recorded URL
         source_path=Path(_path(source_uri)) if source_uri.startswith('file:') else None
         source_stat=source_path.stat() if source_path is not None and source_path.is_file() else None
         observation=dict(source_uri=source_uri,bytes=source_stat.st_size if source_stat else None,

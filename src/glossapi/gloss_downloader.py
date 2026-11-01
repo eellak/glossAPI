@@ -34,7 +34,6 @@ import re
 import string
 from .download_io import open_binary, retry_async
 import json
-import ast
 import pandas as pd
 from urllib.parse import urlparse, unquote
 from collections import deque
@@ -1286,6 +1285,9 @@ class GlossDownloader:
             return False, "", "", "Empty URL", retry_count
 
         url = self._normalize_request_url(url)
+        # Public targets only (PLAN §9): the last line of defence, before any route, header, log line or request.
+        from .ledger.urls import refuse_credentials
+        refuse_credentials(urls=[url, referer] if referer else [url])
         route, route_options = self._resolve_route(url)
         resolved_route(route, route_options)
         user_agent = next(self.user_agents)
@@ -2405,57 +2407,9 @@ class GlossDownloader:
         Adds columns: source_row, url_index, is_duplicate, duplicate_of, __url_norm.
         Initializes download-related columns when expanding.
         """
-        # If URL column contains lists or JSON arrays, expand to one URL per row
-        def _parse_links(value: Any) -> List[str]:
-            if value is None or (isinstance(value, float) and pd.isna(value)):
-                return []
-            # Already a list/tuple of URLs or dicts
-            if isinstance(value, (list, tuple)):
-                out: List[str] = []
-                for v in value:
-                    if v is None or (isinstance(v, float) and pd.isna(v)):
-                        continue
-                    if isinstance(v, dict):
-                        u = v.get('url') or v.get('href') or v.get('link')
-                        if u:
-                            out.append(str(u))
-                    else:
-                        out.append(str(v))
-                return out
-            # Dict with a url field
-            if isinstance(value, dict):
-                u = value.get('url') or value.get('href') or value.get('link')
-                return [str(u)] if u else []
-            # String content: could be a JSON array or JSON object or plain URL
-            if isinstance(value, str):
-                s = value.strip()
-                # JSON list
-                if (s.startswith('[') and s.endswith(']')) or (s.startswith('{') and s.endswith('}')):
-                    try:
-                        obj = json.loads(s)
-                        return _parse_links(obj)
-                    except Exception:
-                        try:
-                            obj = ast.literal_eval(s)
-                            return _parse_links(obj)
-                        except Exception:
-                            pass
-                if any(sep in s for sep in ('\n', ';')) and 'http' in s:
-                    parts = [part.strip() for part in re.split(r'[;\n]+', s) if part.strip()]
-                    if parts:
-                        return parts
-                urls_in_text = re.findall(r'https?://\S+', s)
-                if len(urls_in_text) > 1:
-                    cleaned = [u.rstrip('.,)') for u in urls_in_text if u]
-                    if cleaned:
-                        return cleaned
-                # Fallback: single URL string
-                return [s]
-            # Unknown types -> string cast
-            try:
-                return [str(value)]
-            except Exception:
-                return []
+        # If URL column contains lists or JSON arrays, expand to one URL per row (the execution grammar, shared with the
+        # credential entry rule so validation and execution read a cell alike).
+        from .ledger.urls import source_links as _parse_links
 
         col_vals = df[self.url_column]
         def _looks_expand(v: Any) -> bool:
@@ -2517,6 +2471,13 @@ class GlossDownloader:
             if 'download_success' not in df.columns:
                 df['download_success'] = False
 
+        # Public targets only (PLAN §9): every expanded source, as the per-file kernel will request it, and the referer
+        # column, before any checkpoint, log line or request (every batch path and the run inventory expand here).
+        from .ledger.urls import refuse_credentials
+        referer = getattr(self, 'referer_column', None)
+        refuse_credentials(urls=[value if value.startswith(('http://', 'https://')) else 'https://' + value
+                                 for value in df[self.url_column].tolist() if isinstance(value, str) and value]
+                           + (df[referer].tolist() if referer and referer in df.columns else []))
         # Normalize URLs and mark duplicates (keep first occurrence)
         from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
