@@ -1,21 +1,19 @@
-"""Source URL entry rule: glossAPI downloads public targets only (owner decision 1 Nov 2026, PLAN §9).
+"""Credentials unsupported: glossAPI downloads public targets only (PLAN §2.1, credentials contract v2).
 
-``refuse_credentials`` is the one validation function. It refuses, with ``CredentialsUnsupportedError`` (code
-``credentials_unsupported``), a source URL that carries userinfo (``https://user:pass@host/...``) or an obvious
-credential query/fragment field (``?token=``, ``&X-Amz-Signature=``, ``#accessToken=`` ...), and download settings
-that would send credentials (``domain_cookies``, ``credentials``, cookie/auth/token-named keys, the same inside a
-download policy: its defaults, rules or policy file). It runs at the few choke points every path passes, before
-anything is journaled, planned, output, logged or sent:
+``refuse_credentials`` is the one check. It refuses, with ``CredentialsUnsupportedError`` (code
+``credentials_unsupported``), a URL that carries userinfo (``https://user:pass@host/...``, also schemeless
+``user:pass@host/...`` as the downloader would request it) or an obvious credential query/fragment field (``?token=``,
+``&X-Amz-Signature=``, ``#accessToken=`` ...), and download settings that would send credentials (``domain_cookies``,
+``credentials``, cookie/header/auth/token-named keys, the same inside a download policy: its defaults and rules, as a
+dict, a policy object or a policy file).
 
-- where input URLs, list/JSON/object cells and manifest rows become source URLs (``source_links`` is the execution
-  grammar, shared with the downloader), and on every supplied manifest entry, selected or not;
-- the downloader's per-file request boundary and batch frame (a last line of defence);
-- plan resolution and scheduler freeze/reload (the resolved source URI of every operation);
-- the effective download settings (Python, CLI, legacy wrapper, policy parser).
-
-Every other URL is a public target and is recorded as given; no redaction is needed, so there is none. Errors name
-only scheme, host, path and the field or setting name, never a value. The check is a guard against an obvious
-mistake, not a sanitizer: a secret under an innocuous name (``?x=SECRET``) is recorded as given.
+Hard guarantees (contract v2 items 1, 3, 5): every request boundary (``GlossDownloader._refuse_credentials``: the
+per-file kernel and the batch expansion every direct, sync, async, browser, legacy and streaming download passes) applies
+it before a request is built; errors name only scheme, host, path and the field or setting name, never a value; nothing
+here imports policy or YAML code unless a policy is actually given. The main entries (run/plan, CLI, manifests,
+scheduler freeze/reload, the legacy download wrapper) apply it early, best effort; what a caller supplies may be recorded
+as given before a refusal (item 4: no confidentiality of records, no redaction). A secret under an innocuous name
+(``?x=SECRET``) is a public URL as far as glossAPI can tell.
 """
 from __future__ import annotations
 
@@ -121,6 +119,8 @@ def _candidates(value: Any) -> Iterator[str]:
     if isinstance(value, str):
         text = value.strip()
         yield text
+        if "://" not in text and not text.startswith(("/", ".", "~")) and ("@" in text.split("/", 1)[0] or "?" in text):
+            yield "https://" + text  # the downloader requests a schemeless cell as https://
         for prefix in _KEY_PREFIXES:
             if text.startswith(prefix):
                 yield text[len(prefix):]
@@ -166,11 +166,11 @@ def _public_part(url: str) -> str:
 
 
 def _policy_blocks(policy: Any) -> Iterator[Any]:
-    """The route-option mappings of a download policy: a dict, a DownloadPolicy object or a policy file."""
-    from ..download_policy import DownloadPolicy
-    if isinstance(policy, DownloadPolicy):
+    """The route-option mappings of a download policy (a dict or a DownloadPolicy-like object); imports nothing, so an
+    absent policy never needs the optional download extra (contract v2 item 5)."""
+    if hasattr(policy, "default_options") and hasattr(policy, "rules"):
         yield policy.default_options or {}
-        yield from (rule.options for rule in policy.rules)
+        yield from (getattr(rule, "options", None) or {} for rule in policy.rules)
     elif isinstance(policy, dict):
         yield policy.get("default") or {}
         yield from (rule for rule in policy.get("rules") or [] if isinstance(rule, dict))
@@ -189,12 +189,8 @@ def _settings_violation(settings: Any) -> str | None:
             return "download_policy." + found
     path = settings.get("download_policy_file")
     if path:
-        from pathlib import Path
-        from ..optional_dependencies import optional_dependencies
-        with optional_dependencies("download"):
-            import yaml
-        policy = yaml.safe_load(Path(path).expanduser().read_text(encoding="utf-8")) or {}
-        for block in _policy_blocks(policy):
+        from ..download_policy import read_policy_file  # only when a policy file is actually given
+        for block in _policy_blocks(read_policy_file(path)):
             found = _settings_violation(block)
             if found:
                 return "download_policy_file." + found
