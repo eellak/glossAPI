@@ -78,7 +78,9 @@ class SectionPhaseMixin:
                             pd.read_parquet(parquet_path)  # raises the same missing-file error as before
                         mask = pd.Series(False, index=df_meta.index)
                         if 'filter' in df_meta.columns:
-                            mask = mask | (df_meta['filter'] == 'ok')
+                            # A row no cleaner has judged (null filter) is unfiltered, as clean's own reader treats it
+                            # (K4(b) round 2: the metadata row no longer carries an invented 'ok' before clean runs).
+                            mask = mask | df_meta['filter'].isna() | (df_meta['filter'] == 'ok')
                         if 'ocr_success' in df_meta.columns:
                             mask = mask | (df_meta['ocr_success'].fillna(False))
                         good_rows = df_meta[mask]

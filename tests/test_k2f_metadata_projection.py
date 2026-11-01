@@ -37,3 +37,22 @@ def test_triage_row_append_keeps_existing_integers_exact(tmp_path):
     frame = pd.read_parquet(tmp_path/'download_results/download_results.parquet').set_index('filename')
     assert int(frame.loc['a.pdf', 'big']) == BIG
     assert 'new_doc.pdf' in frame.index and frame.loc['b.pdf', 'selection_id'] == 'B'
+
+
+def test_section_after_extract_selects_rows_no_cleaner_judged(tmp_path):
+    """K4(b) round 2: a separate-session section() after extract (no clean) selects through the metadata as before.
+
+    The metadata row no longer carries an invented filter 'ok' before clean runs; the section reader treats a null filter
+    as unfiltered (as clean's own reader does), so the selection and the processing_stage update match 9f99f38.
+    """
+    from glossapi import Corpus
+    from glossapi.parquet_schema import ParquetSchema
+    out = tmp_path/'out'; (out/'markdown').mkdir(parents=True); (tmp_path/'in').mkdir()
+    for stem in ('a', 'b'):
+        (out/'markdown'/f'{stem}.md').write_text(f'# Title {stem}\n\nSome body text for {stem}.\n\n## Part\n\nMore text.\n')
+    path = ParquetSchema({'url_column': 'url'}).ensure_metadata_parquet(out)
+    assert pd.read_parquet(path)['filter'].isna().all()
+    Corpus(tmp_path/'in', out).section()
+    frame = pd.read_parquet(path).set_index('filename')
+    assert all('section' in str(frame.loc[name, 'processing_stage']).split(',') for name in ('a.pdf', 'b.pdf'))
+    assert (out/'sections/sections_for_annotation.parquet').exists()
