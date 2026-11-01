@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import cast
 import hashlib
 import json
 import multiprocessing
@@ -28,9 +29,12 @@ def producer_hash_scope():
     finally:_producer_hashes.reset(token)
 
 
-def remember_written_hash(path,digest,size):
+def remember_written_hash(path: 'str | os.PathLike[str]', digest: str, size: int) -> tuple[str, int]:
     values=_producer_hashes.get()
     if values is not None:values[str(Path(path).absolute())]=(digest,size)
+    # glossAPI wrote these bytes: reusable for the rest of this run (K4C-G08, ledger.encoding).
+    from ..ledger.encoding import remember_own_hash
+    remember_own_hash(path,digest,size)
     return digest,size
 
 
@@ -46,12 +50,12 @@ def write_text_hashed(path,text,encoding='utf-8'):
     return len(text)
 
 
-def sha256_file(path):
+def sha256_file(path: 'str | os.PathLike[str]', *, own: bool = False) -> str:
     from ..ledger.encoding import file_hash
-    return file_hash(path)
+    return file_hash(path, own=own)
 
 
-def seal_output_hashes(result, root):
+def seal_output_hashes(result: StageResult, root: 'str | os.PathLike[str]') -> StageResult:
     """Worker-owned byte receipts; no stat identity cache supplies content proof."""
     outputs=[]
     for output in result.outputs:
@@ -63,7 +67,8 @@ def seal_output_hashes(result, root):
     return replace(result,outputs=tuple(outputs))
 
 
-def copy_hashed(source, destination):
+def copy_hashed(source: 'str | os.PathLike[str]', destination: 'str | os.PathLike[str]', *,
+                expected: 'tuple[str | None, int | None] | None' = None) -> tuple[str, int]:
     """Hash the bytes being copied, without reading the new product again.
 
     A destination that is a hard link (it may share its inode with a managed
@@ -77,10 +82,49 @@ def copy_hashed(source, destination):
     if info is not None and _stat.S_ISREG(info.st_mode) and info.st_nlink>1:
         os.unlink(destination)
     digest=hashlib.sha256();size=0
+    before=os.stat(source)
     with Path(source).open('rb') as reader, destination.open('wb') as writer:
         for block in iter(lambda:reader.read(1024*1024),b''):
             writer.write(block);digest.update(block);size+=len(block)
-    return remember_written_hash(destination,digest.hexdigest(),size)
+    result=remember_written_hash(destination,digest.hexdigest(),size)
+    if expected is not None and result==expected:
+        # The caller's recorded hash of a file glossAPI wrote was just verified by reading it, and the source did
+        # not change while it was read: reusable for the rest of this run (K4C-G08).
+        after=os.stat(source)
+        if _stable(before,after):
+            from ..ledger.encoding import remember_own_hash
+            remember_own_hash(source,result[0],result[1],info=after)
+    return result
+
+
+def _stable(before: os.stat_result, after: os.stat_result) -> bool:
+    return (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns)==(
+        after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns)
+
+
+def copy_reused(source: 'str | os.PathLike[str]', destination: 'str | os.PathLike[str]', sha256: str, size: int) -> tuple[str, int] | None:
+    """Copy an own file whose recorded hash this run already holds, without hashing it again (K4C-G08).
+
+    Returns None (the caller hashes while copying) unless the source is
+    registered with exactly this hash and size and stays unchanged during the
+    copy; the copy's bytes are glossAPI's own write of those bytes.
+    """
+    import shutil
+    from ..ledger.encoding import reused_own_hash
+    try:before=os.stat(source)
+    except OSError:return None
+    if before.st_size!=size or reused_own_hash(before)!=sha256:
+        return None
+    destination=Path(destination)
+    import stat as _stat
+    try:info=os.lstat(destination)
+    except FileNotFoundError:info=None
+    if info is not None and _stat.S_ISREG(info.st_mode) and info.st_nlink>1:
+        os.unlink(destination)
+    shutil.copyfile(source,destination)
+    if not _stable(before,os.stat(source)) or os.stat(destination).st_size!=size:
+        raise ValueError('input_hash_changed')
+    return remember_written_hash(destination,sha256,size)
 
 
 # Private outputs a run keeps (recovery frontiers, evidence); everything else private and intermediate is released.
@@ -99,7 +143,7 @@ def links_released_copies(journal, retention_class, kind):
             and kind not in RETAINED_PRIVATE_KINDS)
 
 
-def link_published(source, destination, sha256, size):
+def link_published(source: 'str | os.PathLike[str]', destination: 'str | os.PathLike[str]', sha256: str, size: 'int | None') -> tuple[str, int] | None:
     """Publish ``source`` at ``destination`` as a hard link (atomic rename of a fresh link).
 
     The registered producer hash is reused: no new byte stream exists, so the
@@ -120,7 +164,7 @@ def link_published(source, destination, sha256, size):
     if current is not None and (current.st_dev,current.st_ino)==(info.st_dev,info.st_ino):
         # Already this inode (e.g. republished after a kill): rename() between two links of
         # one file is a no-op that would leave the temporary name behind.
-        return remember_written_hash(destination,sha256,size)
+        return remember_written_hash(destination,sha256,info.st_size)
     temporary=destination.parent/('.'+destination.name+'.'+uuid.uuid4().hex+'.link')
     try:os.link(source,temporary,follow_symlinks=False)
     except OSError:return None
@@ -128,7 +172,7 @@ def link_published(source, destination, sha256, size):
     finally:
         # Defensive: a same-inode rename leaves the source name in place.
         if os.path.lexists(temporary):os.unlink(temporary)
-    return remember_written_hash(destination,sha256,size)
+    return remember_written_hash(destination,sha256,info.st_size)
 
 
 def checked_path(root, relative):
@@ -355,11 +399,17 @@ def freeze_inputs(request):
     # A frozen collision-free publication name (CP-LEDGER F1) spells the source
     # payload, so every product the backend names after it is unique.
     published = request.settings.get("publication_name")
-    for ordinal, artifact in enumerate(request.inputs):
+    from .contracts import ArtifactReference
+    for ordinal, artifact in enumerate(cast('tuple[ArtifactReference, ...]', request.inputs)):
         name = published if published and artifact.kind in ("source_payload", "initial_input", "download_payload") else artifact.path.name
         path = request.work_directory / "inputs" / str(ordinal) / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        digest,size=copy_hashed(artifact.path,path)
+        # A producer-bound input glossAPI wrote (or verified) in this run keeps its recorded hash (K4C-G08). Nothing
+        # is registered here: a caller-supplied input (an original, a download, a given text) is hashed as it enters
+        # the attempt, every time.
+        copied=None if artifact.kind in ("source_payload", "initial_input", "download_payload") else copy_reused(
+            artifact.path,path,artifact.sha256,artifact.bytes)
+        digest,size=copied or copy_hashed(artifact.path,path)
         if size != artifact.bytes or digest != artifact.sha256:
             raise ValueError("input_hash_changed")
         frozen.append(replace(artifact, path=path))

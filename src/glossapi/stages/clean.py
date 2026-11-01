@@ -12,7 +12,9 @@ import json
 from pathlib import Path
 import time
 
-from .contracts import PackageRequirement, PlannedOperation, StagePlan, StageResult, StageSpecification, OutputArtifact
+from typing import Any
+
+from .contracts import PackageRequirement, PlannedOperation, StagePlan, StageRequest, StageResult, StageSpecification, OutputArtifact
 from .execution import failed_result, freeze_inputs, outputs_in, sha256_file, remember_written_hash
 from .edits import EditRecorder, text_hash, capture_ocr_edits
 from .receipts import capture_backend_observations
@@ -81,7 +83,7 @@ class CleanStage:
     name = 'clean'
     contract_version = 1
 
-    def __init__(self, selection=None):
+    def __init__(self, selection: 'dict[str, Any] | None' = None) -> None:
         self.selection = selection
 
     def packages(self, specification):
@@ -93,8 +95,26 @@ class CleanStage:
         return StagePlan(tuple(PlannedOperation(document.document_id, document.version_id,
             StageSpecification(operation, ('selected_text',), required, 'cpu', settings)) for document in documents))
 
-    def finalize(self, request, *, reporter):
-        raise ValueError('Clean has no aggregate finalize operation')
+    def finalize(self, request: StageRequest, *, reporter: object) -> StageResult:
+        """One aggregate selection per run (K4(c) part 3): every selected text is a bound input and the decision
+        carries one row per document, so ``report --why`` still gives each document its own selection and reason."""
+        started = time.monotonic_ns()
+        selection = self.selection
+        if request.operation != 'clean.selection' or selection is None:
+            raise ValueError('Clean has no aggregate finalize operation')
+        rows: list[dict[str, Any]] = list(selection['rows'])
+        if len(rows) != len(request.inputs):
+            raise ValueError('Selection rows do not match the selected texts')
+        request.work_directory.mkdir(parents=True, exist_ok=True)
+        selections: list[dict[str, Any]] = []
+        for source, row in zip(request.inputs, rows):
+            if sha256_file(source.path) != source.sha256 or row['selected_text_sha256'] != source.sha256:
+                raise ValueError('input_hash_changed')
+            selections.append({'selected_file_id': source.file_id, **row})
+        common = {key: value for key, value in selection.items() if key != 'rows'}
+        decision: dict[str, Any] = {'selections': selections, **common}
+        return StageResult(request.task_id, request.attempt_id, request.lease_token, 'ok', 'clean_completed', (),
+            (decision,), {'wall_ns': time.monotonic_ns()-started, 'execution': 'in_process'})
 
     def run_document(self, request, *, reporter):
         request.work_directory.mkdir(parents=True, exist_ok=True)
@@ -111,7 +131,7 @@ class CleanStage:
                 if sha256_file(source.path) != source.sha256:
                     raise ValueError('input_hash_changed')
                 return StageResult(request.task_id, request.attempt_id, request.lease_token, 'ok', 'clean_completed', (),
-                    ({'selected_file_id':source.file_id, **dict(self.selection)},),
+                    ({'selected_file_id':source.file_id, **dict(self.selection or {})},),
                     {'wall_ns': time.monotonic_ns()-started, 'execution': 'in_process'})
             request = freeze_inputs(request)
             source = request.inputs[0]

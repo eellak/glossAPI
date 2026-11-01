@@ -398,7 +398,13 @@ def test_canonical_and_chunks_share_version_without_task_identity_collision(tmp_
     with ledger_connect(corpus.output_dir/'corpus.sqlite3') as database:
         operations=[row[0] for row in database.execute("SELECT operation FROM tasks WHERE stage='clean' AND version_id=?",(version,))]
         assert sum(operation.split('.artifact:',1)[0]=='clean.initial' for operation in operations)==2
-        assert sum(operation.split('.artifact:',1)[0]=='clean.selection' for operation in operations)==2
+        # One aggregate selection per run (K4(c) part 3) with one row per selected text of this version.
+        assert not any(operation.split('.artifact:',1)[0]=='clean.selection' for operation in operations)
+        from glossapi.ledger.encoding import unpack_evidence
+        selections=[unpack_evidence(json.loads(row[0])) for row in database.execute("SELECT json FROM snapshots WHERE kind='stage_evidence'")]
+        selections=[item for item in selections if item['operation']=='clean.selection']
+        assert len(selections)==1 and sorted(row['compatibility_filename'] for row in selections[0]['selections'])==['source.pdf','source__p00001-00002.pdf']
+        assert database.execute("SELECT COUNT(*) FROM tasks WHERE stage='clean' AND operation='clean.selection' AND version_id IS NULL").fetchone()[0]==1
         assert database.execute('SELECT COUNT(*) FROM documents').fetchone()[0]==1
 
 

@@ -487,6 +487,9 @@ EXPECTED = {
     ('glossapi/stages/execution.py', 'link_published', 'os.replace'):
         (1, 'K4(c) decision 3: atomic rename of a fresh hard link of a private intermediate onto its per-document '
             'compatibility product; never a .parquet or symlinked destination (it returns None and the caller copies)'),
+    ('glossapi/stages/execution.py', 'copy_reused', 'shutil.copyfile'):
+        (1, 'K4(c) part 3 (K4C-G08): freeze_inputs copies a producer-bound input whose recorded hash this run already '
+            'holds into the attempt\'s private inputs/ directory (a fresh name below the attempt); never corpus metadata'),
     ('glossapi/ledger/writer.py', '_restore_copy', 'shutil.copyfile'):
         (1, 'K4C-M2: republish an unflushed non-metadata byte copy (export.jsonl, markdown) from its intact managed '
             'source at the next run start; a .parquet copy goes through metadata_target + _copy_file_locked instead'),

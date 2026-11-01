@@ -180,7 +180,7 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
                 linked = None
                 if output.sha256 and isinstance(journal, ResultJournal) and links_released_copies(journal, output.retention_class, output.kind):
                     linked = link_published(path, destination, output.sha256, output.bytes)
-                digest, size = linked or copy_hashed(path, destination)
+                digest, size = linked or copy_hashed(path, destination, expected=(output.sha256, output.bytes) if output.sha256 else None)
                 if output.sha256 and (digest, size) != (output.sha256, output.bytes):
                     raise ValueError('Product changed during final publication')
                 mirror_hashes[relative] = (digest, size)
@@ -280,7 +280,7 @@ def materialize_stage_outputs(corpus, result, workspace, paths):
         linked = None
         if fact is not None and links_released_copies(journal, fact['retention_class'], fact['kind']):
             linked = link_published(path, destination, fact['sha256'], fact['bytes'])
-        digest, size = linked or copy_hashed(path, destination)
+        digest, size = linked or copy_hashed(path, destination, expected=(fact['sha256'], fact['bytes']) if fact is not None else None)
         claimed()
         if isinstance(journal, ResultJournal):
             if (digest,size)!=(fact['sha256'],fact['bytes']):
@@ -333,24 +333,43 @@ def record_clean_selection(corpus, frame, *, drop_bad, thresholds):
     first_rows = {}
     for position, name in enumerate(frame['filename'].astype(str)):
         first_rows.setdefault(name, position)
+    from .products import execute_aggregate
+    policy = 'legacy_needs_ocr_false_when_drop_bad'
+    from typing import Any
+    rows: list[dict[str, Any]] = []
+    inputs: list[tuple[str, Path]] = []
+    seen: set[Path] = set()
     for source, output in getattr(corpus, '_stage_clean_surfaces', ()):
         position = first_rows.get(source.with_suffix('.pdf').name)
         if position is None:
             continue
+        output = Path(output).absolute()
+        if output in seen:
+            continue  # one selection row per selected text
+        seen.add(output)
         row = frame.iloc[position]
         # The selected text is a committed product: its producer hash, not a second read of the same bytes.
         binding = producer_binding(journal, output)
-        selection = {'accepted_for_sections': source.stem in corpus.good_files,
+        rows.append({'compatibility_filename': source.with_suffix('.pdf').name,
+            'version_id': binding['version_id'] if binding else None,
+            'accepted_for_sections': source.stem in corpus.good_files,
             'needs_ocr': bool(row.get('needs_ocr',False)), 'filter_tokens': str(row.get('filter','ok')).split(';'),
-            'effective_thresholds': thresholds, 'drop_bad': drop_bad,
             'selected_text_sha256': binding['sha256'] if binding else sha256_file(output),
-            'selection_policy': 'legacy_needs_ocr_false_when_drop_bad',
             'routing_metrics':{field:(None if __import__('pandas').isna(row[field]) else row[field].item() if hasattr(row[field],'item') else row[field])
-                for field in ('latin_word_shape_rate','ocr_pages','ocr_pages_count','ocr_pages_unflagged_count','page_rule_profile','page_fold_validity') if field in row}}
-
-        execute_compatibility_stage(corpus, CleanStage(selection), [('selected_text', output)],
-            StageSpecification('clean.selection', ('selected_text',), (), settings={
-                'effective_thresholds':thresholds,'drop_bad':drop_bad,'selection_policy':selection['selection_policy']}))
+                for field in ('latin_word_shape_rate','ocr_pages','ocr_pages_count','ocr_pages_unflagged_count','page_rule_profile','page_fold_validity') if field in row}})
+        inputs.append(('selected_text', output))
+    if not rows:
+        return
+    # One aggregate task per run (K4(c) part 3, coordinator decision 2): every selected text is a bound input of
+    # the one attempt and the decision keeps one row per document (its own selection, thresholds and reason).
+    common: dict[str, Any] = {'effective_thresholds': thresholds, 'drop_bad': drop_bad, 'selection_policy': policy}
+    from typing import cast
+    from .contracts import StageResult
+    result = cast(StageResult, execute_aggregate(corpus, CleanStage({'rows': rows, **common}), inputs,
+        StageSpecification('clean.selection', ('selected_text',), (), settings={**common,
+            'compatibility_filenames': [row['compatibility_filename'] for row in rows]}))[0])
+    if result.status != 'ok':
+        raise RuntimeError(f'{result.reason_code}: {result.error.message if result.error else "clean selection failed"}')
 
 
 def clean_ocr_compatibility_kernel(corpus, md_files, settings, *, write_cleaned_files, debug_dir):

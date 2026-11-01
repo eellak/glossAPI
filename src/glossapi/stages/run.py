@@ -554,6 +554,11 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                     details={'execution_run_id':run,'occurrences':[{'source_record_id':record,'version_id':version_of.get(key)}
                         for record,key in record_bindings]})
         corpus._retention_settings={**settings,'requested_stages':list(stages)}
+        if 'annotate' in stages:
+            # Overlap the annotation barrier's legacy model import/unpickle with the DAG (K4(c) part 3, decision 3).
+            from ..gloss_section_classifier import preload_legacy_model
+            model_path:object=getattr(corpus,'section_classifier_model_path',None)
+            preload_legacy_model(model_path)
         result=engine.execute(run,resume=bool(resume),retry_failed=retry_failed)
         result['wall_seconds']=time.monotonic()-began
         replays={}
@@ -1155,8 +1160,16 @@ def _record_disk_full(writer,corpus,error):
 
 def run_corpus(corpus,*args,**options):
     """Hold corpus exclusion across document work and every publication barrier."""
+    from ..ledger.encoding import run_hash_scope
     try:
-        return _locked_run_corpus(corpus,*args,**options)
+        # Own-file hashes are reused only within this run (K4C-G08); the next run start re-hashes.
+        with run_hash_scope():
+            try:
+                return _locked_run_corpus(corpus,*args,**options)
+            finally:
+                import sys
+                classifier=sys.modules.get('glossapi.gloss_section_classifier')
+                if classifier is not None:classifier.release_preloaded_models()
     except DiskFullError:
         raise
     except Exception as error:
