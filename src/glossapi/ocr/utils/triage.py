@@ -91,8 +91,9 @@ def update_download_results_parquet(root_dir: Path, filename_stem: str, summary:
             stem_series = df["filename"].astype(str).map(canonical_stem)
             mask = stem_series == target_stem
             if not mask.any():
-                # append new row
-                df.loc[len(df)] = {"filename": f"{target_stem}.pdf"}
+                # append new row; integer columns become nullable first so existing values stay exact (S1)
+                from ...parquet_schema import _nullable_integers
+                df = pd.concat([_nullable_integers(df), pd.DataFrame([{"filename": f"{target_stem}.pdf"}])], ignore_index=True)
                 stem_series = df["filename"].astype(str).map(canonical_stem)
                 mask = stem_series == target_stem
             # Rounded numeric fields for readability/consistency

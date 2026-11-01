@@ -134,7 +134,13 @@ def export_products(corpus,output,options,*,sharded=False):
     root=corpus.cleaned_markdown_dir;chunks=root/'chunks'
     if not root.exists() or (not any(root.glob('*.md')) and not (chunks.exists() and any(chunks.rglob('*.md')))):
         root=corpus.markdown_dir;chunks=root/'chunks'
+    planned=getattr(corpus,'_streaming_publication_stems',None)
+    planned=set(planned.values()) if planned else None
+    from .._naming import canonical_stem
+    import re as _re
     for path in [*sorted(root.glob('*.md')),*sorted(chunks.rglob('*.md'))]:
+        # A streaming run exports exactly its plan's documents; earlier runs' texts stay in their own history (K4BI-G3).
+        if planned is not None and _re.sub(r'__p\d{4}-\d{4}$','',canonical_stem(path)) not in planned:continue
         inputs.append(('selected_text',resolved_input(corpus,path)));relative_paths.append('clean_markdown/'+str(path.relative_to(root)))
     for directory,pattern,prefix in [(corpus.output_dir/'json/metrics','*.json','json/metrics'),(corpus.output_dir/'json','*.latex_map.jsonl','json')]:
         for path in sorted(directory.glob(pattern)):

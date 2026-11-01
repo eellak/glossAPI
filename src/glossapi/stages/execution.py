@@ -194,7 +194,8 @@ def outputs_in(root, required=()):
 
 def failed_result(request, reason, error, *, decisions=(), metrics=None):
     import errno
-    if isinstance(error,OSError) and error.errno==errno.ENOSPC:reason='disk_budget_exceeded'
+    # An exhausted filesystem under a worker's output write is the document's typed cause (W18 M10), not a budget refusal.
+    if isinstance(error,OSError) and error.errno in (errno.ENOSPC,errno.EDQUOT):reason='disk_full'
     return StageResult(request.task_id, request.attempt_id, request.lease_token, "failed", reason,
         tuple(replace(output, retention_class="failed_attempt", required=False)
               for output in outputs_in(request.work_directory)), tuple(decisions), metrics or {},

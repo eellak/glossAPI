@@ -267,6 +267,25 @@ def _publication_names(entries, remote_bases):
     return names
 
 
+def _publication_stems(operations):
+    """The compatibility stem of every document of the frozen plan (its download name, publication name or source stem).
+
+    The run's products (document export, section export) contain exactly these documents: a corpus may hold
+    products of earlier runs, which stay in the ledger history but are not part of this run's export (K4BI-G3).
+    """
+    from .._naming import canonical_stem
+    stems={}
+    for operation in operations:
+        version=operation.document.version_id
+        if version is None:continue
+        if operation.stage=='download':
+            stems[version]=operation.specification.settings['filename_base']
+        elif operation.specification.operation=='extract.document' and version not in stems:
+            published=operation.specification.settings.get('publication_name')
+            stems[version]=Path(published).stem if published else canonical_stem(local_path(operation.document.source_uri))
+    return stems
+
+
 def _publication_alias(root, run, name, target):
     """A run-owned alias spelling the frozen publication name of a local input."""
     import os
@@ -339,6 +358,13 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                 source_rows,remote_entries=[],[]
             local_given=[source for source in sources if not _is_url(str(source))]
             source_rows=[*source_rows,*({'source_uri':str(source)} for source in local_given)]
+            if settings.get('memory_saving')=='extreme':
+                # Up front (K4BI-G7/G10): the final products must fit the corpus filesystem. Estimated from the supplied
+                # sources' sizes (URL sizes are unknown until download; the exact check runs before the publications).
+                from .final_products import PLANNING_TEXT_RATIO, product_need, require_room
+                paths=[Path(unquote(urlsplit(str(source)).path) if str(source).startswith('file:') else str(source)) for source in local_given]
+                sizes=[path.stat().st_size for path in paths if path.is_file()]
+                require_room(root,settings,product_need(stages,int(PLANNING_TEXT_RATIO*sum(sizes)),len(sizes)),when='(estimated at run start)')
         engine=StreamingScheduler(writer,root,workers=workers,cpu_tokens=settings.get('cpu_tokens'),
             memory_bytes=settings.get('memory_budget_bytes'),disk_budget_bytes=settings.get('disk_budget_bytes'),observer=observer)
         engine.transport_urls=dict(transport)
@@ -584,6 +610,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
         # The frozen per-version section filename: the annotated-section census reads rows by it (W18 M4).
         corpus._streaming_section_names={operation.document.version_id:operation.specification.settings.get('filename')
             for operation in operations if operation.stage=='sections' and operation.document.version_id}
+        corpus._streaming_publication_stems=_publication_stems(operations)
         result['plan_hash']=writer.connection.execute('SELECT plan_sha256 FROM runs WHERE run_id=?',(run,)).fetchone()[0]
         if resume:
             settings=json.loads(writer.connection.execute('SELECT s.json FROM runs r JOIN snapshots s ON s.sha256=r.settings_sha256 WHERE r.run_id=?',(run,)).fetchone()[0])
@@ -719,6 +746,17 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         settings={**settings,'publication_barriers':publication_stages},
         resume=resume,retry_failed=retry_failed,observer=observer,writer=corpus._scheduler_writer,credentials=credentials)
     _bind_barrier_context(corpus._scheduler_writer,result.get('run_id'))
+    if result.get('run_id') and result['state'] in ('completed','completed_with_failures') and getattr(corpus,'_retention_settings',{}).get('memory_saving')=='extreme':
+        # Before any publication (K4BI-G7): the exact cleaned text of this run decides whether the final products fit;
+        # a typed refusal now, never an exhausted disk mid-publication. Resume after enlarging the filesystem.
+        from .final_products import product_need, require_room
+        from .disk_budget import DiskBudget
+        produced=set(result['attempts'].values())
+        texts=[row['bytes'] or 0 for row in corpus._scheduler_writer.file_catalog().values()
+            if row['kind']=='clean_markdown' and row['presence']=='present' and row['producer_attempt_id'] in produced]
+        require_room(corpus.output_dir,corpus._retention_settings,product_need(corpus._retention_settings.get('requested_stages',stages),sum(texts),len(texts)),
+            when='(exact, before the publications)',
+            present=DiskBudget(corpus._scheduler_writer,corpus.output_dir,result['run_id'],corpus._retention_settings).present_bytes())
     if result.get('run_id') and getattr(corpus,'_retention_settings',{}).get('memory_saving')=='extreme':
         # Streaming retirement (W18 M9) runs as document readers finish. A resume after a kill inside it (or a run
         # whose last completion raced it) finishes it here, before any publication (K4BP-G2).
@@ -993,7 +1031,10 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
     if previous and task['status']=='running' and not wrapper_ok:
         marker=writer.connection.execute(f"SELECT event_id FROM {writer.connection.event_table} WHERE run_id=? AND event_kind='run' "
             "AND reason_code='disk_full' AND event_id>? ORDER BY event_id DESC LIMIT 1",(run,previous.get('event_id') or 0)).fetchone()
-        cause={'details':{'interruption_cause':'disk_full','errno':28,'disk_full_event_id':marker[0]}} if marker else {}
+        from .interruption import read as read_interruption
+        recorded=read_interruption(corpus.output_dir,run)
+        cause={'details':{'interruption_cause':'disk_full','errno':28,'disk_full_event_id':marker[0] if marker else None,
+            'recorded_at':recorded.get('recorded_at') if recorded else None}} if marker or recorded else {}
         with writer.transaction():
             writer.finish(run,task['task_id'],previous['attempt_id'],status='failed',reason_code='attempt_interrupted',**cause)
             if wrapper_run:
@@ -1093,9 +1134,15 @@ def disk_full(error):
 
 
 def _record_disk_full(writer,corpus,error):
-    """Best effort: name the exhausted disk in the ledger, so status, report and the resume can tell it from process death."""
+    """Name the exhausted disk, so status, report and the resume can tell it from process death.
+
+    First in the record allocated at run start (overwritten in place: it needs no new block on a full disk), then,
+    best effort, as a ledger event.
+    """
     run=getattr(corpus,'_active_run_id',None)
     if not run:return
+    from .interruption import record
+    record(corpus.output_dir,run,error)
     try:
         if writer.connection.in_transaction:writer.connection.rollback()
         with writer.transaction():
@@ -1128,6 +1175,9 @@ def _locked_run_corpus(corpus,*args,**options):
     corpus._active_run_id=options.get('resume')
     with LedgerWriter(Path(corpus.output_dir)/'corpus.sqlite3') as writer:
         corpus._scheduler_writer=writer
+        # The disk_full record exists before any write can exhaust the disk (K4BI-G2).
+        from .interruption import allocate
+        allocate(corpus.output_dir)
         # Copies the previous run close left unflushed are verified (and republished if torn) first (K4C-M2).
         writer.verify_excluded_copies()
         try:
@@ -1137,6 +1187,9 @@ def _locked_run_corpus(corpus,*args,**options):
             with url_policy(_declared_url_policy(writer,options)):
                 result=_run_corpus(corpus,*args,**options)
             result['total_wall_seconds']=time.monotonic()-began
+            if result.get('state') in ('completed','completed_with_failures'):
+                from .interruption import clear
+                clear(corpus.output_dir)
             return result
         except Exception as error:
             if disk_full(error):
@@ -1149,3 +1202,4 @@ def _locked_run_corpus(corpus,*args,**options):
             corpus._publication_claims=None
             corpus._streaming_planned_versions=None
             corpus._streaming_completed_versions=None
+            corpus._streaming_publication_stems=None

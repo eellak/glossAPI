@@ -143,8 +143,12 @@ def test_amended_plan_keeps_names_per_source_publishes_new_downloads_and_preview
     assert (root/'downloads'/names[server.url('/a.pdf')]).read_bytes() == delta, 'the re-acquired bytes were not published'
     texts = export_by_url(root)
     assert 'DELTA' in texts[server.url('/a.pdf')] and 'CHARLIE' in texts[server.url('/c.pdf')]
-    # The removed URL may stay exported (the export is of the corpus), but only with its own text.
-    assert 'BRAVO' in texts.get(server.url('/b.pdf'), 'BRAVO')
+    # The export holds exactly run B's plan; the removed URL stays only in the ledger history (K4BI-G3).
+    assert set(texts) == {server.url('/a.pdf'), server.url('/c.pdf')}
+    with open_readonly(root/'corpus.sqlite3') as connection:
+        from glossapi.ledger.reader import report_why, select_run
+        why = report_why(connection, server.url('/b.pdf'), run=select_run(connection, first['run_id']))
+    assert why['occurrences'] and why['occurrences'][0]['disposition']['decision'] == 'include'
     with open_readonly(root/'corpus.sqlite3') as connection:
         from glossapi.ledger.reader import evidence
         replaced = [evidence(connection, {'details_json': row[0]}).get('observation') for row in connection.execute(

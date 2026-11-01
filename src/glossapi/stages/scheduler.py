@@ -389,7 +389,10 @@ class StreamingScheduler:
         # A run the filesystem stopped (W18 M10) names that cause on its interrupted attempts, not bare process death.
         marker = self.writer.connection.execute(f"SELECT event_id FROM {self.writer.connection.event_table} WHERE run_id=? AND "
             "event_kind='run' AND reason_code='disk_full' ORDER BY event_id DESC LIMIT 1", (run,)).fetchone()
-        cause = {'interruption_cause':'disk_full','errno':28,'disk_full_event_id':marker[0]} if marker else {}
+        from .interruption import read as read_interruption
+        recorded = read_interruption(self.root, run)
+        cause = ({'interruption_cause':'disk_full','errno':28,'disk_full_event_id':marker[0] if marker else None,
+                  'recorded_at':recorded.get('recorded_at') if recorded else None} if marker or recorded else {})
         with self.writer.batch():
             for operation in operations:
                 task = tasks[operation.key]

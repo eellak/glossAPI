@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ..stages.profile import adapters_enabled
+from .._naming import canonical_stem as _canonical_stem
 from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
 
 import json
@@ -124,6 +125,11 @@ class SectionPhaseMixin:
             else:
                 self.logger.info("No metadata parquet found for section selection; will fall back to all markdown files")
 
+        planned = getattr(self, "_streaming_publication_stems", None)
+        if planned:
+            # A streaming run sections exactly its plan's documents (K4BI-G3).
+            stems = set(planned.values())
+            good_filenames = [name for name in good_filenames if _canonical_stem(name) in stems]
         self.logger.info(f"Found {len(good_filenames)} good quality files for sectioning")
         if good_filenames:
             self.logger.info(f"Good filenames: {good_filenames}")
@@ -134,6 +140,7 @@ class SectionPhaseMixin:
             good_filenames = [
                 os.path.splitext(p.name)[0]
                 for p in Path(self.markdown_dir).glob("*.md")
+                if not planned or _canonical_stem(p) in set(planned.values())
             ]
             if not good_filenames:
                 error_msg = "No markdown files found to section. Extraction might have failed."

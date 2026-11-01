@@ -90,7 +90,9 @@ class SequentialStageRunner:
             if any(artifact.bytes>runtime_settings['max_source_bytes'] for artifact in document.artifacts if artifact.kind in ('source_payload','download_payload','initial_input')):
                 from .disk_budget import DiskBudgetError
                 raise DiskBudgetError('disk_budget_exceeded','known source exceeds max_source_bytes')
-            if sum(artifact.bytes for artifact in document.artifacts)>runtime_settings['max_attempt_bytes']:
+            if not aggregate and sum(artifact.bytes for artifact in document.artifacts)>runtime_settings['max_attempt_bytes']:
+                # A corpus-wide aggregate (sections, annotation, export) makes the final products from every document's
+                # text: it is charged to the corpus filesystem (stages.final_products), not to the per-attempt cap (K4BI-G10).
                 from .disk_budget import DiskBudgetError
                 raise DiskBudgetError('disk_budget_exceeded','known inputs exceed max_attempt_bytes')
         if stage.name == "ocr":
@@ -164,7 +166,9 @@ class SequentialStageRunner:
             lease = self.writer.control()['attempts'][attempt]['lease_token']
             self.writer.event(run, event_kind="lifecycle", reason_code="stage_started", status="running", task_id=task,
                 version_id=version, attempt_id=attempt, started_at=started_at)
-        work = self.root / ".glossapi" / "staging" / attempt
+        # Extreme: the staging filesystem is the per-attempt cap; an aggregate's work (the final products) lives on the
+        # corpus filesystem it is charged to (K4BI-G10).
+        work = self.root / ".glossapi" / ("aggregate-work" if aggregate and runtime_settings['memory_saving'] == 'extreme' else "staging") / attempt
         request = StageRequest(task, attempt, lease, document_id, version, specification.operation,
             document.artifacts, runtime_settings, tools, specification.device_id, work, started_ns + int(timeout_seconds*1e9))
         def complete(result):

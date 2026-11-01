@@ -483,10 +483,19 @@ def _mark_interruption(connection: Any, run: Any, counts: Any, result: Any) -> N
         return
     latest = connection.execute("SELECT event_id,reason_code,message FROM events WHERE run_id=? AND event_kind='run' ORDER BY event_id DESC LIMIT 1",
                                 (run["run_id"],)).fetchone()
+    recorded = None
     if latest is None or latest[1] != "disk_full":
-        return
+        # The ledger could not take one more page: the record allocated at run start names the cause (K4BI-G2).
+        from ..stages.interruption import read as read_interruption
+        root = _ledger_root(connection)
+        recorded = read_interruption(root, str(run["run_id"])) if root else None
+        if recorded is None:
+            return
     result["state"] = "interrupted"
-    result["interruption"] = dict(cause="disk_full", errno=28, event_id=latest[0], message=latest[2],
+    result["interruption"] = dict(cause="disk_full", errno=28, event_id=latest[0] if recorded is None else None,
+                                  message=latest[2] if recorded is None else recorded.get("error"),
+                                  recorded_at=recorded.get("recorded_at") if recorded else None,
+                                  basis="ledger event" if recorded is None else "record allocated at run start",
                                   action="free space (or enlarge the filesystem), then: glossapi run --resume " + str(run["run_id"]))
 
 
@@ -611,6 +620,13 @@ def report_view(connection, *, run=None, stage=None):
     return dict(rows=rows, retention=retention_summary(connection,run),
                 resources=status["resources"], counts=status["counts"], conflicts=conflicts,
                 sources=source_metadata(connection, document_ids, run))
+
+
+def _final_products_estimate(documents: Any, stages: Any) -> dict[str, Any]:
+    """K4BI-G8: the text the corpus barriers keep and the final products they make, estimated before the run."""
+    from ..stages.final_products import estimate
+    sizes = [d["source_observation"].get("bytes") for d in documents]
+    return estimate(set(stages), sum(size for size in sizes if size), len(documents), unknown=sum(1 for size in sizes if not size))
 
 
 def plan_view(connection=None, *, selectors=None, stages=None, settings=None, devices=None, workers=None, manifest=None, identities=None,
@@ -751,7 +767,8 @@ def plan_view(connection=None, *, selectors=None, stages=None, settings=None, de
                     reason_code=None if installed else "missing_capability")
     body = dict(source_inventory_hash=source_inventory_hash, settings=settings, settings_help={"debug":DEBUG_HELP,"memory_saving":MEMORY_SAVING_HELP}, documents=documents, barriers=barriers, pools=pools,
         resource_limits={k: settings.get(k) for k in ("disk_budget_bytes", "max_source_bytes", "max_attempt_bytes")},
-        disk=dict(present_bytes=present, pinned_bytes=None, reserved_bytes=None, estimated_peak_bytes=None, unknown_sizes=[dict(document_id=d["document_id"], reason_code="unknown_not_recorded") for d in documents]),
+        disk=dict(present_bytes=present, pinned_bytes=None, reserved_bytes=None, estimated_peak_bytes=None, unknown_sizes=[dict(document_id=d["document_id"], reason_code="unknown_not_recorded") for d in documents],
+                  final_products=_final_products_estimate(documents, planned_stages)),
         requirements=[requirement_entry(p) for p in sorted({p for d in documents for s in d['steps'] for p in s['packages']})],
         legacy_import_required=connection is None or connection.execute("SELECT 1 FROM events WHERE reason_code='legacy_import_completed' LIMIT 1").fetchone() is None,
         execution=dict(command="run", profile="streaming_document_dag",
