@@ -1300,6 +1300,13 @@ class ParquetSchema:
                 )
                 return target_path
 
+            if not existing_df.empty and "download_success" in existing_df.columns and "download_success" in combined.columns:
+                # An acquired download keeps its "download" stage after memory_saving=extreme deleted the file
+                # (the artifact scan above sees only files still present).
+                stages = combined["processing_stage"].fillna("").astype(str) if "processing_stage" in combined.columns else pd.Series("", index=combined.index)
+                acquired = (combined["download_success"] == True) & ~stages.map(lambda value: "download" in value.split(","))  # noqa: E712
+                if acquired.any():
+                    combined.loc[acquired, "processing_stage"] = stages[acquired].map(lambda value: ",".join(["download", *[p for p in value.split(",") if p]]))
             for column, default in defaults.items():
                 if column not in combined.columns:
                     combined[column] = default

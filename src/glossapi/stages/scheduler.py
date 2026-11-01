@@ -386,6 +386,10 @@ class StreamingScheduler:
 
     def _recover(self, run, tasks, operations):
         done = {}
+        # A run the filesystem stopped (W18 M10) names that cause on its interrupted attempts, not bare process death.
+        marker = self.writer.connection.execute(f"SELECT event_id FROM {self.writer.connection.event_table} WHERE run_id=? AND "
+            "event_kind='run' AND reason_code='disk_full' ORDER BY event_id DESC LIMIT 1", (run,)).fetchone()
+        cause = {'interruption_cause':'disk_full','errno':28,'disk_full_event_id':marker[0]} if marker else {}
         with self.writer.batch():
             for operation in operations:
                 task = tasks[operation.key]
@@ -394,7 +398,7 @@ class StreamingScheduler:
                     continue
                 if row['status'] == 'running' or row['status'] is None:
                     self.writer.finish(run,task,row['attempt_id'],status='failed',reason_code='attempt_interrupted',
-                        details={'lease_token':row['lease_token'],'recovery':'old parent fenced before replacement'})
+                        details={'lease_token':row['lease_token'],'recovery':'old parent fenced before replacement',**cause})
                 elif row['status']=='ok' and self._verified(row['attempt_id']) and all(
                     artifact.path.is_file() and sha256_file(artifact.path)==artifact.sha256 for artifact in operation.document.artifacts):
                     done[operation.key] = row['attempt_id']
@@ -529,7 +533,7 @@ class StreamingScheduler:
                             for parent,kind,_ in child.inputs if parent in done})
                     scratch_frontier.clear()
                 self.runner.collect_scratch()
-                if completions and not frozen_settings.get('publication_barriers'):
+                if completions and frozen_settings.get('memory_saving')=='extreme':
                     from .retention import retire_downloaded_sources
                     retire_downloaded_sources(self.writer,self.root,run,frozen_settings)
                 queued={key for queue in self.ready.values() for key in queue}
@@ -570,6 +574,7 @@ class StreamingScheduler:
                             queued.add(key)
                             self.high_water[str(pool_key)]=max(self.high_water[str(pool_key)],len(queue))
                 pending=[]
+                blocked_on_disk=False
                 for pool_key,queue in reversed(list(self.ready.items())):
                     stage_name,device=pool_key
                     count=self.workers.get(stage_name,1)
@@ -605,6 +610,7 @@ class StreamingScheduler:
                         reservation=attempt_reservation(frozen_settings,operation.reservation_bytes)
                         if self.disk_capacity is not None and not budget.can_reserve(reservation):
                             self._wait(run,tasks[operation.key],operation,'waiting_for_disk')
+                            blocked_on_disk=True
                             break
                         # Require downstream credits. At most queue capacity +
                         # already active producers can be ahead of a consumer.
@@ -664,6 +670,11 @@ class StreamingScheduler:
                         self._trace('dispatch',key=operation.key,attempt_id=request.attempt_id)
                 admission_changed = bool(pending)
                 if not self.active and not pending:
+                    if blocked_on_disk and self._release_for_admission(run,frozen_settings,budget,scratch_frontier,done,operations):
+                        # Backpressure (W18 M9): nothing runs and admission waits for disk. Release what
+                        # the finished work no longer needs, now instead of at the next frontier, and retry.
+                        admission_changed = True
+                        continue
                     break
                 if not completions and not pending:
                     time.sleep(.005)
@@ -692,6 +703,20 @@ class StreamingScheduler:
                     install_hints=(['Run python install_glossapi.py ocr with the selected --device'] if any(
                         (tasks[operation.key],'waiting_for_package') in self.wait_reasons for operation in operations if operation.stage=='ocr') else [])
                         +sorted({value for value in self.package_availability.values() if isinstance(value,str)}))
+
+    def _release_for_admission(self,run,settings,budget,scratch_frontier,done,operations):
+        """Retire finished scratch and (extreme) fully read downloads; True when present bytes dropped."""
+        before=budget.present_bytes()
+        if scratch_frontier:
+            from .retention import retire_completed_scratch
+            retire_completed_scratch(self.writer,self.root,run,settings,scratch_frontier,
+                protected={(done[parent],kind) for child in operations if child.key not in done
+                    for parent,kind,_ in child.inputs if parent in done})
+            scratch_frontier.clear()
+        if settings.get('memory_saving')=='extreme':
+            from .retention import retire_downloaded_sources
+            retire_downloaded_sources(self.writer,self.root,run,settings)
+        return budget.present_bytes()<before
 
     def _skip(self,run,task,operation,reason):
         self.task_status[operation.key] = 'skipped'

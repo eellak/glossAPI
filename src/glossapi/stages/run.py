@@ -95,6 +95,54 @@ def _transport_urls(value, found):
     return found
 
 
+def _corpus_download_names(root):
+    """Download names this corpus already assigned: identity -> name base, and every taken base (K4BP-G4).
+
+    Read from the recorded download results (the table the export joins a
+    record's URL by) and the published ``downloads/`` files. A later run keeps
+    a source's earlier name and never gives another source a name in use, so
+    no record is exported under another URL's provenance.
+    """
+    import pandas as pd
+    from .._naming import canonical_stem
+    from ..gloss_downloader import frame_identities
+    root=Path(root)
+    by_identity,taken={},set()
+    directory=root/'download_results'
+    for path in sorted(directory.glob('*.parquet')) if directory.is_dir() else ():
+        try:frame=pd.read_parquet(path)
+        except Exception:continue
+        if 'url' not in frame.columns or not {'filename_base','filename'}&set(frame.columns):continue
+        bases=[str(value) if isinstance(value,str) and value else canonical_stem(str(name)) if isinstance(name,str) and name else ''
+            for value,name in zip(frame['filename_base'] if 'filename_base' in frame.columns else ['']*len(frame),
+                                  frame['filename'] if 'filename' in frame.columns else ['']*len(frame))]
+        for identity,base in zip(frame_identities(frame,'url'),bases):
+            if not base:continue
+            taken.add(base)
+            if identity and not path.name.endswith('.partial.parquet'):by_identity.setdefault(identity,base)
+    downloads=root/'downloads'
+    if downloads.is_dir():
+        taken|={canonical_stem(path) for path in downloads.iterdir() if path.is_file()}
+    return by_identity,taken
+
+
+def _rename_against_corpus(frames,identities,root):
+    """Re-derive ``filename_base`` in every frame from the corpus' earlier names (same rows, same identities)."""
+    from ..gloss_downloader import GlossDownloader
+    by_identity,taken=_corpus_download_names(root)
+    if not taken:
+        return False
+    keep={by_identity[identity] for identity in identities if identity in by_identity}
+    for frame in frames:
+        naming=GlossDownloader.__new__(GlossDownloader)
+        naming.url_column='url'
+        naming._used_filename_bases=set(taken)-keep
+        duplicate=frame['is_duplicate'].astype(bool).tolist() if 'is_duplicate' in frame.columns else [False]*len(frame)
+        frame['filename_base']=['' if dup else by_identity.get(identity,'') for identity,dup in zip(identities,duplicate)]
+        naming.ensure_filename_base(frame)
+    return True
+
+
 def _remote_inventory(rows,root):
     """Expand, deduplicate and name remote rows on their raw URLs, in memory.
 
@@ -137,6 +185,8 @@ def _remote_inventory(rows,root):
     for identity,raw in zip(identities,raw_urls):
         if identity is not None:
             _bind(seen,identity,raw)
+    # A corpus that already holds downloads keeps their names; new sources never take a name in use (K4BP-G4).
+    renamed=_rename_against_corpus((raw_named,persisted_named),identities,root)
     same=(list(raw_named['is_duplicate'].astype(bool))==list(persisted_named['is_duplicate'].astype(bool))
           and list(raw_named['filename_base'].astype(str))==list(persisted_named['filename_base'].astype(str)))
     named=persisted_named
@@ -144,11 +194,14 @@ def _remote_inventory(rows,root):
     keyed=any(isinstance(identity,str) and not identity.startswith('url:v1:') for identity in identities)
     if same and not expanded:
         # One identity per source row: the download serializer records it with
-        # each persisted result row and resumes by it (LG3).
+        # each persisted result row and resumes by it (LG3). The frozen names
+        # travel with the rows, so the publication replays exactly them
+        # whatever the corpus holds by then (K4BP-G1).
         projection=persisted_frame.copy()
         projection['resource_identity']=identities
-    elif same and keyed:
-        same=False  # expanded keyed URLs: record per expanded row below
+        projection['filename_base']=list(persisted_named['filename_base'].astype(str))
+    elif same and (keyed or renamed):
+        same=False  # expanded keyed URLs, or names fixed by the corpus: record per expanded row below
     if not same:
         # Distinct raw URLs persist alike (different credentials or query
         # values): seal the raw duplicate decisions and names as non-secret
@@ -467,6 +520,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                             StageSpecification('sections.document',required_output_kinds=('section_fragment',),settings={'filename':filename}),
                             inputs=((parent,'clean_markdown','selected_text'),),skip_reason=skip))
             run=engine.freeze(operations,settings={**settings,'requested_stages':list(stages)})
+            corpus._active_run_id=run
             # Inventory-to-run and occurrence-to-version bindings: each source
             # occurrence reports its own version and this run's disposition (F4).
             with writer.transaction():
@@ -498,7 +552,10 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
             if operation.stage=='download' and operation.document.version_id in completed_versions and 'extract' not in stages:
                 payload=next(a for a in engine._outputs(attempt) if a.kind=='download_payload')
                 selected_sources.append(payload.path);source_versions[str(payload.path)]=operation.document.version_id
-            if operation.stage=='extract' and operation.document.version_id in completed_versions:
+            if operation.specification.operation=='extract.document' and operation.document.version_id in completed_versions:
+                # Only the document extraction names a publication source. An OCR run's extract.page_quality is
+                # also an extract-stage operation; counting it listed every source twice, so the extract
+                # publication replayed (and registered) each raw markdown twice (K4C2-G2).
                 if operation.document.artifacts:source=operation.document.artifacts[0]
                 else:
                     producer=next(edge[0] for edge in operation.inputs if edge[2]=='source_payload')
@@ -524,6 +581,9 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
         result['source_inventory']={'unavailable':len(unavailable_versions)}
         corpus._streaming_planned_versions=[version for version in per_version if version is not None]
         corpus._streaming_completed_versions=completed_versions
+        # The frozen per-version section filename: the annotated-section census reads rows by it (W18 M4).
+        corpus._streaming_section_names={operation.document.version_id:operation.specification.settings.get('filename')
+            for operation in operations if operation.stage=='sections' and operation.document.version_id}
         result['plan_hash']=writer.connection.execute('SELECT plan_sha256 FROM runs WHERE run_id=?',(run,)).fetchone()[0]
         if resume:
             settings=json.loads(writer.connection.execute('SELECT s.json FROM runs r JOIN snapshots s ON s.sha256=r.settings_sha256 WHERE r.run_id=?',(run,)).fetchone()[0])
@@ -621,7 +681,10 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         if 'ocr' in stages:
             pool=next(pool for pool in body['pools'] if pool['stage']=='ocr')
             settings={**settings,'ocr':{**settings.get('ocr',{}),'device_id':pool['device_id']}}
-        settings={**settings,'planned_document_ids':{document['source_key']:document['document_id'] for document in body['documents']}}
+        settings={**settings,'planned_document_ids':{document['source_key']:document['document_id'] for document in body['documents']},
+            # The approved plan --json identity is part of the frozen run settings (K3A-M3), so a later reader ties
+            # the run to the plan the user approved (the CLI envelope's bound_plan_hash).
+            'approved_plan_hash':body['plan_hash']}
         if explicit is not None:
             settings={**settings,'source_manifest':raw_manifest if raw_manifest is not None else explicit}
     if resume and (files or workers or settings):
@@ -656,6 +719,11 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         settings={**settings,'publication_barriers':publication_stages},
         resume=resume,retry_failed=retry_failed,observer=observer,writer=corpus._scheduler_writer,credentials=credentials)
     _bind_barrier_context(corpus._scheduler_writer,result.get('run_id'))
+    if result.get('run_id') and getattr(corpus,'_retention_settings',{}).get('memory_saving')=='extreme':
+        # Streaming retirement (W18 M9) runs as document readers finish. A resume after a kill inside it (or a run
+        # whose last completion raced it) finishes it here, before any publication (K4BP-G2).
+        from .retention import retire_downloaded_sources
+        retire_downloaded_sources(corpus._scheduler_writer,corpus.output_dir,result['run_id'],corpus._retention_settings)
     if result['state'] not in ('completed','completed_with_failures'):
         return result
     corpus._streaming_ocr_replays=replays
@@ -716,6 +784,8 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                         observer=getattr(corpus,'_retention_observer',None))
     if 'export' in stages:
         reconcile_export_census(corpus,result)
+    if 'annotate' in stages:
+        reconcile_section_census(corpus,result)
     from .retention import retain_completed_run
     writer=corpus._scheduler_writer
     # Every wrapper generation is a child of this fixed publication plan.
@@ -733,14 +803,19 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     result['disk']=publication_budget.report()
     result['disk']['deleted_logical_bytes']=retention_summary(writer.connection)['deleted_logical_bytes']
     result['outputs']=[]
-    output=Path(corpus.output_dir)/'export.jsonl'
-    if output.is_file():
-        # The export barrier just published these bytes and registered their hash (hash once per byte stream).
+    # Both final products (PLAN 2.3): the document export and, when annotation ran, the annotated-section export.
+    products=[('jsonl','export.jsonl')] if 'export' in stages or (Path(corpus.output_dir)/'export.jsonl').is_file() else []
+    if 'annotate' in stages:
+        products+=[('classified_sections_parquet','classified_sections.parquet'),('annotated_sections_parquet','fully_annotated_sections.parquet')]
+    for kind,name in products:
+        output=Path(corpus.output_dir)/name
+        if not output.is_file():continue
+        # The barrier just published these bytes and registered their hash (hash once per byte stream).
         published=writer.connection.execute("SELECT sha256,bytes FROM current_file_state WHERE uri=? AND producer_attempt_id IS NOT NULL "
             "AND ownership='managed' AND presence='present' ORDER BY event_id DESC LIMIT 1",(output.absolute().as_uri(),)).fetchone()
         size=output.stat().st_size
         digest=published['sha256'] if published and published['bytes']==size else sha256_file(output)
-        result['outputs'].append({'kind':'jsonl','path':str(output),'sha256':digest,'bytes':size})
+        result['outputs'].append({'kind':kind,'path':str(output),'sha256':digest,'bytes':size})
     from collections import Counter
     counts=Counter(task['status'] for task in writer.task_states(result['run_id']))
     result['counts']={status:counts[status] for status in ('planned','running','ok','skipped','failed')}
@@ -804,6 +879,52 @@ def reconcile_export_census(corpus,result):
             writer.event(run,event_kind='decision',reason_code='export_canonical_markdown_missing',version_id=version,
                 details={'product':'document_jsonl','included':False,'decision':'omit','cause':cause,'basis':'final_export_membership'})
     result['document_counts']={**result['document_counts'],'included':len(planned)-len(omitted),'omitted':len(omitted)}
+
+
+def reconcile_section_census(corpus,result):
+    """The annotated-section export's own census (PLAN 2.3, W18 M4).
+
+    Every planned version gets exactly one decision for product
+    ``annotated_sections``: include with its section count in the published
+    ``fully_annotated_sections.parquet``, or omit with a cause
+    (``source_unavailable``, ``upstream_failed`` or ``no_sections``).
+    """
+    import pandas as pd
+    writer=corpus._scheduler_writer
+    run=result['run_id']
+    planned=getattr(corpus,'_streaming_planned_versions',None) or []
+    if not planned:
+        return
+    names=getattr(corpus,'_streaming_section_names',None) or {}
+    completed=getattr(corpus,'_streaming_completed_versions',set())
+    tasks=writer.task_states(run)
+    barrier=next((task for task in tasks if task['operation']=='annotate.compatibility_publish'),None)
+    product=Path(corpus.output_dir)/'fully_annotated_sections.parquet'
+    counts={}
+    if barrier is not None and barrier['status']=='ok' and product.is_file():
+        counts=pd.read_parquet(product,columns=['filename'])['filename'].astype(str).value_counts().to_dict()
+    unavailable={task['version_id'] for task in tasks if task['reason_code']=='source_unavailable' and task['version_id'] is not None}
+    table=writer.connection.event_table
+    recorded={row[0] for row in writer.connection.execute(
+        f"SELECT DISTINCT version_id FROM {table} WHERE run_id=? AND event_kind='decision' AND reason_code IN ('export_included','annotation_sections_missing') "
+        "AND version_id IS NOT NULL",(run,))}
+    included=0
+    with writer.transaction():
+        for version in planned:
+            count=int(counts.get(str(names.get(version)),0)) if names.get(version) else 0
+            included+=bool(count)
+            if version in recorded:
+                continue
+            common={'product':'annotated_sections','path':str(product),'basis':'published_annotated_sections_rows'}
+            if count:
+                writer.event(run,event_kind='decision',reason_code='export_included',version_id=version,
+                    details={**common,'included':True,'decision':'include','section_count':count})
+            else:
+                cause=('source_unavailable' if version in unavailable else 'upstream_failed'
+                    if version not in completed or barrier is None or barrier['status']!='ok' else 'no_sections')
+                writer.event(run,event_kind='decision',reason_code='annotation_sections_missing',version_id=version,
+                    details={**common,'included':False,'decision':'omit','cause':cause})
+    result['section_counts']={'selected':len(planned),'included':included,'omitted':len(planned)-included}
 
 
 @shadow_stage('ocr', 'ocr.wrapper')
@@ -870,8 +991,17 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
                 raise ValueError('Committed publication is missing or corrupt')
         return True
     if previous and task['status']=='running' and not wrapper_ok:
+        marker=writer.connection.execute(f"SELECT event_id FROM {writer.connection.event_table} WHERE run_id=? AND event_kind='run' "
+            "AND reason_code='disk_full' AND event_id>? ORDER BY event_id DESC LIMIT 1",(run,previous.get('event_id') or 0)).fetchone()
+        cause={'details':{'interruption_cause':'disk_full','errno':28,'disk_full_event_id':marker[0]}} if marker else {}
         with writer.transaction():
-            writer.finish(run,task['task_id'],previous['attempt_id'],status='failed',reason_code='attempt_interrupted')
+            writer.finish(run,task['task_id'],previous['attempt_id'],status='failed',reason_code='attempt_interrupted',**cause)
+            if wrapper_run:
+                # The killed wrapper's own tasks end with the barrier attempt: nothing is left running (K4BP-G1).
+                for stale in writer.task_states(wrapper_run):
+                    latest=writer.latest_attempt(stale['task_id']) if stale['status']=='running' else None
+                    if latest:
+                        writer.finish(wrapper_run,stale['task_id'],latest['attempt_id'],status='failed',reason_code='attempt_interrupted')
     if not (previous and task['status']=='running' and wrapper_ok):
         with writer.transaction():
             attempt=writer.attempt(task['task_id'],worker_id='single-publisher',device_id='cpu',
@@ -881,6 +1011,8 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
         try:
             callback()
         except Exception as error:
+            if disk_full(error):
+                raise  # an exhausted filesystem stops the run with its typed cause; resume repeats this barrier (W18 M10)
             import traceback
             with writer.transaction():
                 writer.finish(run,task['task_id'],attempt,status='failed',reason_code=stage+'_exception',
@@ -905,8 +1037,19 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
             for source in writer.connection.execute("SELECT DISTINCT i.file_id,i.sha256 FROM attempt_inputs i JOIN attempts a USING(attempt_id) JOIN tasks t USING(task_id) JOIN files f USING(file_id) WHERE t.run_id=? AND f.kind IN ('download_payload','source_payload','initial_input')",(wrapper_run,)):
                 writer.input(attempt,source['file_id'],'source_reader:'+source['file_id'],source['sha256'])
         status='ok' if outcome and outcome['status']=='ok' else 'failed'
+        details={'wrapper_run_id':wrapper_run,'bound_product_files':len(outputs),'recovered_wrapper_commit':wrapper_ok}
+        if status=='failed' and stage=='download' and outcome is not None:
+            # The publication replays committed acquisitions only. A source whose acquisition failed is that
+            # document's own typed outcome (its download.acquire task); it does not fail the corpus-wide
+            # publication of the others (K4BP-L1).
+            failed=[row for row in writer.task_states(run) if row['operation']=='download.acquire' and row['status']=='failed']
+            if failed and outcome['reason_code']!='download_exception':
+                status='ok'
+                details['documents_with_failed_acquisition']=[{'version_id':row['version_id'],'reason_code':row['reason_code']} for row in failed]
+        failure={} if status=='ok' else {'message':'wrapper '+(outcome['operation'] if outcome else wrapper_operation)+' ended '
+            +(str(outcome['status'])+' ('+str(outcome['reason_code'])+')' if outcome else 'without an outcome')}
         writer.finish(run,task['task_id'],attempt,status=status,reason_code=stage+'_completed' if status=='ok' else stage+'_exception',
-            details={'wrapper_run_id':wrapper_run,'bound_product_files':len(outputs),'recovered_wrapper_commit':wrapper_ok})
+            details=details,**failure)
     if status=='ok' and stage=='extract':
         from .retention import retire_downloaded_sources
         retire_downloaded_sources(writer,corpus.output_dir,run,getattr(corpus,'_retention_settings',{}))
@@ -925,10 +1068,64 @@ def _declared_url_policy(writer,options):
     return (options.get('settings') or {}).get('url_policy')
 
 
+class DiskFullError(OSError):
+    """The corpus or staging filesystem ran out of space during a run (errno 28): a typed, resumable interruption."""
+    code='disk_full'
+
+    def __init__(self,message,*,run_id=None,location=None):
+        import errno
+        super().__init__(errno.ENOSPC,message)
+        self.details={'errno':errno.ENOSPC,'run_id':run_id,'location':location,
+            'action':'free space (or enlarge the filesystem), then resume: glossapi run --resume '+(run_id or 'RUN_ID')}
+
+
+def disk_full(error):
+    """True when an exception (or its cause chain) is an exhausted filesystem: ENOSPC or SQLite's disk-full."""
+    import errno
+    import sqlite3
+    seen=set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error,OSError) and error.errno in (errno.ENOSPC,errno.EDQUOT):return True
+        if isinstance(error,sqlite3.Error) and (getattr(error,'sqlite_errorcode',None)==13 or 'disk is full' in str(error)):return True
+        error=error.__cause__ or error.__context__
+    return False
+
+
+def _record_disk_full(writer,corpus,error):
+    """Best effort: name the exhausted disk in the ledger, so status, report and the resume can tell it from process death."""
+    run=getattr(corpus,'_active_run_id',None)
+    if not run:return
+    try:
+        if writer.connection.in_transaction:writer.connection.rollback()
+        with writer.transaction():
+            writer.event(run,event_kind='run',reason_code='disk_full',status=None,
+                message='filesystem full (errno 28); free space, then resume this run',
+                details={'cause':'disk_full','errno':28,'error_type':type(error).__name__,'error':str(error)[:500]})
+    except Exception:
+        pass  # the disk may be too full even for this record; the typed error below still reaches the caller
+
+
 def run_corpus(corpus,*args,**options):
     """Hold corpus exclusion across document work and every publication barrier."""
+    try:
+        return _locked_run_corpus(corpus,*args,**options)
+    except DiskFullError:
+        raise
+    except Exception as error:
+        if disk_full(error):
+            # A typed explanation instead of an escaped sqlite/OSError (W18 M10).
+            raise DiskFullError('disk_full: the corpus filesystem is full (errno 28): '+str(error),
+                run_id=getattr(corpus,'_active_run_id',None),location=str(corpus.output_dir)) from error
+        raise
+    finally:
+        corpus._active_run_id=None
+
+
+def _locked_run_corpus(corpus,*args,**options):
     began=time.monotonic()
     from ..ledger.urls import url_policy
+    corpus._active_run_id=options.get('resume')
     with LedgerWriter(Path(corpus.output_dir)/'corpus.sqlite3') as writer:
         corpus._scheduler_writer=writer
         # Copies the previous run close left unflushed are verified (and republished if torn) first (K4C-M2).
@@ -941,6 +1138,10 @@ def run_corpus(corpus,*args,**options):
                 result=_run_corpus(corpus,*args,**options)
             result['total_wall_seconds']=time.monotonic()-began
             return result
+        except Exception as error:
+            if disk_full(error):
+                _record_disk_full(writer,corpus,error)
+            raise
         finally:
             corpus._scheduler_writer=None
             corpus._streaming_download_replays=None

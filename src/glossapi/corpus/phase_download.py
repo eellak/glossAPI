@@ -146,8 +146,12 @@ class DownloadPhaseMixin:
         found_existing = False
         input_frame = input_df if url_column in input_df.columns and credentials else None
 
-        # Check for specific download results file
-        if os.path.exists(specific_results_path):
+        # Check for specific download results file. A streaming run's publication replays every committed
+        # acquisition of its frozen plan (K4BP-G1/G4): earlier results never filter it (a later run re-acquires a
+        # source; a killed publication restarts); its rows replace earlier rows of the same identity below.
+        if replay:
+            pass
+        elif os.path.exists(specific_results_path):
             self.logger.info(f"Found existing download results: {specific_results_path}")
             try:
                 existing_results = pd.read_parquet(specific_results_path)
@@ -165,7 +169,7 @@ class DownloadPhaseMixin:
                 self.logger.warning(f"Failed to read partial results: {e}")
 
         # If specific results not found, look in the directory for any download results
-        if not found_existing and os.path.exists(download_results_dir):
+        if not found_existing and not replay and os.path.exists(download_results_dir):
             result_files = list(download_results_dir.glob('*.parquet'))
             for file in result_files:
                 try:
@@ -322,17 +326,18 @@ class DownloadPhaseMixin:
             dl_cfg['scheduler_group_by'] = parallelize_by
         # Build used filename bases set to avoid collisions on resume
         used_bases = set()
-        try:
-            used_bases |= {canonical_stem(str(fn)) for fn in existing_filenames if isinstance(fn, str)}
-        except Exception:
-            pass
-        try:
-            # Also include on-disk stems
-            downloads_dir = Path(self.output_dir) / 'downloads'
-            if downloads_dir.exists():
-                used_bases |= {canonical_stem(p) for p in downloads_dir.glob('*') if p.is_file()}
-        except Exception:
-            pass
+        if not replay:  # a replaying publication reproduces the frozen names exactly (K4BP-G1); nothing on disk shifts them
+            try:
+                used_bases |= {canonical_stem(str(fn)) for fn in existing_filenames if isinstance(fn, str)}
+            except Exception:
+                pass
+            try:
+                # Also include on-disk stems
+                downloads_dir = Path(self.output_dir) / 'downloads'
+                if downloads_dir.exists():
+                    used_bases |= {canonical_stem(p) for p in downloads_dir.glob('*') if p.is_file()}
+            except Exception:
+                pass
 
         downloader_kwargs = {
             "url_column": url_column,

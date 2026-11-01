@@ -54,8 +54,12 @@ class SequentialStageRunner:
             return
         # This wrapper consumes an alias of a committed producer. Bind those
         # inputs on the existing wrapper attempt, without a replay-only task.
+        from .retention import released_source
+        extreme = (getattr(journal, 'retention_settings', None) or {}).get('memory_saving') == 'extreme'
         with self.writer.transaction():
             for artifact in document.artifacts:
+                if extreme and released_source(self.writer.connection, artifact.path.absolute().as_uri()) is not None:
+                    continue  # a deleted download is bound by its recorded hash, never read again (extreme, W18 M9)
                 self.writer.connection.execute(
                     'INSERT OR IGNORE INTO attempt_inputs VALUES(?,?,?,?)',
                     (journal.attempt_id, artifact.file_id, 'projection:'+artifact.file_id, artifact.sha256))

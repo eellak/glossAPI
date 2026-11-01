@@ -41,8 +41,14 @@ def install_download_adapter(corpus,downloader,configuration,download_mode):
             receipt=result.decisions[0]
             if result.status=='ok':
                 from .compatibility import materialize_stage_outputs
-                paths={a.relative_path:corpus.output_dir/a.relative_path for a in result.outputs if a.kind=='download_payload'}
-                materialize_stage_outputs(corpus,result,reference.path.parent,paths)
+                from .execution import checked_path
+                from .retention import released_source
+                # memory_saving=extreme already deleted a fully read download (streaming): its
+                # downloads/ copy is not recreated; the results row still names the acquisition.
+                extreme=(getattr(journal,'retention_settings',None) or {}).get('memory_saving')=='extreme'
+                paths={a.relative_path:corpus.output_dir/a.relative_path for a in result.outputs if a.kind=='download_payload'
+                    and not (extreme and released_source(journal.writer.connection,checked_path(reference.path.parent,a.relative_path).as_uri()) is not None)}
+                if paths:materialize_stage_outputs(corpus,result,reference.path.parent,paths)
             return result.status=='ok',receipt['assigned_filename'],receipt['file_ext'],receipt['backend_message'],receipt['legacy_outer_retry_count']
         settings={**configuration,'download_mode':download_mode,'url':url,'row_index':int(row_index),
             'legacy_outer_retry_count':int(retry_count),'filename_base':filename_base,'referer':referer}

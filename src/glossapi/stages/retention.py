@@ -5,6 +5,8 @@ immutable: later readers require a new plan, never an amendment to an old edge.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from collections import defaultdict
 from contextlib import nullcontext
 import functools
@@ -86,6 +88,11 @@ def registering_run(connection, file_id):
     return row[0] if row else None
 
 
+# Compatibility copies published outside .glossapi/ that every setting keeps (the debug-off product set: cleaned text and
+# the per-document extraction sidecar). Declared here by kind; the plan preview lists them (W18 S2).
+KEPT_PUBLISHED_KINDS=frozenset(('clean_markdown','extract_sidecar'))
+
+
 def retention_facts(connection, file_id, *, as_of=9223372036854775807):
     """Ledger-only facts shared by deletion and report --why."""
     # Bulk private releases keep one stage summary and the existing indexed
@@ -147,8 +154,12 @@ def retention_facts(connection, file_id, *, as_of=9223372036854775807):
                 consumers.append(fact[0])
             elif task not in plan.get('waived_task_ids', []):
                 outstanding.append(task)
-    pins=list(plan.get('pins',[])) if plan else ['retention_not_declared']
-    row=connection.execute('SELECT ownership,retention_class FROM files WHERE file_id=?',(file_id,)).fetchone()
+    row=connection.execute('SELECT ownership,retention_class,kind,uri FROM files WHERE file_id=?',(file_id,)).fetchone()
+    if plan:pins=list(plan.get('pins',[]))
+    elif row and row[0]=='managed' and row[2] in KEPT_PUBLISHED_KINDS and '/.glossapi/' not in row[3]:
+        # A compatibility copy the contract declares kept in every setting (W18 S2): declared by kind, no per-file record.
+        pins=['published_compatibility_copy']
+    else:pins=['retention_not_declared']
     if row and row[0]!='managed':pins.append('external_original')
     if plan:
         superseded=plan.get('superseded_by')
@@ -633,40 +644,83 @@ def retention_summary(connection,run=None):
         disk_budget_bytes=settings.get('disk_budget_bytes'),free_space_basis='last recorded statvfs resource observation; report does not scan payloads')
 
 
+def _streaming_retirement(writer,run_id)->'Any':
+    """Per-run reader map for streaming retirement, built once per writer (the frozen plan does not change)."""
+    states=writer.__dict__.setdefault('_streaming_retirement',{})
+    state=states.get(run_id)
+    if state is None:
+        run=writer.connection.execute('SELECT plan_sha256 FROM runs WHERE run_id=?',(run_id,)).fetchone()
+        operations=json.loads(writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',run).fetchone()[0]).get('operations',[])
+        ordinal_task={row['ordinal']:row['task_id'] for row in writer.task_states(run_id)}
+        downloads={value['document']['version_id'] for value in operations if value['stage']=='download'}
+        readers={}
+        for ordinal,value in enumerate(operations):
+            if value['document']['version_id'] not in downloads:continue
+            roles=value['specification']['input_roles']+[edge[2] for edge in value['inputs']]
+            if set(roles)&{'source_payload','pdf','source_pdf'}:
+                readers.setdefault(value['document']['version_id'],[]).append(ordinal_task[ordinal])
+        extract=[ordinal_task[ordinal] for ordinal,value in enumerate(operations) if value['specification'].get('operation')=='extract.document']
+        state=states[run_id]=dict(versions=downloads,readers=readers,settled=set(),extract=extract,repaired_done=set())
+    return state
+
+
+def release_repaired_pdfs(writer,root,run_id,settings):
+    """memory_saving=extreme with debug=off: release each repaired PDF once its document's extraction succeeded.
+
+    A repaired PDF is a whole-PDF copy that no planned document stage reads; its
+    only use was the ``repaired_pdfs/`` compatibility mirror, which debug=off
+    releases again at the clean frontier (it is not a final product). Keeping it
+    until the corpus-wide publication would hold a second copy of every
+    repaired source, so a corpus larger than the budget could never stream (W18
+    M9). The publication skips a released one; products are unchanged.
+    """
+    if settings.get('memory_saving','normal')!='extreme' or settings.get('debug','off')=='on':return
+    state=_streaming_retirement(writer,run_id)
+    controller=RetentionController(writer,root,run_id,settings)
+    private=(controller.root/'.glossapi/artifacts').as_uri()+'/'
+    rows=[]
+    for task in state['extract']:
+        if task in state['repaired_done'] or writer.task_state(task)['status']!='ok':continue
+        state['repaired_done'].add(task)
+        attempt=writer.control()['latest'].get(task)
+        rows+=[row for row in writer.connection.execute("SELECT * FROM current_file_state WHERE producer_attempt_id=? AND kind='repaired_pdf' AND presence='present'",(attempt,)).fetchall()
+            if row['ownership']=='managed' and row['retention_class']=='intermediate' and row['uri'].startswith(private)]
+    if rows:release_private_scratch(controller,rows)
+
+
 def retire_downloaded_sources(writer,root,run_id,settings):
     """Release original download bytes after the frozen plan's last PDF reader.
 
-    Compatibility extraction is an actual reader and is therefore a planned
-    publication consumer. Evaluation and report commands never add reader edges.
+    memory_saving=extreme streams (owner design, W18 M9): a run-owned download
+    is deleted as soon as every planned document stage that reads it succeeded
+    and its outputs are durable, while the run goes on. The compatibility
+    publications later bind it by its recorded hash and never read it again.
+    Evaluation and report commands never add reader edges. Called after every
+    completion batch, it visits only versions it has not settled yet.
     """
     if settings.get('memory_saving','normal')!='extreme':return
-    controller=RetentionController(writer,root,run_id,settings)
-    run=writer.connection.execute('SELECT plan_sha256 FROM runs WHERE run_id=?',(run_id,)).fetchone()
-    plan=json.loads(writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',run).fetchone()[0])
-    operations=plan.get('operations',[])
-    tasks={row['ordinal']:row for row in writer.task_states(run_id)}
-    versions={value['document']['version_id'] for value in operations if value['stage']=='download'}
-    publication=next((task for task in writer.task_states(run_id) if task['operation']=='extract.compatibility_publish'),None)
-    if publication and publication['status']!='ok':return
+    release_repaired_pdfs(writer,root,run_id,settings)
+    state=_streaming_retirement(writer,run_id)
+    controller=None
     # The original payload and byte-identical staging snapshots are one source
     # footprint; extreme must not leave a hidden whole-PDF copy behind.
-    for version in versions:
+    for version in state['versions']-state['settled']:
         readers=[];waived=[];ready=True
-        for ordinal,value in enumerate(operations):
-            if value['document']['version_id']!=version:continue
-            roles=value['specification']['input_roles']+[edge[2] for edge in value['inputs']]
-            if not set(roles)&{'source_payload','pdf','source_pdf'}:continue
-            task=tasks[ordinal]
-            if task['status']=='skipped' and task['reason_code']=='not_in_plan':waived.append(task['task_id'])
+        for task_id in state['readers'].get(version,()):
+            task=writer.task_state(task_id)
+            if task['status']=='skipped' and task['reason_code']=='not_in_plan':waived.append(task_id)
             elif task['status']!='ok':ready=False
-            else:readers.append(task['task_id'])
-        if not ready or not readers:continue
-        if publication:readers.append(publication['task_id'])
+            else:readers.append(task_id)
+        if not ready:continue
+        if not readers:
+            state['settled'].add(version);continue
+        controller=controller or RetentionController(writer,root,run_id,settings)
         digest=writer.connection.execute('SELECT stored_sha256 FROM document_versions WHERE version_id=?',(version,)).fetchone()[0]
         family=run_family(writer.connection,run_id)
         rows=[row for row in writer.connection.execute("SELECT * FROM current_file_state WHERE version_id=? AND sha256=? AND ownership='managed' AND presence='present' AND kind IN ('download_payload','source_snapshot','scratch_copy')",(version,digest)).fetchall()
             if registering_run(writer.connection,row['file_id']) in family and not path_alias(controller.root,file_path(row))]
-        if not rows:continue
+        if not rows:
+            state['settled'].add(version);continue
         # Verify source-hash bindings and full coverage on the real readers.
         valid=True
         for task in readers:
@@ -678,7 +732,8 @@ def retire_downloaded_sources(writer,root,run_id,settings):
                     from ..ledger.encoding import unpack_evidence
                     value=unpack_evidence(json.loads(stored[0]))
                     if 'coverage_allows_source_release' in value and value['coverage_allows_source_release'] is not True:valid=False
-        if not valid:continue
+        if not valid:
+            state['settled'].add(version);continue
         new_rows=[row for row in rows if not retention_facts(writer.connection,row['file_id'])['declaration']]
         sealer=controller.seal(new_rows)
         if sealer:
@@ -688,6 +743,7 @@ def retire_downloaded_sources(writer,root,run_id,settings):
             exact=[task for task in readers if writer.connection.execute("SELECT 1 FROM attempt_inputs i JOIN attempts a USING(attempt_id) WHERE a.task_id=? AND i.file_id=? AND i.sha256=?",(task,row['file_id'],digest)).fetchone()]
             controller.declare(row['file_id'],[*exact,sealer],source=True)
         controller.delete_many([row['file_id'] for row in rows])
+        state['settled'].add(version)
 
 
 def _hard_linked_copies(controller):
@@ -851,6 +907,28 @@ def recover_private_releases(controller):
     for intent,detail in pending:_finish_private_release(controller,intent,detail)
 
 
+def released_source(connection, uri):
+    """The ledger row of a source file at ``uri`` that a completed policy deletion removed, or None.
+
+    memory_saving=extreme deletes a run-owned download after its last planned
+    document reader (streaming, W18 M9). Later compatibility projections bind
+    the committed bytes by this row; they never read, recreate or re-consume them.
+    """
+    row=connection.execute("SELECT * FROM current_file_state WHERE uri=? AND presence='deleted' AND kind IN ('download_payload','source_snapshot') "
+        "ORDER BY event_id DESC LIMIT 1",(uri,)).fetchone()
+    if row is None or Path(file_path(row)).exists():
+        return None
+    if not any(value['reason_code'] in ('delete_completed','delete_recovered') for value in retention_facts(connection,row['file_id'])['deletions']):
+        return None
+    return row
+
+
+def _download_footprint(writer,row):
+    """A staging snapshot of a run-owned download's bytes: extreme retires it with the download (one source footprint)."""
+    return writer.connection.execute("SELECT 1 FROM current_file_state WHERE version_id=? AND sha256=? AND kind='download_payload' LIMIT 1",
+        (row['version_id'],row['sha256'])).fetchone() is not None
+
+
 def retire_completed_scratch(writer, root, run, settings, attempts, *, protected=()):
     """During the DAG, only outputs with no planned publication reader retire."""
     if settings.get('debug','off')=='on':return
@@ -859,7 +937,7 @@ def retire_completed_scratch(writer, root, run, settings, attempts, *, protected
         for row in writer.connection.execute("SELECT * FROM current_file_state WHERE producer_attempt_id=? AND presence='present' AND retention_class='intermediate'",(attempt,)):
             if (attempt,row['kind']) in protected:continue
             if row['kind'] not in ('source_snapshot','attempt_diagnostic'):continue
-            if settings.get('memory_saving')=='extreme' and row['kind']=='source_snapshot':continue
+            if settings.get('memory_saving')=='extreme' and row['kind']=='source_snapshot' and _download_footprint(writer,row):continue
             if not file_path(row).is_relative_to(Path(root).resolve()/'.glossapi/artifacts'):continue
             rows.append(row)
     release_private_scratch(RetentionController(writer,root,run,settings),rows)

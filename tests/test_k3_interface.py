@@ -400,7 +400,8 @@ def test_exact_preview_targets_exclusions_devices_and_deletion_policy(tmp_path):
     deletion = extreme['data']['deletion_policy']
     assert deletion['deletions'][0]['applies'] and deletion['deletions'][0]['after_readers'] == ['extract']
     assert deletion['per_document'][0]['source']['action'] == 'deleted_after_last_reader'
-    assert extreme['data']['targets'][0]['download'] == {'source_uri': 'https://example.org/a.pdf'}
+    assert extreme['data']['targets'][0]['download'] == {'source_uri': 'https://example.org/a.pdf', 'reacquire': False,
+                                                              'reason': 'first acquisition'}  # K4BP-G5 (additive)
 
 
 def write_json(path, value):

@@ -199,7 +199,7 @@ def test_new_remote_plan_includes_acquisition_prerequisite_but_local_plan_does_n
     assert [s['stage'] for s in remote['steps']]==['download','extract']
     assert remote['steps'][1]['input_roles']==[dict(producer='download',role='stage_input')]
     assert [s['stage'] for s in local['steps']]==['extract']
-    assert [b['name'] for b in result['data']['barriers']]==['source_manifest']
+    assert [b['name'] for b in result['data']['barriers']]==['source_manifest','download_publication','extract_publication']  # every executed barrier (W18 M13)
 
 
 def test_imported_remote_source_version_is_visible_without_stage_or_artifact_facts(tmp_path, capsys):
