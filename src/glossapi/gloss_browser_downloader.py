@@ -233,13 +233,6 @@ class BrowserGlossDownloader(GlossDownloader):
             connector = aiohttp.TCPConnector(ssl=ctx)
         return connector
 
-    def _domain_cookies_for_url(self, url: str) -> Dict[str, str]:
-        cookies: Dict[str, str] = {}
-        for domain_pattern, domain_cookies in self.domain_cookies.items():
-            if domain_pattern in url:
-                cookies.update(domain_cookies)
-        return cookies
-
     async def _write_recovered_file(self, row_index: int, filename: str, body: bytes) -> None:
         tmp_path = self.downloads_dir / f".part_browser_{row_index}"
         async with open_binary(tmp_path, "wb") as handle:
@@ -307,18 +300,6 @@ class BrowserGlossDownloader(GlossDownloader):
 
                 browser = await browser_type.launch(headless=browser_headless)
                 context = await browser.new_context(ignore_https_errors=not self.ssl_verify)
-                parsed = urlparse(url)
-                browser_cookies = [
-                    {
-                        "name": key,
-                        "value": str(value),
-                        "domain": parsed.hostname or "",
-                        "path": "/",
-                    }
-                    for key, value in self._domain_cookies_for_url(url).items()
-                ]
-                if browser_cookies:
-                    await context.add_cookies(browser_cookies)
                 page = await context.new_page()
                 if referer:
                     await page.set_extra_http_headers({"Referer": referer})

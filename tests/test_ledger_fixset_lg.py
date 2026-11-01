@@ -1,23 +1,21 @@
 """Fix set LG: CP-LEDGER cycle-1 findings F1 (collision-free publication and
-final census), F2 (URL credentials never recorded), F3 (missing local input
-keeps the census), F4 (local-manifest occurrences) and F7 (bounded OCR marker
-scoring). The first four tests are the reviewer's probes, ported unchanged."""
+final census), F3 (missing local input keeps the census), F4 (local-manifest
+occurrences) and F7 (bounded OCR marker scoring). The reviewer's probes are
+ported unchanged. F2 (URL credentials never recorded) was withdrawn with the
+credential channel (owner, 1 Nov 2026): credentialed URLs are refused at entry
+(tests/test_k4_credential_refusal.py)."""
 import contextlib
 import io
 import json
 import os
 from pathlib import Path
-import subprocess
-import sys
-import threading
 
 import pytest
 
 from glossapi import Corpus
-from glossapi.ledger.writer import LedgerWriter, open_readonly
+from glossapi.ledger.writer import open_readonly
 
 TESTS = Path(__file__).resolve().parent
-MARKER = 'CP_LEDGER_SYNTHETIC_CREDENTIAL'
 
 
 @pytest.fixture(autouse=True)
@@ -75,24 +73,6 @@ def test_two_local_pdfs_with_the_same_basename_export_their_own_text(tmp_path):
     # probe's ``row.get('text','')`` could never match, so the port reads it.
     assert any('ALPHA first input' in row.get('document', row.get('text','')) for row in rows)
     assert any('BRAVO other input' in row.get('document', row.get('text','')) for row in rows)
-
-
-def test_credentials_in_url_are_redacted_before_freezing_plan(tmp_path, monkeypatch):
-    from glossapi.stages.scheduler import StreamingScheduler
-    marker = 'CP_LEDGER_SYNTHETIC_CREDENTIAL'
-    url = 'https://reviewer:'+marker+'@example.invalid/a.pdf?access_token='+marker
-    # Stop only execution, after the actual public run has frozen its plan.
-    # No request is sent and no socket or background process is started.
-    monkeypatch.setattr(StreamingScheduler, 'execute', lambda self, run, **kw:
-        {'run_id':run,'state':'waiting','attempts':{},'counts':{'planned':1,'running':0,'ok':0,'skipped':0,'failed':0}})
-    corpus = Corpus(tmp_path/'empty', tmp_path/'output')
-    result = corpus.run([url], stages=('download',), settings={'download':{'headers':{'Authorization':marker}}})
-    with open_readonly(corpus.output_dir/'corpus.sqlite3') as connection:
-        snapshots = list(connection.execute('SELECT kind,json FROM snapshots'))
-        hits = [kind for kind, encoded in snapshots if marker in encoded]
-        source_hits = [source for source, in connection.execute('SELECT source_uri FROM source_records') if marker in source]
-    print('URL_CREDENTIAL', json.dumps(dict(snapshot_kinds_with_marker=hits,source_record_hits=source_hits,run=result['run_id'])))
-    assert not hits, 'URL userinfo/query credentials survive the key-only credential redactor'
 
 
 def test_local_manifest_retains_each_source_occurrence_in_source_records(tmp_path):
@@ -210,151 +190,6 @@ def test_claim_publication_refuses_a_second_version_on_one_location(tmp_path):
         claim_publication(corpus, target, 'v2')
     assert target.read_text() == 'first'
     assert claim_publication(SimpleNamespace(_publication_claims=None), target, 'v2')() is None
-
-
-# ---------------------------------------------------------------------- F2 ---
-
-def test_sanitize_url_redacts_userinfo_and_credential_fields_only(tmp_path):
-    # CP-LEDGER cycle 2 supersedes the name-based list: the persisted form is an
-    # allowlist (scheme, host, port, path); userinfo is dropped and every query
-    # and fragment value is a placeholder unless declared public. Identity is a
-    # keyed reference to the raw URL, so a rotated token is another identity
-    # unless the caller declares a stable source_id.
-    from glossapi.ledger.urls import sanitize_url, scrub_text, URL_REDACTED
-    plain = 'https://example.org/a/b.pdf'
-    assert sanitize_url(plain) is plain
-    assert sanitize_url('file:///tmp/x@y.pdf') == 'file:///tmp/x@y.pdf'
-    url = 'https://user:'+MARKER+'@Example.org/a.pdf?id=7&access_token='+MARKER+'&X-Amz-Signature='+MARKER+'#token='+MARKER
-    clean = sanitize_url(url)
-    assert MARKER not in clean and 'id=7' not in clean and clean.startswith('https://Example.org/a.pdf?id='+URL_REDACTED)
-    assert sanitize_url(clean) == clean
-    text = "ClientError: GET "+url+" failed; retry 'https://h/p?api_key="+MARKER+"'"
-    assert MARKER not in scrub_text(text) and 'ClientError: GET https://' in scrub_text(text)
-    from glossapi.ledger.journal import source_key
-    from glossapi.ledger.identity import source_key as identity_key
-    with LedgerWriter(tmp_path/'corpus.sqlite3'):
-        assert MARKER not in source_key(url) and MARKER not in identity_key(url)
-        assert source_key(url) != source_key(url.replace(MARKER, 'rotated-secret'))
-
-
-class _AuthServer:
-    """Loopback server that requires the URL credentials and redirects with another token."""
-    def __init__(self, payload):
-        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-        import base64
-        self.requests = []
-        server = self
-        expected = 'Basic '+base64.b64encode(('reviewer:'+MARKER).encode()).decode()
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                server.requests.append((self.path, self.headers.get('Authorization')))
-                if self.path.startswith('/start.pdf'):
-                    if self.headers.get('Authorization') != expected or 'access_token='+MARKER not in self.path:
-                        self.send_error(401); return
-                    self.send_response(302); self.send_header('Location', '/final.pdf?sig='+MARKER); self.end_headers(); return
-                if self.path == '/final.pdf?sig='+MARKER:
-                    self.send_response(200); self.send_header('Content-Type', 'application/pdf')
-                    self.send_header('Content-Length', str(len(payload))); self.end_headers(); self.wfile.write(payload); return
-                self.send_error(404)
-            def log_message(self, *args): pass
-        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-    def url(self):
-        return f'http://reviewer:{MARKER}@127.0.0.1:{self.server.server_port}/start.pdf?id=7&access_token={MARKER}'
-    def __enter__(self):
-        self.thread.start(); return self
-    def __exit__(self, *args):
-        self.server.shutdown(); self.server.server_close(); self.thread.join()
-
-
-def recorded_marker_hits(output):
-    """Every decoded ledger text column and every file byte under the corpus."""
-    hits = []
-    with open_readonly(Path(output)/'corpus.sqlite3') as connection:
-        queries = {'snapshots': 'SELECT kind,json FROM snapshots', 'source_records': 'SELECT source_uri,metadata_json FROM source_records',
-                   'documents': 'SELECT source_key FROM documents', 'files': 'SELECT uri FROM files',
-                   'events': 'SELECT reason_code,message,traceback,details_json FROM events'}
-        for table, query in queries.items():
-            for row in connection.execute(query):
-                if any(isinstance(value, str) and MARKER in value for value in row):
-                    hits.append(table)
-    for path in Path(output).rglob('*'):
-        if path.is_file() and not path.is_symlink() and MARKER.encode() in path.read_bytes():
-            hits.append(str(path.relative_to(output)))
-    return sorted(set(hits))
-
-
-def test_public_run_downloads_with_url_credentials_and_records_none_of_them(tmp_path):
-    pytest.importorskip('aiohttp')
-    pytest.importorskip('glossapi_rs_cleaner')
-    from test_ledger_stages import simple_pdf
-    payload = simple_pdf(tmp_path/'payload.pdf').read_bytes()
-    with _AuthServer(payload) as server:
-        corpus = Corpus(tmp_path/'empty', tmp_path/'output')
-        result = corpus.run([server.url()], stages=('extract','clean','export'), settings={
-            'download': {'rate_limit': 0, 'max_retries': 1, 'retry_interval': 0}, 'extract': {'repair_fonts': False}})
-        assert result['state'] == 'completed', result
-        assert len(export_rows(corpus.output_dir)) == 1
-        assert any(path.startswith('/final.pdf') for path, _ in server.requests)  # the real credentials were used
-        assert recorded_marker_hits(corpus.output_dir) == []
-        with open_readonly(corpus.output_dir/'corpus.sqlite3') as connection:
-            from glossapi.ledger.reader import report_why, select_run, report_view
-            why = report_why(connection, server.url(), run=select_run(connection))
-            assert MARKER not in json.dumps(why) and MARKER not in json.dumps(report_view(connection, run=select_run(connection)), default=str)
-            assert why['document']['source_key'].endswith('access_token=%5Bredacted%5D')
-            redirects = [request for event in why['stages'] for attempt in event['attempts'] for decision in attempt['decisions']
-                         for request in decision['details'].get('http', {}).get('requests', [])]
-            assert redirects and all(MARKER not in json.dumps(item) for item in redirects)
-
-
-def test_resume_requires_the_caller_to_supply_url_credentials_again(tmp_path, monkeypatch):
-    pytest.importorskip('aiohttp')
-    pytest.importorskip('glossapi_rs_cleaner')
-    from glossapi.stages.scheduler import StreamingScheduler
-    from test_ledger_stages import simple_pdf
-    payload = simple_pdf(tmp_path/'payload.pdf').read_bytes()
-    with _AuthServer(payload) as server:
-        original = StreamingScheduler.execute
-        monkeypatch.setattr(StreamingScheduler, 'execute', lambda self, run, **kw:
-            {'run_id':run,'state':'waiting','attempts':{},'counts':{'planned':1,'running':0,'ok':0,'skipped':0,'failed':0}})
-        settings = {'download': {'rate_limit': 0, 'max_retries': 1, 'retry_interval': 0}, 'extract': {'repair_fonts': False}}
-        corpus = Corpus(tmp_path/'empty', tmp_path/'output')
-        frozen = corpus.run([server.url()], stages=('extract','clean','export'), settings=settings)
-        assert frozen['state'] == 'waiting' and not server.requests
-        monkeypatch.setattr(StreamingScheduler, 'execute', original)
-        with pytest.raises(ValueError, match='credentials_not_persisted'):
-            Corpus(tmp_path/'empty', tmp_path/'output').run(resume=frozen['run_id'])
-        assert not server.requests, 'resume without credentials must not send a request'
-        resumed = Corpus(tmp_path/'empty', tmp_path/'output').run(resume=frozen['run_id'], credentials=[server.url()])
-        assert resumed['state'] == 'completed', resumed
-        assert len(export_rows(tmp_path/'output')) == 1
-        assert recorded_marker_hits(tmp_path/'output') == []
-
-
-def test_cli_subprocess_with_url_credentials_records_none_of_them(tmp_path):
-    pytest.importorskip('aiohttp')
-    pytest.importorskip('glossapi_rs_cleaner')
-    from test_ledger_stages import simple_pdf
-    payload = simple_pdf(tmp_path/'payload.pdf').read_bytes()
-    settings = tmp_path/'settings.json'
-    settings.write_text(json.dumps({'download': {'rate_limit': 0, 'max_retries': 1, 'retry_interval': 0}, 'extract': {'repair_fonts': False}}))
-    with _AuthServer(payload) as server:
-        output = tmp_path/'output'
-        manifest = tmp_path/'manifest.json'
-        manifest.write_text(json.dumps({'documents': [{'url': server.url(), 'title': 'credentialed'}]}))
-        env = {**os.environ, 'PYTHONPATH': os.pathsep.join([str(TESTS.parent/'src'), str(TESTS), os.environ.get('PYTHONPATH', '')])}
-        plan = subprocess.run([sys.executable, '-c', 'import sys; from glossapi.cli import main; sys.exit(main(sys.argv[1:]))',
-            'plan', '--corpus', str(output), '--manifest', str(manifest), '--stages', 'extract,clean,export', '--json'],
-            env=env, capture_output=True, text=True, timeout=300)
-        assert plan.returncode == 0, plan.stderr[-2000:]
-        assert MARKER not in plan.stdout
-        process = subprocess.run([sys.executable, '-c', 'import sys; from glossapi.cli import main; sys.exit(main(sys.argv[1:]))',
-            'run', '--corpus', str(output), '--manifest', str(manifest), '--stages', 'extract,clean,export',
-            '--settings', str(settings), '--json'], env=env, capture_output=True, text=True, timeout=300)
-        assert process.returncode == 0, process.stdout[-3000:]+process.stderr[-3000:]
-        assert MARKER not in process.stdout
-        assert len(export_rows(output)) == 1
-        assert recorded_marker_hits(output) == []
 
 
 # ---------------------------------------------------------------------- F3 ---

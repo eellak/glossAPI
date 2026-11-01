@@ -81,11 +81,7 @@ def _payload_observation(value, field=None):
     if isinstance(value, dict):
         result = {}
         for key, item in value.items():
-            from .journal import credential_key
-            if isinstance(key, str) and credential_key(key):
-                result[key] = "[redacted]"
-            else:
-                result[key] = _payload_observation(item, field=key)
+            result[key] = _payload_observation(item, field=key)
         return result
     if isinstance(value, list):
         return [_payload_observation(item, field=field) for item in value]

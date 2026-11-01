@@ -44,7 +44,7 @@ def test_every_executed_barrier_is_previewed_and_documented(tmp_path):
         stages = ['extract', 'clean', 'sections', 'annotate', 'export']
         settings = {'download': {'rate_limit': 0}, 'extract': {'repair_fonts': False}}
         plan = plan_documents(tmp_path/'out', manifest=manifest, stages=stages, settings=settings)
-        result = Corpus(tmp_path/'empty', tmp_path/'out').run(plan=plan, credentials=[manifest])
+        result = Corpus(tmp_path/'empty', tmp_path/'out').run(plan=plan)
     finally:
         server.shutdown(); server.server_close(); thread.join()
     assert result['state'] == 'completed', result

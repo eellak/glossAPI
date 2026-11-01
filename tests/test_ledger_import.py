@@ -18,20 +18,13 @@ def rows(path, records):
     pd.DataFrame(records).to_parquet(path, index=False)
 
 
-def test_url_identity_preserves_meaningful_bytes_and_explicit_namespaces(tmp_path):
-    # CP-LEDGER cycle 2: a URL that loses information in its persisted form
-    # (userinfo, query or fragment values) is keyed by an HMAC of the raw URL
-    # under the corpus key; its identity never is the redacted spelling, and
-    # different credentials are different identities.
-    from glossapi.ledger.writer import LedgerWriter
-    with LedgerWriter(tmp_path/"corpus.sqlite3"):
-        key = source_key("HTTPS://User:Pass@EXAMPLE.COM/A%2fb?b=2&a=1#x")
-        assert key.startswith("url:v2:") and key.endswith(":https://example.com/A%2fb?b=%5Bredacted%5D&a=%5Bredacted%5D")
-        assert "Pass" not in key and key != source_key("HTTPS://User:Other@EXAMPLE.COM/A%2fb?b=2&a=1#x")
-        assert key == source_key("HTTPS://User:Pass@EXAMPLE.COM/A%2fb?b=2&a=1#y")
-        assert source_key("https://EXAMPLE.com/a?") != source_key("https://example.com/a")
-        assert source_key("https://example.com/A") != source_key("https://example.com/a")
-        assert source_key("https://example.com/a?b=1&a=2") != source_key("https://example.com/a?a=2&b=1")
+def test_url_identity_preserves_meaningful_bytes_and_explicit_namespaces():
+    # Public URLs keep url:v1 with their query (the url:v2 keyed form was withdrawn with the credential channel, owner
+    # 1 Nov 2026). Imported legacy URLs are caller-owned rows, recorded as given.
+    assert source_key("HTTPS://User:Pass@EXAMPLE.COM/A%2fb?b=2&a=1#x") == "url:v1:https://User:Pass@example.com/A%2fb?b=2&a=1"
+    assert source_key("https://EXAMPLE.com/a?") != source_key("https://example.com/a")
+    assert source_key("https://example.com/A") != source_key("https://example.com/a")
+    assert source_key("https://example.com/a?b=1&a=2") != source_key("https://example.com/a?a=2&b=1")
     assert source_key("https://x", dataset_id="a", source_id="1") != source_key("https://x", dataset_id="b", source_id="1")
 
 
@@ -50,9 +43,7 @@ def test_all_parquets_duplicate_occurrences_lost_columns_and_conflicting_flags(t
         assert connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
         records = connection.execute("SELECT source_record_id,metadata_json FROM source_records").fetchall()
         originals = [untyped_value(untyped_value(json.loads(metadata)["fields"])["original_fields"]) for _, metadata in records if 'scraping' in metadata]
-        # CP-LEDGER cycle 2: recorded URLs use the persisted (allowlist) form;
-        # the fragment value is replaced. Every other original field is exact.
-        assert originals == [dict(row, url="https://EXAMPLE.org/A#%5Bredacted%5D") for row in original]
+        assert originals == original
         assert len({identifier for identifier, _ in records}) == len(records)
         assert connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
     assert any(c["code"] == "conflicting_store_claims" and c["field"] == "download_success" for c in first["conflicts"])

@@ -63,6 +63,11 @@ Its data adds to the hashed plan body:
   exit 0 with `execution.ready: false` and a warning, and make `run` refuse. `memory_saving=extreme` without a disk
   budget fails with `disk_budget_required` (exit 3).
 
+Downloads are public targets only. A source URL with userinfo (`user:pass@`) or a credential query/fragment field
+(`token`, `key`, `signature`, `X-Amz-Signature`, ...), or a `download` setting that would send credentials
+(`domain_cookies`, `credentials`), fails `plan` and `run` with `credentials_unsupported` (exit 2) before anything is
+planned, recorded or fetched. Every other URL is recorded as given.
+
 An omitted selection (no `--files`, no `--manifest`) plans every corpus document. A manifest is an explicit selection:
 one that selects nothing (`"selection": []`, or an empty pre-v1 list) plans zero `targets`, lists every entry in
 `exclusions`, and carries the blocking `empty_selection` conflict; `run` refuses it with `empty_selection` (exit 2)

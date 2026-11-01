@@ -132,7 +132,7 @@ def test_amended_plan_keeps_names_per_source_publishes_new_downloads_and_preview
         assert targets[server.url('/a.pdf')]['download']['reacquire'] is True
         assert targets[server.url('/c.pdf')]['download']['reacquire'] is False
         before = len(server.requests)
-        second = Corpus(tmp_path/'empty', root).run(plan=plan, credentials=[manifest('a.pdf', 'c.pdf')])
+        second = Corpus(tmp_path/'empty', root).run(plan=plan)
         assert second['state'] == 'completed', second
         assert server.requests[before:].count('/a.pdf') == 1
     frame = results_frame(root)

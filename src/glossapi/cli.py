@@ -74,10 +74,6 @@ def parser():
                 command.add_argument('--resume')
                 command.add_argument('--retry-failed', action='store_true')
                 command.add_argument('--trust-legacy-outputs', action='store_true')
-                command.add_argument('--credentials', help='JSON file listing full source URLs (a list, {"urls": [...]} or '
-                    '{"documents": [...]} rows with optional source_id). Read into memory only; never recorded. Required to resume '
-                    'or run a saved plan whose URLs were recorded in their persisted form. A URL binds only to its own resource '
-                    'identity: the identical URL, or the same declared source_id.')
         else:
             command.add_argument("--run")
             command.add_argument("--stage", choices=sorted(STAGES))
@@ -188,29 +184,21 @@ def _plan_data(connection, root, *, files=(), manifest=None, stages=None, device
     workers = _merge("workers", workers or {}, parsed.workers if parsed else {})
     if parsed is not None:
         selectors, rows = list(parsed.selectors), list(parsed.rows)
-    from .ledger.urls import persisted_url, pop_identity_root, push_identity_root, url_policy
-    with url_policy(settings.get("url_policy")):
-        identities = None
-        if any(str(selector).startswith(("http://", "https://")) for selector in selectors):
-            # Raw URLs stay in memory. The plan carries each URL's
-            # resource identity (keyed under the corpus key, created
-            # outside the ledger when first needed) and its persisted
-            # spelling only (CP-LEDGER cycle 2, F1/F2).
-            from .stages.run import resource_identity
-            identity_root = Path(root).absolute()
-            push_identity_root(identity_root)
-            try:
-                identities = [resource_identity(selector, source_id=row.get("source_id"), dataset_id=row.get("dataset_id"))
-                              if str(selector).startswith(("http://", "https://")) else None for selector, row in zip(selectors, rows)]
-            finally:
-                pop_identity_root(identity_root)
-            selectors = [persisted_url(selector) if identity else selector for selector, identity in zip(selectors, identities)]
-        # Only an omitted selection (no manifest, no files) means every corpus document;
-        # a manifest is an explicit selection even when it selects nothing (CP-K3 F1).
-        explicit = parsed is not None or bool(files)
-        data = plan_view(connection, selectors=selectors if explicit else None, stages=stages, settings=settings, devices=devices, workers=workers,
-            manifest=parsed.selected if parsed else None, identities=identities,
-            exclusions=parsed.exclusions if parsed else None, input_manifest=parsed.describe() if parsed else None)
+    # Public targets only (PLAN §9): a credentialed URL (resource_identity) or credential setting is refused here.
+    from .ledger.urls import refuse_credential_settings
+    refuse_credential_settings(settings.get("download"))
+    identities = None
+    if any(str(selector).startswith(("http://", "https://")) for selector in selectors):
+        # The plan carries each URL's resource identity (a declared source_id keys its own).
+        from .stages.run import resource_identity
+        identities = [resource_identity(selector, source_id=row.get("source_id"), dataset_id=row.get("dataset_id"))
+                      if str(selector).startswith(("http://", "https://")) else None for selector, row in zip(selectors, rows)]
+    # Only an omitted selection (no manifest, no files) means every corpus document;
+    # a manifest is an explicit selection even when it selects nothing (CP-K3 F1).
+    explicit = parsed is not None or bool(files)
+    data = plan_view(connection, selectors=selectors if explicit else None, stages=stages, settings=settings, devices=devices, workers=workers,
+        manifest=parsed.selected if parsed else None, identities=identities,
+        exclusions=parsed.exclusions if parsed else None, input_manifest=parsed.describe() if parsed else None)
     return data, parsed
 
 
@@ -325,19 +313,6 @@ def main(argv=None):
             # Export after the short read transaction closes.
             envelope["data"] = _export(args.output, data, args.format)
         if args.command == 'run':
-            # Transport credentials stay in this process: from the given manifest
-            # or file list, and from an explicit --credentials file (F2).
-            credentials=[]
-            if args.credentials:
-                supplied=_json_file(args.credentials)
-                supplied=supplied.get('urls',supplied.get('documents',[])) if isinstance(supplied,dict) else supplied
-                if not isinstance(supplied,list) or not all(isinstance(item,(str,dict)) for item in supplied):
-                    raise ReadRequestError('invalid_request','--credentials must list source URLs or {"url": ..., "source_id": ...} rows')
-                credentials.extend(supplied)
-            credentials.extend(args.files)
-            if args.manifest and parsed is not None:
-                # Only the selected entries reach the run; unselected siblings never do.
-                credentials.append(parsed.selected)
             if args.resume and (args.files or args.manifest or args.plan or args.stages or args.device or args.workers or args.settings or args.debug or args.memory_saving or args.disk_budget_bytes is not None):
                 raise ReadRequestError('invalid_request','Resume restores the frozen plan; overrides are forbidden')
             if args.plan and (args.files or args.manifest or args.stages or args.device or args.workers or args.settings or args.debug or args.memory_saving):
@@ -373,7 +348,7 @@ def main(argv=None):
                     sys.stdout.flush()
                     os.dup2(2,1)
                     outcome=corpus.run(resume=args.resume,retry_failed=args.retry_failed,
-                        **({'plan':requested} if not args.resume else {}),**({'credentials':credentials} if credentials else {}))
+                        **({'plan':requested} if not args.resume else {}))
                 finally:
                     os.dup2(saved_stdout,1)
                     os.close(saved_stdout)
@@ -389,15 +364,11 @@ def main(argv=None):
                 if failed:
                     # A run that ran and found failures (exit 1) reports them as typed errors, not an empty list.
                     from .ledger.reader import run_failure_errors
-                    from .ledger.urls import scrub, scrub_error_text, scrub_known_value
-                    for item in run_failure_errors(connection, outcome['run_id'], state=outcome['state'], counts=outcome.get('counts')):
-                        envelope['errors'].append({**item, 'message': scrub_error_text(item['message']),
-                                                   'details': scrub_known_value(scrub(item['details']))})
+                    envelope['errors'].extend(run_failure_errors(connection, outcome['run_id'], state=outcome['state'], counts=outcome.get('counts')))
             exit_code=3 if outcome['state']=='waiting' else 1 if failed else 0
     except (ReadRequestError, CatalogError, LedgerError, sqlite3.Error, OSError, ValueError, TypeError, ImportError, RuntimeError) as error:
         code = getattr(error, "code", "unsupported_schema" if isinstance(error, LedgerError) else "read_error")
-        from .ledger.urls import scrub, scrub_error_text, scrub_known_value
-        envelope["errors"].append(dict(code=code, message=scrub_error_text(str(error)), document_id=None, stage=None, details=scrub_known_value(scrub(getattr(error, "details", {})))))
+        envelope["errors"].append(dict(code=code, message=str(error), document_id=None, stage=None, details=getattr(error, "details", {})))
         if envelope.get("command") == "run" and not isinstance((envelope.get("data") or {}).get("state"), str):
             envelope["data"] = None  # a refused run has no run data (the plan is not its result)
         exit_code = 3 if code in ("policy_conflict","disk_guard_unavailable","disk_budget_exceeded","disk_budget_required","waiting_for_disk","disk_full") else 2

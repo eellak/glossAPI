@@ -14,7 +14,9 @@ Features:
 - Retry mechanism for failed downloads
 - Download status tracking
 - Rate limiting support
-- Domain-specific cookie handling
+
+Public targets only: a source URL with userinfo or a credential query/fragment field is refused
+(glossapi.ledger.urls), and no setting sends cookies or credentials.
 """
 
 from .ledger.journal import observe, observe_store, observe_source_rows, observe_http_response, observe_acquisition
@@ -44,13 +46,7 @@ import functools
 from email.utils import parsedate_to_datetime
 
 
-from .ledger.urls import CredentialLogFilter as _UrlCredentialFilter, protect_handler as _protect_handler
-
-
 RESOURCE_IDENTITY_COLUMN = 'resource_identity'
-# URL-valued result columns besides the configured URL column.
-_URL_VALUED_COLUMNS = ('duplicate_of', 'final_url', 'redirect_url', 'referer', 'source_url')
-_ERROR_COLUMNS = ('download_error', 'error', 'error_message')
 
 
 def _row_identity(value, source_id=None):
@@ -72,41 +68,21 @@ def frame_identities(df: pd.DataFrame, url_column: str = 'url') -> List[Optional
 
 
 def persisted_download_frame(df: pd.DataFrame, url_column: str = 'url') -> pd.DataFrame:
-    """The recordable copy of a download results frame (CP-LEDGER cycle 2, LG3).
-
-    URL-valued columns hold only the persisted (allowlisted) spelling, error
-    columns are scrubbed, every string cell loses registered known secrets, and
-    ``resource_identity`` (last column) keeps each row's identity so that a
-    resume matches by identity, never by the raw URL string.
-    """
-    from .ledger.urls import persisted_url, scrub_error_text, scrub_known
+    """The recorded copy of a download results frame: the rows as given, with ``resource_identity`` (last column)
+    so that a resume matches each row by its identity (a declared ``source_id`` included)."""
     out = df.drop(columns=['__url_norm'], errors='ignore').copy()
     if url_column in out.columns:
         identities = frame_identities(out, url_column)
         out = out.drop(columns=[RESOURCE_IDENTITY_COLUMN], errors='ignore')
-        out[url_column] = [persisted_url(value) if isinstance(value, str) else value for value in out[url_column].tolist()]
         out[RESOURCE_IDENTITY_COLUMN] = identities
-    for column in _URL_VALUED_COLUMNS:
-        if column in out.columns:
-            out[column] = [persisted_url(value) if isinstance(value, str) else value for value in out[column].tolist()]
-    for column in out.columns:
-        if column == RESOURCE_IDENTITY_COLUMN or not (out[column].dtype == object or pd.api.types.is_string_dtype(out[column])):
-            continue
-        clean = scrub_error_text if column in _ERROR_COLUMNS else scrub_known
-        out[column] = [clean(value) if isinstance(value, str) else value for value in out[column].tolist()]
     return out
 
 
 def _private_logger(name: str, level: int, *, propagate: bool = True) -> logging.Logger:
-    """An unregistered per-instance logger whose handlers no other instance shares.
-
-    The shared credential filter (persisted URL form, secret headers, formatted
-    tracebacks) applies to every record of this logger and its handlers.
-    """
+    """An unregistered per-instance logger whose handlers no other instance shares."""
     logger = logging.Logger(name, level)
     logger.parent = logging.getLogger(name)
     logger.propagate = propagate
-    logger.addFilter(_UrlCredentialFilter())
     return logger
 
 
@@ -172,7 +148,6 @@ class GlossDownloader:
         rate_period: int = 60,
         request_timeout: int = 45,
         skip_failed_after: int = 3,
-        domain_cookies: Dict[str, Dict[str, str]] = None,
         supported_formats: List[str] = None,
         log_level: int = logging.INFO,
         verbose: bool = False,
@@ -232,7 +207,6 @@ class GlossDownloader:
             rate_period: Time period in seconds for rate limiting
             request_timeout: Overall timeout in seconds for each request
             skip_failed_after: Skip URLs that failed more than this many times
-            domain_cookies: Dictionary mapping domain names to cookies dictionaries
             log_level: Logging level (default: logging.INFO)
         """
         # Setup logging. Each downloader owns private loggers: its file handlers
@@ -275,9 +249,6 @@ class GlossDownloader:
             )
         self.request_timeout = request_timeout
         self.skip_failed_after = skip_failed_after
-        
-        # Setup domain cookies with defaults
-        self.domain_cookies = domain_cookies or {}
         
         # Set supported formats for validation
         self.supported_formats = supported_formats or ['pdf', 'docx', 'xml', 'html', 'pptx', 'csv', 'md']
@@ -329,7 +300,7 @@ class GlossDownloader:
             fmt = logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s')
             fh.setFormatter(fmt)
             fh.setLevel(progress_log_level)
-            self.progress_logger.addHandler(_protect_handler(fh))
+            self.progress_logger.addHandler(fh)
         except Exception:
             self.progress_logger = self.logger
 
@@ -340,7 +311,7 @@ class GlossDownloader:
             rfh = logging.FileHandler(rp)
             rfh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
             rfh.setLevel(self.logger.level)
-            self.logger.addHandler(_protect_handler(rfh))
+            self.logger.addHandler(rfh)
         except Exception:
             pass
 
@@ -1022,22 +993,6 @@ class GlossDownloader:
             'DNT': '1'
         }
 
-    def _resolve_request_cookies(self, url: str, route_options: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
-        cookies: Dict[str, str] = {}
-        for domain_pattern, domain_cookies in self.domain_cookies.items():
-            if domain_pattern in url:
-                cookies.update(domain_cookies)
-                # If the domain needs dynamic values like random IDs
-                for key, value in list(cookies.items()):
-                    if 'random.randint' in str(value):
-                        # Replace with an actual random value (only supporting this pattern for now)
-                        if 'session-id' in str(value):
-                            cookies[key] = f"session-id-{random.randint(100000000, 999999999)}"
-        extra_cookies = self._route_setting(route_options, "domain_cookies", None)
-        if isinstance(extra_cookies, dict):
-            cookies.update({str(k): str(v) for k, v in extra_cookies.items()})
-        return cookies
-
     def _build_request_timeout(
         self,
         retry_count: int,
@@ -1076,25 +1031,7 @@ class GlossDownloader:
         headers: Dict[str, str],
         route_options: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
-        headers = await self.setup_session(session, url, headers)
-
-        # Set a shorter timeout for the initial connection attempt
-        base_timeout = aiohttp.ClientTimeout(total=10)
-        try:
-            # Visit the base domain to establish cookies if needed
-            base_domain = urlparse(url).netloc
-            all_cookie_domains = set(self.domain_cookies.keys())
-            extra_cookies = self._route_setting(route_options, "domain_cookies", None)
-            if isinstance(extra_cookies, dict) and extra_cookies:
-                all_cookie_domains.add(base_domain)
-            if any(domain in base_domain for domain in all_cookie_domains):
-                base_url = f"https://{base_domain}"
-                async with recorded_request(session, 'get', base_url, headers=headers, timeout=base_timeout) as response:
-                    observe_http_response(response, base_url)
-        except Exception as e:
-            # Non-fatal error, just log and continue
-            self.logger.debug(f"Initial base URL visit failed: {str(e)}")
-        return headers
+        return await self.setup_session(session, url, headers)
 
     def _best_effort_url_extension(self, url: str) -> str:
         try:
@@ -1303,11 +1240,9 @@ class GlossDownloader:
         self.logger.warning(f"Received {status} for {url}")
 
         if self.verbose:
-            # Headers are redacted structurally before any formatting (cycle-2 F1).
-            from .ledger.urls import describe_request, redact_headers
             self.logger.debug(f"HTTP Error Details - Status: {error.status}, Message: {error.message}")
-            self.logger.debug(f"Headers: {redact_headers(error.headers) if getattr(error, 'headers', None) is not None else 'No headers available'}")
-            self.logger.debug(f"Request info: {describe_request(getattr(error, 'request_info', None))}")
+            self.logger.debug(f"Headers: {error.headers if getattr(error, 'headers', None) is not None else 'No headers available'}")
+            self.logger.debug(f"Request info: {getattr(error, 'request_info', None) or 'No request info available'}")
 
         retry_after = None
         try:
@@ -1355,7 +1290,6 @@ class GlossDownloader:
         resolved_route(route, route_options)
         user_agent = next(self.user_agents)
         headers = self._build_request_headers(url, user_agent, referer)
-        cookies = self._resolve_request_cookies(url, route_options=route_options)
         
         if semaphore:
             await semaphore.acquire()
@@ -1377,7 +1311,7 @@ class GlossDownloader:
 
             try:
                 connector = self._build_session_connector(url, route_options=route_options)
-                async with aiohttp.ClientSession(cookies=cookies, connector=connector) as session:
+                async with aiohttp.ClientSession(connector=connector) as session:
                     try:
                         headers = await self._bootstrap_download_session(
                             session,
@@ -2603,14 +2537,7 @@ class GlossDownloader:
                 return str(u)
 
         df['__url_norm'] = df[self.url_column].map(_canon)
-        # A frozen run manifest records URLs in their persisted form, where
-        # distinct raw URLs (different credentials or query values) can spell
-        # alike. Its non-secret per-row duplicate group, sealed from the raw
-        # URLs, keeps exactly the frozen duplicate decisions (CP-LEDGER cycle 2).
-        dedupe_key = df['__url_norm']
-        if 'frozen_duplicate_group' in df.columns:
-            dedupe_key = df['__url_norm'] + '\x00' + df['frozen_duplicate_group'].astype(str)
-        dup_mask = dedupe_key.duplicated(keep='first')
+        dup_mask = df['__url_norm'].duplicated(keep='first')
         canon_rows = df.loc[~dup_mask, ['__url_norm', self.url_column]]
         canon_map = dict(zip(canon_rows['__url_norm'], canon_rows[self.url_column]))
         df.loc[dup_mask, 'is_duplicate'] = True

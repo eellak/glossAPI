@@ -53,8 +53,7 @@ def _serve(connection, parent_pid):
                               GLOSSAPI_CONVERSION_LOG_FILE=str(request.work_directory/'conversion.log'))
             import tempfile
             tempfile.tempdir = str(scratch)
-            from ..ledger.urls import protect_handler
-            log_handler=protect_handler(logging.FileHandler(request.work_directory/'conversion.log'))
+            log_handler=logging.FileHandler(request.work_directory/'conversion.log')
             log_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
             logging.getLogger().addHandler(log_handler)
             try:
@@ -82,8 +81,7 @@ def _serve(connection, parent_pid):
             target = request.work_directory/'worker-result.json'
             try:
                 from .execution import write_text_hashed, sha256_file
-                from ..ledger.urls import parse_policy, scrub, scrub_known_value
-                encoded = json.dumps(scrub_known_value(scrub(asdict(result), parse_policy(request.settings.get('url_policy')))), ensure_ascii=False)
+                encoded = json.dumps(asdict(result), ensure_ascii=False)
                 write_text_hashed(target,encoded)
                 import hashlib
                 data = encoded.encode('utf-8')

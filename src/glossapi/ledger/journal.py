@@ -27,61 +27,22 @@ from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
 from .encoding import canonical_json, dataframe_records, file_hash, pack_evidence, typed_value
-from .urls import sanitize_url, scrub_text
 from .writer import LedgerWriter, new_id, utc_now
 from .stores import TEXT_FIELDS, membership_snapshot, read_store, store_states
 
 _active_journal = ContextVar("glossapi_shadow_result_journal", default=None)
 _loaded_tools_cache = {}
-_SECRET_KEYS = frozenset(("authorization", "cookie", "cookies", "password", "passwd", "token", "api_key", "apikey",
-    "headers", "proxy_auth", "auth", "secret", "credentials", "set_cookie", "domain_cookies", "access_key", "private_key",
-    "session_id", "sessionid", "bearer", "oauth"))
-# Suffix forms cover containers and header names such as ``domain_cookies``,
-# ``session_cookie``, ``X-Api-Key`` and ``client_secret``.
-_SECRET_SUFFIXES = ("_cookie", "_cookies", "_password", "_passwd", "_secret", "_api_key", "_apikey",
-    "_authorization", "_auth", "_credentials", "_access_key", "_private_key", "_session_id")
-# ``*_token`` is not a generic suffix: ``lease_token`` (scheduler fencing) and
-# ``tail_token`` (LaTeX sanitizer) are evidence, not credentials.
-_SECRET_TOKENS = frozenset(("access_token", "refresh_token", "auth_token", "bearer_token", "id_token", "api_token",
-    "session_token", "csrf_token", "xsrf_token", "x_auth_token", "x_csrf_token", "x_xsrf_token", "hf_token", "github_token"))
-REDACTED = "[redacted]"
-
-
-def credential_key(key):
-    """True for a settings/header key whose value may carry a credential."""
-    name = str(key).strip().lower().replace("-", "_").replace(" ", "_")
-    return name in _SECRET_KEYS or name in _SECRET_TOKENS or name.endswith(_SECRET_SUFFIXES)
-
-
-def redact_credentials(value):
-    """Replace only credential values; every other JSON value is unchanged.
-
-    Strings keep their spelling except URL userinfo and credential query
-    fields, which are redacted (CP-LEDGER F2).
-    """
-    if isinstance(value, dict):
-        return {key: (REDACTED if credential_key(key) else redact_credentials(item)) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [redact_credentials(item) for item in value]
-    if isinstance(value, str):
-        return scrub_text(value)
-    return value
-
-
 def safe_settings(value):
-    """Recordable copy of settings: credential values never reach a receipt.
+    """Recordable JSON copy of settings and evidence, recorded as given (paths as text, non-finite floats typed).
 
-    The whole value under a credential key is replaced, including nested
-    containers such as ``domain_cookies -> domain -> cookie``.
+    An arbitrary object is not recorded: its repr is neither stable nor bounded.
     """
     if isinstance(value, dict):
-        return {str(key): (REDACTED if credential_key(key) else safe_settings(item)) for key, item in value.items()}
+        return {str(key): safe_settings(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)): return [safe_settings(item) for item in value]
     if isinstance(value, Path): return str(value)
-    if isinstance(value, str): return scrub_text(value)
     if isinstance(value, float) and not math.isfinite(value): return typed_value(value)
-    if value is None or isinstance(value, (bool, int, float)): return value
-    # Do not use repr: backend option objects can hold secrets.
+    if value is None or isinstance(value, (str, bool, int, float)): return value
     return {"type": type(value).__module__ + "." + type(value).__name__, "value": "unknown_not_recorded"}
 
 
@@ -117,18 +78,9 @@ def wrapper_return_receipt(value):
 
 
 def source_key(uri):
-    """Stable non-secret identity, never the persisted (redacted) spelling.
-
-    A URL whose persisted form loses nothing keeps ``url:v1:``. A URL with
-    userinfo, a query or a fragment value is keyed by an HMAC of the raw URL
-    under the corpus key (``url:v2:``): different credentials are different
-    resources (CP-LEDGER cycle 2, F2).
-    """
+    """Stable identity: ``url:v1:`` (scheme and host lowercased, fragment dropped) or ``local_path:v1:``."""
     parts = urlsplit(uri)
     if parts.scheme in ("http", "https"):
-        from .urls import keyed_source_key, lossless_url
-        if not lossless_url(uri):
-            return keyed_source_key(uri)
         return "url:v1:" + urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
     return "local_path:v1:" + uri
 
@@ -649,6 +601,10 @@ def shadow_stage(stage, operation=None):
             bound.apply_defaults()
             parameters = dict(bound.arguments)
             parameters.pop("self", None)
+            if stage == "download":
+                # Public targets only (PLAN §9): a credential setting is refused before the call is recorded.
+                from .urls import refuse_credential_settings
+                refuse_credential_settings(parameters.get("kwargs"))
             parent = _active_journal.get()
             # Existing spawned backend workers send their results to the parent.
             # Never open a second writable ledger for the same corpus there.

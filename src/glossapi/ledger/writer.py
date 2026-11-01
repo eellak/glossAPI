@@ -19,8 +19,6 @@ from .encoding import canonical_json, evidence, file_hash, snapshot_hash, typed_
 from .schema import APPEND_ONLY_TABLES, SCHEMA_SQL, SCHEMA_VERSION, COMPACT_SCHEMA_SQL, COMPACT_RETENTION_SCHEMA_SQL, FORMAT_SCHEMA_SQL
 from .compact import connect, encode_json
 from .validation import validate_evidence
-from .urls import (has_known_secrets, needs_scrub, persisted_url, pop_identity_root, push_identity_root, scrub, scrub_known,
-    scrub_known_value, scrub_text)
 
 
 _OPEN_WRITERS = set()
@@ -67,7 +65,6 @@ def _forget_integrity_after_fork() -> None:
 
 if hasattr(os, 'register_at_fork'):
     os.register_at_fork(after_in_child=_forget_integrity_after_fork)
-_FUNCTIONAL_SNAPSHOTS = frozenset(("plan", "settings", "environment", "shared_config", "inputs"))
 
 
 class LedgerError(ValueError):
@@ -315,9 +312,6 @@ class LedgerWriter:
         try:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             _OPEN_WRITERS.add(str(self.path))
-            # Lossy URLs are keyed under this corpus's identity key (cycle-2 F2).
-            push_identity_root(self.path.parent)
-            self._identity_root = self.path.parent
             # The file identity before this process opens it (opening creates the WAL); see _integrity_known.
             opened_identity = _ledger_identity(self.path)
             self.connection = connect(self.path, isolation_level=None)
@@ -364,6 +358,9 @@ class LedgerWriter:
                 self.connection.storage_version = storage_version
                 if storage_version>=3:self.connection.path_root=self.path.parent.as_uri()
             supported_schema(self.connection)
+            if self.connection.execute("SELECT 1 FROM documents WHERE source_key>='url:v2:' AND source_key<'url:v2;' LIMIT 1").fetchone():
+                # Development builds before 1 Nov 2026 keyed query-bearing URLs by a corpus secret (never released).
+                raise LedgerError("This ledger keys URLs in the withdrawn url:v2 development format; use a new output directory")
             known = _integrity_known.pop(str(self.path.resolve()), None)
             if known is None or known != opened_identity:
                 integrity(self.connection)
@@ -495,9 +492,6 @@ class LedgerWriter:
                 os.close(self.lock)
                 self.lock = None
                 _OPEN_WRITERS.discard(str(self.path))
-            if getattr(self, "_identity_root", None) is not None:
-                pop_identity_root(self._identity_root)
-                self._identity_root = None
         if failure is not None:
             raise failure
 
@@ -929,17 +923,6 @@ class LedgerWriter:
         value = evidence(value)
         validate_evidence(value)
         encoded = canonical_json(value)
-        if needs_scrub(encoded):
-            # Last recording boundary for URL credentials (CP-LEDGER F2).
-            value = scrub(value)
-            encoded = canonical_json(value)
-        if kind not in _FUNCTIONAL_SNAPSHOTS and has_known_secrets() and scrub_known(encoded) != encoded:
-            # Exact secret strings of in-memory transport URLs (cycle-2 LG3):
-            # evidence, errors and receipts. Frozen plans/settings are re-read
-            # for execution, already carry redacted credentials and persisted
-            # URLs, and are left byte-exact.
-            value = scrub_known_value(value)
-            encoded = canonical_json(value)
         digest = hashlib.sha256(encoded.encode()).hexdigest()
         if digest in self.snapshot_cache:
             return digest
@@ -964,7 +947,6 @@ class LedgerWriter:
 
     def document(self, source_key):
         self._owner()
-        source_key = scrub_text(source_key)
         row = self.connection.execute("SELECT document_id FROM documents WHERE source_key=?", (source_key,)).fetchone()
         if row: return row[0]
         identifier = new_id()
@@ -994,10 +976,7 @@ class LedgerWriter:
         validate_hash(manifest_sha256, nullable=True)
         if source_row is not None and not isinstance(source_row, str): raise LedgerError("source_row must be text")
         if url_index is not None and (type(url_index) is not int or url_index < 0): raise LedgerError("url_index must be a nonnegative integer")
-        source_uri = persisted_url(source_uri)
         encoded = canonical_json({"schema_version": 1, "fields": typed_value(metadata)})
-        if needs_scrub(encoded) or (has_known_secrets() and scrub_known(encoded) != encoded):
-            encoded = canonical_json({"schema_version": 1, "fields": typed_value(scrub_known_value(scrub(metadata)))})
         identifier = source_record_id or snapshot_hash([document_id, run_id, source_uri, source_kind, manifest_sha256, source_row, url_index, encoded])
         validate_hash(identifier)
         self.connection.execute("INSERT INTO source_records VALUES(?,?,?,?,?,?,?,?,?)", (identifier, document_id, run_id, source_uri, source_kind, manifest_sha256, source_row, url_index, encoded))
@@ -1095,13 +1074,6 @@ class LedgerWriter:
         payload = evidence(details or {})
         validate_evidence(payload)
         text = canonical_json(payload)
-        if needs_scrub(text):
-            payload = scrub(payload)
-            text = canonical_json(payload)
-        if has_known_secrets() and scrub_known(text) != text:
-            payload = scrub_known_value(payload)
-            text = canonical_json(payload)
-        message, traceback = scrub_known(scrub_text(message)), scrub_known(scrub_text(traceback))
         if duration_ns is not None and (type(duration_ns) is not int or duration_ns < 0):
             raise LedgerError("Duration must be nonnegative integer nanoseconds")
         encoded=encode_json(text) if self.connection.compact else text
@@ -1146,7 +1118,6 @@ class LedgerWriter:
         if bytes is not None and (type(bytes) is not int or bytes < 0): raise LedgerError("Artifact bytes must be a nonnegative integer")
         if presence == "present" and (sha256 is None or bytes is None): raise LedgerError("Present artifact requires hash and size")
         if ownership == "managed" and (sha256 is None or bytes is None): raise LedgerError("Managed artifact requires hash and size")
-        uri = persisted_url(uri)
         # Earlier registrations of this location, from the owner's catalog (current presence) by URI.
         catalog = self.file_catalog()
         previous_files = [(row['file_id'], row['version_id'], row['sha256'], row['presence'])

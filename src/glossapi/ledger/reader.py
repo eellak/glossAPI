@@ -13,8 +13,7 @@ from urllib.parse import unquote, urlsplit
 
 from .catalogue import STAGES, STATUSES
 from .encoding import canonical_json, snapshot_hash, unpack_evidence
-from .identity import source_key
-from .urls import scrub, source_uri_of_key
+from .identity import source_key, source_uri_of_key
 from .stores import membership_values
 from .writer import LedgerError, new_id
 from ..stages.retention import retention_facts, retention_summary
@@ -124,24 +123,16 @@ def resolve_document(connection, selector):
             if selector in (file["uri"], _path(file["uri"])):
                 exact.add(file["document_id"])
     if not strong_selector and urlsplit(selector).scheme.lower() in ("http", "https"):
-        # A raw URL resolves through its resource identity (keyed reference
-        # under the corpus key, read only); a persisted spelling may name
-        # several documents (different credentials) and is then ambiguous.
-        keyed = _selector_identity(connection, selector)
-        exact.update(d["document_id"] for d in documents if keyed is not None and d["source_key"] == keyed)
-        spelled = _persisted_spelling(selector)
-        keys = {d["document_id"]: d["source_key"] for d in documents}
-        spelled_matches = {record["document_id"] for record in _rows(connection, "SELECT document_id,source_uri FROM source_records")
-                           if urlsplit(record["source_uri"]).scheme.lower() in ("http", "https") and _persisted_spelling(record["source_uri"]) == spelled}
-        spelled_matches |= {d["document_id"] for d in documents if source_uri_of_key(d["source_key"]) is not None
-                            and urlsplit(source_uri_of_key(d["source_key"])).scheme.lower() in ("http", "https")
-                            and _persisted_spelling(source_uri_of_key(d["source_key"])) == spelled}
-        # A document keyed by a different keyed reference provably comes from a
-        # different raw URL (other credentials); exclude it only when the
-        # selector's own keyed identity is known. Declared-ID and legacy
-        # records with the same spelling stay explicit candidates.
-        exact.update(identifier for identifier in spelled_matches
-                     if keyed is None or not str(keys.get(identifier, "")).startswith("url:v2:") or keys.get(identifier) == keyed)
+        # A URL resolves through its resource identity, and through any recorded
+        # source URI spelled alike (scheme and host case, fragment).
+        key = source_key(selector)
+        exact.update(d["document_id"] for d in documents if d["source_key"] == key)
+        spelled = _url_spelling(selector)
+        exact.update(record["document_id"] for record in _rows(connection, "SELECT document_id,source_uri FROM source_records")
+                     if urlsplit(record["source_uri"]).scheme.lower() in ("http", "https") and _url_spelling(record["source_uri"]) == spelled)
+        exact.update(d["document_id"] for d in documents if source_uri_of_key(d["source_key"]) is not None
+                     and urlsplit(source_uri_of_key(d["source_key"])).scheme.lower() in ("http", "https")
+                     and _url_spelling(source_uri_of_key(d["source_key"])) == spelled)
     filename_selector = False
     if not exact:
         # A filename is a convenience selector only. It never joins identities
@@ -164,12 +155,11 @@ def resolve_document(connection, selector):
     return next(d for d in documents if d["document_id"] in exact)
 
 
-def _persisted_spelling(url):
-    """Persisted URL form with scheme and host case-folded, fragment dropped."""
-    from .urls import persisted_url
-    parts = urlsplit(persisted_url(url.split("#", 1)[0]))
-    host = parts.netloc.rpartition("@")[2].lower()
-    return (parts.scheme.lower(), host, parts.path, parts.query, "?" in persisted_url(url.split("#", 1)[0]))
+def _url_spelling(url):
+    """A URL with scheme and host case-folded and the fragment dropped."""
+    without_fragment = url.split("#", 1)[0]
+    parts = urlsplit(without_fragment)
+    return (parts.scheme.lower(), parts.netloc.rpartition("@")[2].lower(), parts.path, parts.query, "?" in without_fragment)
 
 
 def _ledger_root(connection):
@@ -180,20 +170,6 @@ def _ledger_root(connection):
     except Exception:
         return None
     return None
-
-
-def _selector_identity(connection, selector):
-    """Resource identity of a raw URL selector without writing anything."""
-    from .urls import keyed_source_key, lossless_url
-    if lossless_url(selector):
-        return source_key(selector)
-    root = _ledger_root(connection)
-    if root is None:
-        return None
-    try:
-        return keyed_source_key(selector, root=root, create=False)
-    except LedgerError:
-        return None
 
 
 def _same_content_aliases(connection, documents, candidates):
@@ -665,7 +641,7 @@ def _final_products_estimate(documents: Any, stages: Any) -> dict[str, Any]:
 def plan_view(connection=None, *, selectors=None, stages=None, settings=None, devices=None, workers=None, manifest=None, identities=None,
               exclusions=None, input_manifest=None):
     """``identities`` (aligned with ``selectors``) carries precomputed resource
-    identities of URL selectors; their selectors are persisted spellings.
+    identities of URL selectors (a declared ``source_id`` keys its own identity).
 
     ``selectors=None`` (omitted) selects every corpus document. An explicit
     selection (a list, even an empty one) is taken literally: an empty list
@@ -743,7 +719,7 @@ def plan_view(connection=None, *, selectors=None, stages=None, settings=None, de
             except OSError as error:observation['read_error']=type(error).__name__  # the run records it as unavailable
         inventory.append(dict(source_key=key, version=version,observation=observation))
         document_stages = set(selected_stages)
-        remote_source = key.startswith(("url:v1:", "url:v2:")) or urlsplit(selector).scheme.lower() in ("http", "https")
+        remote_source = key.startswith("url:v1:") or urlsplit(selector).scheme.lower() in ("http", "https")
         if known and not remote_source:
             remote_source = any(r[0] == "url" for r in connection.execute("SELECT source_kind FROM source_records WHERE document_id=?", (identifier,)))
         if remote_source and "extract" in document_stages:
@@ -813,5 +789,5 @@ def plan_view(connection=None, *, selectors=None, stages=None, settings=None, de
             blocked_by=sorted({item["code"] for item in preview["conflicts"] if item["severity"] in ("error", "blocking")}),
             unavailable_stages={stage: RUN_UNAVAILABLE[stage] for stage in sorted(pooled_stages) if stage in RUN_UNAVAILABLE},
             basis="run revalidates sources, packages and devices before any dispatch"),
-        explicit_manifest=scrub(manifest), **preview)
+        explicit_manifest=manifest, **preview)
     return dict(body, plan_hash=snapshot_hash(body))

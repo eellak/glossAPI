@@ -22,7 +22,7 @@ from .workers import read_result
 async def _acquire(stage,request,limiters,domains):
     from ..gloss_downloader import GlossDownloader,RateLimiter
     options=dict(request.settings)
-    for key in ('url','filename_base','row_index','referer','legacy_outer_retry_count','required_output_kinds','debug','memory_saving','download_mode','disk_budget_bytes','max_source_bytes','max_attempt_bytes','url_policy','transport_url_redacted'):
+    for key in ('url','filename_base','row_index','referer','legacy_outer_retry_count','required_output_kinds','debug','memory_saving','download_mode','disk_budget_bytes','max_source_bytes','max_attempt_bytes'):
         options.pop(key,None)
     options['progress_log_file']=str(request.work_directory/'logs/download_progress.logs')
     options['request_log_file']=str(request.work_directory/'logs/download_request.logs')
@@ -40,8 +40,6 @@ async def _acquire(stage,request,limiters,domains):
     for field in ('logger','progress_logger'):
         original=getattr(downloader,field)
         private=logging.Logger(original.name+'.'+request.attempt_id,level=original.level)
-        from ..ledger.urls import CredentialLogFilter
-        private.addFilter(CredentialLogFilter())
         for handler in list(original.handlers):
             if isinstance(handler,logging.FileHandler) and Path(handler.baseFilename).is_relative_to(request.work_directory):
                 original.removeHandler(handler);private.addHandler(handler);handlers.append(handler)
@@ -94,8 +92,7 @@ def _serve(connection,parent_pid,capacity):
                     import hashlib
                     with producer_hash_scope():
                         result=seal_output_hashes(cast(Any,result),request.work_directory)
-                    from ..ledger.urls import parse_policy, scrub, scrub_known_value
-                    encoded=json.dumps(scrub_known_value(scrub(asdict(result),parse_policy(request.settings.get('url_policy')))),ensure_ascii=False)
+                    encoded=json.dumps(asdict(result),ensure_ascii=False)
                     write_text_hashed(request.work_directory/'worker-result.json',encoded)
                     data=encoded.encode('utf-8')
                     connection.send((request.task_id,request.attempt_id,request.lease_token,

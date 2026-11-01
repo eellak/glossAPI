@@ -40,8 +40,7 @@ def request_receipt(url, *, retry_index=0, backoff_ms=None, route=None):
     if state is None:
         yield None
         return
-    from ..ledger.urls import persisted_url, scrub_error_text
-    receipt = {"sequence": len(state["requests"]), "requested_url": persisted_url(url), "final_url": None,
+    receipt = {"sequence": len(state["requests"]), "requested_url": url, "final_url": None,
         "http_status": None, "redirects": [], "response_headers": {}, "retry_index": retry_index,
         "route": route or state["route"], "policy_hash": state["policy_hash"], "started_at": utc_now(),
         "finished_at": None, "backoff_ms": backoff_ms, "retry_after_ms": None, "error": None,
@@ -52,7 +51,7 @@ def request_receipt(url, *, retry_index=0, backoff_ms=None, route=None):
         yield receipt
     except BaseException as error:
         receipt["error"] = {"error_type": type(error).__module__ + "." + type(error).__name__,
-            "message": scrub_error_text(str(error)), "traceback": scrub_error_text("".join(traceback.format_exception(error)))}
+            "message": str(error), "traceback": "".join(traceback.format_exception(error))}
         raise
     finally:
         receipt["finished_at"] = utc_now()
@@ -77,12 +76,11 @@ def response_receipt(response, requested_url, retry_index=None):
 def _response_fields(receipt, response):
     headers = {str(key).lower(): str(value) for key, value in (getattr(response, "headers", {}) or {}).items()
         if str(key).lower() in ("content-type", "content-disposition", "content-length", "content-encoding", "etag", "last-modified", "retry-after")}
-    from ..ledger.urls import persisted_url, scrub
-    # Every URL and redirect reference (absolute, network-path or relative)
-    # is recorded in its persisted form only (cycle-2 F1).
-    receipt.update(final_url=persisted_url(str(getattr(response, "url", receipt["requested_url"]))), http_status=getattr(response, "status", None),
-        response_headers=scrub(headers), redirects=[{"url": persisted_url(str(item.url)), "status": item.status,
-            "location": persisted_url(item.headers.get("Location"))} for item in getattr(response, "history", ())])
+    # Sources are public (credentialed URLs are refused at entry), so every URL and redirect is recorded as given. A
+    # public server's redirect to a signed URL carries a token the server issues to any client: recorded as well.
+    receipt.update(final_url=str(getattr(response, "url", receipt["requested_url"])), http_status=getattr(response, "status", None),
+        response_headers=headers, redirects=[{"url": str(item.url), "status": item.status,
+            "location": item.headers.get("Location")} for item in getattr(response, "history", ())])
     value = headers.get("retry-after", "")
     if value.isdigit():
         receipt["retry_after_ms"] = int(value) * 1000
@@ -101,8 +99,7 @@ def acquired_receipt(url, path, source_observable):
     from .execution import sha256_file, remember_written_hash
     digest, size = sha256_file(path), path.stat().st_size
     remember_written_hash(path, digest, size)
-    from ..ledger.urls import persisted_url
-    state["acquisitions"].append({"requested_url": persisted_url(url), "stored_sha256": digest, "stored_bytes": size,
+    state["acquisitions"].append({"requested_url": url, "stored_sha256": digest, "stored_bytes": size,
         "source_sha256": digest if source_observable else None, "source_entity_bytes": size if source_observable else None,
         "wire_bytes": None, "source_hash_unavailable_reason": None if source_observable else "original_entity_not_observable",
         "transformation": "identity" if source_observable else "browser_or_source_specific_recovery"})
