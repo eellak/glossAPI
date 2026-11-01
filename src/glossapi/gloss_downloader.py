@@ -964,6 +964,16 @@ class GlossDownloader:
         """Allow subclasses to short-circuit the direct HTTP path for known routes."""
         return None
 
+    def _refuse_credentials(self, urls: List[Any]) -> None:
+        """The request boundary (PLAN §2.1 credentials contract v2 item 1): credentialed URLs, and once per downloader
+        the credential settings of its download policy (object or file), are refused before any request is built."""
+        from .ledger.urls import refuse_credentials
+        if not getattr(self, '_policy_checked', False):
+            refuse_credentials(settings={'download_policy': getattr(self, 'download_policy', None),
+                                         'download_policy_file': getattr(self, 'download_policy_file', None)})
+            self._policy_checked = True
+        refuse_credentials(urls=urls)
+
     def _normalize_request_url(self, url: str) -> str:
         if not url.startswith(("http://", "https://")):
             return f"https://{url}"
@@ -1285,9 +1295,7 @@ class GlossDownloader:
             return False, "", "", "Empty URL", retry_count
 
         url = self._normalize_request_url(url)
-        # Public targets only (PLAN §9): the last line of defence, before any route, header, log line or request.
-        from .ledger.urls import refuse_credentials
-        refuse_credentials(urls=[url, referer] if referer else [url])
+        self._refuse_credentials([url, referer] if referer else [url])
         route, route_options = self._resolve_route(url)
         resolved_route(route, route_options)
         user_agent = next(self.user_agents)
@@ -2471,13 +2479,10 @@ class GlossDownloader:
             if 'download_success' not in df.columns:
                 df['download_success'] = False
 
-        # Public targets only (PLAN §9): every expanded source, as the per-file kernel will request it, and the referer
-        # column, before any checkpoint, log line or request (every batch path and the run inventory expand here).
-        from .ledger.urls import refuse_credentials
+        # Every batch path (sync, async, legacy) and the run inventory expand here: the request boundary rule applies to
+        # every expanded source and referer before any pre-ping, checkpoint, log line or request.
         referer = getattr(self, 'referer_column', None)
-        refuse_credentials(urls=[value if value.startswith(('http://', 'https://')) else 'https://' + value
-                                 for value in df[self.url_column].tolist() if isinstance(value, str) and value]
-                           + (df[referer].tolist() if referer and referer in df.columns else []))
+        self._refuse_credentials(df[self.url_column].tolist() + (df[referer].tolist() if referer and referer in df.columns else []))
         # Normalize URLs and mark duplicates (keep first occurrence)
         from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 

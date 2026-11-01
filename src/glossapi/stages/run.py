@@ -43,14 +43,8 @@ def _row_url(row):
 
 
 def resource_identity(raw_url,*,source_id=None,dataset_id=None,resource_index=0):
-    """Resource identity of one source URL: a declared ``source_id``, else ``url:v1:``.
-
-    The source entry rule applies first: a credentialed URL is refused here,
-    before any plan, ledger row or request exists (PLAN §9, 1 Nov).
-    """
+    """Resource identity of one source URL: a declared ``source_id``, else ``url:v1:``."""
     from ..ledger.journal import source_key
-    from ..ledger.urls import refuse_credentials
-    refuse_credentials(urls=[raw_url])
     if source_id is not None and not (isinstance(source_id,float) and source_id!=source_id):
         from ..ledger.identity import source_key as declared_key
         return declared_key(None,dataset_id=dataset_id if isinstance(dataset_id,str) and dataset_id else 'glossapi:declared_source_id',

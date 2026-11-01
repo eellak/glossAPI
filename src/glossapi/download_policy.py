@@ -121,12 +121,28 @@ def build_download_policy(data: Dict[str, Any]) -> DownloadPolicy:
     )
 
 
-def load_download_policy(path: str | Path) -> DownloadPolicy:
+class PolicyFileError(ValueError):
+    """An unreadable download policy file; the message names the file and position only, never its content."""
+    code = "invalid_settings"
+
+
+def read_policy_file(path: str | Path) -> Dict[str, Any]:
+    """The decoded policy mapping. A YAML error is re-raised without the parser's source excerpt or exception chain
+    (the excerpt could repeat a value; contract v2 item 3)."""
     policy_path = Path(path).expanduser().resolve()
-    payload = yaml.safe_load(policy_path.read_text(encoding="utf-8")) or {}
+    try:
+        payload = yaml.safe_load(policy_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as error:
+        mark = getattr(error, "problem_mark", None) or getattr(error, "context_mark", None)
+        where = f" (line {mark.line + 1}, column {mark.column + 1})" if mark is not None else ""
+        raise PolicyFileError(f"Download policy file is not valid YAML: {policy_path}{where}") from None
     if not isinstance(payload, dict):
-        raise ValueError("Download policy file must define a mapping at the top level")
-    return build_download_policy(payload)
+        raise PolicyFileError("Download policy file must define a mapping at the top level")
+    return payload
+
+
+def load_download_policy(path: str | Path) -> DownloadPolicy:
+    return build_download_policy(read_policy_file(path))
 
 
 __all__ = [
@@ -136,4 +152,5 @@ __all__ = [
     "VALID_DOWNLOADERS",
     "build_download_policy",
     "load_download_policy",
+    "read_policy_file",
 ]
