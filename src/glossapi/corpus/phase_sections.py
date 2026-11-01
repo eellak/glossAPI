@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ..stages.profile import adapters_enabled
+from .._naming import canonical_stem as _canonical_stem
 from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
 
 import json
@@ -77,7 +78,9 @@ class SectionPhaseMixin:
                             pd.read_parquet(parquet_path)  # raises the same missing-file error as before
                         mask = pd.Series(False, index=df_meta.index)
                         if 'filter' in df_meta.columns:
-                            mask = mask | (df_meta['filter'] == 'ok')
+                            # A row no cleaner has judged (null filter) is unfiltered, as clean's own reader treats it
+                            # (K4(b) round 2: the metadata row no longer carries an invented 'ok' before clean runs).
+                            mask = mask | df_meta['filter'].isna() | (df_meta['filter'] == 'ok')
                         if 'ocr_success' in df_meta.columns:
                             mask = mask | (df_meta['ocr_success'].fillna(False))
                         good_rows = df_meta[mask]
@@ -124,6 +127,11 @@ class SectionPhaseMixin:
             else:
                 self.logger.info("No metadata parquet found for section selection; will fall back to all markdown files")
 
+        planned = getattr(self, "_streaming_publication_stems", None)
+        if planned:
+            # A streaming run sections exactly its plan's documents (K4BI-G3).
+            stems = set(planned.values())
+            good_filenames = [name for name in good_filenames if _canonical_stem(name) in stems]
         self.logger.info(f"Found {len(good_filenames)} good quality files for sectioning")
         if good_filenames:
             self.logger.info(f"Good filenames: {good_filenames}")
@@ -134,6 +142,7 @@ class SectionPhaseMixin:
             good_filenames = [
                 os.path.splitext(p.name)[0]
                 for p in Path(self.markdown_dir).glob("*.md")
+                if not planned or _canonical_stem(p) in set(planned.values())
             ]
             if not good_filenames:
                 error_msg = "No markdown files found to section. Extraction might have failed."

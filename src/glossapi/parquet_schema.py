@@ -112,6 +112,16 @@ def _nullable_or(lhs: object, rhs: object) -> object:
     return False
 
 
+def _nullable_integers(df: pd.DataFrame) -> pd.DataFrame:
+    """A copy whose numpy integer columns are pandas nullable integers (exact under row unions with missing rows)."""
+    result = df.copy()
+    for column in result.columns:
+        dtype = result[column].dtype
+        if pd.api.types.is_integer_dtype(dtype) and not isinstance(dtype, pd.api.extensions.ExtensionDtype):
+            result[column] = result[column].astype("UInt64" if pd.api.types.is_unsigned_integer_dtype(dtype) else "Int64")
+    return result
+
+
 def _prepare_metadata_frame(df: pd.DataFrame) -> pd.DataFrame:
     """Return a copy with normalized boolean columns and legacy aliases aligned."""
 
@@ -1001,40 +1011,42 @@ class ParquetSchema:
                 logger.debug("Failed to read existing metadata parquet %s: %s", candidate, exc)
                 return pd.DataFrame()
 
+        # One rule for every record (K4BI-G9): a field holds the value its producer computed, else null. The
+        # artifact scan fills what it observes below; nothing here invents a value for a field no producer filled.
         defaults: Dict[str, Any] = {
-            self.url_column: "",
+            self.url_column: pd.NA,
             "filename": "",
             "file_ext": "",
             "document_type": pd.NA,
-            "download_success": False,
-            "download_error": "",
-            "download_retry_count": 0,
-            "is_duplicate": False,
-            "duplicate_of": "",
+            "download_success": pd.NA,
+            "download_error": pd.NA,
+            "download_retry_count": pd.NA,
+            "is_duplicate": pd.NA,
+            "duplicate_of": pd.NA,
             "source_row": pd.NA,
             "url_index": pd.NA,
             "filename_base": "",
-            "filter": "ok",
-            "extract_status": "",
-            "extract_error": "",
-            "font_repair_status": "skipped",
-            "font_repair_backend": "unknown",
-            "font_repair_fonts": 0,
-            "font_repair_valid_rate_before": None,
-            "font_repair_valid_rate_after": None,
-            "needs_ocr": False,
-            "ocr_pages": "",
-            "ocr_pages_count": 0,
-            "ocr_pages_unflagged_count": 0,
+            "filter": pd.NA,
+            "extract_status": pd.NA,
+            "extract_error": pd.NA,
+            "font_repair_status": pd.NA,
+            "font_repair_backend": pd.NA,
+            "font_repair_fonts": pd.NA,
+            "font_repair_valid_rate_before": pd.NA,
+            "font_repair_valid_rate_after": pd.NA,
+            "needs_ocr": pd.NA,
+            "ocr_pages": pd.NA,
+            "ocr_pages_count": pd.NA,
+            "ocr_pages_unflagged_count": pd.NA,
             "pua_char_count": pd.NA,
             "control_char_count": pd.NA,
-            "ocr_success": False,
+            "ocr_success": pd.NA,
             "processing_stage": "",
             "mojibake_badness_score": pd.NA,
             "mojibake_latin_percentage": pd.NA,
             "percentage_greek": pd.NA,
             "char_count_no_comments": pd.NA,
-            "is_empty": False,
+            "is_empty": pd.NA,
             "page_count": pd.NA,
             "pages_total": pd.NA,
             "pages_with_formula": pd.NA,
@@ -1042,7 +1054,7 @@ class ParquetSchema:
             "formula_avg_pp": pd.NA,
             "formula_p90_pp": pd.NA,
             "phase_recommended": pd.NA,
-            "math_enriched": False,
+            "math_enriched": pd.NA,
             "math_items": pd.NA,
             "math_accepted": pd.NA,
             "math_accept_rate": pd.NA,
@@ -1081,8 +1093,7 @@ class ParquetSchema:
         for pdf_path in pdf_paths:
             stem = canonical_stem(pdf_path)
             row = _row_for(stem)
-            if not row.get(self.url_column):
-                row[self.url_column] = ""
+            # No URL is invented for a PDF found on disk; a producer (the downloader) records it.
             row["filename"] = pdf_path.name
             row["file_ext"] = pdf_path.suffix.lstrip(".").lower()
             row["filename_base"] = stem
@@ -1281,7 +1292,9 @@ class ParquetSchema:
                 combined = existing_df.copy()
             elif not combined.empty and not existing_df.empty and "filename" in existing_df.columns:
                 base_idx = combined.set_index("filename", drop=False)
-                existing_idx = existing_df.set_index("filename", drop=False)
+                # Exact union (S1): integer columns become nullable before the row union, so a value above 2**53
+                # survives rows the existing table does not have (plain int64 would be promoted to float64).
+                existing_idx = _nullable_integers(existing_df).set_index("filename", drop=False)
                 base_idx = base_idx.combine_first(existing_idx)
                 base_idx.update(existing_idx)
                 # Fresh extraction evidence wins over older parquet state.
@@ -1300,10 +1313,20 @@ class ParquetSchema:
                 )
                 return target_path
 
+            if not existing_df.empty and "download_success" in existing_df.columns and "download_success" in combined.columns:
+                # An acquired download keeps its "download" stage after memory_saving=extreme deleted the file
+                # (the artifact scan above sees only files still present).
+                stages = combined["processing_stage"].fillna("").astype(str) if "processing_stage" in combined.columns else pd.Series("", index=combined.index)
+                acquired = (combined["download_success"] == True) & ~stages.map(lambda value: "download" in value.split(","))  # noqa: E712
+                if acquired.any():
+                    combined.loc[acquired, "processing_stage"] = stages[acquired].map(lambda value: ",".join(["download", *[p for p in value.split(",") if p]]))
             for column, default in defaults.items():
                 if column not in combined.columns:
                     combined[column] = default
-            combined = combined.reindex(columns=ordered_columns, fill_value=pd.NA)
+            # Exact union (S1): every column of the existing table (the caller's own, the HTTP downloader's
+            # selection_id, resource_identity, base_domain, ...) is kept after the fixed columns, with its type.
+            extra = [column for column in [*existing_df.columns, *combined.columns] if column not in ordered_columns]
+            combined = combined.reindex(columns=[*ordered_columns, *dict.fromkeys(extra)], fill_value=pd.NA)
             combined.sort_values(by="filename", inplace=True)
             _write_metadata_parquet_locked(combined, physical, observed=target_path)
             logger.info(

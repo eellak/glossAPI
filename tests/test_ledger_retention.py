@@ -64,6 +64,10 @@ def consumer(writer,run,version,file,*,status='ok',operation='clean.test',covera
     ('attempt_diagnostic','intermediate','managed',False),
     ('document_jsonl','final','managed',True),
     ('generation_manifest','evidence','managed',True),
+    # The annotated-section export is its own final product (PLAN 2.3, W18 M1): kept in all four settings.
+    ('sections_parquet','final','managed',True),
+    ('classified_parquet','final','managed',True),
+    ('annotated_parquet','final','managed',True),
 ])
 def test_artifact_matrix_all_four_settings(tmp_path,debug,memory_saving,kind,retention,ownership,pinned):
     with LedgerWriter(tmp_path/'corpus.sqlite3') as writer:

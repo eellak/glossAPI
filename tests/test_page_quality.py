@@ -200,7 +200,8 @@ def test_parquet_schema_defaults(tmp_path):
     (tmp_path / 'downloads/a.pdf').write_bytes(b'%PDF-stub')
     path = schema.ensure_metadata_parquet(tmp_path)
     row = pd.read_parquet(path).iloc[0]
-    assert row['ocr_pages'] == '' and row['ocr_pages_count'] == 0
+    # K4BI-G9: no producer computed OCR pages for this file, so the fields are null (no invented defaults).
+    assert pd.isna(row['ocr_pages']) and pd.isna(row['ocr_pages_count'])
     assert 'ocr_pages' in schema.METADATA_SCHEMA.names
 
 

@@ -68,6 +68,12 @@ def register_publication(writer, run_id, stage, kind, uri, *, version_id, produc
         if row['ownership'] == 'legacy_external' and row['producer_attempt_id'] is None and (row['sha256'], row['bytes']) == (sha256, bytes):
             writer.event(run_id, event_kind='artifact', reason_code='missing', file_id=row['file_id'], version_id=row['version_id'],
                 details={'observation': 'unowned_location_claimed_by_product', 'product_file_id': file_id})
+        elif (kind == 'download_payload' and row['kind'] == 'download_payload' and row['ownership'] == 'managed'
+                and row['version_id'] != version_id and (row['sha256'], row['bytes']) != (sha256, bytes)):
+            # A later acquisition of the same source keeps its name (K4BP-G4) and its bytes replaced the earlier
+            # downloads/ copy. The earlier version's bytes stay in its run's private download payload.
+            writer.event(run_id, event_kind='artifact', reason_code='missing', file_id=row['file_id'], version_id=row['version_id'],
+                details={'observation': 'replaced_by_later_acquisition', 'product_file_id': file_id})
     return file_id
 
 
@@ -88,10 +94,20 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
     from .products import producer_binding
     journal = _active_journal.get()
     binding = producer_binding(journal if isinstance(journal, ResultJournal) else None, source)
-    reference = ArtifactReference(str(uuid.uuid4()), "source_payload", source,
-        binding['sha256'] if binding else sha256_file(source), source.stat().st_size)
-    # One page-count based timeout per document (it was computed twice, each opening the PDF).
-    timeout_seconds = extractor._calculate_text_timeout(file_path=source)
+    released = None
+    if binding is None and isinstance(journal, ResultJournal) and not source.exists():
+        # memory_saving=extreme deleted this download after its last document reader (W18 M9). The projection
+        # replays the committed extraction bound to the recorded bytes; it never reads or re-consumes them.
+        from .retention import released_source
+        released = released_source(journal.writer.connection, source.as_uri())
+    if released is not None:
+        reference = ArtifactReference(str(uuid.uuid4()), "source_payload", source, released['sha256'], released['bytes'])
+        timeout_seconds = float(getattr(extractor, 'processing_timeout', None) or 600)
+    else:
+        reference = ArtifactReference(str(uuid.uuid4()), "source_payload", source,
+            binding['sha256'] if binding else sha256_file(source), source.stat().st_size)
+        # One page-count based timeout per document (it was computed twice, each opening the PDF).
+        timeout_seconds = extractor._calculate_text_timeout(file_path=source)
     with tempfile.TemporaryDirectory(prefix="glossapi-sequential-") as temporary:
         identifiers = [str(uuid.uuid4()) for _ in range(5)]
         request = StageRequest(*identifiers, "extract.document", (reference,), settings, {}, "cpu", Path(temporary)/"attempt",
@@ -114,7 +130,8 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
                     journal.versions[str(source)]=version
                     journal.writer.artifact(journal.run_id,'extract','initial_input',source.as_uri(),version_id=version,
                         sha256=reference.sha256,bytes=reference.bytes,ownership='initial_external',retention_class='initial')
-            file_id = journal.writer.connection.execute("SELECT file_id FROM current_file_state WHERE uri=? AND version_id=? AND sha256=? AND presence='present' ORDER BY event_id DESC LIMIT 1",
+            file_id = released['file_id'] if released is not None and released['version_id'] == version else journal.writer.connection.execute(
+                "SELECT file_id FROM current_file_state WHERE uri=? AND version_id=? AND sha256=? AND presence='present' ORDER BY event_id DESC LIMIT 1",
                 (source.as_uri(), version, reference.sha256)).fetchone()[0]
             document_id = journal.writer.connection.execute("SELECT document_id FROM document_versions WHERE version_id=?", (version,)).fetchone()[0]
             snapshot = DocumentSnapshot(document_id, version, source.as_uri(), artifacts=(
@@ -135,6 +152,9 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
             if relative.startswith(("logs/", "inputs/")) or output.kind in ("attempt_diagnostic", "worker_receipt"):
                 continue
             path = checked_path(workspace, relative)
+            if output.kind == "repaired_pdf" and not path.exists() and isinstance(journal, ResultJournal) and journal.writer.connection.execute(
+                    "SELECT 1 FROM current_file_state WHERE uri=? AND presence='deleted' LIMIT 1", (path.as_uri(),)).fetchone():
+                continue  # released under memory_saving=extreme after extraction (W18 M9); its mirror would be released anyway
             if output.kind == "chunk_manifest":
                 import json
                 payload = json.loads(path.read_text())

@@ -132,6 +132,8 @@ def _deletion_policy(documents: list[dict[str, Any]], stages: list[str], setting
                 compatibility_publications=('copies published into markdown/, clean_markdown/, sidecars/ and download_results/ follow the '
                                             'retention declared when they are published; a copy without a declaration is kept '
                                             '(report --why lists each file with its pins)'),
+                kept_compatibility_copies=[dict(kinds=['clean_markdown', 'extract_sidecar'], locations=['clean_markdown/', 'sidecars/extract/'],
+                                                reason='published compatibility copies kept in every setting (pin published_compatibility_copy)')],
                 basis='declared stage output kinds; exact file paths are assigned when the run registers them')
 
 
@@ -194,7 +196,10 @@ def preview_fields(*, documents: list[dict[str, Any]], stages: list[str], reques
                             state='remote' if path is None else 'absent' if observation.get('bytes') is None else
                             'unreadable' if observation.get('read_error') else 'present',
                             bytes=observation.get('bytes'), sha256=observation.get('sha256') or observation.get('stored_sha256'),
-                            stages=steps, download=dict(source_uri=uri) if 'download' in steps else None,
+                            stages=steps, download=(dict(source_uri=uri, reacquire=bool(document.get('version_id')),
+                                                         reason='a run fetches every remote source again; earlier downloads are not reused'
+                                                         if document.get('version_id') else 'first acquisition')
+                                                    if 'download' in steps else None),
                             known_version_id=document.get('version_id')))
     install = sorted({command for row in missing for command in cast(list[str], row['install_commands'])})
     return dict(preview_version=PREVIEW_VERSION, requested_stages=list(requested), targets=targets, exclusions=exclusions,

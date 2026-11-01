@@ -371,6 +371,12 @@ def report_why(connection, selector, *, run=None, stage=None):
                         reason_code=selected['reason_code'],record_hash=record_hashes.get(selected.get('compatibility_stem')),
                         manifest_hash=terminal.get('output_manifest_sha256'),event_id=event['event_id']))
                     inclusion_scope.append((event['run_id'], selected.get('version_id')))
+        elif details.get("product") == "annotated_sections" and event["event_kind"] == "decision":
+            # The annotated-section export's own census (PLAN 2.3, W18 M4).
+            inclusion.append(dict(product="annotated_sections", decision=details.get("decision"), reason_code=event["reason_code"],
+                                  cause=details.get("cause"), section_count=details.get("section_count"),
+                                  record_hash=None, manifest_hash=event["output_manifest_sha256"], event_id=event["event_id"]))
+            inclusion_scope.append((event['run_id'], event['version_id']))
         elif event["reason_code"].startswith("export_"):
             inclusion.append(dict(product=details.get("product", details.get("path")), decision=event["reason_code"], reason_code=event["reason_code"],
                                   record_hash=details.get("record_sha256"), manifest_hash=event["output_manifest_sha256"], event_id=event["event_id"]))
@@ -399,21 +405,29 @@ def report_why(connection, selector, *, run=None, stage=None):
         children = {json.loads(encoded).get("wrapper_run_id") for encoded, in connection.execute(
             "SELECT details_json FROM events WHERE run_id=? AND message LIKE 'wrapper:%'", (run_id,))}
         return {run_id} | {child for child in children if child}
-    def disposition_of(version_id, run_id):
+    def disposition_of(version_id, run_id) -> dict[str, Any]:
         scope = execution_scope(run_id)
         final = None
         for item, (event_run, event_version) in zip(inclusion, inclusion_scope):
             if item.get("product") == "document_jsonl" and event_version == version_id and event_run in scope:
                 final = item
+        sections = None
+        for item, (event_run, event_version) in zip(inclusion, inclusion_scope):
+            if item.get("product") == "annotated_sections" and event_version == version_id and event_run in scope:
+                sections = item
+        products = {"annotated_sections": dict(decision=sections["decision"], reason_code=sections["reason_code"], cause=sections.get("cause"),
+                    section_count=sections.get("section_count"), event_id=sections["event_id"])} if sections else {}
         if final is not None:
-            return dict(decision=final["decision"], reason_code=final["reason_code"], event_id=final["event_id"], run_id=run_id, basis="export_inclusion")
+            products["document_jsonl"] = dict(decision=final["decision"], reason_code=final["reason_code"], event_id=final["event_id"])
+            return dict(decision=final["decision"], reason_code=final["reason_code"], event_id=final["event_id"], run_id=run_id, basis="export_inclusion",
+                        **({"products": products} if sections else {}))
         terminal = [item for item in stages if item.get("scope") == "document" and item["status"]
                     and item["version_id"] == version_id and item["run_id"] in scope]
         failed = next((item for item in terminal if item["status"] in ("failed", "skipped")), None)
         return dict(decision="failed" if failed and failed["status"] == "failed" else failed["status"] if failed else
                     "completed" if terminal else None,
                     reason_code=(failed["reasons"][-1]["reason_code"] if failed and failed["reasons"] else None),
-                    event_id=None, run_id=run_id, basis="document_stage_status")
+                    event_id=None, run_id=run_id, basis="document_stage_status", **({"products": products} if products else {}))
     occurrences = []
     for record in records:
         bound_version, execution_run = bindings.get(record["source_record_id"], (None, None))
@@ -461,6 +475,28 @@ def source_metadata(connection, document_ids, run):
                                    source_uri=record["source_uri"], source_row=record["source_row"], metadata=metadata,
                                    metadata_encoding=encoding))
     return output
+
+
+def _mark_interruption(connection: Any, run: Any, counts: Any, result: Any) -> None:
+    """A run the filesystem stopped says so (W18 M10): exhausted disk, not a live or killed process."""
+    if not run or not (counts["running"] or counts["planned"]):
+        return
+    latest = connection.execute("SELECT event_id,reason_code,message FROM events WHERE run_id=? AND event_kind='run' ORDER BY event_id DESC LIMIT 1",
+                                (run["run_id"],)).fetchone()
+    recorded = None
+    if latest is None or latest[1] != "disk_full":
+        # The ledger could not take one more page: the record allocated at run start names the cause (K4BI-G2).
+        from ..stages.interruption import read as read_interruption
+        root = _ledger_root(connection)
+        recorded = read_interruption(root, str(run["run_id"])) if root else None
+        if recorded is None:
+            return
+    result["state"] = "interrupted"
+    result["interruption"] = dict(cause="disk_full", errno=28, event_id=latest[0] if recorded is None else None,
+                                  message=latest[2] if recorded is None else recorded.get("error"),
+                                  recorded_at=recorded.get("recorded_at") if recorded else None,
+                                  basis="ledger event" if recorded is None else "record allocated at run start",
+                                  action="free space (or enlarge the filesystem), then: glossapi run --resume " + str(run["run_id"]))
 
 
 def status_view(connection, *, run=None, stage=None, selector=None):
@@ -515,6 +551,7 @@ def status_view(connection, *, run=None, stage=None, selector=None):
         result['resources']['disk_budget_bytes']=plan.get('disk_budget_bytes')
         latest=connection.execute("SELECT details_json FROM events WHERE run_id=? AND event_kind='run' ORDER BY event_id DESC LIMIT 1",(run['run_id'],)).fetchone()
         if latest:result['state']=json.loads(latest[0]).get('state',state)
+    _mark_interruption(connection, run, counts, result)
     return result
 
 
@@ -583,6 +620,13 @@ def report_view(connection, *, run=None, stage=None):
     return dict(rows=rows, retention=retention_summary(connection,run),
                 resources=status["resources"], counts=status["counts"], conflicts=conflicts,
                 sources=source_metadata(connection, document_ids, run))
+
+
+def _final_products_estimate(documents: Any, stages: Any) -> dict[str, Any]:
+    """K4BI-G8: the text the corpus barriers keep and the final products they make, estimated before the run."""
+    from ..stages.final_products import estimate
+    sizes = [d["source_observation"].get("bytes") for d in documents]
+    return estimate(set(stages), sum(size for size in sizes if size), len(documents), unknown=sum(1 for size in sizes if not size))
 
 
 def plan_view(connection=None, *, selectors=None, stages=None, settings=None, devices=None, workers=None, manifest=None, identities=None,
@@ -669,7 +713,9 @@ def plan_view(connection=None, *, selectors=None, stages=None, settings=None, de
         remote_source = key.startswith(("url:v1:", "url:v2:")) or urlsplit(selector).scheme.lower() in ("http", "https")
         if known and not remote_source:
             remote_source = any(r[0] == "url" for r in connection.execute("SELECT source_kind FROM source_records WHERE document_id=?", (identifier,)))
-        if remote_source and (version is None or version["stored_sha256"] is None) and "extract" in document_stages:
+        if remote_source and "extract" in document_stages:
+            # A run acquires every remote source again (no cross-run reuse), including one an earlier run
+            # downloaded or deleted under memory_saving=extreme: the preview shows that fetch (K4BP-G5).
             document_stages.add("download")
         pooled_stages.update(document_stages)
         steps = []
@@ -697,9 +743,9 @@ def plan_view(connection=None, *, selectors=None, stages=None, settings=None, de
             pool['detector_device']=values['detector_device']
             pool['accelerator_devices']=sorted(accelerator_claims('ocr',pool['device_id'],{'options':values}))
             pool['cpu_tokens']=int(settings.get('ocr',{}).get('num_threads',1))
-    barriers = [dict(name=name, scope="corpus", waiting_for="sealed_selection", remaining=len(documents))
-                for name, stage in (("source_manifest", None), ("sections_selection_ids", "sections"), ("annotation_batch", "annotate"), ("export_shards", "export"))
-                if stage is None or stage in pooled_stages]
+    # Every corpus-wide waiting point the run executes, with why it waits and what continues (W18 M13).
+    from ..stages.barriers import planned_barriers
+    barriers: Any = planned_barriers(pooled_stages, len(documents))
     from ..plan_preview import preview_fields
     planned_stages = [stage for stage in STAGE_ORDER if stage in pooled_stages]
     preview = preview_fields(documents=documents, stages=planned_stages, requested=list(requested), settings=settings,
@@ -721,7 +767,8 @@ def plan_view(connection=None, *, selectors=None, stages=None, settings=None, de
                     reason_code=None if installed else "missing_capability")
     body = dict(source_inventory_hash=source_inventory_hash, settings=settings, settings_help={"debug":DEBUG_HELP,"memory_saving":MEMORY_SAVING_HELP}, documents=documents, barriers=barriers, pools=pools,
         resource_limits={k: settings.get(k) for k in ("disk_budget_bytes", "max_source_bytes", "max_attempt_bytes")},
-        disk=dict(present_bytes=present, pinned_bytes=None, reserved_bytes=None, estimated_peak_bytes=None, unknown_sizes=[dict(document_id=d["document_id"], reason_code="unknown_not_recorded") for d in documents]),
+        disk=dict(present_bytes=present, pinned_bytes=None, reserved_bytes=None, estimated_peak_bytes=None, unknown_sizes=[dict(document_id=d["document_id"], reason_code="unknown_not_recorded") for d in documents],
+                  final_products=_final_products_estimate(documents, planned_stages)),
         requirements=[requirement_entry(p) for p in sorted({p for d in documents for s in d['steps'] for p in s['packages']})],
         legacy_import_required=connection is None or connection.execute("SELECT 1 FROM events WHERE reason_code='legacy_import_completed' LIMIT 1").fetchone() is None,
         execution=dict(command="run", profile="streaming_document_dag",

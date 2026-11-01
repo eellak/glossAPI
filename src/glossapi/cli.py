@@ -400,7 +400,7 @@ def main(argv=None):
         envelope["errors"].append(dict(code=code, message=scrub_error_text(str(error)), document_id=None, stage=None, details=scrub_known_value(scrub(getattr(error, "details", {})))))
         if envelope.get("command") == "run" and not isinstance((envelope.get("data") or {}).get("state"), str):
             envelope["data"] = None  # a refused run has no run data (the plan is not its result)
-        exit_code = 3 if code in ("policy_conflict","disk_guard_unavailable","disk_budget_exceeded","disk_budget_required","waiting_for_disk") else 2
+        exit_code = 3 if code in ("policy_conflict","disk_guard_unavailable","disk_budget_exceeded","disk_budget_required","waiting_for_disk","disk_full") else 2
     return _emit(envelope, argv, exit_code)
 
 
