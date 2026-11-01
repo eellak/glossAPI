@@ -140,6 +140,6 @@ def annotate_products(corpus,annotation_type,fully_annotate):
                 'document_types':corpus.filename_to_doctype,'section_key_evidence':key_evidence,'batch_barrier':True}))
     if result.status!='ok':
         raise ValueError(result.error.message if result.error else result.reason_code)
-    paths={output.relative_path:corpus.output_dir/output.relative_path for output in result.outputs
+    paths: dict[str, object]={output.relative_path:corpus.output_dir/output.relative_path for output in result.outputs
         if output.kind in ('classified_parquet','annotated_parquet','annotation_partition')}
     publish_products(corpus,result,workspace,paths)

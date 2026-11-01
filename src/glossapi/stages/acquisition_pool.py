@@ -1,6 +1,8 @@
 """One fenced async acquisition process with shared rate and domain limits."""
 from __future__ import annotations
 
+from typing import Any, cast
+
 import asyncio
 from dataclasses import asdict,replace
 import json
@@ -91,7 +93,7 @@ def _serve(connection,parent_pid,capacity):
                     from .execution import producer_hash_scope, seal_output_hashes, write_text_hashed
                     import hashlib
                     with producer_hash_scope():
-                        result=seal_output_hashes(result,request.work_directory)
+                        result=seal_output_hashes(cast(Any,result),request.work_directory)
                     from ..ledger.urls import parse_policy, scrub, scrub_known_value
                     encoded=json.dumps(scrub_known_value(scrub(asdict(result),parse_policy(request.settings.get('url_policy')))),ensure_ascii=False)
                     write_text_hashed(request.work_directory/'worker-result.json',encoded)

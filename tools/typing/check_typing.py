@@ -1,4 +1,5 @@
-"""W19 typing gate: strict modules have no pyright error; touched legacy files have no error beyond the staged baseline.
+"""W19 typing gate: strict modules have no pyright error; touched legacy files have no error beyond the staged baseline
+(baseline_k3a.json, plus baseline_k4.json for the ledger/ and stages/ modules K4 touched).
 
 Usage: python tools/typing/check_typing.py   (needs pyright==1.1.408 from the dev group; uses this interpreter's packages)
 Exit 0 when the gate holds; prints the new diagnostics otherwise. Baseline diagnostics are matched by file, rule and
@@ -23,6 +24,10 @@ def main():
     report = json.loads(done.stdout)
     strict = {str((HERE / path).resolve()).split('/src/')[-1] for path in config['strict']}
     allowed = Counter({(row['file'], row['rule'], row['message']): row['count'] for row in baseline['diagnostics']})
+    # CP-K4b F5: the staged gate also covers every ledger/ and stages/ module K4 touched, against their pre-K4 errors.
+    extended = HERE / 'baseline_k4.json'
+    if extended.exists():
+        allowed.update({(row['file'], row['rule'], row['message']): row['count'] for row in json.loads(extended.read_text())['diagnostics']})
     found = Counter()
     strict_errors = []
     for item in report['generalDiagnostics']:

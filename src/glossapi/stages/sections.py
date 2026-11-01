@@ -41,11 +41,11 @@ def restore_clean_selection(corpus):
         decision=unpack_evidence(json.loads(row[0]))
         # One aggregate selection per run (K4(c) part 3) carries a row per document; older ledgers have one
         # decision per document with the filename in the attempt settings.
-        for item in _selection_rows(decision,settings):
+        for item in _selection_rows(decision,cast(Any,settings)):
             if 'selected_file_id' not in item or not item.get('compatibility_filename'):continue
             fact=journal.writer.connection.execute('SELECT uri,sha256 FROM files WHERE file_id=?',(item['selected_file_id'],)).fetchone()
             path=local_path(fact['uri'])
-            if not path.is_file() or sha256_file(path)!=item['selected_text_sha256']:continue
+            if not path.is_file() or sha256_file(path,own=True)!=item['selected_text_sha256']:continue
             filename=Path(item['compatibility_filename']).stem
             selected[filename]=item['accepted_for_sections'];surfaces[filename]=path
     if selected:

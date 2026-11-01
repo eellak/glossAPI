@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import time
+from typing import Any, cast
 
 from .contracts import ArtifactReference, DocumentSnapshot, StageSpecification
 from .execution import sha256_file
@@ -151,7 +152,7 @@ class StreamingScheduler:
         if self.cpu_capacity < 1:
             raise ValueError('CPU token capacity must be positive')
         self.memory_capacity = memory_bytes
-        self.disk_capacity = disk_budget_bytes
+        self.disk_capacity: int | None = disk_budget_bytes
         self.registry = registry or stage_registry()
         self.retry_limit = retry_limit
         self.observer = observer or (lambda *_: None)
@@ -286,7 +287,7 @@ class StreamingScheduler:
         from ..ledger.journal import code_revision, loaded_tools
         plan = dict(schema_version=1, mode='streaming', operations=[operation_json(op) for op in operations],
                     workers=self.workers, cpu_tokens=self.cpu_capacity, memory_bytes=self.memory_capacity,
-                    disk_budget_bytes=self.disk_capacity, retry_limit=self.retry_limit,
+                    disk_budget_bytes=cast(Any, self.disk_capacity), retry_limit=self.retry_limit,
                     publication_barriers=list((settings or {}).get('publication_barriers',())))
         settings = {'debug': 'off', 'memory_saving': 'normal', **(settings or {})}
         from .retention import resolved_settings
@@ -335,7 +336,7 @@ class StreamingScheduler:
         self.workers = plan['workers']
         self.cpu_capacity = plan['cpu_tokens']
         self.memory_capacity = plan['memory_bytes']
-        self.disk_capacity = plan['disk_budget_bytes']
+        self.disk_capacity = cast(int | None, plan['disk_budget_bytes'])
         self.retry_limit = plan['retry_limit']
         operations = [operation_from_json(value) for value in plan['operations']]
         from ..ledger.journal import redact_credentials
@@ -391,12 +392,18 @@ class StreamingScheduler:
     def _recover(self, run, tasks, operations):
         done = {}
         # A run the filesystem stopped (W18 M10) names that cause on its interrupted attempts, not bare process death.
-        marker = self.writer.connection.execute(f"SELECT event_id FROM {self.writer.connection.event_table} WHERE run_id=? AND "
-            "event_kind='run' AND reason_code='disk_full' ORDER BY event_id DESC LIMIT 1", (run,)).fetchone()
-        from .interruption import read as read_interruption
-        recorded = read_interruption(self.root, run)
-        cause = ({'interruption_cause':'disk_full','errno':28,'disk_full_event_id':marker[0] if marker else None,
-                  'recorded_at':recorded.get('recorded_at') if recorded else None} if marker or recorded else {})
+        # Tied to each interrupted attempt's start (CP-K4a F3): an earlier ENOSPC never explains a later death.
+        from .interruption import consume, verified_cause
+        attributed: list[dict[str, Any]] = []
+        connection = cast(Any, self.writer.connection)
+        root = cast(Any, self.root)
+        run_id = cast(str, run)
+        def cause_of(attempt_id: str) -> dict[str, Any]:
+            found = verified_cause(connection, root, run_id, attempt_id=attempt_id, table=connection.event_table)
+            if not found:
+                return {}
+            attributed.append(found)
+            return {'interruption_cause':'disk_full','errno':28,'disk_full_event_id':found['event_id'],'recorded_at':found['recorded_at']}
         with self.writer.batch():
             for operation in operations:
                 task = tasks[operation.key]
@@ -405,7 +412,7 @@ class StreamingScheduler:
                     continue
                 if row['status'] == 'running' or row['status'] is None:
                     self.writer.finish(run,task,row['attempt_id'],status='failed',reason_code='attempt_interrupted',
-                        details={'lease_token':row['lease_token'],'recovery':'old parent fenced before replacement',**cause})
+                        details={'lease_token':row['lease_token'],'recovery':'old parent fenced before replacement',**cause_of(cast(str, row['attempt_id']))})
                 elif row['status']=='ok' and self._verified(row['attempt_id']) and all(
                     artifact.path.is_file() and sha256_file(artifact.path)==artifact.sha256 for artifact in operation.document.artifacts):
                     done[operation.key] = row['attempt_id']
@@ -424,6 +431,8 @@ class StreamingScheduler:
                                 os.rename(parent,quarantine)
                             self.writer.event(run,event_kind='invalidation',reason_code='attempt_interrupted',task_id=task,
                                 version_id=operation.document.version_id,details={'quarantined_uri':quarantine.as_uri()})
+        if any(found['basis'] == 'record allocated at run start' for found in attributed):
+            consume(root, run_id)  # attributed and committed: the record cannot explain a replacement attempt
         # A producer invalidation also invalidates every dependent completion.
         for operation in operations:
             if operation.key in done and any(edge[0] not in done for edge in operation.inputs):
@@ -450,7 +459,7 @@ class StreamingScheduler:
                 raise ValueError('Frozen model/dictionary input changed; create an amended run')
         from .disk_budget import DiskBudget, require_disk_guard
         require_disk_guard(self.root,frozen_settings)
-        budget=DiskBudget(self.writer,self.root,run,{**frozen_settings,'disk_budget_bytes':self.disk_capacity})
+        budget=DiskBudget(self.writer,self.root,run,{**frozen_settings,'disk_budget_bytes':cast(Any, self.disk_capacity)})
         budget.observe()
         from .retention import RetentionController
         RetentionController(self.writer,self.root,run,frozen_settings).recover()

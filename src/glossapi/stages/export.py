@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+from typing import Any, cast
 
 from .contracts import PackageRequirement, StagePlan, StageSpecification
 from .execution import failed_result, freeze_inputs, sha256_file
@@ -25,10 +26,10 @@ class ExportStage:
     def plan(self,documents,*,settings):
         return StagePlan((),('export_order_and_shard_membership',))
 
-    def run_document(self,request,*,reporter):
+    def run_document(self,request: Any,*,reporter: Any) -> Any:
         return self.finalize(request,reporter=reporter)
 
-    def finalize(self,request,*,reporter):
+    def finalize(self,request: Any,*,reporter: Any) -> Any:
         request.work_directory.mkdir(parents=True,exist_ok=True)
         # The legacy serializer reads a corpus-shaped view of the frozen inputs. The view is a throwaway copy beside
         # the attempt directory, not inside it: inside, every view file became a second registered generation file
@@ -40,11 +41,11 @@ class ExportStage:
         finally:
             shutil.rmtree(view_root,ignore_errors=True)
 
-    def _finalize(self,request,view_root):
+    def _finalize(self,request: Any,view_root: Path) -> Any:
         try:
             request=freeze_inputs(request)
             from ..corpus.phase_export import ExportPhaseMixin
-            view=copy.copy(self.corpus);view._inside_product_stage=True
+            view: Any=copy.copy(self.corpus);view._inside_product_stage=True
             view.output_dir=view_root
             view.markdown_dir=view.output_dir/'markdown'
             view.cleaned_markdown_dir=view.output_dir/'clean_markdown'
@@ -52,6 +53,12 @@ class ExportStage:
             for source,relative in zip(request.inputs,request.settings['input_paths']):
                 destination=view.output_dir/relative;destination.parent.mkdir(parents=True,exist_ok=True)
                 shutil.copyfile(source.path,destination)
+            mismatch=_borrowed_metadata_rows(view.output_dir/'metadata.parquet',request.settings.get('planned_sources'))
+            if mismatch:
+                # A planned document's metadata row names another source: refuse rather than export its text under
+                # that source's provenance (CP-K4a F1).
+                return failed_result(request,'export_metadata_identity_mismatch',ValueError(
+                    'metadata rows of planned documents name a different source: '+json.dumps(mismatch[:5],default=str)))
             options=dict(request.settings['options'])
             options['metadata_path']=view.output_dir/'metadata.parquet'
             if options.get('source_metadata_path') is not None:options['source_metadata_path']=view.output_dir/'source_metadata.parquet'
@@ -108,6 +115,36 @@ class ExportStage:
             return failed_result(request,'export_exception',error)
 
 
+def _borrowed_metadata_rows(path: Path, planned: dict[str, dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Metadata rows of planned stems that record a *different* source an earlier frozen plan downloaded under the same
+    name (``planned``: ``{stem: {url, foreign_urls, foreign_keys}}`` from the frozen plans). Such a row belongs to that
+    other URL; its provenance must never be exported with this document's text. Rows a caller supplied or a legacy
+    download wrote keep their legacy meaning."""
+    if not planned:
+        return []
+    import importlib
+    import re
+    from .._naming import canonical_stem
+    pd: Any = importlib.import_module("pandas")
+    frame: Any = pd.read_parquet(path)
+    if 'filename' not in frame.columns:
+        return []
+    def column(name: str) -> list[Any]:
+        return frame[name].tolist() if name in frame.columns else [None]*len(frame)
+    wrong: list[dict[str, Any]] = []
+    for filename,url,identity in zip(frame['filename'].tolist(),column('url'),column('resource_identity')):
+        stem=re.sub(r'__p\d{4}-\d{4}$','',canonical_stem(str(filename)))
+        expected=planned.get(stem)
+        if expected is None:
+            continue
+        url=url if isinstance(url,str) and url else None
+        identity=identity if isinstance(identity,str) and identity else None
+        if (url is not None and url!=expected.get('url') and url in expected.get('foreign_urls',()))\
+                or (identity is not None and identity in expected.get('foreign_keys',())):
+            wrong.append({'compatibility_filename':str(filename),'recorded_url':url,'recorded_resource_identity':identity,'planned_url':expected.get('url')})
+    return wrong
+
+
 def export_products(corpus,output,options,*,sharded=False):
     options=dict(options)
     for key in ('metadata_fields','source_metadata_fields'):
@@ -146,9 +183,12 @@ def export_products(corpus,output,options,*,sharded=False):
         for path in sorted(directory.glob(pattern)):
             inputs.append(('metrics_or_math',resolved_input(corpus,path)));relative_paths.append(prefix+'/'+path.name)
     semantic_options={key:str(value) if isinstance(value,Path) else value for key,value in options.items()}
+    sources: dict[str, dict[str, Any]] | None = getattr(cast(Any,corpus),'_streaming_publication_sources',None)
+    settings: dict[str, Any] = {'sharded':sharded,'options':semantic_options,'input_paths':relative_paths}
+    if sources:
+        settings['planned_sources']=dict(sorted(sources.items()))
     result,workspace=execute_aggregate(corpus,ExportStage(corpus),inputs,
-        StageSpecification('export.publish',tuple(role for role,path in inputs),('generation_manifest',),
-            settings={'sharded':sharded,'options':semantic_options,'input_paths':relative_paths}))
+        StageSpecification('export.publish',tuple(role for role,path in inputs),('generation_manifest',),settings=cast(Any,settings)))
     if result.status!='ok':
         # Match existing public error classes for malformed source/options.
         error_type=result.error.error_type.rsplit('.',1)[-1]

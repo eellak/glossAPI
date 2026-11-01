@@ -10,7 +10,7 @@ import json
 import math
 from pathlib import Path
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 
 def canonical_json(value):
@@ -94,16 +94,29 @@ def evidence(value):
 # the file is glossAPI's own register it (remember_own_hash); the user's originals and downloads are never registered,
 # so every boundary that hashes them still reads their bytes. The registry exists only inside run_hash_scope() and is
 # discarded at the end of the call, so anything that could change between runs is re-checked at the next run start.
-_run_hashes: dict[tuple[int, int, int, int], str] | None = None
+#
+# CP-K4b F3/F4: the key includes st_ctime_ns (any write or metadata change sets it; utime cannot restore it); only a
+# caller that declares the file glossAPI's own (``own=True``) consults the registry, so a caller-supplied file (or a
+# hard-link alias of a registered one) is always byte-hashed; a forked child starts with an empty registry.
+_run_hashes: dict[tuple[int, int, int, int, int], str] | None = None
 
 
-def own_hash_key(info: os.stat_result) -> tuple[int, int, int, int]:
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+def own_hash_key(info: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _forget_own_hashes_after_fork() -> None:
+    if _run_hashes is not None:
+        _run_hashes.clear()
+
+
+if hasattr(os, 'register_at_fork'):
+    os.register_at_fork(after_in_child=_forget_own_hashes_after_fork)
 
 
 class run_hash_scope:
     """Activate the registry for one public call; a nested call keeps the outer call's registry."""
-    outer: dict[tuple[int, int, int, int], str] | None = None
+    outer: dict[tuple[int, int, int, int, int], str] | None = None
 
     def __enter__(self) -> 'run_hash_scope':
         global _run_hashes
@@ -157,14 +170,15 @@ def file_hash(path: 'str | os.PathLike[str]', *, own: bool = False) -> str:
     accepted as proof for a file glossAPI did not write. The one exception is
     the run-scoped registry above: a file glossAPI itself wrote (or verified)
     in this run and has not reopened for writing keeps its recorded hash.
-    ``own=True`` registers the computed hash (the caller knows the file is
-    glossAPI's own, e.g. a managed artifact whose recorded hash it checks).
+    ``own=True`` consults and registers the registry (the caller knows the file
+    is glossAPI's own, e.g. a managed artifact whose recorded hash it checks);
+    ``own=False`` (a caller-supplied file) always reads the bytes (CP-K4b F3).
     """
     path = Path(path)
     def identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
         return (value.st_dev,value.st_ino,value.st_size,value.st_mtime_ns,value.st_ctime_ns)
     info = path.stat()
-    reused = reused_own_hash(info)
+    reused = reused_own_hash(info) if own else None
     if reused is not None:
         return reused
     before = identity(info)
@@ -232,8 +246,7 @@ def unpack_evidence(value: Any) -> Any:
                 table = item["_table"]
                 return [{key: unpack(table["dictionaries"][str(i)][row[i]] if str(i) in table["dictionaries"] else row[i])
                          for i, key in enumerate(table["columns"])} for row in table["rows"]]
-            if "_object" in item:
-                return {key: unpack(v) for key, v in item["_object"].items()}
-            return {key: unpack(v) for key, v in item.items()}
+            mapping = cast(dict[str, Any], item["_object"] if "_object" in item else item)
+            return {key: unpack(v) for key, v in mapping.items()}
         return item
     return unpack(value["value"])

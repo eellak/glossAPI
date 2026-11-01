@@ -27,6 +27,7 @@ def install_download_adapter(corpus,downloader,configuration,download_mode):
             if fact is None:
                 raise ValueError('Download projection differs from the frozen source manifest')
             journal=active_journal()
+            assert journal is not None  # the download serializer runs inside its publication journal
             journal.adapter_stages.add('download');journal.adapter_attempts.add(fact['attempt_id'])
             reference=fact['receipt']
             if reference is None:

@@ -7,6 +7,7 @@ from dataclasses import asdict
 import os
 from pathlib import Path
 import shutil
+from typing import Any, cast
 import tempfile
 import time
 import uuid
@@ -178,10 +179,11 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
             else:
                 from .execution import copy_hashed, link_published, links_released_copies
                 linked = None
-                if output.sha256 and isinstance(journal, ResultJournal) and links_released_copies(journal, output.retention_class, output.kind):
-                    linked = link_published(path, destination, output.sha256, output.bytes)
-                digest, size = linked or copy_hashed(path, destination, expected=(output.sha256, output.bytes) if output.sha256 else None)
-                if output.sha256 and (digest, size) != (output.sha256, output.bytes):
+                produced = cast(Any, output)
+                if produced.sha256 and isinstance(journal, ResultJournal) and links_released_copies(journal, produced.retention_class, produced.kind):
+                    linked = link_published(cast(Any, path), cast(Any, destination), produced.sha256, produced.bytes)
+                digest, size = linked or copy_hashed(cast(Any, path), cast(Any, destination), expected=(produced.sha256, produced.bytes) if produced.sha256 else None)
+                if produced.sha256 and (digest, size) != (produced.sha256, produced.bytes):
                     raise ValueError('Product changed during final publication')
                 mirror_hashes[relative] = (digest, size)
             claimed()
@@ -322,7 +324,7 @@ def clean_compatibility_kernel(corpus, md_files, report_path, *, input_root=None
     return scores
 
 
-def record_clean_selection(corpus, frame, *, drop_bad, thresholds):
+def record_clean_selection(corpus: Any, frame: Any, *, drop_bad: Any, thresholds: Any) -> None:
     from .clean import CleanStage
     from ..ledger.journal import _active_journal, ResultJournal
     journal = _active_journal.get()
@@ -335,7 +337,6 @@ def record_clean_selection(corpus, frame, *, drop_bad, thresholds):
         first_rows.setdefault(name, position)
     from .products import execute_aggregate
     policy = 'legacy_needs_ocr_false_when_drop_bad'
-    from typing import Any
     rows: list[dict[str, Any]] = []
     inputs: list[tuple[str, Path]] = []
     seen: set[Path] = set()
@@ -363,7 +364,6 @@ def record_clean_selection(corpus, frame, *, drop_bad, thresholds):
     # One aggregate task per run (K4(c) part 3, coordinator decision 2): every selected text is a bound input of
     # the one attempt and the decision keeps one row per document (its own selection, thresholds and reason).
     common: dict[str, Any] = {'effective_thresholds': thresholds, 'drop_bad': drop_bad, 'selection_policy': policy}
-    from typing import cast
     from .contracts import StageResult
     result = cast(StageResult, execute_aggregate(corpus, CleanStage({'rows': rows, **common}), inputs,
         StageSpecification('clean.selection', ('selected_text',), (), settings={**common,

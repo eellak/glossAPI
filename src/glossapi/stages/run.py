@@ -6,6 +6,7 @@ from contextlib import nullcontext
 import json
 from pathlib import Path
 import time
+from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 
 from .contracts import ArtifactReference, DocumentSnapshot, StageSpecification
@@ -95,7 +96,7 @@ def _transport_urls(value, found):
     return found
 
 
-def _corpus_download_names(root):
+def _corpus_download_names(root: Any) -> tuple[dict[str, str], set[str]]:
     """Download names this corpus already assigned: identity -> name base, and every taken base (K4BP-G4).
 
     Read from the recorded download results (the table the export joins a
@@ -126,10 +127,53 @@ def _corpus_download_names(root):
     return by_identity,taken
 
 
-def _rename_against_corpus(frames,identities,root):
-    """Re-derive ``filename_base`` in every frame from the corpus' earlier names (same rows, same identities)."""
+def _ledger_compatibility_names(writer: Any) -> dict[str, set[str]]:
+    """Every compatibility name a frozen plan of this corpus ever gave a source: ``{stem: {source_key, ...}}``.
+
+    Download names (``download.acquire`` ``filename_base``) and local publication names (``extract.document``
+    ``publication_name``, else the local source's own stem), joined to the document's source identity. A name held by
+    one source identity is never given to another in a later run, so a filename match can never borrow another
+    source's metadata row (CP-K4a F1).
+    """
+    from .._naming import canonical_stem
+    claimed: dict[str, set[str]] = {}
+    if writer is None:
+        return claimed
+    rows: list[Any]=writer.connection.execute("""SELECT t.operation,s.json,d.source_key FROM tasks t
+        JOIN snapshots s ON s.sha256=t.specification_sha256
+        JOIN document_versions v ON v.version_id=t.version_id JOIN documents d ON d.document_id=v.document_id
+        WHERE t.operation IN ('download.acquire','extract.document')""").fetchall()
+    for operation,specification,key in rows:
+        frozen = cast(dict[str, Any], json.loads(specification))
+        operation_json = cast(dict[str, Any], frozen.get('scheduler_operation') or {})
+        specification_json = cast(dict[str, Any], operation_json.get('specification') or {})
+        settings = cast(dict[str, Any], specification_json.get('settings') or frozen.get('settings') or {})
+        name: Any
+        if operation=='download.acquire':
+            name=settings.get('filename_base')
+        elif settings.get('publication_name'):
+            name=Path(settings['publication_name']).stem
+        elif str(key).startswith('local_path:v1:'):
+            name=canonical_stem(local_path(str(key).split(':v1:',1)[1]))
+        else:
+            continue  # a remote document's extraction uses its download name, recorded above
+        if name:
+            claimed.setdefault(canonical_stem(str(name)),set()).add(key)
+    return claimed
+
+
+def _rename_against_corpus(frames: Any, identities: Any, root: Any, claimed: dict[str, set[str]] | None = None) -> bool:
+    """Re-derive ``filename_base`` in every frame from the corpus' earlier names (same rows, same identities).
+
+    ``claimed`` adds the names earlier frozen plans gave any source identity (``_ledger_compatibility_names``): a URL
+    keeps a name the ledger records for its own identity and never takes one recorded for another identity.
+    """
     from ..gloss_downloader import GlossDownloader
     by_identity,taken=_corpus_download_names(root)
+    for name,keys in (claimed or {}).items():
+        taken.add(name)
+        for key in keys:
+            if key in identities and len(keys)==1:by_identity.setdefault(key,name)
     if not taken:
         return False
     keep={by_identity[identity] for identity in identities if identity in by_identity}
@@ -143,7 +187,7 @@ def _rename_against_corpus(frames,identities,root):
     return True
 
 
-def _remote_inventory(rows,root):
+def _remote_inventory(rows,root,claimed: dict[str, set[str]] | None = None):
     """Expand, deduplicate and name remote rows on their raw URLs, in memory.
 
     Returns the persisted rows (for the ledger), the raw URL and identity of
@@ -162,7 +206,7 @@ def _remote_inventory(rows,root):
     for row in rows:
         if 'url' not in row or not isinstance(row['url'],(str,list,tuple)) or (isinstance(row['url'],str) and not row['url'].strip()):
             row['url']=_row_url(row)
-    persisted=scrub(rows)
+    persisted=cast(Any,scrub(rows))
     raw_named=kernel(pd.DataFrame(rows))
     persisted_frame=pd.DataFrame(persisted)
     persisted_named=kernel(persisted_frame.copy())
@@ -186,7 +230,7 @@ def _remote_inventory(rows,root):
         if identity is not None:
             _bind(seen,identity,raw)
     # A corpus that already holds downloads keeps their names; new sources never take a name in use (K4BP-G4).
-    renamed=_rename_against_corpus((raw_named,persisted_named),identities,root)
+    renamed=_rename_against_corpus((raw_named,persisted_named),identities,root,claimed)
     same=(list(raw_named['is_duplicate'].astype(bool))==list(persisted_named['is_duplicate'].astype(bool))
           and list(raw_named['filename_base'].astype(str))==list(persisted_named['filename_base'].astype(str)))
     named=persisted_named
@@ -206,7 +250,7 @@ def _remote_inventory(rows,root):
         # Distinct raw URLs persist alike (different credentials or query
         # values): seal the raw duplicate decisions and names as non-secret
         # columns so the unchanged download serializer reproduces them.
-        groups=raw_named['__url_norm'].map({value:index for index,value in reversed(list(enumerate(raw_named['__url_norm'])))})
+        groups=raw_named['__url_norm'].map(cast(Any,{value:index for index,value in reversed(list(enumerate(raw_named['__url_norm'])))}))
         named=persisted_named.copy()
         named['is_duplicate']=raw_named['is_duplicate'].astype(bool).values
         named['filename_base']=raw_named['filename_base'].astype(str).values
@@ -238,27 +282,40 @@ def _manifest_selector_uri(row, writer):
     return Path(unquote(urlsplit(selector).path) if selector.startswith('file:') else selector).resolve().as_uri()
 
 
-def _publication_names(entries, remote_bases):
-    """Collision-free compatibility publication names for local inputs (CP-LEDGER F1).
+def _publication_names(entries: list[dict[str, Any]], remote_bases: list[Any], claimed: dict[str, set[str]] | None = None) -> dict[str, str]:
+    """Collision-free compatibility publication names for local inputs (CP-LEDGER F1, CP-K4a F1).
 
     Legacy serializers key every product by the source basename/stem. Inputs
     whose canonical stems are unique keep exactly their current names. When
     distinct inputs share one, each local input is published under a name
     derived from its own source identity, so no product is overwritten.
+    A stem that an earlier frozen plan gave a *different* source identity
+    (``claimed``: ``{stem: {source_key}}`` from the ledger, remote or local) is
+    reserved too: the local input then takes its identity-derived name, so its
+    products and metadata row never meet the other source's row.
     """
     import hashlib
     from .._naming import canonical_stem
-    groups = {}
+    claimed = claimed or {}
+    groups: dict[str, list[dict[str, Any]]] = {}
     for entry in entries:
         if entry['path'] is not None:
             groups.setdefault(canonical_stem(entry['path'].name), []).append(entry)
-    names = {}
-    taken = {canonical_stem(name) for name in remote_bases} | {stem for stem, members in groups.items() if len(members) == 1}
+    names: dict[str, str] = {}
+    remote = {canonical_stem(name) for name in remote_bases}
+    def held(stem: str, members: list[dict[str, Any]]) -> bool:
+        return bool(claimed.get(stem, set()) - {entry['key'] for entry in members})
+    taken = remote | set(claimed) | {stem for stem, members in groups.items() if len(members) == 1}
     for stem, members in groups.items():
-        if len(members) == 1 and stem not in {canonical_stem(name) for name in remote_bases}:
+        if len(members) == 1 and stem not in remote and not held(stem, members):
             continue
         for entry in members:
             digest = hashlib.sha256(entry['key'].encode('utf-8')).hexdigest()
+            # A source that already holds an identity-derived name keeps it (reintroduction is stable).
+            own = sorted(name for name, keys in claimed.items() if keys == {entry['key']} and name.startswith(f'{stem}__{digest[:10]}'))
+            if own:
+                names[entry['key']] = f'{own[0]}{entry["path"].suffix}'
+                continue
             width = 10
             while f'{stem}__{digest[:width]}' in taken:
                 width += 2
@@ -284,6 +341,71 @@ def _publication_stems(operations):
             published=operation.specification.settings.get('publication_name')
             stems[version]=Path(published).stem if published else canonical_stem(local_path(operation.document.source_uri))
     return stems
+
+
+def _publication_sources(operations: Any, writer: Any) -> dict[str, dict[str, Any]]:
+    """Per planned compatibility stem: its frozen source (``url``: the download URL, None for a local input) and the
+    URLs and identities of every *other* source an earlier frozen plan downloaded under that name (``foreign_urls``,
+    ``foreign_keys``). The export refuses a planned stem's metadata row that records one of those other sources
+    (CP-K4a F1: a filename match never lends another source's provenance). Rows the caller supplied or a legacy
+    download wrote (no frozen plan gave the name to another identity) keep their legacy meaning."""
+    stems = cast(dict[Any, str], _publication_stems(operations))
+    remote: dict[Any, str] = {operation.document.version_id:operation.document.source_uri for operation in operations if operation.stage=='download'}
+    documents: dict[Any, Any] = {operation.document.version_id:operation.document.document_id for operation in operations}
+    claims: dict[str, set[tuple[str, str]]] = {}
+    rows: list[Any] = writer.connection.execute("""SELECT s.json,d.source_key FROM tasks t JOIN snapshots s ON s.sha256=t.specification_sha256
+        JOIN document_versions v ON v.version_id=t.version_id JOIN documents d ON d.document_id=v.document_id
+        WHERE t.operation='download.acquire'""").fetchall()
+    for specification,key in rows:
+        frozen = cast(dict[str, Any], json.loads(specification))
+        operation_json = cast(dict[str, Any], frozen.get('scheduler_operation') or {})
+        settings = cast(dict[str, Any], cast(dict[str, Any], operation_json.get('specification') or {}).get('settings') or {})
+        document = cast(dict[str, Any], operation_json.get('document') or {})
+        if settings.get('filename_base') and document.get('source_uri'):
+            claims.setdefault(str(settings['filename_base']),set()).add((str(key),str(document['source_uri'])))
+    sources: dict[str, dict[str, Any]] = {}
+    for version,stem in stems.items():
+        known: Any = writer.connection.execute('SELECT source_key FROM documents WHERE document_id=?',(documents.get(version),)).fetchone()
+        own = known[0] if known else None
+        foreign = sorted((key,uri) for key,uri in claims.get(stem,set()) if key!=own)
+        sources[stem] = dict(url=remote.get(version), foreign_urls=sorted({uri for _,uri in foreign}), foreign_keys=sorted({key for key,_ in foreign}))
+    return sources
+
+
+def fold_download_rows(corpus: Any, published: Any) -> None:
+    """Carry this publication's download rows into the canonical metadata table when the corpus already has one.
+
+    The legacy download serializer writes ``download_results_<manifest>.parquet``; the metadata readers and the
+    export use ``download_results.parquet`` when it exists (a corpus that began with local inputs). Without this the
+    URL, success and identity of a later download never reached the row the export joins (CP-K4a F1, local→remote):
+    the download-owned columns of each published row replace that filename's values, other columns are kept, and
+    new filenames are added, under the metadata lock. Called by the download serializer inside the streaming
+    download publication (its journal seals the result), never by a plain ``Corpus.download()``.
+    """
+    import importlib
+    schema: Any = importlib.import_module('glossapi.parquet_schema')
+    pd: Any = importlib.import_module("pandas")
+    canonical=Path(corpus.output_dir)/'download_results'/'download_results.parquet'
+    published=Path(published)
+    if not canonical.is_file() or not published.is_file() or canonical.resolve()==published.resolve():
+        return
+    rows: Any = pd.read_parquet(published)
+    if 'filename' not in rows.columns or rows.empty:
+        return
+    rows=schema._nullable_integers(rows[rows['filename'].notna()])
+    rows=rows[~rows['filename'].duplicated(keep='last')]
+    def fold(current: Any) -> Any:
+        if current.empty or 'filename' not in current.columns:
+            return rows
+        current=schema._nullable_integers(current)
+        known=current['filename'].isin(list(rows['filename']))
+        merged=current[known].set_index('filename',drop=False)
+        update=rows.set_index('filename',drop=False)
+        merged=update.loc[update.index.intersection(merged.index)].combine_first(merged).reindex(columns=[*current.columns,*[c for c in rows.columns if c not in current.columns]])
+        added=rows[~rows['filename'].isin(list(current['filename']))]
+        result=schema.lossless_concat([current[~known],merged.reset_index(drop=True),added],what='folded download results')
+        return result.sort_values('filename',kind='stable').reset_index(drop=True)[[*current.columns,*[c for c in result.columns if c not in current.columns]]]
+    schema.update_metadata_parquet(canonical,fold)
 
 
 def _publication_alias(root, run, name, target):
@@ -335,7 +457,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
             remote_given=[str(source) for source in sources if _is_url(str(source))]
             if remote_manifest or remote_given:
                 remote_rows=remote_manifest or [{'url':source} for source in remote_given]
-                source_rows,raw_urls,identities,frame=_remote_inventory(remote_rows,root)
+                source_rows,raw_urls,identities,frame=_remote_inventory(remote_rows,root,_ledger_compatibility_names(writer))
                 for identity,raw in zip(identities,raw_urls):
                     if identity is not None:transport[identity]=raw
                 # Retain the persisted source frame for the unchanged download
@@ -364,7 +486,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                 from .final_products import PLANNING_TEXT_RATIO, product_need, require_room
                 paths=[Path(unquote(urlsplit(str(source)).path) if str(source).startswith('file:') else str(source)) for source in local_given]
                 sizes=[path.stat().st_size for path in paths if path.is_file()]
-                require_room(root,settings,product_need(stages,int(PLANNING_TEXT_RATIO*sum(sizes)),len(sizes)),when='(estimated at run start)')
+                require_room(root,cast(dict[str, Any],settings),product_need(cast(Any,stages),int(PLANNING_TEXT_RATIO*sum(sizes)),len(sizes)),when='(estimated at run start)')
         engine=StreamingScheduler(writer,root,workers=workers,cpu_tokens=settings.get('cpu_tokens'),
             memory_bytes=settings.get('memory_budget_bytes'),disk_budget_bytes=settings.get('disk_budget_bytes'),observer=observer)
         engine.transport_urls=dict(transport)
@@ -455,7 +577,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                     except OSError as error:
                         entry['failure']=error
             remote_bases=[source_rows[entry['ordinal']].get('filename_base') for entry in unique if entry['remote'] and source_rows[entry['ordinal']].get('filename_base')]
-            publication=_publication_names([entry for entry in unique if 'failure' not in entry],remote_bases)
+            publication=_publication_names(cast(list[dict[str, Any]],[entry for entry in unique if 'failure' not in entry]),cast(list[Any],remote_bases),_ledger_compatibility_names(writer))
             version_of={}
             with writer.transaction():
                 for entry in unique:
@@ -476,8 +598,8 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                         version=writer.version(document,source_sha256=digest,stored_sha256=digest)
                     version_of[entry['key']]=version
                     skip='source_unavailable' if failure is not None else None
-                    published=publication.get(entry['key'])
-                    naming={'publication_name':published} if published else {}
+                    published=cast(Any,publication.get(entry['key']))
+                    naming: dict[str, Any]={'publication_name':published} if published else {}
                     artifacts=()
                     if path and failure is None:
                         file_id=writer.artifact(observation,'extract','source_payload',uri,sha256=digest,bytes=entry['bytes'],
@@ -506,7 +628,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                         key=f'{ordinal}:extract'
                         operations.append(ScheduledOperation(key,'extract',snapshot,
                             StageSpecification('extract.document',('source_payload',) if artifacts else (),('raw_markdown',),
-                                settings={**extraction_settings(settings.get('extract')),**naming}),
+                                settings=cast(Any,{**extraction_settings(settings.get('extract')),**naming})),
                             inputs=((parent,'download_payload','source_payload'),) if parent else (),skip_reason=skip))
                         parent=key
                     if 'clean' in stages:
@@ -525,15 +647,15 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                         quality_key=f'{ordinal}:quality'
                         operations.append(ScheduledOperation(quality_key,'extract',snapshot,
                             StageSpecification('extract.page_quality',required_output_kinds=('page_quality',),
-                                settings={'page_quality':settings.get('page_quality',{}),**naming}),
+                                settings=cast(Any,{'page_quality':settings.get('page_quality',{}),**naming})),
                             inputs=((f'{ordinal}:download','download_payload','source_payload'),) if remote else (),skip_reason=skip))
                         source_snapshot=replace(snapshot,artifacts=() if remote else snapshot.artifacts)
                         edges=((f'{ordinal}:download','download_payload','source_payload'),) if remote else ()
                         ocr_key=f'{ordinal}:ocr'
                         operations.append(ScheduledOperation(ocr_key,'ocr',source_snapshot,
                             StageSpecification('ocr.document',('source_payload',) if not remote else (),('ocr_markdown','ocr_metrics'),device,
-                                {**ocr_settings,'options':values,'entry_point_name':'glossapi',
-                                 'cache_root':str(cache_root(ocr_settings.get('cache_root'))),**naming}),
+                                cast(Any,{**ocr_settings,'options':values,'entry_point_name':'glossapi',
+                                 'cache_root':str(cache_root(ocr_settings.get('cache_root'))),**naming})),
                             inputs=(*edges,(f'{ordinal}:extract','raw_markdown','native_markdown'),(quality_key,'page_quality','page_quality')),
                             after=(parent,),cpu_tokens=int(ocr_settings.get('num_threads',1)),skip_reason=skip))
                         parent=f'{ordinal}:clean_after_ocr'
@@ -616,6 +738,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
         corpus._streaming_section_names={operation.document.version_id:operation.specification.settings.get('filename')
             for operation in operations if operation.stage=='sections' and operation.document.version_id}
         corpus._streaming_publication_stems=_publication_stems(operations)
+        corpus._streaming_publication_sources=_publication_sources(operations,writer)
         result['plan_hash']=writer.connection.execute('SELECT plan_sha256 FROM runs WHERE run_id=?',(run,)).fetchone()[0]
         if resume:
             settings=json.loads(writer.connection.execute('SELECT s.json FROM runs r JOIN snapshots s ON s.sha256=r.settings_sha256 WHERE r.run_id=?',(run,)).fetchone()[0])
@@ -754,15 +877,31 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     if result.get('run_id') and result['state'] in ('completed','completed_with_failures') and getattr(corpus,'_retention_settings',{}).get('memory_saving')=='extreme':
         # Before any publication (K4BI-G7): the exact cleaned text of this run decides whether the final products fit;
         # a typed refusal now, never an exhausted disk mid-publication. Resume after enlarging the filesystem.
-        from .final_products import product_need, require_room
+        from .final_products import binding_need, exact_export_need, require_room
         from .disk_budget import DiskBudget
         produced=set(result['attempts'].values())
-        texts=[row['bytes'] or 0 for row in corpus._scheduler_writer.file_catalog().values()
+        owner=cast(Any,corpus)
+        exact_catalog=cast(dict[str, Any],owner._scheduler_writer.file_catalog())
+        text_rows: list[Any]=[row for row in exact_catalog.values()
             if row['kind']=='clean_markdown' and row['presence']=='present' and row['producer_attempt_id'] in produced]
-        require_room(corpus.output_dir,corpus._retention_settings,product_need(corpus._retention_settings.get('requested_stages',stages),sum(texts),len(texts)),
+        text_sizes=[row['bytes'] or 0 for row in text_rows]
+        requested_stages: list[str]=list(owner._retention_settings.get('requested_stages',stages))
+        # Exact (CP-K4a F7): the serialized texts and metadata rows of this run's records, both kept copies and the
+        # export's transient view, not a fixed per-document allowance.
+        results_directory=Path(owner.output_dir)/'download_results'
+        metadata_table=results_directory/'download_results.parquet'
+        if not metadata_table.is_file():
+            metadata_candidates=sorted(path for path in results_directory.glob('*.parquet') if '.partial.' not in path.name) if results_directory.is_dir() else []
+            metadata_table=next((path for path in metadata_candidates if path.name.startswith('download_results_')),metadata_candidates[0] if metadata_candidates else None)
+        planned_stems: dict[Any, str] | None=getattr(owner,'_streaming_publication_stems',None)
+        download_projection: dict[str, Any]=getattr(owner,'_streaming_download_manifest',None) or {}
+        projection_path: Any=download_projection.get('path')
+        export_bytes=exact_export_need([local_path(row['uri']) for row in text_rows],[metadata_table,projection_path],
+            set(planned_stems.values()) if planned_stems else None) if 'export' in requested_stages else 0
+        require_room(owner.output_dir,owner._retention_settings,binding_need(requested_stages,sum(text_sizes),len(text_sizes),export_bytes),
             when='(exact, before the publications)',
-            present=DiskBudget(corpus._scheduler_writer,corpus.output_dir,result['run_id'],corpus._retention_settings).present_bytes())
-    if result.get('run_id') and getattr(corpus,'_retention_settings',{}).get('memory_saving')=='extreme':
+            present=DiskBudget(owner._scheduler_writer,owner.output_dir,result['run_id'],owner._retention_settings).present_bytes())
+    if result.get('run_id') and getattr(cast(Any,corpus),'_retention_settings',{}).get('memory_saving')=='extreme':
         # Streaming retirement (W18 M9) runs as document readers finish. A resume after a kill inside it (or a run
         # whose last completion raced it) finishes it here, before any publication (K4BP-G2).
         from .retention import retire_downloaded_sources
@@ -1034,12 +1173,12 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
                 raise ValueError('Committed publication is missing or corrupt')
         return True
     if previous and task['status']=='running' and not wrapper_ok:
-        marker=writer.connection.execute(f"SELECT event_id FROM {writer.connection.event_table} WHERE run_id=? AND event_kind='run' "
-            "AND reason_code='disk_full' AND event_id>? ORDER BY event_id DESC LIMIT 1",(run,previous.get('event_id') or 0)).fetchone()
-        from .interruption import read as read_interruption
-        recorded=read_interruption(corpus.output_dir,run)
-        cause={'details':{'interruption_cause':'disk_full','errno':28,'disk_full_event_id':marker[0] if marker else None,
-            'recorded_at':recorded.get('recorded_at') if recorded else None}} if marker or recorded else {}
+        # Tied to the interrupted barrier attempt's start (CP-K4a F3).
+        from .interruption import consume, verified_cause
+        ledger=cast(Any,writer.connection)
+        found=verified_cause(ledger,cast(Any,corpus.output_dir),cast(str,run),attempt_id=cast(str,previous['attempt_id']),table=ledger.event_table)
+        cause={'details':{'interruption_cause':'disk_full','errno':28,'disk_full_event_id':found['event_id'],
+            'recorded_at':found['recorded_at']}} if found else {}
         with writer.transaction():
             writer.finish(run,task['task_id'],previous['attempt_id'],status='failed',reason_code='attempt_interrupted',**cause)
             if wrapper_run:
@@ -1048,6 +1187,8 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
                     latest=writer.latest_attempt(stale['task_id']) if stale['status']=='running' else None
                     if latest:
                         writer.finish(wrapper_run,stale['task_id'],latest['attempt_id'],status='failed',reason_code='attempt_interrupted')
+        if found and found['basis']=='record allocated at run start':
+            consume(cast(Any,corpus.output_dir),cast(str,run))
     if not (previous and task['status']=='running' and wrapper_ok):
         with writer.transaction():
             attempt=writer.attempt(task['task_id'],worker_id='single-publisher',device_id='cpu',
@@ -1098,20 +1239,22 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
             details=details,**failure)
     if status=='ok' and stage=='extract':
         from .retention import retire_downloaded_sources
-        retire_downloaded_sources(writer,corpus.output_dir,run,getattr(corpus,'_retention_settings',{}))
+        retire_downloaded_sources(writer,corpus.output_dir,run,getattr(cast(Any,corpus),'_retention_settings',{}))
     return status=='ok'
 
 
-def _declared_url_policy(writer,options):
+def _declared_url_policy(writer: Any, options: dict[str, Any]) -> Any:
     if options.get('resume'):
         row=writer.connection.execute('SELECT settings_sha256 FROM runs WHERE run_id=?',(options['resume'],)).fetchone()
         if row is None:
             return None
-        from ..ledger.reader import snapshot
-        return snapshot(writer.connection,row[0]).get('url_policy')
+        from ..ledger.encoding import unpack_evidence
+        stored: Any = unpack_evidence(json.loads(writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(row[0],)).fetchone()[0]))
+        return stored.get('url_policy')
     if options.get('plan') is not None:
         return options['plan'].get('data',options['plan']).get('settings',{}).get('url_policy')
-    return (options.get('settings') or {}).get('url_policy')
+    given = cast(dict[str, Any], options.get('settings') or {})
+    return given.get('url_policy')
 
 
 class DiskFullError(OSError):
@@ -1148,6 +1291,8 @@ def _record_disk_full(writer,corpus,error):
     if not run:return
     from .interruption import record
     record(corpus.output_dir,run,error)
+    if writer.connection is None:
+        return  # the failed run-close released the ledger; the record names the cause (CP-K4a F5)
     try:
         if writer.connection.in_transaction:writer.connection.rollback()
         with writer.transaction():
@@ -1186,19 +1331,23 @@ def _locked_run_corpus(corpus,*args,**options):
     began=time.monotonic()
     from ..ledger.urls import url_policy
     corpus._active_run_id=options.get('resume')
-    with LedgerWriter(Path(corpus.output_dir)/'corpus.sqlite3') as writer:
+    writer=LedgerWriter(Path(corpus.output_dir)/'corpus.sqlite3')
+    if True:
         corpus._scheduler_writer=writer
-        # The disk_full record exists before any write can exhaust the disk (K4BI-G2).
-        from .interruption import allocate
-        allocate(corpus.output_dir)
-        # Copies the previous run close left unflushed are verified (and republished if torn) first (K4C-M2).
-        writer.verify_excluded_copies()
         try:
+            # The disk_full record exists before any write can exhaust the disk (K4BI-G2).
+            from .interruption import allocate
+            allocate(corpus.output_dir)
+            # Copies the previous run close left unflushed are verified (and republished if torn) first (K4C-M2).
+            writer.verify_excluded_copies()
             # The caller's declared URL policy (public query fields, secret
             # headers) is frozen in the run settings and active for every
             # recording boundary of this run, including a resume.
-            with url_policy(_declared_url_policy(writer,options)):
+            with url_policy(_declared_url_policy(writer,cast(dict[str, Any],options))):
                 result=_run_corpus(corpus,*args,**options)
+            # The run-close durability barrier and VACUUM are part of the run (CP-K4a F5): an exhausted disk there is
+            # recorded like any other, and the record is cleared only after the close succeeded.
+            writer.close()
             result['total_wall_seconds']=time.monotonic()-began
             if result.get('state') in ('completed','completed_with_failures'):
                 from .interruption import clear
@@ -1209,6 +1358,10 @@ def _locked_run_corpus(corpus,*args,**options):
                 _record_disk_full(writer,corpus,error)
             raise
         finally:
+            try:
+                writer.close()  # idempotent; after a failed close it has already released the connection and lock
+            except Exception:
+                pass
             corpus._scheduler_writer=None
             corpus._streaming_download_replays=None
             corpus._streaming_ocr_replays=None
@@ -1216,3 +1369,4 @@ def _locked_run_corpus(corpus,*args,**options):
             corpus._streaming_planned_versions=None
             corpus._streaming_completed_versions=None
             corpus._streaming_publication_stems=None
+            corpus._streaming_publication_sources=None

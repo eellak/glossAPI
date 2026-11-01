@@ -201,15 +201,27 @@ def observe_source_rows(frame, path, *, url_column="url"):
 # observation to that hash instead of reading the bytes again. A new process (or no recorded hash, or any stat change)
 # hashes as before.
 ORIGINAL_READING_STAGES = frozenset(("extract", "ocr", "math", "download"))
-_original_hashes: dict[str, tuple[tuple[int, int, int, int], str]] = {}
+# CP-K4b F3/F4: the key includes st_ctime_ns; a hash taken from this cache is byte-verified before any destructive
+# step of the phase (ResultJournal.verify_cached_originals, before retention); a forked child starts empty.
+_original_hashes: dict[str, tuple[tuple[int, int, int, int, int], str]] = {}
 
 
-def observed_original_hash(stage: str, path: Path) -> str:
+def _forget_original_hashes_after_fork() -> None:
+    _original_hashes.clear()
+
+
+if hasattr(os, 'register_at_fork'):
+    os.register_at_fork(after_in_child=_forget_original_hashes_after_fork)
+
+
+def observed_original_hash(stage: str, path: Path, cached: 'list[tuple[Path, str]] | None' = None) -> str:
     from .encoding import own_hash_key
     key = own_hash_key(path.stat())
     if stage not in ORIGINAL_READING_STAGES:
         recorded = _original_hashes.get(str(path))
         if recorded is not None and recorded[0] == key:
+            if cached is not None:
+                cached.append((path, recorded[1]))
             return recorded[1]
     digest = file_hash(path)
     if stage in ORIGINAL_READING_STAGES:
@@ -274,6 +286,7 @@ class ResultJournal:
                 writer.event(publication['run_id'],event_kind='run',reason_code='legacy_observed',message='wrapper:'+stage,
                     details={'wrapper_run_id':self.run_id,'publication_task_id':publication['task_id']})
             observed_inputs = []
+            self.cached_originals: list[tuple[Path, str]] = []
             candidates = parameters.get("file_paths")
             if not candidates:
                 candidates = getattr(corpus, "_shadow_source_paths", None)
@@ -290,7 +303,7 @@ class ResultJournal:
                 bound = writer.connection.execute(
                     "SELECT sha256,bytes FROM files WHERE uri=? AND version_id=? ORDER BY rowid DESC LIMIT 1",
                     (uri, streaming)).fetchone() if streaming else None
-                digest = bound['sha256'] if bound else observed_original_hash(stage_name, path) if present else None
+                digest = bound['sha256'] if bound else observed_original_hash(stage_name, path, self.cached_originals) if present else None
                 version_id = getattr(corpus,'_streaming_source_versions',{}).get(str(path))
                 if version_id:
                     document_id=writer.connection.execute('SELECT document_id FROM document_versions WHERE version_id=?',(version_id,)).fetchone()[0]
@@ -545,6 +558,14 @@ class ResultJournal:
                 document_id = self.writer.document(source_key(uri))
                 self.writer.source_record(document_id, self.run_id, uri, values, source_kind=kind, manifest_sha256=manifest, source_row=str(ordinal))
 
+    def verify_cached_originals(self):
+        """Byte-verify every original whose hash this phase took from the process cache, before a destructive step
+        (retention) relies on it (CP-K4b F3): a same-stat rewrite that the cache could not see stops the phase."""
+        for path, digest in getattr(self, 'cached_originals', ()):
+            if not Path(path).is_file() or file_hash(path) != digest:
+                _original_hashes.pop(str(path), None)
+                raise ValueError(f'original_changed_since_observed: {path} no longer has the hash this phase bound; run the phase again')
+
     def finish(self, result, error):
         if self.cutover and error is None:
             from ..stages.metadata import seal_metadata_projections
@@ -665,6 +686,7 @@ def shadow_stage(stage, operation=None):
                     try: journal.finish(result, error)
                     finally: _active_journal.reset(token)
                     if own_writer and journal.cutover and error is None:
+                        journal.verify_cached_originals()
                         from ..stages.retention import retain_completed_run
                         retain_completed_run(writer,self.output_dir,journal.run_id,journal.retention_settings,cleanup_paths=getattr(journal,"cleanup_paths",()),observer=getattr(self,"_retention_observer",None))
             finally:
