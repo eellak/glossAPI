@@ -23,6 +23,23 @@ from .urls import (has_known_secrets, needs_scrub, persisted_url, pop_identity_r
 
 
 _OPEN_WRITERS = set()
+# K4(c) part 4 (coordinator decision on K4C3-G4): the full integrity check (PRAGMA integrity_check, every snapshot's
+# checksum, canonical JSON and evidence schema, foreign keys) runs once per process per ledger. A writer of this process
+# that closes a ledger cleanly (no -wal left) records the file's (dev, ino, size, mtime_ns); the next writer in the same
+# process skips the full check only while the file still has exactly that identity and no -wal exists. Anything else
+# (first open in a process, a file changed by anyone else, a leftover WAL) runs the full check. The schema/migration
+# checks still run at every open.
+_integrity_known: dict[str, tuple[int, int, int, int]] = {}
+
+
+def _ledger_identity(path: Path) -> tuple[int, int, int, int] | None:
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    if os.path.exists(str(path)+'-wal'):
+        return None
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
 _FUNCTIONAL_SNAPSHOTS = frozenset(("plan", "settings", "environment", "shared_config", "inputs"))
 
 
@@ -273,6 +290,8 @@ class LedgerWriter:
             # Lossy URLs are keyed under this corpus's identity key (cycle-2 F2).
             push_identity_root(self.path.parent)
             self._identity_root = self.path.parent
+            # The file identity before this process opens it (opening creates the WAL); see _integrity_known.
+            opened_identity = _ledger_identity(self.path)
             self.connection = connect(self.path, isolation_level=None)
             self.connection.row_factory = sqlite3.Row
             self.connection.execute("PRAGMA foreign_keys=ON")
@@ -317,7 +336,9 @@ class LedgerWriter:
                 self.connection.storage_version = storage_version
                 if storage_version>=3:self.connection.path_root=self.path.parent.as_uri()
             supported_schema(self.connection)
-            integrity(self.connection)
+            known = _integrity_known.pop(str(self.path.resolve()), None)
+            if known is None or known != opened_identity:
+                integrity(self.connection)
             # The scheduler's indexed control projection is process local. Old
             # creation scripts/checksums and read-only historical reports stay exact.
             self.connection.execute(f"CREATE TEMP VIEW current_task_state AS SELECT t.*,e.status,e.reason_code,e.event_id FROM tasks t LEFT JOIN {self.connection.event_table} e ON e.event_id=(SELECT MAX(s.event_id) FROM {self.connection.event_table} s WHERE s.task_id=t.task_id AND s.event_kind='lifecycle')")
@@ -410,6 +431,8 @@ class LedgerWriter:
             if self.barrier_context:self._vacuum_at_run_close()
             self.connection.close()
             self.connection = None
+            identity = _ledger_identity(self.path)
+            if identity is not None:_integrity_known[str(self.path.resolve())] = identity
         if getattr(self, "lock", None) is not None:
             os.close(self.lock)
             self.lock = None

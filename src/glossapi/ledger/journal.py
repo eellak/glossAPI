@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 import traceback as traceback_module
+from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
 from .encoding import canonical_json, dataframe_records, file_hash, pack_evidence, typed_value
@@ -194,6 +195,28 @@ def observe_source_rows(frame, path, *, url_column="url"):
     if journal is not None and journal.owner_pid == os.getpid(): journal.source_rows(frame, Path(path), url_column=url_column)
 
 
+# K4(c) part 4 (coordinator decision on K4C3-G4): the user's originals are hashed only by the stages that read them.
+# A reading stage's wrapper records the hash it observed (process-level, keyed by the file's unchanged
+# (dev, ino, size, mtime_ns)); a later phase in the same process that never opens the originals binds its source
+# observation to that hash instead of reading the bytes again. A new process (or no recorded hash, or any stat change)
+# hashes as before.
+ORIGINAL_READING_STAGES = frozenset(("extract", "ocr", "math", "download"))
+_original_hashes: dict[str, tuple[tuple[int, int, int, int], str]] = {}
+
+
+def observed_original_hash(stage: str, path: Path) -> str:
+    from .encoding import own_hash_key
+    key = own_hash_key(path.stat())
+    if stage not in ORIGINAL_READING_STAGES:
+        recorded = _original_hashes.get(str(path))
+        if recorded is not None and recorded[0] == key:
+            return recorded[1]
+    digest = file_hash(path)
+    if stage in ORIGINAL_READING_STAGES:
+        _original_hashes[str(path)] = (key, digest)
+    return digest
+
+
 def inventory(root, produced=()):
     result = {}
     if not Path(root).exists(): return result
@@ -258,6 +281,7 @@ class ResultJournal:
                 directory = corpus.downloads_dir if corpus.downloads_dir.exists() else corpus.input_dir
                 candidates = [p for p in directory.iterdir() if p.is_file() and p.suffix.lower() in (".pdf", ".doc", ".docx", ".xml", ".html", ".pptx", ".csv", ".md")] if directory.exists() else []
             corpus._shadow_source_paths = tuple(str(p) for p in candidates)
+            stage_name = str(cast(object, stage))
             for ordinal, candidate in enumerate(candidates):
                 path = Path(candidate).absolute()
                 present = path.is_file()
@@ -266,7 +290,7 @@ class ResultJournal:
                 bound = writer.connection.execute(
                     "SELECT sha256,bytes FROM files WHERE uri=? AND version_id=? ORDER BY rowid DESC LIMIT 1",
                     (uri, streaming)).fetchone() if streaming else None
-                digest = bound['sha256'] if bound else file_hash(path) if present else None
+                digest = bound['sha256'] if bound else observed_original_hash(stage_name, path) if present else None
                 version_id = getattr(corpus,'_streaming_source_versions',{}).get(str(path))
                 if version_id:
                     document_id=writer.connection.execute('SELECT document_id FROM document_versions WHERE version_id=?',(version_id,)).fetchone()[0]

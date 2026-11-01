@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -156,3 +157,57 @@ def test_legacy_model_preloaded_during_the_dag_is_the_object_the_barrier_loads(t
         classifier.release_preloaded_models()
     assert classifier._preloaded(frozen) == (None, None)
     assert classifier.preload_legacy_model(Path(glossapi.__file__).parent/'models/section_classifier') is None  # neutral: no-op
+
+
+# K4(c) part 4: coordinator decision on K4C3-G4.
+
+def test_originals_are_hashed_by_reading_stages_and_bound_by_the_others(tmp_path, monkeypatch):
+    from glossapi.ledger import journal
+    original = tmp_path/'source.pdf'; original.write_bytes(b'%PDF user bytes')
+    monkeypatch.setattr(journal, '_original_hashes', {})
+    reads = []
+    real = journal.file_hash
+    monkeypatch.setattr(journal, 'file_hash', lambda path, **k: reads.append(str(path)) or real(path, **k))
+    expected = hashlib.sha256(original.read_bytes()).hexdigest()
+    # No reading stage ran in this process: a non-reading phase hashes and records nothing.
+    assert journal.observed_original_hash('clean', original) == expected and len(reads) == 1
+    assert journal._original_hashes == {}
+    assert journal.observed_original_hash('extract', original) == expected and len(reads) == 2
+    for stage in ('clean', 'sections', 'annotate', 'export'):
+        assert journal.observed_original_hash(stage, original) == expected
+    assert len(reads) == 2  # bound to extract's recorded hash, not read again
+    assert journal.observed_original_hash('ocr', original) == expected and len(reads) == 3  # a reading stage reads
+    original.write_bytes(b'%PDF user bytes, changed')  # any stat change: hashed again
+    assert journal.observed_original_hash('export', original) == hashlib.sha256(original.read_bytes()).hexdigest()
+    assert len(reads) == 4
+
+
+def test_full_integrity_check_once_per_process_until_the_file_changes(tmp_path, monkeypatch):
+    from glossapi.ledger import writer as W
+    path = tmp_path/'corpus.sqlite3'
+    calls = []
+    real = W.integrity
+    monkeypatch.setattr(W, 'integrity', lambda connection: calls.append(1) or real(connection))
+    monkeypatch.setattr(W, '_integrity_known', {})
+    with W.LedgerWriter(path) as writer:
+        with writer.transaction():
+            writer.run({}, {}, {}, code_revision='test')
+    assert len(calls) == 1
+    with W.LedgerWriter(path):
+        pass
+    assert len(calls) == 1  # same process, file unchanged since this process closed it
+    stat = path.stat(); os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns+1_000_000))  # changed by someone else
+    with W.LedgerWriter(path):
+        pass
+    assert len(calls) == 2
+    W._integrity_known.clear()  # a new process knows nothing
+    with W.LedgerWriter(path):
+        pass
+    assert len(calls) == 3
+    Path(str(path)+'-wal').write_bytes(b'')  # a leftover WAL: full check
+    try:
+        with W.LedgerWriter(path):
+            pass
+    finally:
+        Path(str(path)+'-wal').unlink(missing_ok=True)
+    assert len(calls) == 4
