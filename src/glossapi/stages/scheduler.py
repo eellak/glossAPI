@@ -23,26 +23,30 @@ from ..ledger.writer import new_id, utc_now
 
 
 def execution_environment():
-    """Stable executable identity, including unimported native stage binaries."""
+    """Stable executable identity, including unimported native stage binaries.
+
+    Computed at the freeze and again at dispatch: within one run the second computation reuses each file's hash
+    keyed by its unchanged (dev, ino, size, mtime_ns) (K4C-G08, the environment double hash); the next run
+    start re-hashes every file."""
     import importlib.metadata
     import importlib.util
     root=Path(__file__).resolve().parents[1]
-    files={str(path.relative_to(root)):sha256_file(path) for path in sorted(root.rglob('*.py'))}
-    files['ocr_package.txt']=sha256_file(root/'ocr_package.txt')
+    files={str(path.relative_to(root)):sha256_file(path,own=True) for path in sorted(root.rglob('*.py'))}
+    files['ocr_package.txt']=sha256_file(root/'ocr_package.txt',own=True)
     for path in sorted((root/'data/wordlists').glob('*')):
         if path.is_file():
-            files[str(path.relative_to(root))]=sha256_file(path)
+            files[str(path.relative_to(root))]=sha256_file(path,own=True)
     native={}
     for name in ('glossapi_rs_cleaner','glossapi_rs_noise','glossapi_rs_pdfrepair'):
         specification=importlib.util.find_spec(name)
         if specification and specification.origin:
             path=Path(specification.origin)
             binaries=list(path.parent.glob('*.so')) if path.suffix=='.py' else [path]
-            native[name]=[sha256_file(binary) for binary in sorted(binaries)]
+            native[name]=[sha256_file(binary,own=True) for binary in sorted(binaries)]
     packages=sorted((distribution.metadata['Name'],distribution.version) for distribution in importlib.metadata.distributions())
     # Every packaged model file (the neutral section-classifier directory included, K2 W2b) and any *.joblib.
     model_paths=set(root.rglob('*.joblib'))|{path for path in (root/'models').rglob('*') if path.is_file() and '__pycache__' not in path.parts}
-    models=[{'path':str(path.relative_to(root)),'sha256':sha256_file(path)} for path in sorted(model_paths)]
+    models=[{'path':str(path.relative_to(root)),'sha256':sha256_file(path,own=True)} for path in sorted(model_paths)]
     environment={name:os.environ.get(name) for name in ('GLOSSAPI_IMAGES_SCALE','GLOSSAPI_FORMULA_BATCH',
         'DOCLING_ARTIFACTS_PATH','OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','RAYON_NUM_THREADS',
         'GLOSSAPI_OCR_TOOLKIT_SOURCE','GREEKOCR_SEGMENTER_MODEL_DIR')}
@@ -529,12 +533,18 @@ class StreamingScheduler:
                                 terminal.add(key)
                             elif result.reason_code not in ('worker_lost','worker_process_crashed','extract_timeout') or self.attempt_counts[key]>=self.retry_limit:
                                 terminal.add(key)
-                if len(scratch_frontier)>=64:
-                    from .retention import retire_completed_scratch
-                    retire_completed_scratch(self.writer,self.root,run,frozen_settings,scratch_frontier,
-                        protected={(done[parent],kind) for child in operations if child.key not in done
-                            for parent,kind,_ in child.inputs if parent in done})
-                    scratch_frontier.clear()
+                def retire_frontier():
+                    if len(scratch_frontier)>=64:
+                        from .retention import retire_completed_scratch
+                        retire_completed_scratch(self.writer,self.root,run,frozen_settings,scratch_frontier,
+                            protected={(done[parent],kind) for child in operations if child.key not in done
+                                for parent,kind,_ in child.inputs if parent in done})
+                        scratch_frontier.clear()
+                # Without a disk budget, the bulk scratch release waits until the next attempts are dispatched, so it
+                # runs while the workers work instead of between a completion and the next dispatch (K4(c) part 3,
+                # overlap with the DAG). With a disk budget admission may need the freed bytes: release first.
+                release_after_dispatch=self.disk_capacity is None and frozen_settings.get('memory_saving')!='extreme'
+                if not release_after_dispatch:retire_frontier()
                 self.runner.collect_scratch()
                 if completions and frozen_settings.get('memory_saving')=='extreme':
                     from .retention import retire_downloaded_sources
@@ -671,6 +681,7 @@ class StreamingScheduler:
                         reporter=Reporter();reporter.request=request
                         pool.submit(stage,request,reporter=reporter)
                         self._trace('dispatch',key=operation.key,attempt_id=request.attempt_id)
+                if release_after_dispatch:retire_frontier()
                 admission_changed = bool(pending)
                 if not self.active and not pending:
                     if blocked_on_disk and self._release_for_admission(run,frozen_settings,budget,scratch_frontier,done,operations):

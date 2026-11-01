@@ -407,6 +407,7 @@ class LedgerWriter:
                 self.connection.rollback()
                 self._file_catalog = None
             if hasattr(self,'_durable_files'):self.durable_barrier()
+            if self.barrier_context:self._vacuum_at_run_close()
             self.connection.close()
             self.connection = None
         if getattr(self, "lock", None) is not None:
@@ -416,6 +417,19 @@ class LedgerWriter:
         if getattr(self, "_identity_root", None) is not None:
             pop_identity_root(self._identity_root)
             self._identity_root = None
+
+    def _vacuum_at_run_close(self) -> None:
+        """Representation only (K4(c) part 3, coordinator decision 4): after the run-close barrier, rebuild the
+        ledger file without free pages and partly filled pages. Every record, id and order is unchanged (every
+        table keeps its rows and rowids; VACUUM is one transaction, so a death inside it leaves the committed
+        pre-VACUUM ledger). A reader holding the database (SQLITE_BUSY/LOCKED) only skips the compaction."""
+        connection=self.connection
+        if connection is None or connection.in_transaction:
+            return
+        try:
+            connection.executescript('VACUUM')
+        except sqlite3.OperationalError as error:
+            if not any(word in str(error).lower() for word in ('busy','locked')):raise
 
     def durable_barrier(self, unlinking=(), *, private=False, reason=None):
         """Make durable exactly what a pending unlink (or the run close) depends on, then FULL-commit.

@@ -445,8 +445,11 @@ class ResultJournal:
             fields_by_operation["clean.score_after_ocr"]=fields_by_operation["clean.initial"]
             for stage,operation,attempt_id,encoded in self.writer.connection.execute(
                     f"SELECT t.stage,t.operation,a.attempt_id,s.json FROM attempts a JOIN tasks t ON t.task_id=a.task_id JOIN snapshots s ON s.sha256=a.settings_sha256 WHERE t.stage IN ('clean','ocr','math') AND EXISTS (SELECT 1 FROM {self.writer.connection.event_table} e WHERE e.attempt_id=a.attempt_id AND e.event_kind='lifecycle' AND e.status='ok') ORDER BY a.rowid"):
-                filename=json.loads(encoded).get("compatibility_filename")
-                if filename:
+                attempt_settings=json.loads(encoded)
+                # An aggregate clean selection (K4(c) part 3) owns its fields for every filename it selected.
+                filenames=attempt_settings.get("compatibility_filenames") or [attempt_settings.get("compatibility_filename")]
+                for filename in filenames:
+                    if not filename:continue
                     for field in fields_by_operation.get(operation.split(".artifact:",1)[0],fields_by_stage[stage]): owners[(filename,field)]=attempt_id
             filename_position=columns.index("filename") if "filename" in columns else None
             if owners and filename_position is not None:
@@ -587,8 +590,11 @@ def shadow_stage(stage, operation=None):
             from ..stages.profile import _public_adapter_scope
             from ..stages.workers import warm_worker_scope
             profile_token = _public_adapter_scope.set(adapters_enabled(self))
+            from .encoding import run_hash_scope
             try:
-                with warm_worker_scope():
+                # One public call is one run (or a streaming run's publication): own-file hashes are reused only
+                # inside it (K4C-G08).
+                with warm_worker_scope(), run_hash_scope():
                     return invoke(self, *args, **kwargs)
             finally:
                 _public_adapter_scope.reset(profile_token)

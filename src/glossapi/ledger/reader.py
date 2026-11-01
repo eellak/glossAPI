@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 
 from .catalogue import STAGES, STATUSES
@@ -70,6 +70,25 @@ def evidence(connection, event):
     details = json.loads(event["details_json"])
     reference = details.get("evidence_sha256")
     return {**details, **(snapshot(connection, reference) if reference else {})}
+
+
+def _keep_own_selection_rows(details: object, file_ids: object, version_ids: object) -> None:
+    """Keep only the rows of an aggregate clean selection that belong to one document (its selected file or version)."""
+    if not isinstance(details, dict):
+        return
+    mapping = cast('dict[str, object]', details)
+    rows = mapping.get('selections')
+    if not isinstance(rows, list):
+        return
+    own: list[dict[str, object]] = []
+    for item in cast('list[object]', rows):
+        if not isinstance(item, dict):
+            continue
+        row = cast('dict[str, object]', item)
+        owned_files, owned_versions = cast('set[object]', file_ids), cast('set[object]', version_ids)
+        if row.get('selected_file_id') in owned_files or (row.get('version_id') is not None and row.get('version_id') in owned_versions):
+            own.append(row)
+    mapping['selections'] = own
 
 
 def reason_view(event, details):
@@ -293,6 +312,8 @@ def report_why(connection, selector, *, run=None, stage=None):
         if event['version_id'] is None and event['task_id'] in bound_tasks:
             details={**details,'scope':'corpus_operation_with_bound_document_inputs'}
             if 'lineage' in details:details['lineage']=[item for item in details['lineage'] if item.get('section_key') in section_keys]
+            # An aggregate clean selection (K4(c) part 3): this document's own row(s) only.
+            _keep_own_selection_rows(cast(object,details),cast(object,document_file_ids),cast(object,version_ids))
             if 'selected_versions' in details:
                 details['selected_versions']=[item for item in details['selected_versions'] if item.get('version_id') in version_ids]
                 stems={item.get('compatibility_stem') for item in details['selected_versions']}
@@ -528,7 +549,7 @@ def status_view(connection, *, run=None, stage=None, selector=None):
         # status --file: the selected document's original metadata (K3 manifest round trip).
         result["sources"] = source_metadata(connection, _document_ids(document), run)
     plan = snapshot(connection,run['plan_sha256']) if run else {}
-    if plan.get('mode')=='streaming':
+    if plan.get('mode')=='streaming' and run:
         result['unknowns']=[]
         for document in documents:
             document['stale_reason']=None
@@ -702,7 +723,7 @@ def plan_view(connection=None, *, selectors=None, stages=None, settings=None, de
         source_stat=source_path.stat() if source_path is not None and source_path.is_file() else None
         observation=dict(source_uri=source_uri,bytes=source_stat.st_size if source_stat else None,
             mtime_ns=source_stat.st_mtime_ns if source_stat else None,stored_sha256=version.get('stored_sha256') if version else None)
-        if source_stat is not None:
+        if source_stat is not None and source_path is not None:
             # The exact bytes the plan binds (read only; run refuses if they change),
             # observed now even when the ledger knows an older hash (CP-K3 F3).
             from ..stages.execution import sha256_file

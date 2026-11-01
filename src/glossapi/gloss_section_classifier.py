@@ -1,6 +1,7 @@
 from .ledger.journal import observe, observe_store, observe_source_rows
 import logging
 import os
+import threading
 import re
 import time
 import traceback
@@ -8,7 +9,7 @@ from .ledger.encoding import file_hash, typed_value
 import numpy as np
 import pandas as pd
 from .optional_dependencies import optional_dependencies
-from typing import Dict
+from typing import Dict, cast
 
 # K2 W2b: the packaged default model is the neutral export (glossapi.section_model: numpy only). scikit-learn and
 # joblib are needed only for explicitly supplied legacy *.joblib models and for training, from the
@@ -21,6 +22,57 @@ def _legacy_joblib():
         import joblib
         import sklearn  # noqa: F401  (the legacy pickles need scikit-learn 1.6.1)
     return joblib
+
+
+# K4(c) part 3 (coordinator decision 3): an explicit legacy *.joblib model is imported and unpickled while the
+# streaming DAG runs (its main thread otherwise waits), keyed by the pickle's sha256. The annotation barrier then takes
+# the loaded object for the same bytes (its frozen copy has the same hash) instead of importing scikit-learn and
+# unpickling at the start of the serial tail. Same bytes, same object graph: predictions are unchanged.
+_PRELOADED = {}
+_PRELOAD_THREADS = {}
+
+
+def preload_legacy_model(model_path: object) -> 'threading.Thread | None':
+    """Start a background load of an explicit legacy pickle (no-op for the neutral model, which loads in ms)."""
+    from . import section_model
+    if not isinstance(model_path, (str, os.PathLike)):
+        return None
+    path = os.fspath(cast('str | os.PathLike[str]', model_path))
+    if not path or section_model.is_neutral(path) or not os.path.isfile(path):
+        return None
+    key = os.path.abspath(path)
+    if key in _PRELOAD_THREADS:
+        return _PRELOAD_THREADS[key]
+    def load():
+        try:
+            digest = file_hash(key)
+            model = _legacy_joblib().load(key)
+            if file_hash(key) == digest:
+                _PRELOADED[digest] = model
+        except Exception:  # the barrier loads (and reports) the model itself
+            pass
+    thread = threading.Thread(target=load, name='glossapi-model-preload', daemon=True)
+    _PRELOAD_THREADS[key] = thread
+    thread.start()
+    return thread
+
+
+def release_preloaded_models() -> None:
+    """End of a run: wait for any background load and drop the preloaded objects."""
+    for thread in list(_PRELOAD_THREADS.values()):
+        thread.join()
+    _PRELOAD_THREADS.clear()
+    _PRELOADED.clear()
+
+
+def _preloaded(model_file):
+    """The preloaded object for exactly these bytes, waiting for a load still in progress."""
+    if not _PRELOAD_THREADS:
+        return None, None
+    for thread in list(_PRELOAD_THREADS.values()):
+        thread.join()
+    digest = file_hash(model_file)
+    return _PRELOADED.get(digest), digest
 
 
 def _model_sha256(model_path):
@@ -107,7 +159,8 @@ class GlossSectionClassifier:
                 self.loaded_model = section_model.load(model_file)
             else:
                 # Explicit legacy *.joblib pickle: scikit-learn 1.6.1 from glossapi[annotate-legacy].
-                self.loaded_model = _legacy_joblib().load(model_file)
+                preloaded, _ = _preloaded(model_file)
+                self.loaded_model = preloaded if preloaded is not None else _legacy_joblib().load(model_file)
             self.clf_pipeline = self.loaded_model
             return self.loaded_model
         except Exception as e:

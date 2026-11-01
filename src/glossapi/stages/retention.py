@@ -280,15 +280,23 @@ class RetentionController:
                 before = os.fstat(handle)
                 if not stat.S_ISREG(before.st_mode) or before.st_size != row['bytes']:
                     raise ValueError('Artifact identity changed')
-                import hashlib
-                digest = hashlib.sha256()
-                with os.fdopen(os.dup(handle), 'rb') as stream:
-                    for chunk in iter(lambda: stream.read(1024*1024), b''):
-                        digest.update(chunk)
+                # A file glossAPI wrote or verified in this run and has not reopened for writing keeps its recorded
+                # hash (K4C-G08: the seal/delete double hash); anything else is read and hashed here.
+                from ..ledger.encoding import reused_own_hash
+                value: str
+                if reused_own_hash(before) == row['sha256']:
+                    value = row['sha256']
+                else:
+                    import hashlib
+                    digest = hashlib.sha256()
+                    with os.fdopen(os.dup(handle), 'rb') as stream:
+                        for chunk in iter(lambda: stream.read(1024*1024), b''):
+                            digest.update(chunk)
+                    value = digest.hexdigest()
                 after = os.fstat(handle)
                 current = os.stat(relative.name, dir_fd=descriptor, follow_symlinks=False)
                 identity = lambda item:(item.st_dev,item.st_ino,item.st_size,item.st_mtime_ns,item.st_ctime_ns)
-                if identity(before) != identity(after) or identity(after) != identity(current) or digest.hexdigest() != row['sha256']:
+                if identity(before) != identity(after) or identity(after) != identity(current) or value != row['sha256']:
                     raise ValueError('Artifact hash or identity changed')
             finally:
                 os.close(handle)
@@ -327,7 +335,7 @@ class RetentionController:
                 except OSError:continue
                 if (other.st_dev,other.st_ino)==(identity.st_dev,identity.st_ino) and self.eligibility(shared['file_id'])[2]:return False
         intent = recovering
-        details = dict(file_id=file_id, sha256=row['sha256'], bytes=row['bytes'],
+        details: dict[str, Any] = dict(file_id=file_id, sha256=row['sha256'], bytes=row['bytes'],
             policy_sha256=snapshot_hash(facts['declaration']), consumer_ok_event_ids=facts['consumer_ok_event_ids'],
             pin_check=[], logical_references=[alias[0] for alias in aliases])
         descriptor = None
@@ -495,7 +503,8 @@ class RetentionController:
         files = []
         for row in rows:
             path=file_path(row)
-            if path.is_symlink() or not path.is_file() or sha256_file(path)!=row['sha256']:
+            # A managed file: the verified hash is reused by its retention delete in this run (K4C-G08).
+            if path.is_symlink() or not path.is_file() or sha256_file(path,own=True)!=row['sha256']:
                 raise ValueError('Evidence-sealing input changed')
             files.append({'file_id':row['file_id'],'sha256':row['sha256']})
         with self.writer.transaction():

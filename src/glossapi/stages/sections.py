@@ -6,10 +6,24 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Any, cast
 
 from .contracts import PackageRequirement, PlannedOperation, StagePlan, StageSpecification
 from .execution import failed_result, freeze_inputs
 from .products import execute_aggregate, generation_outputs, publish_products, resolved_input
+
+
+def _selection_rows(decision: Any, settings: str) -> list[dict[str, Any]]:
+    """Rows of one clean.selection decision: an aggregate's per-document rows (K4(c) part 3), or an older ledger's
+    single per-document decision with the filename from its attempt settings."""
+    if not isinstance(decision, dict):
+        return []
+    value = cast('dict[str, Any]', decision)
+    if 'selections' in value:
+        rows = value['selections']
+        return [cast('dict[str, Any]', row) for row in cast('list[object]', rows) if isinstance(row, dict)] if isinstance(rows, list) else []
+    filename: object = json.loads(settings).get('compatibility_filename')
+    return [{**value, 'compatibility_filename': filename}]
 
 
 def restore_clean_selection(corpus):
@@ -25,12 +39,15 @@ def restore_clean_selection(corpus):
         row=journal.writer.connection.execute('SELECT json FROM snapshots WHERE sha256=?',(digest,)).fetchone()
         if row is None:continue
         decision=unpack_evidence(json.loads(row[0]))
-        if 'selected_file_id' not in decision:continue
-        fact=journal.writer.connection.execute('SELECT uri,sha256 FROM files WHERE file_id=?',(decision['selected_file_id'],)).fetchone()
-        path=local_path(fact['uri'])
-        if not path.is_file() or sha256_file(path)!=decision['selected_text_sha256']:continue
-        filename=Path(json.loads(settings)['compatibility_filename']).stem
-        selected[filename]=decision['accepted_for_sections'];surfaces[filename]=path
+        # One aggregate selection per run (K4(c) part 3) carries a row per document; older ledgers have one
+        # decision per document with the filename in the attempt settings.
+        for item in _selection_rows(decision,settings):
+            if 'selected_file_id' not in item or not item.get('compatibility_filename'):continue
+            fact=journal.writer.connection.execute('SELECT uri,sha256 FROM files WHERE file_id=?',(item['selected_file_id'],)).fetchone()
+            path=local_path(fact['uri'])
+            if not path.is_file() or sha256_file(path)!=item['selected_text_sha256']:continue
+            filename=Path(item['compatibility_filename']).stem
+            selected[filename]=item['accepted_for_sections'];surfaces[filename]=path
     if selected:
         corpus.good_files=[name for name,accepted in selected.items() if accepted]
         roots={path.parent for path in surfaces.values()}
