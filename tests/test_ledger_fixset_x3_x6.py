@@ -1,6 +1,7 @@
-"""Fix set X3-X6: run selection, report --why, math availability, credential
-redaction, log ownership, request-body retention, disk peaks, retention
-ownership and external-plugin devices."""
+"""Fix set X3-X6: run selection, report --why, math availability, log
+ownership, request-body retention, disk peaks, retention ownership and
+external-plugin devices. (Its credential-redaction part was withdrawn with the
+credential channel, owner 1 Nov 2026.)"""
 import asyncio
 import contextlib
 import io
@@ -14,7 +15,6 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from glossapi.ledger import LedgerWriter
-from glossapi.stages.execution import sha256_file
 
 
 def cli(*arguments):
@@ -222,69 +222,6 @@ def test_injected_math_kernel_does_not_count_as_real_inference(tmp_path, monkeyp
 
 
 # ---------------------------------------------------------------- X4 -------
-
-MARKER = 'AUDIT_SYNTHETIC_NOT_A_SECRET'
-
-
-def test_safe_settings_redacts_credential_fields_and_keeps_evidence():
-    from glossapi.ledger.journal import safe_settings
-    settings = {'domain_cookies': {'example.invalid': {'session': MARKER}},
-                'download': {'session_cookie': MARKER, 'request_headers': {'X-Api-Key': MARKER}},
-                'access_token': MARKER, 'client_secret': MARKER, 'proxy_authorization': MARKER, 'Authorization': MARKER,
-                'lease_token': 'lease-1', 'tail_token': '}', 'max_new_tokens': 7, 'cpu_tokens': 2, 'url': 'https://example.org/a.pdf'}
-    result = safe_settings(settings)
-    assert MARKER not in json.dumps(result)
-    assert result['domain_cookies'] == '[redacted]'
-    assert (result['lease_token'], result['tail_token'], result['max_new_tokens'], result['cpu_tokens']) == ('lease-1', '}', 7, 2)
-    assert result['url'] == settings['url']
-
-
-class CredentialProbe:
-    name = 'extract'
-    contract_version = 1
-    def run_document(self, request, *, reporter):
-        from glossapi.stages.contracts import OutputArtifact, StageResult
-        seen = (request.settings.get('domain_cookies') or {}).get('example.invalid', {}).get('session') == MARKER
-        (request.work_directory/'text.txt').write_text('credential-present' if seen else 'credential-absent')
-        return StageResult(request.task_id, request.attempt_id, request.lease_token, 'ok', 'extract_completed',
-            (OutputArtifact('text', 'text.txt', None, 'final', True),), ({'route': True},), {})
-
-
-def _credential_graph(writer, root):
-    from glossapi.stages.contracts import DocumentSnapshot, StageSpecification
-    from glossapi.stages.scheduler import ScheduledOperation
-    source = root/'source.txt'; source.write_text('body')
-    with writer.transaction():
-        writer.run({}, {}, {}, code_revision='test')
-        document = writer.document(source.as_uri())
-        version = writer.version(document, source_sha256=sha256_file(source), stored_sha256=sha256_file(source))
-    snapshot = DocumentSnapshot(document, version, source.as_uri())
-    return [ScheduledOperation('probe:0', 'extract', snapshot, StageSpecification('extract.probe', (), ('text',),
-        settings={'domain_cookies': {'example.invalid': {'session': MARKER}}, 'rate_limit': 5}))]
-
-
-def test_streaming_plan_never_records_credentials_and_resume_refuses_placeholders(tmp_path):
-    from glossapi.stages.scheduler import StreamingScheduler
-    with LedgerWriter(tmp_path/'corpus.sqlite3') as writer:
-        engine = StreamingScheduler(writer, tmp_path, registry={'extract': CredentialProbe})
-        run = engine.freeze(_credential_graph(writer, tmp_path), settings={'download': {'domain_cookies': {'x': MARKER}}})
-        result = engine.execute(run)
-        assert result['state'] == 'completed'
-        output = next(artifact for artifact in engine._outputs(result['attempts']['probe:0']) if artifact.kind == 'text')
-        assert output.path.read_text() == 'credential-present'  # this process dispatched with the real value
-        recorded = [row[0] for row in writer.connection.execute('SELECT json FROM snapshots')]
-        assert recorded and not any(MARKER in value for value in recorded)
-        fresh = StreamingScheduler(writer, tmp_path, registry={'extract': CredentialProbe})
-        fresh._load(run)
-        assert fresh.redacted_credentials == {'probe:0'}
-        second = engine.freeze(_credential_graph(writer, tmp_path))
-        with pytest.raises(ValueError, match='credentials_not_persisted'):
-            StreamingScheduler(writer, tmp_path, registry={'extract': CredentialProbe}).execute(second)
-    for name in ('corpus.sqlite3', 'corpus.sqlite3-wal'):
-        path = tmp_path/name
-        if path.exists():
-            assert MARKER.encode() not in path.read_bytes(), name
-
 
 def test_second_downloader_cannot_append_to_a_sealed_request_log(tmp_path):
     from glossapi.gloss_downloader import GlossDownloader

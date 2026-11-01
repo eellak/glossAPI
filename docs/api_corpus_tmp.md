@@ -20,7 +20,7 @@ glossapi.Corpus(
 
 - `input_dir`: source files (PDF/DOCX/HTML/…)
 - `output_dir`: pipeline outputs (markdown, json, sections, …)
-- `downloader_config`: defaults for `download()` (e.g., concurrency, cookies)
+- `downloader_config`: defaults for `download()` (e.g., concurrency, retries; public targets only, no cookies or credentials)
 
 ## extract()
 

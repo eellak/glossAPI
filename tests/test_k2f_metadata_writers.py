@@ -87,9 +87,9 @@ def test_download_publication_replaces_rows_of_the_same_resource_only(tmp_path, 
     assert 'extract_status' in final.columns
 
 
-def test_redaction_rewrite_keeps_a_row_committed_after_the_read(tmp_path, monkeypatch):
-    """All URLs done + an older results file without ``resource_identity``: the redacted rewrite (line 269 on
-    9d5d372) is applied to the file as it is now."""
+def test_identity_rewrite_keeps_a_row_committed_after_the_read(tmp_path, monkeypatch):
+    """All URLs done + an older results file without ``resource_identity``: the rewrite that adds it (line 269 on
+    9d5d372, then a redaction rewrite) is applied to the file as it is now."""
     from glossapi import Corpus
     import glossapi.gloss_downloader as downloader
     source = tmp_path / 'urls.parquet'
@@ -114,7 +114,7 @@ def test_redaction_rewrite_keeps_a_row_committed_after_the_read(tmp_path, monkey
     assert 'resource_identity' in final.columns and final.resource_identity.notna().all()
 
 
-def test_redaction_rewrite_without_concurrency_writes_the_previous_bytes(tmp_path, monkeypatch):
+def test_identity_rewrite_without_concurrency_writes_the_previous_bytes(tmp_path, monkeypatch):
     from glossapi import Corpus
     from glossapi.gloss_downloader import persisted_download_frame
     source = tmp_path / 'urls.parquet'

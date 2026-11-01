@@ -24,7 +24,6 @@ ROUTE_OPTION_KEYS = {
     "domain_concurrency_floor",
     "domain_concurrency_ceiling",
     "skip_failed_after",
-    "domain_cookies",
     "browser_timeout_ms",
     "browser_post_load_wait_ms",
     "browser_engine",
@@ -90,6 +89,8 @@ class DownloadPolicy:
 
 
 def _extract_route_options(data: Dict[str, Any]) -> Dict[str, Any]:
+    from .ledger.urls import refuse_credential_settings
+    refuse_credential_settings(data)  # public targets only: a policy never sends credentials
     return {key: value for key, value in data.items() if key in ROUTE_OPTION_KEYS}
 
 

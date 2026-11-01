@@ -95,8 +95,7 @@ class Corpus(
         self.logger.setLevel(log_level)
         try:
             if not self.logger.handlers:
-                from ..ledger.urls import protect_handler
-                _handler = protect_handler(logging.StreamHandler())
+                _handler = logging.StreamHandler()
                 _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s:%(name)s: %(message)s", "%H:%M:%S"))
                 self.logger.addHandler(_handler)
             self.logger.propagate = False

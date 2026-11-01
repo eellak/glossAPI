@@ -58,11 +58,12 @@ def execution_environment():
     ocr={'toolkit':{key:toolkit.get(key) for key in ('status','admitted','version','installed_url','installed_commit',
             'installed_code_fingerprint','override_declared','pinned_url','pinned_commit')},
          'detector_override':detector_override()}
-    from ..ledger.urls import scrub
-    # Recorded and compared in its credential-free spelling (an installed VCS
-    # URL may carry userinfo), so resume compares like with like (F2).
-    return scrub({'code':snapshot_hash(files),'environment':environment,'native':[{'name':name,'hashes':hashes} for name,hashes in native.items()],
-            'models':models,'packages':[{'name':name,'version':version} for name,version in packages],'ocr':ocr})
+    from ..ledger.urls import without_userinfo
+    # An installed VCS URL can carry an access token in its userinfo: never recorded (the one URL glossAPI did not
+    # receive as a source, so the source entry rule cannot refuse it).
+    ocr['toolkit']['installed_url']=without_userinfo(ocr['toolkit']['installed_url'])
+    return {'code':snapshot_hash(files),'environment':environment,'native':[{'name':name,'hashes':hashes} for name,hashes in native.items()],
+            'models':models,'packages':[{'name':name,'version':version} for name,version in packages],'ocr':ocr}
 
 
 @functools.lru_cache(maxsize=1<<16)
@@ -97,24 +98,6 @@ class ScheduledOperation:
     memory_bytes: int = 0
     reservation_bytes: int = 0
     skip_reason: str | None = None
-
-
-def _has_redacted_credentials(value):
-    from ..ledger.journal import REDACTED, credential_key
-    from ..ledger.urls import was_redacted
-    if isinstance(value, dict):
-        return any((credential_key(key) and item==REDACTED) or _has_redacted_credentials(item) for key, item in value.items())
-    if isinstance(value, list):
-        return any(_has_redacted_credentials(item) for item in value)
-    # A recorded URL whose userinfo/credential query was sanitized (CP-LEDGER F2).
-    return was_redacted(value)
-
-
-CREDENTIALS_NOT_PERSISTED = ('credentials_not_persisted: the ledger records credential settings redacted and URLs in their '
-    'persisted form (no userinfo, query or fragment values); resume with the source URLs supplied again '
-    '(Corpus.run(resume=RUN_ID, credentials=[full source URLs or {"url": ..., "source_id": ...}]) or glossapi run '
-    '--resume RUN_ID --credentials FILE). A URL binds only to its own resource identity: the identical raw URL, or the '
-    'same declared source_id (needed for token rotation). Otherwise resubmit this download in a new run')
 
 
 def operation_json(operation):
@@ -168,12 +151,6 @@ class StreamingScheduler:
         self.attempt_counts = Counter()
         self.package_availability = {}
         self.task_status = {}
-        # Credential values (cookies, auth headers, tokens) never enter the
-        # frozen plan. This process keeps them for its own dispatch only.
-        self.credentials = {}
-        self.redacted_credentials = set()
-        # Caller-supplied raw transport URLs, keyed by resource identity (source key).
-        self.transport_urls = {}
 
     def _wait(self,run,task,operation,reason,message=None):
         if (task,reason) in self.wait_reasons:
@@ -243,15 +220,6 @@ class StreamingScheduler:
         operations = tuple(replace(operation,specification=replace(operation.specification,
             settings=effective_ocr_settings(operation.specification.device_id,operation.specification.settings)))
             if operation.stage=='ocr' else operation for operation in operations)
-        from ..ledger.journal import redact_credentials
-        recorded=[]
-        for operation in operations:
-            redacted=redact_credentials(operation.specification.settings)
-            if redacted!=json.loads(json.dumps(operation.specification.settings)):
-                self.credentials[operation.key]=operation.specification.settings
-                operation=replace(operation,specification=replace(operation.specification,settings=redacted))
-            recorded.append(operation)
-        operations=tuple(recorded)
         for operation in operations:
             if operation.stage not in self.registry:
                 raise ValueError('Unsupported stage: '+operation.stage)
@@ -296,7 +264,7 @@ class StreamingScheduler:
         require_disk_guard(self.root,settings)
         self.retention_settings=settings
         with self.writer.transaction():
-            run = self.writer.run(redact_credentials(settings), plan, execution_environment(), code_revision=code_revision())
+            run = self.writer.run(settings, plan, execution_environment(), code_revision=code_revision())
             tasks = {}
             for ordinal, operation in enumerate(operations):
                 task = self.writer.task(run, operation.stage, operation.specification.operation,
@@ -339,30 +307,6 @@ class StreamingScheduler:
         self.disk_capacity = cast(int | None, plan['disk_budget_bytes'])
         self.retry_limit = plan['retry_limit']
         operations = [operation_from_json(value) for value in plan['operations']]
-        from ..ledger.journal import redact_credentials
-        for index,operation in enumerate(operations):
-            original=self.credentials.get(operation.key)
-            if original is not None and redact_credentials(original)==operation.specification.settings:
-                operations[index]=replace(operation,specification=replace(operation.specification,settings=original))
-            elif _has_redacted_credentials(operation.specification.settings) or operation.specification.settings.get('transport_url_redacted'):
-                settings=operation.specification.settings
-                supplied=None
-                if isinstance(settings.get('url'),str):
-                    # Exact binding (cycle-2 F2): the resupplied raw URL must key to
-                    # this operation's own resource identity (keyed reference or
-                    # declared source_id), never to a matching redacted spelling.
-                    identity=self.writer.connection.execute('SELECT source_key FROM documents WHERE document_id=?',(operation.document.document_id,)).fetchone()
-                    supplied=self.transport_urls.get(identity[0]) if identity else None
-                if supplied is not None:
-                    # The caller supplied the URL again; only this process holds it.
-                    settings={**settings,'url':supplied}
-                    self.credentials[operation.key]=settings
-                    operations[index]=replace(operation,specification=replace(operation.specification,settings=settings))
-                elif settings.get('transport_url_redacted'):
-                    # Dropped userinfo leaves no marker in the URL itself.
-                    self.redacted_credentials.add(operation.key)
-                if _has_redacted_credentials(settings):
-                    self.redacted_credentials.add(operation.key)
         tasks = {row['ordinal']:row['task_id'] for row in self.writer.connection.execute('SELECT * FROM tasks WHERE run_id=? ORDER BY ordinal',(run,))}
         return operations, {operation.key:tasks[index] for index,operation in enumerate(operations)}, row
 
@@ -481,10 +425,6 @@ class StreamingScheduler:
                     terminal.add(operation.key)
                 if state['status']=='skipped' and all(edge[0] in done for edge in operation.inputs):
                     terminal.add(operation.key)
-        # Refuse before any dispatch when pending work lacks its in-memory credentials.
-        blocked=[operation for operation in operations if operation.key in self.redacted_credentials and operation.key not in terminal]
-        if blocked:
-            raise ValueError(CREDENTIALS_NOT_PERSISTED+' (sources: '+', '.join(sorted({operation.document.source_uri for operation in blocked}))+')')
         by_key = {operation.key:operation for operation in operations}
         consumers={key:[] for key in by_key}
         for operation in operations:
@@ -639,8 +579,6 @@ class StreamingScheduler:
                         children=consumers[operation.key]
                         if any(len(self.ready.get((child.stage,child.specification.device_id),()))>=max(2,2*self.workers.get(child.stage,1)) for child in children):
                             break
-                        if operation.key in self.redacted_credentials:
-                            raise ValueError(CREDENTIALS_NOT_PERSISTED)
                         queue.popleft()
                         artifacts=list(operation.document.artifacts)
                         roles=list(operation.specification.input_roles[:len(artifacts)])
@@ -652,7 +590,7 @@ class StreamingScheduler:
                         document=replace(operation.document,artifacts=tuple(artifacts))
                         specification=replace(operation.specification,input_roles=tuple(roles),settings={**{name:frozen_settings[name] for name in ('debug','memory_saving','disk_budget_bytes','max_source_bytes','max_attempt_bytes') if name in frozen_settings},**operation.specification.settings})
                         fingerprint={'contract_version':self.registry[stage_name]().contract_version,
-                            'specification':__import__('glossapi.ledger.journal',fromlist=['redact_credentials']).redact_credentials(asdict(specification)),'inputs':[{'sha256':a.sha256,'kind':a.kind,'range':a.page_range} for a in artifacts],
+                            'specification':asdict(specification),'inputs':[{'sha256':a.sha256,'kind':a.kind,'range':a.page_range} for a in artifacts],
                             'code_revision':run_row['code_revision'],'environment_sha256':run_row['environment_sha256'],
                             'reuse_eligible':True,'scope':'same frozen run only; no cross-run semantic cache'}
                         pending.append((pool,operation,document,specification,fingerprint))

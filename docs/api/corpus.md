@@ -22,7 +22,7 @@ glossapi.Corpus(
 
 - `input_dir`: source files (PDF/DOCX/HTML/…)
 - `output_dir`: pipeline outputs (markdown, json, sections, …)
-- `downloader_config`: defaults for `download()` (e.g., concurrency, cookies)
+- `downloader_config`: defaults for `download()` (e.g., concurrency, retries; public targets only, no cookies or credentials)
 - Main side effects: creates the standard output folders and lazy-initializes the extractor, sectioner, and classifier.
 
 ## extract()
@@ -196,7 +196,9 @@ download(
   - `download_mode`: one of `standard`, `auto`, or `browser`
   - `browser_mode=True`: alias for `download_mode="browser"`
   - `download_policy_file`: route specific domains/URL patterns to `standard`, `auto`, or `browser`
-  - downloader kwargs via `**kwargs` for concurrency, SSL, cookies, retries, checkpoints, etc.
+  - downloader kwargs via `**kwargs` for concurrency, SSL, retries, checkpoints, etc. Public targets only: a URL with
+    userinfo or a credential query field, or a `domain_cookies`/`credentials` setting, is refused with
+    `credentials_unsupported` before any request.
 - Main outputs:
   - downloaded files in `downloads/`
   - partial/final results in `download_results/`

@@ -2,6 +2,7 @@ import asyncio
 import io
 
 import pandas as pd
+import pytest
 from PIL import Image
 
 from glossapi import Corpus
@@ -173,17 +174,10 @@ def test_academy_images_to_pdf_bytes_builds_pdf(tmp_path):
     assert pdf_bytes.startswith(b"%PDF-")
 
 
-def test_browser_downloader_domain_cookie_lookup(tmp_path):
-    downloader = BrowserGlossDownloader(
-        output_dir=str(tmp_path),
-        domain_cookies={"eur-lex.europa.eu": {"token": "abc123"}},
-    )
-
-    cookies = downloader._domain_cookies_for_url(
-        "https://eur-lex.europa.eu/legal-content/EL/TXT/PDF/?uri=OJ:L_202502360"
-    )
-
-    assert cookies == {"token": "abc123"}
+def test_browser_downloader_accepts_no_domain_cookies(tmp_path):
+    # Public targets only (owner, 1 Nov 2026): the cookie setting was removed, so naming it is a TypeError.
+    with pytest.raises(TypeError):
+        BrowserGlossDownloader(output_dir=str(tmp_path), domain_cookies={"eur-lex.europa.eu": {"token": "abc123"}})
 
 
 def test_browser_downloader_bootstrap_url_uses_base_for_file_endpoints(tmp_path):
@@ -315,7 +309,6 @@ def test_download_policy_preserves_transport_and_scheduler_options():
                     "domain_concurrency_floor": 1,
                     "domain_concurrency_ceiling": 3,
                     "skip_failed_after": 5,
-                    "domain_cookies": {"sessionid": "abc"},
                 }
             ],
         }
@@ -330,7 +323,13 @@ def test_download_policy_preserves_transport_and_scheduler_options():
     assert options["domain_concurrency_floor"] == 1
     assert options["domain_concurrency_ceiling"] == 3
     assert options["skip_failed_after"] == 5
-    assert options["domain_cookies"] == {"sessionid": "abc"}
+
+
+def test_download_policy_refuses_domain_cookies():
+    from glossapi.ledger.urls import CredentialsUnsupportedError
+    with pytest.raises(CredentialsUnsupportedError, match="credentials_unsupported"):
+        build_download_policy({"default": {"downloader": "standard"},
+                               "rules": [{"match": {"domains": ["ikee.lib.auth.gr"]}, "domain_cookies": {"sessionid": "abc"}}]})
 
 
 def test_browser_downloader_route_options_apply_standard_transport_settings(tmp_path):
@@ -347,7 +346,6 @@ def test_browser_downloader_route_options_apply_standard_transport_settings(tmp_
                     "domain_concurrency_floor": 1,
                     "domain_concurrency_ceiling": 2,
                     "skip_failed_after": 4,
-                    "domain_cookies": {"sessionid": "abc"},
                 }
             ],
         }
@@ -367,16 +365,11 @@ def test_browser_downloader_route_options_apply_standard_transport_settings(tmp_
     route, route_options = downloader._resolve_route("https://ktisis.cut.ac.cy/items/123/file.pdf")
     timeout = downloader._build_request_timeout(0, route_options=route_options)
     connector = asyncio.run(_build_connector())
-    cookies = downloader._resolve_request_cookies(
-        "https://ktisis.cut.ac.cy/items/123/file.pdf",
-        route_options=route_options,
-    )
     floor, ceiling, start, skip_after = downloader._resolve_domain_scheduler_settings(route_options)
 
     assert route == "standard"
     assert timeout.total == 90
     assert connector is not None
-    assert cookies["sessionid"] == "abc"
     assert (floor, ceiling, start, skip_after) == (1, 2, 2, 4)
 
 

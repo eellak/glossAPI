@@ -278,8 +278,7 @@ def _worker(stage, request, connection):
         # capacity could deadlock join(). The pipe carries one small sentinel.
         from dataclasses import asdict
         target = request.work_directory / "worker-result.json"
-        from ..ledger.urls import parse_policy, scrub, scrub_known_value
-        encoded = json.dumps(scrub_known_value(scrub(asdict(result), parse_policy(request.settings.get("url_policy")))), ensure_ascii=False)
+        encoded = json.dumps(asdict(result), ensure_ascii=False)
         write_text_hashed(target, encoded)
         data = encoded.encode('utf-8')
         connection.send((hashlib.sha256(data).hexdigest(), len(data)))

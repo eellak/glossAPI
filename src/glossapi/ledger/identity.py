@@ -20,13 +20,8 @@ def source_key(uri, *, dataset_id=None, source_id=None, resource_index=0):
     uri = str(uri)
     parts = urlsplit(uri)
     if parts.scheme.lower() in ("http", "https"):
-        from .urls import keyed_source_key, lossless_url
-        if not lossless_url(uri):
-            # Userinfo, query or fragment values never persist; the identity is a
-            # keyed reference to the raw URL, not its redacted spelling.
-            return keyed_source_key(uri)
-        # Lowercase the host, not credentials, path or escaping. Preserve ports,
-        # queries (including a trailing empty query) and meaningful URL bytes.
+        # Lowercase the host, not the path or escaping. Preserve ports, queries
+        # (including a trailing empty query) and meaningful URL bytes.
         authority = parts.netloc
         user, separator, host = authority.rpartition("@")
         authority = (user + separator if separator else "") + host.lower()
@@ -37,3 +32,13 @@ def source_key(uri, *, dataset_id=None, source_id=None, resource_index=0):
     if parts.scheme == "file":
         return "local_path:v1:" + str(uri)
     return "local_path:v1:" + Path(uri).absolute().as_uri()
+
+
+def source_uri_of_key(key):
+    """The source URI a ``url:v1``/``local_path:v1`` key spells, or None (``source:v1``)."""
+    if not isinstance(key, str):
+        return None
+    for prefix in ("url:v1:", "local_path:v1:"):
+        if key.startswith(prefix):
+            return key[len(prefix):]
+    return None

@@ -152,7 +152,7 @@ Only measured values. Each entry names its machine, workload, date and evidence 
 
 - Paths are absolute; URLs are fetched by the download stage only when it is planned.
 - Show the user `plan --json` before `run`; run the saved plan with `run --plan`.
-- Credentials never go into a manifest (URLs with credential fields are refused).
+- Downloads are public targets only: a URL with userinfo or a credential query field is refused (credentials_unsupported).
 
 ## Typed errors on the decision path
 
@@ -178,6 +178,7 @@ Only measured values. Each entry names its machine, workload, date and evidence 
 | `plan_source_changed` | run --plan | 2 | The saved plan no longer matches: re-run plan and show the new preview. |
 | `plan_capability_changed` | run --plan | 2 | The saved plan no longer matches: re-run plan and show the new preview. |
 | `disk_budget_required` | plan, run | 3 | memory_saving=extreme needs --disk-budget-bytes. |
+| `credentials_unsupported` | plan, run | 2 | A source URL carries userinfo (user:pass@) or a credential query/fragment field (token, key, signature, ...), or a download setting would send credentials (domain_cookies, credentials): glossAPI downloads public targets only. Refused before anything is planned, recorded or fetched; supply the public URL. |
 | `invalid_manifest` | plan, run | 2 | A malformed manifest entry; details.field and details.index say where. |
 | `unsupported_manifest_version` | plan, run | 2 | This glossAPI reads manifest_version 1 only. |
 

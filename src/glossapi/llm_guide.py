@@ -73,6 +73,8 @@ def _cli_errors() -> dict[str, dict[str, Any]]:
                                        for code, (exit_code, meaning) in INSTALL_ERRORS.items()}
     rows.update(plan_preview.error_contracts())
     rows['disk_budget_required'] = dict(command='plan, run', exit_code=3, meaning='memory_saving=extreme needs --disk-budget-bytes.')
+    from .ledger import urls
+    rows[urls.CODE] = dict(command='plan, run', exit_code=2, meaning=urls.MEANING)
     rows.update(input_manifest.error_contracts())
     return rows
 
@@ -159,7 +161,7 @@ def guide_view() -> dict[str, Any]:
                                'selection': ['a', 'b'], 'products': ['document_export'], 'settings': {'debug': 'off', 'memory_saving': 'normal'}},
                       rules=['Paths are absolute; URLs are fetched by the download stage only when it is planned.',
                              'Show the user `plan --json` before `run`; run the saved plan with `run --plan`.',
-                             'Credentials never go into a manifest (URLs with credential fields are refused).']),
+                             'Downloads are public targets only: a URL with userinfo or a credential query field is refused (credentials_unsupported).']),
         errors=_cli_errors(),
         exit_codes={'0': 'success', '1': 'ran and found failures (status/run with failed documents; doctor with an error check); run lists each failed '
                                      'task and unavailable source in errors (code = the ledger reason code)',
