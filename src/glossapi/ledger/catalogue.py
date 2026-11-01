@@ -1,5 +1,5 @@
 """Versioned status/reason vocabulary; details retain original backend tokens."""
-CATALOGUE_VERSION = 6  # 3: source_unavailable (CP-LEDGER F3); 4: source_inventory_bound (cycle-2 F4); 5: durability_barrier (K4(c)); 6: disk_full (K4(b), W18 M10); 38 codes that never had a writer removed (K4(b), W18 M14)
+CATALOGUE_VERSION = 7  # 3: source_unavailable (CP-LEDGER F3); 4: source_inventory_bound (cycle-2 F4); 5: durability_barrier (K4(c)); 6: disk_full (K4(b), W18 M10); 38 codes that never had a writer removed (K4(b), W18 M14); 7: export_metadata_identity_mismatch (CP-K4a F1)
 STAGES = frozenset(("download", "extract", "clean", "ocr", "math", "sections", "annotate", "export"))
 STATUSES = frozenset(("planned", "running", "ok", "skipped", "failed"))
 TERMINAL_STATUSES = frozenset(("ok", "skipped", "failed"))
@@ -65,6 +65,7 @@ REASON_CODES = frozenset((
     'export_empty',
     'export_exception',
     'export_included',
+    'export_metadata_identity_mismatch',
     'export_metadata_row_missing',
     'extract_backend_unavailable',
     'extract_completed',

@@ -22,15 +22,17 @@ def test_an_own_file_keeps_its_recorded_hash_only_inside_one_run(tmp_path):
     assert file_hash(own) == hashlib.sha256(own.read_bytes()).hexdigest()
     with run_hash_scope():
         remember_own_hash(own, sentinel, own.stat().st_size)
-        assert file_hash(own) == sentinel
+        assert file_hash(own, own=True) == sentinel
+        # A caller-supplied file (own=False) never consults the registry, even for a registered inode (CP-K4b F3).
+        assert file_hash(own) == hashlib.sha256(own.read_bytes()).hexdigest()
         # Never registered (a user original): read at every boundary.
         assert file_hash(original) == hashlib.sha256(original.read_bytes()).hexdigest()
         assert reused_own_hash(original.stat()) is None
         with run_hash_scope():  # a nested public call keeps the run's registry
-            assert file_hash(own) == sentinel
+            assert file_hash(own, own=True) == sentinel
         # Reopened for writing (size or mtime changes the key): read again.
         own.write_bytes(b'rewritten by glossapi, longer')
-        assert file_hash(own) == hashlib.sha256(own.read_bytes()).hexdigest()
+        assert file_hash(own, own=True) == hashlib.sha256(own.read_bytes()).hexdigest()
         digest = file_hash(own, own=True)
         assert reused_own_hash(own.stat()) == digest
         forget_own_hash(own)

@@ -1,0 +1,892 @@
+{
+ "pyright": "1.1.408",
+ "basis": "CP-K4b F5: standard-mode pyright errors of every ledger/ and stages/ module K4 touched (and the fix round touched), on the pre-K4 tree a7f3c17 (git archive a7f3c17 src); new modules (barriers, final_products, interruption, json_dictionary, download_compatibility) start empty. reader.py and retention.py keep their K3a baseline. Matched per (file, rule, message) key with counts; the gate allows no key beyond its count.",
+ "files": [
+  "glossapi/stages/acquisition_pool.py",
+  "glossapi/stages/products.py",
+  "glossapi/stages/workers.py",
+  "glossapi/ledger/catalogue.py",
+  "glossapi/ledger/compact.py",
+  "glossapi/ledger/encoding.py",
+  "glossapi/ledger/journal.py",
+  "glossapi/ledger/json_dictionary.py",
+  "glossapi/ledger/schema.py",
+  "glossapi/ledger/writer.py",
+  "glossapi/stages/annotate.py",
+  "glossapi/stages/barriers.py",
+  "glossapi/stages/clean.py",
+  "glossapi/stages/compatibility.py",
+  "glossapi/stages/disk_budget.py",
+  "glossapi/stages/download_compatibility.py",
+  "glossapi/stages/execution.py",
+  "glossapi/stages/export.py",
+  "glossapi/stages/extract.py",
+  "glossapi/stages/final_products.py",
+  "glossapi/stages/interruption.py",
+  "glossapi/stages/metadata.py",
+  "glossapi/stages/run.py",
+  "glossapi/stages/scheduler.py",
+  "glossapi/stages/sections.py",
+  "glossapi/stages/sequential.py"
+ ],
+ "diagnostics": [
+  {
+   "file": "glossapi/ledger/compact.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"__set__\" for class \"type[Row]\"\n  Attribute \"__set__\" is unknown",
+   "count": 2
+  },
+  {
+   "file": "glossapi/ledger/compact.py",
+   "rule": "reportFunctionMemberAccess",
+   "message": "Cannot access attribute \"__set__\" for class \"FunctionType\"\n  Attribute \"__set__\" is unknown",
+   "count": 2
+  },
+  {
+   "file": "glossapi/ledger/compact.py",
+   "rule": "reportIncompatibleMethodOverride",
+   "message": "Method \"cursor\" overrides class \"Connection\" in an incompatible manner\n  Parameter 2 type mismatch: base parameter is type \"None\", override parameter is type \"type[LedgerCursor]\"\n    Type \"None\" is not assignable to type \"type[LedgerCursor]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/compact.py",
+   "rule": "reportIncompatibleVariableOverride",
+   "message": "\"row_factory\" overrides symbol of same name in class \"Connection\"\n  Type \"property\" is not assignable to type \"_RowFactoryOptions\"\n    Type \"property\" is not assignable to type \"type[Row]\"\n    Type \"property\" is not assignable to type \"(Cursor, Row) -> object\"\n    \"property\" is not assignable to \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/compact.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"__set__\" is not a known attribute of \"None\"",
+   "count": 2
+  },
+  {
+   "file": "glossapi/ledger/journal.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"ResultJournal\" cannot be assigned to parameter \"value\" of type \"None\" in function \"set\"\n  \"ResultJournal\" is not assignable to \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/journal.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"WorkerObservations\" cannot be assigned to parameter \"value\" of type \"None\" in function \"set\"\n  \"WorkerObservations\" is not assignable to \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/journal.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"get\" for class \"str\"\n  Attribute \"get\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/journal.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"writer\" for class \"None\"\n  Attribute \"writer\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/journal.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "\"Never\" is not iterable",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/journal.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Expected mapping for dictionary unpack operator",
+   "count": 2
+  },
+  {
+   "file": "glossapi/ledger/journal.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Object of type \"Never\" cannot be used with \"with\" because it does not correctly implement __enter__",
+   "count": 3
+  },
+  {
+   "file": "glossapi/ledger/journal.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Object of type \"Never\" cannot be used with \"with\" because it does not correctly implement __exit__",
+   "count": 3
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Unknown | int\" cannot be assigned to parameter \"value\" of type \"dict[Any, Any]\" in function \"__setitem__\"\n  Type \"Unknown | int\" is not assignable to type \"dict[Any, Any]\"\n    \"int\" is not assignable to \"dict[Any, Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"int | None\" cannot be assigned to parameter \"fd\" of type \"int\" in function \"close\"\n  Type \"int | None\" is not assignable to type \"int\"\n    \"None\" is not assignable to \"int\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"str\" cannot be assigned to parameter \"value\" of type \"dict[Any, Any]\" in function \"__setitem__\"\n  \"str\" is not assignable to \"dict[Any, Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot assign to attribute \"owner_writer\" for class \"LedgerConnection\"\n  Attribute \"owner_writer\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportOperatorIssue",
+   "message": "Operator \"+\" not supported for types \"dict[Any, Any] | int\" and \"Literal[1]\"\n  Operator \"+\" not supported for types \"dict[Any, Any]\" and \"Literal[1]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportOptionalCall",
+   "message": "Object of type \"None\" cannot be called",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"backup\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"commit\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"compact\" is not a known attribute of \"None\"",
+   "count": 5
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"encode_snapshot\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"event_table\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"execute\" is not a known attribute of \"None\"",
+   "count": 41
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"in_transaction\" is not a known attribute of \"None\"",
+   "count": 4
+  },
+  {
+   "file": "glossapi/ledger/writer.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"rollback\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/acquisition_pool.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"close\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/acquisition_pool.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"poll\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/acquisition_pool.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"recv\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/acquisition_pool.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"send\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Literal['compatibility_filename']\" cannot be assigned to parameter \"s\" of type \"slice[Any, Any, Any]\" in function \"__getitem__\"\n  \"Literal['compatibility_filename']\" is not assignable to \"slice[Any, Any, Any]\"",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Literal['section_keys']\" cannot be assigned to parameter \"s\" of type \"slice[Any, Any, Any]\" in function \"__getitem__\"\n  \"Literal['section_keys']\" is not assignable to \"slice[Any, Any, Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"filename\" for class \"tuple[Any, ...]\"\n  Attribute \"filename\" is unknown",
+   "count": 4
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"get\" for class \"list[dict[Unknown, list[list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]]\"\n  Attribute \"get\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"get\" for class \"list[list[Unknown] | list[dict[Unknown, list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]] | dict[Unknown, Unknown] | Unknown]\"\n  Attribute \"get\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"id\" for class \"tuple[Any, ...]\"\n  Attribute \"id\" is unknown",
+   "count": 6
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"predicted_section\" for class \"tuple[Any, ...]\"\n  Attribute \"predicted_section\" is unknown",
+   "count": 6
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportCallIssue",
+   "message": "No overloads for \"__getitem__\" match the provided arguments",
+   "count": 3
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportFunctionMemberAccess",
+   "message": "Cannot access attribute \"__wrapped__\" for class \"FunctionType\"\n  Attribute \"__wrapped__\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "\"Never\" is not iterable",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"_inside_product_stage\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"annotation_mapping\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"classified_parquet\" is not a known attribute of \"None\"",
+   "count": 4
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"classifier\" is not a known attribute of \"None\"",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"filename_to_doctype\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"fully_annotated_parquet\" is not a known attribute of \"None\"",
+   "count": 4
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"section_classifier_model_path\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/annotate.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"sections_parquet\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/clean.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"iterable\" of type \"Iterable[list[bytes]]\" in function \"__init__\"\n  Type \"Unknown | None\" is not assignable to type \"Iterable[list[bytes]]\"\n    \"None\" is incompatible with protocol \"Iterable[list[bytes]]\"\n      \"__iter__\" is not present",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/clean.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"tuple[dict[str | bytes, Unknown | bytes]]\" cannot be assigned to parameter \"decisions\" of type \"tuple[Mapping[str, JsonValue], ...]\" in function \"__init__\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/clean.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "\"run_complete_pipeline\" is not a known attribute of module \"glossapi_rs_cleaner\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/clean.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "\"score_markdown_directory_detailed\" is not a known attribute of module \"glossapi_rs_noise\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/clean.py",
+   "rule": "reportCallIssue",
+   "message": "No overloads for \"__init__\" match the provided arguments",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/clean.py",
+   "rule": "reportPossiblyUnboundVariable",
+   "message": "\"output_digest\" is possibly unbound",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"None\" cannot be assigned to parameter \"document_id\" of type \"str\" in function \"__init__\"\n  \"None\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"tuple[Literal['inode'], int, int]\" cannot be assigned to parameter \"object\" of type \"tuple[str, str]\" in function \"append\"\n  \"int\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"get\" for class \"list[dict[Unknown, list[list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]]\"\n  Attribute \"get\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"get\" for class \"list[list[Unknown] | list[dict[Unknown, list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]] | dict[Unknown, Unknown] | Unknown]\"\n  Attribute \"get\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportCallIssue",
+   "message": "Expected 12 positional arguments",
+   "count": 14
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "\"Never\" is not iterable",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Object of type \"Never\" cannot be used with \"with\" because it does not correctly implement __enter__",
+   "count": 4
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Object of type \"Never\" cannot be used with \"with\" because it does not correctly implement __exit__",
+   "count": 4
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"message\" is not a known attribute of \"None\"",
+   "count": 4
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportOptionalSubscript",
+   "message": "Object of type \"None\" is not subscriptable",
+   "count": 8
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportPossiblyUnboundVariable",
+   "message": "\"payload\" is possibly unbound",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportPossiblyUnboundVariable",
+   "message": "\"serialized_payload\" is possibly unbound",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/compatibility.py",
+   "rule": "reportPossiblyUnboundVariable",
+   "message": "\"version\" is possibly unbound",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/download_compatibility.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"adapter_attempts\" for class \"None\"\n  Attribute \"adapter_attempts\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/download_compatibility.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"adapter_stages\" for class \"None\"\n  Attribute \"adapter_stages\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/download_compatibility.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot assign to attribute \"downloader\" for class \"DownloadStage\"\n  Attribute \"downloader\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/download_compatibility.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot assign to attribute \"kernel\" for class \"DownloadStage\"\n  Attribute \"kernel\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/download_compatibility.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot assign to attribute \"rate_limiter\" for class \"DownloadStage\"\n  Attribute \"rate_limiter\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/download_compatibility.py",
+   "rule": "reportCallIssue",
+   "message": "Expected 12 positional arguments",
+   "count": 7
+  },
+  {
+   "file": "glossapi/stages/download_compatibility.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Object of type \"Never\" cannot be used with \"with\" because it does not correctly implement __enter__",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/download_compatibility.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Object of type \"Never\" cannot be used with \"with\" because it does not correctly implement __exit__",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/execution.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"dict[Any, Any]\" cannot be assigned to parameter \"value\" of type \"None\" in function \"set\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/export.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"dict[str, bool | dict[Unknown, str | Unknown] | list[str]]\" cannot be assigned to parameter \"settings\" of type \"Mapping[str, JsonValue]\" in function \"__init__\"\n  Type \"list[str]\" is not assignable to type \"JsonValue\"\n    \"list[str]\" is not assignable to \"None\"\n    \"list[str]\" is not assignable to \"bool\"\n    \"list[str]\" is not assignable to \"int\"\n    \"list[str]\" is not assignable to \"float\"\n    \"list[str]\" is not assignable to \"str\"\n    \"list[str]\" is not assignable to \"list[JsonValue]\"\n      Type parameter \"_T@list\" is invariant, but \"str\" is not the same as \"JsonValue\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/export.py",
+   "rule": "reportFunctionMemberAccess",
+   "message": "Cannot access attribute \"__wrapped__\" for class \"FunctionType\"\n  Attribute \"__wrapped__\" is unknown",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/export.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "\"Never\" is not iterable",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/export.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"_inside_product_stage\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/export.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"cleaned_markdown_dir\" is not a known attribute of \"None\"",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/export.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"error_type\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/export.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"markdown_dir\" is not a known attribute of \"None\"",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/export.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"message\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/export.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"output_dir\" is not a known attribute of \"None\"",
+   "count": 7
+  },
+  {
+   "file": "glossapi/stages/extract.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"repair_backend\" for class \"GlossExtract\"\n  Attribute \"repair_backend\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/extract.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot assign to attribute \"page_range\" for class \"GlossExtract\"\n  Attribute \"page_range\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/extract.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot assign to attribute \"processing_timeout\" for class \"GlossExtract\"\n  Expression of type \"float\" cannot be assigned to attribute \"processing_timeout\" of class \"GlossExtract\"\n    \"float\" is not assignable to \"int\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/extract.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot assign to attribute \"repair_backend\" for class \"GlossExtract\"\n  Attribute \"repair_backend\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/products.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"None\" cannot be assigned to parameter \"document_id\" of type \"str\" in function \"__init__\"\n  \"None\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/products.py",
+   "rule": "reportCallIssue",
+   "message": "Expected 12 positional arguments",
+   "count": 7
+  },
+  {
+   "file": "glossapi/stages/products.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "\"Never\" is not iterable",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/products.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Object of type \"Never\" cannot be used with \"with\" because it does not correctly implement __enter__",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/products.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Object of type \"Never\" cannot be used with \"with\" because it does not correctly implement __exit__",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"dict[Unknown, int]\" cannot be assigned to parameter \"func\" of type \"PythonFuncType\" in function \"map\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"dict[str, str | None]\" cannot be assigned to parameter \"object\" of type \"dict[str, str]\" in function \"append\"\n  Type \"str | None\" is not assignable to type \"str\"\n    \"None\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"tuple[str | None]\" cannot be assigned to parameter \"after\" of type \"tuple[str, ...]\" in function \"__init__\"\n  Type \"str | None\" is not assignable to type \"str\"\n    \"None\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"tuple[tuple[str | None, Literal['clean_markdown'], Literal['selected_text']]]\" cannot be assigned to parameter \"inputs\" of type \"tuple[tuple[str, str, str], ...]\" in function \"__init__\"\n  Type \"str | None\" is not assignable to type \"str\"\n    \"None\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"tuple[tuple[str | None, Literal['raw_markdown'], Literal['selected_text']]]\" cannot be assigned to parameter \"inputs\" of type \"tuple[tuple[str, str, str], ...]\" in function \"__init__\"\n  Type \"str | None\" is not assignable to type \"str\"\n    \"None\" is not assignable to \"str\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"get\" for class \"list[dict[Unknown, list[list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]]\"\n  Attribute \"get\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"get\" for class \"list[list[Unknown] | list[dict[Unknown, list[Unknown] | list[dict[Unknown, Unknown]] | dict[Unknown, Unknown] | Unknown]] | dict[Unknown, Unknown] | Unknown]\"\n  Attribute \"get\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Expected mapping for dictionary unpack operator",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"artifact\" is not a known attribute of \"None\"",
+   "count": 3
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"connection\" is not a known attribute of \"None\"",
+   "count": 6
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"document\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"event\" is not a known attribute of \"None\"",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"execute\" is not a known attribute of \"None\"",
+   "count": 6
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"latest_attempt\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"run\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"snapshot\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"source_record\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"startswith\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"task_states\" is not a known attribute of \"None\"",
+   "count": 3
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"transaction\" is not a known attribute of \"None\"",
+   "count": 3
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"version\" is not a known attribute of \"None\"",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportOptionalSubscript",
+   "message": "Object of type \"None\" is not subscriptable",
+   "count": 11
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportPossiblyUnboundVariable",
+   "message": "\"digest\" is possibly unbound",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportPossiblyUnboundVariable",
+   "message": "\"local_given\" is possibly unbound",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportPossiblyUnboundVariable",
+   "message": "\"name\" is possibly unbound",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportPossiblyUnboundVariable",
+   "message": "\"remote_entries\" is possibly unbound",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/run.py",
+   "rule": "reportPossiblyUnboundVariable",
+   "message": "\"source_rows\" is possibly unbound",
+   "count": 12
+  },
+  {
+   "file": "glossapi/stages/scheduler.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"float\" cannot be assigned to parameter \"timeout_seconds\" of type \"int\" in function \"prepare\"\n  \"float\" is not assignable to \"int\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/scheduler.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"int | Any\" cannot be assigned to parameter \"iterable\" of type \"Iterable[_T@enumerate]\" in function \"__new__\"\n  Type \"int | Any\" is not assignable to type \"Iterable[_T@enumerate]\"\n    \"int\" is incompatible with protocol \"Iterable[_T@enumerate]\"\n      \"__iter__\" is not present",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/scheduler.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"request\" for class \"Reporter*\"\n  Attribute \"request\" is unknown",
+   "count": 3
+  },
+  {
+   "file": "glossapi/stages/scheduler.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot assign to attribute \"request\" for class \"Reporter\"\n  Attribute \"request\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/scheduler.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Expected mapping for dictionary unpack operator",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/scheduler.py",
+   "rule": "reportOperatorIssue",
+   "message": "Operator \"in\" not supported for types \"Literal['ocr', 'clean']\" and \"int | Any\"\n  Operator \"in\" not supported for types \"Literal['ocr']\" and \"int\"\n  Operator \"in\" not supported for types \"Literal['clean']\" and \"int\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/scheduler.py",
+   "rule": "reportOperatorIssue",
+   "message": "Operator \"in\" not supported for types \"Literal['ocr']\" and \"int | Any\"\n  Operator \"in\" not supported for types \"Literal['ocr']\" and \"int\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/scheduler.py",
+   "rule": "reportPossiblyUnboundVariable",
+   "message": "\"accelerator_claims\" is possibly unbound",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/sections.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Literal['accepted_for_sections']\" cannot be assigned to parameter \"s\" of type \"slice[Any, Any, Any]\" in function \"__getitem__\"\n  \"Literal['accepted_for_sections']\" is not assignable to \"slice[Any, Any, Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/sections.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Literal['selected_file_id']\" cannot be assigned to parameter \"s\" of type \"slice[Any, Any, Any]\" in function \"__getitem__\"\n  \"Literal['selected_file_id']\" is not assignable to \"slice[Any, Any, Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/sections.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"Literal['selected_text_sha256']\" cannot be assigned to parameter \"s\" of type \"slice[Any, Any, Any]\" in function \"__getitem__\"\n  \"Literal['selected_text_sha256']\" is not assignable to \"slice[Any, Any, Any]\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/sections.py",
+   "rule": "reportCallIssue",
+   "message": "No overloads for \"__getitem__\" match the provided arguments",
+   "count": 3
+  },
+  {
+   "file": "glossapi/stages/sections.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "\"Never\" is not iterable",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/sections.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"message\" is not a known attribute of \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/sequential.py",
+   "rule": "reportGeneralTypeIssues",
+   "message": "Expected mapping for dictionary unpack operator",
+   "count": 2
+  },
+  {
+   "file": "glossapi/stages/sequential.py",
+   "rule": "reportPossiblyUnboundVariable",
+   "message": "\"scratch_files\" is possibly unbound",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/workers.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"dict[Unknown, Unknown]\" cannot be assigned to parameter \"value\" of type \"None\" in function \"set\"\n  \"dict[Unknown, Unknown]\" is not assignable to \"None\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/workers.py",
+   "rule": "reportArgumentType",
+   "message": "Argument of type \"float\" cannot be assigned to parameter \"lease_expiry\" of type \"SpawnProcess | Connection[Any, Any] | int | None\" in function \"update\"\n  Type \"float\" is not assignable to type \"SpawnProcess | Connection[Any, Any] | int | None\"\n    \"float\" is not assignable to \"SpawnProcess\"\n    \"float\" is not assignable to \"Connection[Any, Any]\"\n    \"float\" is not assignable to \"None\"\n    \"float\" is not assignable to \"int\"",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/workers.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"send\" for class \"SpawnProcess\"\n  Attribute \"send\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/workers.py",
+   "rule": "reportAttributeAccessIssue",
+   "message": "Cannot access attribute \"send\" for class \"int\"\n  Attribute \"send\" is unknown",
+   "count": 1
+  },
+  {
+   "file": "glossapi/stages/workers.py",
+   "rule": "reportOptionalMemberAccess",
+   "message": "\"send\" is not a known attribute of \"None\"",
+   "count": 1
+  }
+ ]
+}

@@ -108,7 +108,7 @@ class CleanStage:
         request.work_directory.mkdir(parents=True, exist_ok=True)
         selections: list[dict[str, Any]] = []
         for source, row in zip(request.inputs, rows):
-            if sha256_file(source.path) != source.sha256 or row['selected_text_sha256'] != source.sha256:
+            if sha256_file(source.path, own=True) != source.sha256 or row['selected_text_sha256'] != source.sha256:
                 raise ValueError('input_hash_changed')
             selections.append({'selected_file_id': source.file_id, **row})
         common = {key: value for key, value in selection.items() if key != 'rows'}
@@ -130,8 +130,9 @@ class CleanStage:
                 source = request.inputs[0]
                 if sha256_file(source.path) != source.sha256:
                     raise ValueError('input_hash_changed')
+                decision: dict[str, Any] = {'selected_file_id':source.file_id, **(self.selection or {})}
                 return StageResult(request.task_id, request.attempt_id, request.lease_token, 'ok', 'clean_completed', (),
-                    ({'selected_file_id':source.file_id, **dict(self.selection or {})},),
+                    (decision,),
                     {'wall_ns': time.monotonic_ns()-started, 'execution': 'in_process'})
             request = freeze_inputs(request)
             source = request.inputs[0]

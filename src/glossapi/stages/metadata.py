@@ -51,7 +51,7 @@ def restore_metadata_projections(journal):
         current=current_product(journal.writer.connection,path)
         if current!=product:continue
         immutable=local_path(product['immutable_uri'])
-        if not immutable.is_file() or sha256_file(immutable)!=product['sha256']:raise ValueError('Metadata projection corrupt')
+        if not immutable.is_file() or sha256_file(immutable,own=True)!=product['sha256']:raise ValueError('Metadata projection corrupt')
         # Restoring the committed projection is a deliberate rollback of uncommitted bytes (cutover profile). It is
         # compared and replaced inside the metadata lock, atomically, so a reader never sees a partial copy and a
         # locked writer's read-modify-write is never interleaved with it (CP-K2a F1).

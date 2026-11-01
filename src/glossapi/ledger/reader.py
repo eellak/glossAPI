@@ -66,8 +66,8 @@ def snapshot(connection, digest):
     return value
 
 
-def evidence(connection, event):
-    details = json.loads(event["details_json"])
+def evidence(connection: Any, event: Any) -> dict[str, Any]:
+    details: dict[str, Any] = json.loads(event["details_json"])
     reference = details.get("evidence_sha256")
     return {**details, **(snapshot(connection, reference) if reference else {})}
 
@@ -304,14 +304,16 @@ def report_why(connection, selector, *, run=None, stage=None):
         expanded=bound_tasks|{task for task,producer in dependencies if producer in bound_tasks}
         if expanded==bound_tasks:break
         bound_tasks=expanded
-    decoded={event['event_id']:evidence(connection,event) for event in history}
+    decoded: dict[Any, dict[str, Any]]={event['event_id']:evidence(connection,event) for event in history}
     section_keys={key for event in history if event['version_id'] in version_ids for key in decoded[event['event_id']].get('section_keys',[])}
     relevant_events = []
     for event in history:
         details = decoded[event['event_id']]
         if event['version_id'] is None and event['task_id'] in bound_tasks:
-            details={**details,'scope':'corpus_operation_with_bound_document_inputs'}
-            if 'lineage' in details:details['lineage']=[item for item in details['lineage'] if item.get('section_key') in section_keys]
+            details=cast(dict[str, Any],{**details,'scope':'corpus_operation_with_bound_document_inputs'})
+            if 'lineage' in details:
+                lineage: list[Any]=details['lineage']
+                details['lineage']=[item for item in lineage if item.get('section_key') in section_keys]
             # An aggregate clean selection (K4(c) part 3): this document's own row(s) only.
             _keep_own_selection_rows(cast(object,details),cast(object,document_file_ids),cast(object,version_ids))
             if 'selected_versions' in details:
@@ -340,7 +342,7 @@ def report_why(connection, selector, *, run=None, stage=None):
         for attempt in _rows(connection, "SELECT * FROM attempts WHERE task_id=? ORDER BY attempt_number", (task["task_id"],)):
             attempt_events = [(e, d) for e, d in events if e["attempt_id"] == attempt["attempt_id"]]
             terminal = next((e for e, _ in reversed(attempt_events) if e["event_kind"] == "lifecycle"), {})
-            outputs = snapshot(connection, terminal["output_manifest_sha256"]).get("files", []) if terminal.get("output_manifest_sha256") else []
+            outputs: list[Any] = snapshot(connection, terminal["output_manifest_sha256"]).get("files", []) if terminal.get("output_manifest_sha256") else []
             inputs = _rows(connection, "SELECT file_id,role,sha256 FROM attempt_inputs WHERE attempt_id=? ORDER BY role,file_id", (attempt["attempt_id"],))
             error = dict(type=terminal.get("error_type"), message=terminal.get("message"), traceback=terminal.get("traceback"),
                 basis="attempt_terminal_event") if terminal.get("error_type") or terminal.get("status") == "failed" else None
@@ -458,8 +460,16 @@ def report_why(connection, selector, *, run=None, stage=None):
                                 source_uri=record["source_uri"], source_row=record["source_row"], url_index=record["url_index"],
                                 manifest_sha256=record["manifest_sha256"], metadata=record["metadata"], document_id=record["document_id"],
                                 version_id=bound_version, disposition=disposition))
-    return dict(document=dict(**document, version_id=version["version_id"] if version else None, versions=versions, source_records=records),
+    explained: dict[str, Any] = dict(document=dict(**document, version_id=version["version_id"] if version else None, versions=versions, source_records=records),
                 occurrences=occurrences, stages=stages, files=files, inclusion=inclusion, conflicts=conflicts, unknowns=unknowns, observations=observations,retention=retention_summary(connection,run))
+    # The verified interruption record of an interrupted run in scope, as status shows it (CP-K4a F4).
+    # The run in scope (the CLI passes the selected run, by default the latest, as status does).
+    scoped = cast(Any, run)
+    explanation = interruption_explanation(connection, scoped) if scoped else None
+    if explanation:
+        explained["interruption"] = dict(explanation, run_id=scoped["run_id"])
+    return explained
+
 
 
 _JSON_TAGS = frozenset(("null", "str", "bool", "int", "float", "mapping", "list"))
@@ -499,25 +509,27 @@ def source_metadata(connection, document_ids, run):
 
 
 def _mark_interruption(connection: Any, run: Any, counts: Any, result: Any) -> None:
-    """A run the filesystem stopped says so (W18 M10): exhausted disk, not a live or killed process."""
-    if not run or not (counts["running"] or counts["planned"]):
+    """A run the filesystem stopped says so (W18 M10): exhausted disk, not a live or killed process. A run whose tasks
+    all ended but whose run-close barrier hit a full disk says so too (CP-K4a F5)."""
+    if not run:
         return
-    latest = connection.execute("SELECT event_id,reason_code,message FROM events WHERE run_id=? AND event_kind='run' ORDER BY event_id DESC LIMIT 1",
-                                (run["run_id"],)).fetchone()
-    recorded = None
-    if latest is None or latest[1] != "disk_full":
-        # The ledger could not take one more page: the record allocated at run start names the cause (K4BI-G2).
-        from ..stages.interruption import read as read_interruption
-        root = _ledger_root(connection)
-        recorded = read_interruption(root, str(run["run_id"])) if root else None
-        if recorded is None:
-            return
+    explanation = interruption_explanation(connection, run)
+    if explanation is None:
+        return
     result["state"] = "interrupted"
-    result["interruption"] = dict(cause="disk_full", errno=28, event_id=latest[0] if recorded is None else None,
-                                  message=latest[2] if recorded is None else recorded.get("error"),
-                                  recorded_at=recorded.get("recorded_at") if recorded else None,
-                                  basis="ledger event" if recorded is None else "record allocated at run start",
-                                  action="free space (or enlarge the filesystem), then: glossapi run --resume " + str(run["run_id"]))
+    result["interruption"] = explanation
+
+
+def interruption_explanation(connection: Any, run: Any) -> Any:
+    """The run's verified disk_full explanation (status, report and report --why alike; CP-K4a F3/F4): a ledger event,
+    else the record allocated at run start (K4BI-G2), each only when it came after the run's latest attempt began."""
+    if not run:
+        return None
+    from ..stages.interruption import verified_cause
+    found = verified_cause(connection, _ledger_root(connection), str(run["run_id"]))
+    if found is None:
+        return None
+    return dict(found, action="free space (or enlarge the filesystem), then: glossapi run --resume " + str(run["run_id"]))
 
 
 def status_view(connection, *, run=None, stage=None, selector=None):

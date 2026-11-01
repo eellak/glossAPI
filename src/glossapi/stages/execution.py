@@ -398,11 +398,11 @@ def freeze_inputs(request):
     frozen = []
     # A frozen collision-free publication name (CP-LEDGER F1) spells the source
     # payload, so every product the backend names after it is unique.
-    published = request.settings.get("publication_name")
+    published = cast("str | None", request.settings.get("publication_name"))
     from .contracts import ArtifactReference
     for ordinal, artifact in enumerate(cast('tuple[ArtifactReference, ...]', request.inputs)):
         name = published if published and artifact.kind in ("source_payload", "initial_input", "download_payload") else artifact.path.name
-        path = request.work_directory / "inputs" / str(ordinal) / name
+        path = cast(Path, request.work_directory / "inputs" / str(ordinal) / name)
         path.parent.mkdir(parents=True, exist_ok=True)
         # A producer-bound input glossAPI wrote (or verified) in this run keeps its recorded hash (K4C-G08). Nothing
         # is registered here: a caller-supplied input (an original, a download, a given text) is hashed as it enters

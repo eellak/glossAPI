@@ -181,7 +181,7 @@ def test_ambiguous_projection_is_rejected_and_census_reconciles_to_export(tmp_pa
     # Simulate an unresolved name collision: the guard must refuse the second
     # projection instead of overwriting the first, and the final census must
     # reflect the export, not DAG completion.
-    monkeypatch.setattr(run_module, '_publication_names', lambda entries, remote: {})
+    monkeypatch.setattr(run_module, '_publication_names', lambda entries, remote, claimed=None: {})
     first = pdf(tmp_path/'first/same.pdf', 'ALPHA first input.')
     second = pdf(tmp_path/'second/same.pdf', 'BRAVO other input.')
     corpus = Corpus(tmp_path/'empty', tmp_path/'output')

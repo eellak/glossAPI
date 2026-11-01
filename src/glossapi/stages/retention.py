@@ -5,7 +5,7 @@ immutable: later readers require a new plan, never an amendment to an old edge.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from collections import defaultdict
 from contextlib import nullcontext
@@ -542,7 +542,7 @@ def retain_completed_run(writer,root,run_id,settings=None,*,attempts=None,cleanu
     private=Path(root).resolve()/'.glossapi/artifacts'
     projections={}
     for encoded, in writer.connection.execute("SELECT json FROM snapshots WHERE kind='product_projection' ORDER BY rowid"):
-        value=json.loads(encoded);projections[value['product_uri']]=value
+        value: dict[str, Any]=json.loads(encoded);projections[value['product_uri']]=value
     current_backings={value['immutable_uri'] for value in projections.values()}
     candidates=[]
     partial_coverage={}
@@ -697,7 +697,7 @@ def release_repaired_pdfs(writer,root,run_id,settings):
     if rows:release_private_scratch(controller,rows)
 
 
-def retire_downloaded_sources(writer,root,run_id,settings):
+def retire_downloaded_sources(writer: Any, root: Any, run_id: str, settings: dict[str, Any]) -> None:
     """Release original download bytes after the frozen plan's last PDF reader.
 
     memory_saving=extreme streams (owner design, W18 M9): a run-owned download
@@ -714,21 +714,30 @@ def retire_downloaded_sources(writer,root,run_id,settings):
     # The original payload and byte-identical staging snapshots are one source
     # footprint; extreme must not leave a hidden whole-PDF copy behind.
     for version in state['versions']-state['settled']:
-        readers=[];waived=[];ready=True
-        for task_id in state['readers'].get(version,()):
-            task=writer.task_state(task_id)
-            if task['status']=='skipped' and task['reason_code']=='not_in_plan':waived.append(task_id)
-            elif task['status']!='ok':ready=False
-            else:readers.append(task_id)
-        if not ready:continue
-        if not readers:
-            state['settled'].add(version);continue
+        # Not before this document's own source readers are terminal (cheap; the download itself precedes them).
+        if any(writer.task_state(task_id)['status'] not in ('ok','skipped','failed') for task_id in state['readers'].get(version,())):continue
         controller=controller or RetentionController(writer,root,run_id,settings)
         digest=writer.connection.execute('SELECT stored_sha256 FROM document_versions WHERE version_id=?',(version,)).fetchone()[0]
         family=run_family(writer.connection,run_id)
         rows=[row for row in writer.connection.execute("SELECT * FROM current_file_state WHERE version_id=? AND sha256=? AND ownership='managed' AND presence='present' AND kind IN ('download_payload','source_snapshot','scratch_copy')",(version,digest)).fetchall()
             if registering_run(writer.connection,row['file_id']) in family and not path_alias(controller.root,file_path(row))]
         if not rows:
+            state['settled'].add(version);continue
+        # Every frozen reader of these bytes (CP-K4a F2): the producer/output-kind edges and explicit file bindings of
+        # the plan (``planned_readers``), whatever role the edge names and whatever document or aggregate the reading
+        # task belongs to, plus this document's source readers by role. Deletion waits for all of them.
+        candidates: set[str] = set(state['readers'].get(version,()))
+        for row in rows:
+            planned: set[str] = writer.planned_readers(run_id,row)
+            candidates|=planned
+        readers=[];waived=[];ready=True
+        for task_id in sorted(candidates):
+            task=writer.task_state(task_id)
+            if task['status']=='skipped' and task['reason_code']=='not_in_plan':waived.append(task_id)
+            elif task['status']!='ok':ready=False
+            else:readers.append(task_id)
+        if not ready:continue
+        if not readers:
             state['settled'].add(version);continue
         # Verify source-hash bindings and full coverage on the real readers.
         valid=True
@@ -927,7 +936,8 @@ def released_source(connection, uri):
         "ORDER BY event_id DESC LIMIT 1",(uri,)).fetchone()
     if row is None or Path(file_path(row)).exists():
         return None
-    if not any(value['reason_code'] in ('delete_completed','delete_recovered') for value in retention_facts(connection,row['file_id'])['deletions']):
+    deletions = cast(list[dict[str, Any]], retention_facts(connection,row['file_id'])['deletions'])
+    if not any(item['reason_code'] in ('delete_completed','delete_recovered') for item in deletions):
         return None
     return row
 

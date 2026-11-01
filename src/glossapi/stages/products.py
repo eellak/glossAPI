@@ -9,6 +9,7 @@ from .execution import write_text_hashed
 from dataclasses import replace
 import json
 import os
+from typing import Any
 from pathlib import Path
 import shutil
 import tempfile
@@ -95,7 +96,7 @@ def producer_binding(journal, path):
         (Path(path).absolute().as_uri(),)).fetchone()
 
 
-def execute_aggregate(corpus, stage, inputs, specification):
+def execute_aggregate(corpus: Any, stage: Any, inputs: Any, specification: Any) -> Any:
     journal = active_journal()
     references = []
     for role, given in inputs:

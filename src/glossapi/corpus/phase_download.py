@@ -415,6 +415,10 @@ class DownloadPhaseMixin:
             return persisted_download_frame(final, url_column)
 
         update_metadata_parquet(output_parquet, _publish, serialize=pandas_parquet)
+        if getattr(self, '_scheduler_publication', None) and getattr(self, '_streaming_download_manifest', None):
+            # Streaming download publication only: the canonical metadata table receives these rows (CP-K4a F1).
+            from ..stages.run import fold_download_rows
+            fold_download_rows(self, output_parquet)
         final_results = published[0]
         self.logger.info(f"Saved download results to {output_parquet}")
 

@@ -1,6 +1,8 @@
 """Bounded, warm spawned workers. Only the parent publishes or opens SQLite."""
 from __future__ import annotations
 
+from typing import Any, cast
+
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, replace
@@ -63,7 +65,7 @@ def _serve(connection, parent_pid):
                 from .execution import producer_hash_scope,seal_output_hashes
                 with producer_hash_scope():
                     result = method(request, reporter=ReceiptCollector())
-                    result = seal_output_hashes(result,request.work_directory)
+                    result = seal_output_hashes(cast(Any,result),request.work_directory)
             except Exception as error:
                 result = failed_result(request, 'input_hash_changed' if str(error)=='input_hash_changed' else stage.name+'_exception', error)
             finally:

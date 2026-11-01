@@ -113,8 +113,12 @@ def test_resumed_publication_reuses_its_registration_and_closes_the_leftover_obs
 
 # K4C-M2 ------------------------------------------------------------------------------------------------------------
 
-def published_copy(writer, root):
-    """A retained managed source in .glossapi/artifacts and its user-visible byte copy (same producer, same hash)."""
+def published_copy(writer, root, *, torn=False):
+    """A retained managed source in .glossapi/artifacts and its user-visible byte copy (same producer, same hash).
+
+    ``torn``: the copy's bytes on disk are already incomplete when the run-close barrier records it, as a power loss
+    leaves an unflushed copy (its mtime/ctime stay those of the write before the close; CP-K4a F6). A userland
+    truncation after the close would advance ctime and count as a later edit."""
     source = root/'.glossapi/artifacts/corpus/export/attempt/export.jsonl'; source.parent.mkdir(parents=True)
     source.write_text('{"a": 1}\n'*1000)
     copy = root/'export.jsonl'; copy.write_bytes(source.read_bytes())
@@ -128,6 +132,8 @@ def published_copy(writer, root):
                                     bytes=size, retention_class='final')
         copy_id = writer.artifact(run, 'export', 'document_jsonl', copy.as_uri(), producer_attempt_id=attempt, sha256=digest,
                                   bytes=size, retention_class='final')
+    if torn:
+        with copy.open('r+b') as stream: stream.truncate(100)
     writer.barrier_context = {'run_id': run, 'debug': 'off'}
     writer.durable_barrier()
     return run, source, copy, source_id, copy_id
@@ -136,13 +142,11 @@ def published_copy(writer, root):
 def test_run_close_names_unflushed_copies_and_the_next_start_republishes_a_torn_one(tmp_path):
     import json
     with LedgerWriter(tmp_path/'corpus.sqlite3') as writer:
-        run, source, copy, source_id, copy_id = published_copy(writer, tmp_path)
+        run, source, copy, source_id, copy_id = published_copy(writer, tmp_path, torn=True)
         summary = json.loads(writer.connection.execute(f"SELECT details_json FROM {writer.connection.event_table} "
                                                        "WHERE message='barrier_summary'").fetchone()[0])
         assert summary['run_close_excluded_copy_file_ids'] == [copy_id]
-    # Power loss after close: the unflushed copy is truncated; its bytes were written before the close.
-    with copy.open('r+b') as stream: stream.truncate(100)
-    os.utime(copy, ns=(copy.stat().st_atime_ns, copy.stat().st_mtime_ns-60_000_000_000))
+    # Power loss after close: the unflushed copy is incomplete; its bytes and times are those of before the close.
     with LedgerWriter(tmp_path/'corpus.sqlite3') as writer:
         assert writer.verify_excluded_copies() == [copy_id]
         assert copy.read_bytes() == source.read_bytes()
