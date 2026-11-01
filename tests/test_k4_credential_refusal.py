@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 from glossapi import Corpus
-from glossapi.ledger.urls import CredentialsUnsupportedError, credential_reason, refuse_credentialed
+from glossapi.ledger.urls import CredentialsUnsupportedError, credential_reason, refuse_credentials
 from test_ledger_fixset_lg import cli, export_rows, pdf
 
 MARKER = 'K4CREDRMSYNTHETICSECRET'
@@ -35,22 +35,25 @@ def log_in_scratch(tmp_path, monkeypatch):
 
 
 def marker_hits(root):
-    """Every ledger text column and every file byte under ``root`` that holds the marker."""
+    """Every file byte under ``root`` and every *logical* ledger value (read through the ledger's decoding adapter, so
+    compressed snapshots and evidence are searched decoded; CP-CRM F8) that holds the marker."""
+    from glossapi.ledger.writer import open_readonly
     hits = []
     for path in Path(root).rglob('*'):
         if path.is_file() and not path.is_symlink() and MARKER.encode() in path.read_bytes():
             hits.append(str(path.relative_to(root)))
     database = Path(root) / 'corpus.sqlite3'
     if database.exists():
-        connection = sqlite3.connect(f'file:{database}?mode=ro', uri=True)
-        try:
-            for (table,) in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
-                for row in connection.execute(f'SELECT * FROM "{table}"'):
-                    if any(MARKER in (value if isinstance(value, str) else value.decode('latin-1') if isinstance(value, bytes) else '')
-                           for value in row):
-                        hits.append('ledger:' + table)
-        finally:
-            connection.close()
+        with open_readonly(database) as connection:
+            for kind, text in connection.execute('SELECT kind,json FROM snapshots'):
+                if MARKER in json.dumps(text, default=str):
+                    hits.append('ledger:snapshots:' + kind)
+            names = [row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%'")]
+            for name in names:
+                for row in connection.execute(f'SELECT * FROM "{name}"'):
+                    if MARKER in json.dumps([value if isinstance(value, (str, int, float, type(None))) else
+                                             value.decode('latin-1') if isinstance(value, bytes) else str(value) for value in row]):
+                        hits.append('ledger:' + name)
     return sorted(set(hits))
 
 
@@ -96,7 +99,7 @@ class Server:
 def test_credentialed_urls_are_refused_with_a_typed_error_that_never_repeats_the_secret(url):
     assert credential_reason(url) is not None
     with pytest.raises(CredentialsUnsupportedError) as raised:
-        refuse_credentialed(url)
+        refuse_credentials(urls=[url])
     assert raised.value.code == 'credentials_unsupported' and 'credentialed downloads are not supported' in str(raised.value)
     assert MARKER not in str(raised.value) and MARKER not in json.dumps(raised.value.details)
 
@@ -106,7 +109,7 @@ def test_credentialed_urls_are_refused_with_a_typed_error_that_never_repeats_the
                                  'https://example.org/user@host/a.pdf', '/local/path/with@sign.pdf'])
 def test_public_urls_and_local_paths_pass(url):
     assert credential_reason(url) is None
-    refuse_credentialed(url)
+    refuse_credentials(urls=[url])
 
 
 # -------------------------------------------------------------- Python entry ---
@@ -269,3 +272,16 @@ def test_a_ledger_with_withdrawn_url_v2_identities_is_refused(tmp_path):
             writer.document('url:v2:0123456789abcdef0123456789abcdef:https://example.org/a.pdf?id=%5Bredacted%5D')
     with pytest.raises(LedgerError, match='url:v2'):
         LedgerWriter(tmp_path / 'corpus.sqlite3')
+
+
+def test_the_secret_scanner_reads_compressed_ledger_evidence(tmp_path):
+    """Known-positive control (CP-CRM F8): the marker only inside a compressed snapshot is invisible to a raw byte scan
+    and found by marker_hits through the ledger's decoding adapter."""
+    from glossapi.ledger.writer import LedgerWriter
+    out = tmp_path / 'out'
+    out.mkdir()
+    with LedgerWriter(out / 'corpus.sqlite3') as writer:
+        with writer.transaction():
+            writer.snapshot('probe', {'kind': 'probe', 'value': ('padding ' * 400) + MARKER + (' padding' * 400)})
+    assert not any(MARKER.encode() in path.read_bytes() for path in out.rglob('*') if path.is_file()), 'control is not compressed'
+    assert 'ledger:snapshots:probe' in marker_hits(out)

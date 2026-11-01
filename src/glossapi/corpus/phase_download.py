@@ -63,7 +63,7 @@ class DownloadPhaseMixin:
         """
         from ..gloss_downloader import (GlossDownloader, RESOURCE_IDENTITY_COLUMN, frame_identities,
                                         persisted_download_frame)
-        from ..ledger.urls import refuse_credential_settings, refuse_credentialed
+        from ..ledger.urls import refuse_credentials
         from ..parquet_schema import lossless_concat, pandas_parquet, same_metadata_file, update_metadata_parquet
         BrowserGlossDownloader = None
 
@@ -87,13 +87,14 @@ class DownloadPhaseMixin:
         if links_column:
             url_column = links_column
 
-        # Public targets only (PLAN §9): refused before any request or recorded row.
-        refuse_credential_settings(dict(self.downloader_config), kwargs)
-        if url_column in input_df.columns:
-            for value in input_df[url_column].tolist():
-                for url in ([value] if isinstance(value, str) else [item for item in value if isinstance(item, str)]
-                            if isinstance(value, (list, tuple, np.ndarray)) else []):
-                    refuse_credentialed(url)
+        # Public targets only (PLAN §9): every cell of the effective URL column (or of every URL-like column the
+        # downloader could fall back to), the referer column and the download settings, before any request or row.
+        settings = {**dict(self.downloader_config), **kwargs}
+        columns = [url_column] if url_column in input_df.columns else [
+            column for column in input_df.columns if any(word in str(column).lower() for word in ('url', 'link', 'uri'))]
+        if settings.get('referer_column') in input_df.columns:
+            columns.append(settings['referer_column'])
+        refuse_credentials(urls=[value for column in columns for value in input_df[column].tolist()], settings=[settings])
         replay = getattr(self, '_streaming_download_replays', None) is not None
 
         # Look for existing download results file by the specific input filename first

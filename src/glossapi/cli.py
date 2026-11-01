@@ -184,9 +184,7 @@ def _plan_data(connection, root, *, files=(), manifest=None, stages=None, device
     workers = _merge("workers", workers or {}, parsed.workers if parsed else {})
     if parsed is not None:
         selectors, rows = list(parsed.selectors), list(parsed.rows)
-    # Public targets only (PLAN §9): a credentialed URL (resource_identity) or credential setting is refused here.
-    from .ledger.urls import refuse_credential_settings
-    refuse_credential_settings(settings.get("download"))
+    # Public targets only (PLAN §9): plan_view refuses credentialed selectors, exclusions and download settings.
     identities = None
     if any(str(selector).startswith(("http://", "https://")) for selector in selectors):
         # The plan carries each URL's resource identity (a declared source_id keys its own).

@@ -100,6 +100,16 @@ class ScheduledOperation:
     skip_reason: str | None = None
 
 
+def _refuse_credentialed(operations, settings):
+    """Public targets only (PLAN §9): every operation's resolved source URI and every download step's URL, referer
+    and settings, at freeze (before any ledger write) and at reload (before resume or dispatch)."""
+    from ..ledger.urls import refuse_credentials
+    downloads=[operation.specification.settings for operation in operations if operation.stage=='download']
+    refuse_credentials(urls=[*(operation.document.source_uri for operation in operations),
+                             *(value for step in downloads for value in (step.get('url'),step.get('referer')) if value)],
+                       settings=[*downloads,(settings or {}).get('download')])
+
+
 def operation_json(operation):
     value = asdict(operation)
     for artifact in value['document']['artifacts']:
@@ -211,6 +221,7 @@ class StreamingScheduler:
 
     def freeze(self, operations, *, settings=None):
         operations = tuple(operations)
+        _refuse_credentialed(operations, settings)
         keys = {operation.key for operation in operations}
         if len(keys) != len(operations):
             raise ValueError('Duplicate operation key')
@@ -307,6 +318,7 @@ class StreamingScheduler:
         self.disk_capacity = cast(int | None, plan['disk_budget_bytes'])
         self.retry_limit = plan['retry_limit']
         operations = [operation_from_json(value) for value in plan['operations']]
+        _refuse_credentialed(operations, None)  # a frozen run is checked again before resume or dispatch
         tasks = {row['ordinal']:row['task_id'] for row in self.writer.connection.execute('SELECT * FROM tasks WHERE run_id=? ORDER BY ordinal',(run,))}
         return operations, {operation.key:tasks[index] for index,operation in enumerate(operations)}, row
 

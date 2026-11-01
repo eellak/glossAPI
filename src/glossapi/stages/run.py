@@ -49,8 +49,8 @@ def resource_identity(raw_url,*,source_id=None,dataset_id=None,resource_index=0)
     before any plan, ledger row or request exists (PLAN §9, 1 Nov).
     """
     from ..ledger.journal import source_key
-    from ..ledger.urls import refuse_credentialed
-    refuse_credentialed(raw_url)
+    from ..ledger.urls import refuse_credentials
+    refuse_credentials(urls=[raw_url])
     if source_id is not None and not (isinstance(source_id,float) and source_id!=source_id):
         from ..ledger.identity import source_key as declared_key
         return declared_key(None,dataset_id=dataset_id if isinstance(dataset_id,str) and dataset_id else 'glossapi:declared_source_id',
@@ -387,12 +387,13 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
     remote_rows=None
     record_bindings=[]
     with nullcontext(writer) if writer is not None else LedgerWriter(root/'corpus.sqlite3') as writer:
-        # Public targets only: a download setting that would send credentials is refused before anything is
-        # recorded (credentialed source URLs are refused by resource_identity).
-        from ..ledger.urls import refuse_credential_settings
-        refuse_credential_settings(settings.get('download'),getattr(corpus,'downloader_config',None))
         raw_manifest=settings.get('source_manifest')
         manifest_rows=(raw_manifest.get('documents',[]) if isinstance(raw_manifest,dict) else raw_manifest) if raw_manifest is not None else None
+        # Public targets only (PLAN §9): every supplied source and manifest row, and the download settings, before
+        # anything is recorded. A resume re-checks its frozen operations in StreamingScheduler._load.
+        from ..ledger.urls import refuse_credentials
+        refuse_credentials(urls=[*sources,*(manifest_rows if isinstance(manifest_rows,list) else [])],
+            settings=[settings.get('download'),getattr(corpus,'downloader_config',None)])
         if not resume:
             # Selectors are resolved per row: remote rows are expanded and named;
             # local rows keep their real paths (cycle-2 F3).
