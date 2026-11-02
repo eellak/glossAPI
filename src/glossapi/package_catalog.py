@@ -108,11 +108,33 @@ def _file_lines(path: Path) -> tuple[str, ...]:
 
 def _from_source_tree(root: Path) -> RequirementSource:
     project = tomllib.loads((root / 'pyproject.toml').read_text(encoding='utf-8'))
-    core = tuple(cast(list[str], project['project']['dependencies']))
+    core = tuple(canonical_requirement(line) for line in cast(list[str], project['project']['dependencies']))
     table = cast(dict[str, dict[str, list[str]]],
                  project['tool']['setuptools']['dynamic']['optional-dependencies'])
-    extras = {name: tuple(line for file in entry['file'] for line in _file_lines(root / file)) for name, entry in table.items()}
+    extras = {name: tuple(canonical_requirement(line) for file in entry['file'] for line in _file_lines(root / file))
+              for name, entry in table.items()}
     return RequirementSource('source_tree', str(root / 'pyproject.toml'), core, extras)
+
+
+# K3B-L2: installed metadata lists specifiers in setuptools' sorted order (``aiohttp<4,>=3.14.5``) while the source tree
+# writes ``aiohttp>=3.14.5,<4``. Both sources go through one canonical order (exact and lower bounds, then upper bounds,
+# then exclusions; stable otherwise), so the requirement text, the install commands and the lock-input hash are the same
+# for a wheel install as for a checkout. The order is the source tree's own, so its lines pass through unchanged.
+_SPECIFIER_RANK: Final[dict[str, int]] = {'===': 0, '==': 0, '~=': 1, '>=': 1, '>': 1, '<=': 2, '<': 2, '!=': 3}
+_REQUIREMENT_HEAD = re.compile(r'\s*([A-Za-z0-9][A-Za-z0-9._-]*\s*(?:\[[^\]]*\])?)\s*')
+
+
+def canonical_requirement(text: str) -> str:
+    """``text`` with its version specifiers in the canonical order; everything else (name, extras, marker) as written."""
+    parsed = parse_requirement(text)
+    if parsed.url is not None or len(parsed.specifiers) < 2:
+        return text
+    body, separator, marker = text.partition(';')
+    head = _REQUIREMENT_HEAD.match(body)
+    if head is None:  # unreachable: parse_requirement accepted the same text
+        return text
+    ordered = sorted(parsed.specifiers, key=lambda item: _SPECIFIER_RANK[item[0]])
+    return head.group(1) + ','.join(operator + version for operator, version in ordered) + (separator + marker if separator else '')
 
 
 _EXTRA_CLAUSE = re.compile(r'''\s*(?:\band\s+)?extra\s*==\s*["']([^"']+)["']\s*(?:\band\b\s*)?''')
@@ -130,11 +152,11 @@ def _from_metadata() -> RequirementSource:
         requirement, _, marker = line.partition(';')
         found = _EXTRA_CLAUSE.search(marker)
         if found is None:
-            core.append(line.strip())
+            core.append(canonical_requirement(line.strip()))
             continue
         rest = (marker[:found.start()] + ' ' + marker[found.end():]).strip()
         rest = re.sub(r'^(and|or)\s+|\s+(and|or)$', '', rest).strip()
-        extras.setdefault(found.group(1), []).append(requirement.strip() + ('; ' + rest if rest else ''))
+        extras.setdefault(found.group(1), []).append(canonical_requirement(requirement.strip() + ('; ' + rest if rest else '')))
     return RequirementSource('installed_metadata', str(distribution.locate_file('')), tuple(core),
                              {name: tuple(lines) for name, lines in extras.items()})
 

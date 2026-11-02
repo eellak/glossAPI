@@ -31,6 +31,8 @@
 // hot path but should remain available. Real bugs (unused variables,
 // unread assignments) still warn; only DEAD-CODE noise is silenced.
 #![allow(dead_code)]
+// PyO3 entry points mirror the Python keyword surfaces, so their argument counts are part of the API (STATE-4).
+#![allow(clippy::too_many_arguments)]
 
 // Internal modules
 mod charset_module;
@@ -71,10 +73,17 @@ use md_verify::{verify_md_preview_equivalent_py, verify_md_structural_py};
 use pipeline_module::run_complete_pipeline; // Bring the #[pyfunction] into scope
 use pyo3::prelude::*;
 
+/// Native API marker (INTEG-G1): `GLOSSAPI_NATIVE_API:<module>:<level>;`. Raise the level whenever the Python package
+/// starts to rely on a new or changed export; `glossapi.capabilities.NATIVE_API_LEVELS` names the level it needs, and
+/// reads these bytes from the built binary without importing it, so a stale build makes its stage unavailable instead
+/// of failing per document. Exported to Python as `__glossapi_native_api__`, which also keeps the bytes in the binary.
+pub const NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:1;";
+
 // Python module definition. gil_used = true keeps the 0.19 contract (the module requires the GIL): PyO3 0.28+
 // would otherwise declare free-threaded support, which has not been audited.
 #[pymodule(gil_used = true)]
 fn glossapi_rs_cleaner(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("__glossapi_native_api__", NATIVE_API_MARKER)?;
     // Registering the new pipeline function (now directly as it's a #[pyfunction])
     m.add_function(wrap_pyfunction!(run_complete_pipeline, m)?)?;
 

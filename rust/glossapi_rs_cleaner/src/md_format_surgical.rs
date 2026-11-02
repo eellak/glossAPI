@@ -447,7 +447,7 @@ pub struct PhaseAPolicy {
     pub preserve_hard_breaks: bool,
     /// Whitespace treatment at soft-break boundaries. `Ascii`
     /// trims only ` ` / `\t` / `\r` and preserves U+00A0 (NBSP)
-    /// + other Unicode whitespace as content (matches cmark-gfm).
+    /// and other Unicode whitespace as content (matches cmark-gfm).
     /// `Unicode` would strip NBSP too; we don't use this (it
     /// breaks Docling-extracted PDF corpus).
     pub softbreak_whitespace_trim: WhitespaceTrimPolicy,
@@ -532,6 +532,7 @@ pub fn format_surgical_checked(md: &str) -> PhaseARewriteResult {
 /// path deterministically testable without depending on finding a
 /// small natural comrak-vs-pulldown-cmark disagreement fixture
 /// (per pass-3 reviewer Finding).
+#[allow(clippy::type_complexity)] // boxed oracle closures; aliases would only rename them
 pub struct CheckOracles<'a> {
     /// Preflight oracle. Takes (input, candidate) and returns
     /// `Some(dual_report)` if the check should run, or `None` to
@@ -550,9 +551,9 @@ pub struct CheckOracles<'a> {
 
 fn default_oracles() -> CheckOracles<'static> {
     CheckOracles {
-        dual: Box::new(|a, b| crate::md_format::dual_verify(a, b)),
+        dual: Box::new(crate::md_format::dual_verify),
         cmark_gfm_available: Box::new(crate::cmark_gfm_oracle::is_available),
-        cmark_gfm_verify: Box::new(|a, b| crate::cmark_gfm_oracle::verify(a, b)),
+        cmark_gfm_verify: Box::new(crate::cmark_gfm_oracle::verify),
     }
 }
 
@@ -759,13 +760,14 @@ mod tests {
                 // Construct a DualVerifyReport that reports
                 // input-parser-disagreement. Fields not explicitly
                 // set stay at their `Default::default()` values.
-                let mut r = crate::md_format::DualVerifyReport::default();
-                r.input_parser_agreement = false;
-                // Output-side doesn't matter — preflight short-circuits.
-                r.output_parser_agreement = true;
-                r.pd_identity = true;
-                r.cm_identity = true;
-                r
+                crate::md_format::DualVerifyReport {
+                    input_parser_agreement: false,
+                    // Output-side doesn't matter — preflight short-circuits.
+                    output_parser_agreement: true,
+                    pd_identity: true,
+                    cm_identity: true,
+                    ..Default::default()
+                }
             }),
             cmark_gfm_available: Box::new(|| false),
             cmark_gfm_verify: Box::new(|_a, _b| Err("mock never consulted".to_string())),

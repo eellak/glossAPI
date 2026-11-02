@@ -166,7 +166,6 @@ fn collapse_ws(s: &str) -> String {
     // block content (e.g. `## heading\t` → `<h2>heading </h2>`);
     // comrak strips it on round-trip. Both render identically in any
     // preview since block-level trailing whitespace is invisible.
-    let mut prev = prev;
     loop {
         let next = prev.replace(" </", "</");
         if next == prev {
@@ -210,8 +209,7 @@ fn collapse_ws(s: &str) -> String {
     // in all browsers for `<th>`/`<td>`).
     let prev = prev.replace(r#" style="text-align: left""#, r#" align="left""#);
     let prev = prev.replace(r#" style="text-align: right""#, r#" align="right""#);
-    let prev = prev.replace(r#" style="text-align: center""#, r#" align="center""#);
-    prev
+    prev.replace(r#" style="text-align: center""#, r#" align="center""#)
 }
 
 /// Run the dual-parser verifier on `(input, output)`. Returns a

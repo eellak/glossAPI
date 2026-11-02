@@ -12,7 +12,6 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, LazyLock}; // Mutex will be needed for collecting report_entries if done from parallel loop
 use std::time::{SystemTime, UNIX_EPOCH};
-use walkdir;
 
 use regex::Regex;
 
@@ -125,21 +124,19 @@ pub fn run_complete_pipeline(
 
     // Ensure final output directory for cleaned files exists when asked to persist them
     let final_output_cleaned_files_path = Path::new(output_cleaned_files_dir_str);
-    if write_cleaned_files {
-        if !final_output_cleaned_files_path.exists() {
-            println!(
-                "Rust: Creating final output directory for cleaned files: {}...",
-                final_output_cleaned_files_path.display()
-            );
-            fs::create_dir_all(final_output_cleaned_files_path).map_err(|e| {
-                PyValueError::new_err(format!(
-                    "Failed to create final output directory {}: {}",
-                    final_output_cleaned_files_path.display(),
-                    e
-                ))
-            })?;
-            println!("Rust: Final output directory for cleaned files created.");
-        }
+    if write_cleaned_files && !final_output_cleaned_files_path.exists() {
+        println!(
+            "Rust: Creating final output directory for cleaned files: {}...",
+            final_output_cleaned_files_path.display()
+        );
+        fs::create_dir_all(final_output_cleaned_files_path).map_err(|e| {
+            PyValueError::new_err(format!(
+                "Failed to create final output directory {}: {}",
+                final_output_cleaned_files_path.display(),
+                e
+            ))
+        })?;
+        println!("Rust: Final output directory for cleaned files created.");
     }
 
     // --- Setup Main Temporary Directory for this Pipeline Run ---
@@ -175,7 +172,7 @@ pub fn run_complete_pipeline(
     // --- Setup for character sets (used by Stage 4, generate_analysis_report_for_directory sets its own) ---
     println!("Rust: Setting up allowed characters for final analysis stage...");
     let mut allowed_chars_final_analysis = HashSet::new();
-    let base_scripts = vec!["punctuation", "numbers", "common_symbols"];
+    let base_scripts = ["punctuation", "numbers", "common_symbols"];
     for script_key_str in scripts_to_keep_input
         .iter()
         .map(|s| s.as_str())
@@ -300,7 +297,7 @@ pub fn run_complete_pipeline(
                 .into_iter()
                 .filter_map(Result::ok)
                 .filter(|e| {
-                    e.path().is_file() && e.path().extension().map_or(false, |ext| ext == "md")
+                    e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "md")
                 })
                 .map(|e| e.path().to_path_buf())
                 .collect();
@@ -343,9 +340,9 @@ pub fn run_complete_pipeline(
                                 // println!("Rust: [S4-Thread {}] Read final_content for report: {}", thread_id, report_relative_path.display()); // Verbose
                                 let analysis_result = cleaning_module::perform_text_analysis(
                                     &final_content,
-                                    &*allowed_chars_final_analysis_arc,
-                                    &*unusual_chars_final_analysis_arc,
-                                    &*scripts_to_keep_input_arc_final,
+                                    &allowed_chars_final_analysis_arc,
+                                    &unusual_chars_final_analysis_arc,
+                                    &scripts_to_keep_input_arc_final,
                                     true,
                                     None,
                                 );

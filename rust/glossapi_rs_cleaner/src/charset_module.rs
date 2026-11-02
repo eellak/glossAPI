@@ -91,10 +91,8 @@ pub fn is_format_scaffolding_line(line: &str) -> bool {
         return false; // empty lines don't contribute chars anyway
     }
     // MD table row: starts and ends with `|`, and has at least one interior `|`
-    if trimmed.starts_with('|') && trimmed.ends_with('|') {
-        if trimmed.chars().filter(|&c| c == '|').count() >= 2 {
-            return true;
-        }
+    if trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.chars().filter(|&c| c == '|').count() >= 2 {
+        return true;
     }
     // Standalone separator / dot-leader line: entire trimmed content is
     // runs of separator chars only.
@@ -217,7 +215,7 @@ pub fn count_charsets(text: &str) -> CharsetCounts {
                     c.latin_letters += 1;
                 } else if ch.is_ascii_digit() {
                     c.digits += 1;
-                } else if cp >= 0x21 && cp <= 0x7E {
+                } else if (0x21..=0x7E).contains(&cp) {
                     c.ascii_punct += 1;
                 } else {
                     c.other += 1;

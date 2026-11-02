@@ -379,6 +379,7 @@ pub fn normalize_ellipsis_runs(line: &str) -> Option<String> {
 ///   5..=19  → 5  (medium run — canonical "short leader" form)
 ///   20      → 20
 ///   >20     → 20 (long run — canonical "long leader" form)
+///
 /// Target token vocabulary for dots: `.`, `...`, `.....`,
 /// `....................` — four forms. Uniform across dots and
 /// whitespace so the BPE sees a small fixed vocabulary of leader
@@ -743,7 +744,7 @@ pub fn normalize_escaped_run_chars(line: &str) -> Option<String> {
     if !line.contains('\\') {
         return None;
     }
-    const ESCAPED_RUN_CHARS: [u8; 7] = [b'_', b'*', b'-', b'#', b'.', b'=', b'~'];
+    const ESCAPED_RUN_CHARS: [u8; 7] = *b"_*-#.=~";
     // Parse: [leading ws] (\_)+ [trailing ws]. If anything else
     // appears, bail (not a pure run line).
     let bytes = line.as_bytes();
@@ -939,8 +940,8 @@ fn count_nonwhitespace_in_range(lines: &[&str], start: usize, end: usize) -> usi
 // Code fence detection
 // ---------------------------------------------------------------------------
 
-/// True if the line opens or closes a fenced code block (``` or ~~~).
-/// Leading whitespace up to 3 spaces is allowed (CommonMark spec).
+// True if the line opens or closes a fenced code block (``` or ~~~).
+// Leading whitespace up to 3 spaces is allowed (CommonMark spec).
 // (is_code_fence_marker moved to md_module.rs.)
 
 // ---------------------------------------------------------------------------
@@ -1527,8 +1528,8 @@ static ADOBE_SYMBOL_PUA_MAP: LazyLock<HashMap<char, &'static str>> = LazyLock::n
     m
 });
 
-/// Decode HTML entities (Case 4): `&amp; &lt; &gt; &quot; &apos; &nbsp;`
-/// + named entities in the map above + numeric (decimal `&#38;` and
+/// Decode HTML entities (Case 4): `&amp; &lt; &gt; &quot; &apos; &nbsp;`,
+/// named entities in the map above and numeric (decimal `&#38;` and
 /// hex `&#x26;`) back to their literal characters. Unknown named
 /// entities are left as-is.
 pub fn decode_html_entities(text: &str) -> String {
@@ -1604,7 +1605,7 @@ pub fn is_residue_mojibake_line(line: &str) -> bool {
     for ch in line.chars() {
         let cp = ch as u32;
         let is_residue =
-            (0x0180..=0x024F).contains(&cp) && !matches!(cp, 0x0218 | 0x0219 | 0x021A | 0x021B);
+            (0x0180..=0x024F).contains(&cp) && !matches!(cp, 0x0218..=0x021B);
         if is_residue {
             cur_run += 1;
             if cur_run > max_run {
@@ -1694,22 +1695,22 @@ pub fn decode_adobe_symbol_pua(text: &str) -> String {
     out
 }
 
-/// Paragraph-reflow (Case 8): collapse soft-wrap sequences where a
-/// line ends mid-sentence and the next line continues it. PDF column-
-/// width line breaks look like `word1\t\n  word2`; we replace with
-/// `word1 word2`. Hard breaks (blank lines, headings, tables,
-/// separators, list markers, blockquotes, fenced code) are preserved.
-///
-/// Heuristic — only joins when:
-/// - prior line is non-empty AND doesn't end with a sentence terminator
-///   (`.?!:;·;·` or closing quote/bracket)
-/// - next line is non-empty, doesn't start with `#|>*-` / list marker
-///   / fenced-code marker, and starts with a letter or digit
-/// - prior line doesn't look like a list item / heading either
-///
-/// Accounting: the whitespace chars (`\n`, `\t`, leading spaces on the
-/// joined line) are replaced by a single space, so output is shorter
-/// by `(removed_ws_len) - 1` chars per join.
+// Paragraph-reflow (Case 8): collapse soft-wrap sequences where a
+// line ends mid-sentence and the next line continues it. PDF column-
+// width line breaks look like `word1\t\n  word2`; we replace with
+// `word1 word2`. Hard breaks (blank lines, headings, tables,
+// separators, list markers, blockquotes, fenced code) are preserved.
+//
+// Heuristic — only joins when:
+// - prior line is non-empty AND doesn't end with a sentence terminator
+//   (`.?!:;·;·` or closing quote/bracket)
+// - next line is non-empty, doesn't start with `#|>*-` / list marker
+//   / fenced-code marker, and starts with a letter or digit
+// - prior line doesn't look like a list item / heading either
+//
+// Accounting: the whitespace chars (`\n`, `\t`, leading spaces on the
+// joined line) are replaced by a single space, so output is shorter
+// by `(removed_ws_len) - 1` chars per join.
 // (reflow_paragraphs, can_join_lines, line_is_hard_break moved to md_module.rs.)
 
 #[cfg(test)]
@@ -1753,7 +1754,7 @@ mod wave2_tests {
     // ---------- is_residue_mojibake_line (R1 ∪ R2) ----------
 
     #[test]
-    fn residue_drop_R2_pure_residue_word_fires() {
+    fn residue_drop_r2_pure_residue_word_fires() {
         // 12 consecutive Latin-Ext-B chars (Greek-CID rendering of
         // ΑΡΙΣΤΟΤΕΛΕΙΟ). max_run = 12 → R2 fires.
         let line = "ǹȇǿȈȉȅȉǼȁǼǿȅ ȆǹȃǼȆǿȈȉǾȂǿȅ ĬǼȈȈǹȁȅȃǿȀǾȈ";
@@ -1761,21 +1762,21 @@ mod wave2_tests {
     }
 
     #[test]
-    fn residue_drop_R2_short_run_fires() {
+    fn residue_drop_r2_short_run_fires() {
         // exactly 4 consecutive residue chars → R2 fires.
         let line = "Greek prose ǹȇǿȈ followed by more Greek prose";
         assert!(is_residue_mojibake_line(line));
     }
 
     #[test]
-    fn residue_drop_R2_run_of_3_does_not_fire() {
+    fn residue_drop_r2_run_of_3_does_not_fire() {
         // 3 consecutive residue chars — below R2 threshold (≥4).
         let line = "Greek prose ǹȇǿ followed by more Greek prose";
         assert!(!is_residue_mojibake_line(line));
     }
 
     #[test]
-    fn residue_drop_R1_long_concatenated_token_fires() {
+    fn residue_drop_r1_long_concatenated_token_fires() {
         // One token of length 25 with 100% residue → R1 fires
         // (>20 chars, >10% residue). Surrounding context is plain
         // Latin so R2 doesn't fire on its own (max_run 25 actually

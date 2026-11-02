@@ -794,7 +794,7 @@ pub fn batch_generate_table_summary_csv(
     let md_files: Vec<PathBuf> = WalkDir::new(input_path)
         .into_iter()
         .filter_map(Result::ok)
-        .filter(|e| e.path().is_file() && e.path().extension().map_or(false, |ext| ext == "md"))
+        .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "md"))
         .map(|e| e.path().to_path_buf())
         .collect();
 
@@ -805,7 +805,7 @@ pub fn batch_generate_table_summary_csv(
         );
         let mut wtr = Writer::from_path(output_csv_path_str)
             .map_err(|e| PyValueError::new_err(format!("Failed to create CSV writer: {}", e)))?;
-        wtr.write_record(&["file", "total_tables", "malformed_tables"])
+        wtr.write_record(["file", "total_tables", "malformed_tables"])
             .map_err(|e| PyValueError::new_err(format!("Failed to write CSV header: {}", e)))?;
         wtr.flush()
             .map_err(|e| PyValueError::new_err(format!("Failed to flush CSV: {}", e)))?;
@@ -888,7 +888,7 @@ pub fn batch_generate_table_summary_csv(
         ))
     })?;
 
-    wtr.write_record(&["file", "total_tables", "malformed_tables"])
+    wtr.write_record(["file", "total_tables", "malformed_tables"])
         .map_err(|e| PyValueError::new_err(format!("Failed to write CSV header: {}", e)))?;
 
     for summary in results {
@@ -957,7 +957,7 @@ pub fn batch_generate_detailed_table_report_csv(
         })?;
 
     // Manually write header once.
-    wtr.write_record(&[
+    wtr.write_record([
         "file_path",
         "issue_description",
         "table_start_line",

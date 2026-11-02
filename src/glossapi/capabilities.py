@@ -9,12 +9,15 @@ child process and says so.
 A stage is *available* under exactly the rule the streaming scheduler applies before dispatch
 (``StreamingScheduler._check_package``): every declared distribution is installed; for the OCR stage each pin's
 marker is evaluated, its version must satisfy the pin, the Greek OCR toolkit source must be admitted, and its
-entry point must be registered. The required native modules of the stage must be locatable as well.
+entry point must be registered. The required native modules of the stage must be locatable as well, and built for the
+native API level this package needs (read from the binary's embedded marker, not by importing it).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+import functools
 import hashlib
+import importlib.machinery
 import importlib.metadata
 import importlib.util
 import json
@@ -34,6 +37,13 @@ NATIVE_MODULES: Final[dict[str, tuple[tuple[str, bool], ...]]] = {
     'extract': (('glossapi_rs_pdfrepair', False),),
     'clean': (('glossapi_rs_cleaner', True), ('glossapi_rs_noise', True)),
 }
+# INTEG-G1: the native API level this package needs from each required extension. Each build embeds the marker
+# ``GLOSSAPI_NATIVE_API:<module>:<level>;`` (rust/<module>/src/lib.rs NATIVE_API_MARKER), read here from the binary
+# without importing it. A build without the marker or with another level is stale (built from other source): its
+# module is reported missing, with the found and needed levels, so plan/doctor say "rebuild core" instead of the run
+# failing per document. Raise a level here and in the crate together.
+NATIVE_API_LEVELS: Final[dict[str, int]] = {'glossapi_rs_cleaner': 1, 'glossapi_rs_noise': 1}
+_NATIVE_API_PREFIX: Final[bytes] = b'GLOSSAPI_NATIVE_API:'
 # Stages the streaming run cannot execute, with the reason (ledger/reader.RUN_UNAVAILABLE).
 RUN_UNAVAILABLE: Final[dict[str, str]] = {'math': 'math_backend_unavailable'}
 INSTALLER_PACKAGES: Final[tuple[str, ...]] = ('core', 'download', 'browser', 'layout', 'ocr', 'annotate', 'annotate-legacy')
@@ -158,6 +168,70 @@ def module_present(name: str) -> bool:
         return False
 
 
+def native_binary(name: str) -> Path | None:
+    """The extension file a top-level native module resolves to, located without importing it: the module itself
+    (``name.abi3.so`` in the root wheel) or the extension inside its package (maturin's ``name/name.abi3.so``)."""
+    try:
+        spec = importlib.util.find_spec(name)
+    except (ImportError, ValueError):
+        return None
+    if spec is None:
+        return None
+    suffixes = tuple(importlib.machinery.EXTENSION_SUFFIXES)
+    if spec.origin and spec.origin.endswith(suffixes):
+        return Path(spec.origin)
+    for location in spec.submodule_search_locations or ():
+        found = sorted(path for path in Path(location).glob(name + '.*') if path.name.endswith(suffixes))
+        if found:
+            return found[0]
+    return None
+
+
+def _marker_level(data: bytes, name: str) -> int | None:
+    """The level of ``name``'s marker in a binary's bytes; None without exactly one well-formed marker for it."""
+    pattern = re.escape(_NATIVE_API_PREFIX + name.encode() + b':') + rb'(\d{1,6});'
+    levels = {int(found.group(1)) for found in re.finditer(pattern, data)}
+    return levels.pop() if len(levels) == 1 else None
+
+
+def native_api_level(name: str) -> int | None:
+    """The native API level embedded in the module's binary (None: no binary, or a build without the marker)."""
+    binary = native_binary(name)
+    if binary is None:
+        return None
+    try:
+        stat = binary.stat()
+    except OSError:
+        return None
+    return _binary_level(str(binary), stat.st_size, stat.st_mtime_ns, name)
+
+
+@functools.lru_cache(maxsize=16)
+def _binary_level(path: str, size: int, mtime_ns: int, name: str) -> int | None:
+    try:
+        return _marker_level(Path(path).read_bytes(), name)
+    except OSError:
+        return None
+
+
+def native_module_status(name: str, required: bool) -> dict[str, Any]:
+    """One ``native_modules`` row. A located module whose API level differs from ``NATIVE_API_LEVELS`` is reported as
+    missing (the module this package needs is not installed) with the found and required levels."""
+    row: dict[str, Any] = dict(module=name, required=required, status='present' if module_present(name) else 'missing')
+    wanted = NATIVE_API_LEVELS.get(name)
+    if wanted is None:
+        return row
+    found = native_api_level(name) if row['status'] == 'present' else None
+    row.update(api_level=found, required_api_level=wanted, detail=None)
+    if row['status'] == 'present' and found != wanted:
+        row['status'] = 'missing'
+        row['detail'] = (f'stale native module: built for native API level {found} (this glossapi needs {wanted}); '
+                         'rebuild core' if found is not None else
+                         f'stale native module: built without a native API marker (this glossapi needs level {wanted}); '
+                         'rebuild core')
+    return row
+
+
 def install_command(group: str, device: str | None = None) -> str:
     """The dry-run command that adds a missing package group (``glossapi install``; add ``--yes`` to execute). Core (the
     Rust extensions) is rebuilt by the source installer, which reinstalls glossapi itself."""
@@ -251,9 +325,9 @@ def stage_capability(stage: str, settings: dict[str, Any] | None = None, device:
             missing_groups.append(group)
     natives: list[dict[str, Any]] = []
     for module, required in NATIVE_MODULES.get(stage, ()):
-        present = module_present(module)
-        natives.append(dict(module=module, required=required, status='present' if present else 'missing'))
-        if required and not present:
+        native = native_module_status(module, required)
+        natives.append(native)
+        if required and native['status'] != 'present':
             reasons.append('missing_native_module')
             if 'core' not in missing_groups:
                 missing_groups.append('core')

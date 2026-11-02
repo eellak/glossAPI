@@ -17,13 +17,16 @@ Rules (PLAN rev 5 section 2.4; K3b brief):
 """
 from __future__ import annotations
 
+from collections import deque
 import importlib.metadata
 import json
+import os
 import platform
 import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from typing import Any, Final, cast
 
@@ -231,6 +234,37 @@ def _tail(text: str) -> list[str]:
     return text.splitlines()[-OUTPUT_TAIL_LINES:]
 
 
+class _LiveOutput:
+    """Combined output of one install command, copied to stderr line by line while it runs (K3B-L5: a long torch install
+    shows live progress); the last ``OUTPUT_TAIL_LINES`` lines are kept for ``output_tail``. Pass ``fd`` as the
+    command's stdout (stderr joined to it) and call ``close`` once the command has exited."""
+
+    def __init__(self) -> None:
+        self.lines: deque[str] = deque(maxlen=OUTPUT_TAIL_LINES)
+        read_fd, self.fd = os.pipe()
+        self.reader = threading.Thread(target=self._pump, args=(read_fd,), name='install-output', daemon=True)
+        self.reader.start()
+
+    def _pump(self, read_fd: int) -> None:
+        with os.fdopen(read_fd, 'r', encoding='utf-8', errors='replace') as stream:
+            for line in stream:
+                sys.stderr.write(line)
+                sys.stderr.flush()
+                self.lines.append(line.rstrip('\n'))
+
+    def close(self) -> None:
+        os.close(self.fd)
+        self.reader.join(timeout=30)  # EOF arrives once the command (and any child holding the pipe) has exited
+
+    def tail(self, done: Any) -> list[str]:
+        parts: list[Any] = [done.stdout, done.stderr]  # None when written to the pipe; a test runner may return text
+        captured = ''.join(part.decode('utf-8', 'replace') if isinstance(part, bytes) else str(part) for part in parts if part)
+        if captured:
+            sys.stderr.write(captured)
+            self.lines.extend(captured.splitlines())
+        return list(self.lines)
+
+
 def execute_install(plan: dict[str, Any], *, installer: str = 'auto') -> tuple[dict[str, Any], CatalogError | None]:
     """Run the plan's commands in order, stop at the first failure, then re-check capabilities. Returns the data and the
     typed error of a failed command (or None). The commands are exactly ``plan['commands']``."""
@@ -243,13 +277,17 @@ def execute_install(plan: dict[str, Any], *, installer: str = 'auto') -> tuple[d
     failure: CatalogError | None = None
     for index, command in enumerate(cast(list[dict[str, Any]], plan['commands'])):
         started = time.monotonic()
-        done = subprocess.run(cast(list[str], command['argv']), capture_output=True, text=True)
-        sys.stderr.write(done.stdout + done.stderr)
-        steps.append(dict(index=index, argv=command['argv'], returncode=done.returncode,
-                          seconds=round(time.monotonic() - started, 3), output_tail=_tail(done.stdout + done.stderr)))
-        if done.returncode:
-            failure = _error('install_command_failed', f'Install command {index + 1} exited {done.returncode}; later commands did not run',
-                             index=index, returncode=done.returncode, argv=command['argv'])
+        live = _LiveOutput()
+        try:
+            done = subprocess.run(cast(list[str], command['argv']), stdout=live.fd, stderr=subprocess.STDOUT)
+        finally:
+            live.close()
+        returncode, output_tail = done.returncode, live.tail(done)
+        steps.append(dict(index=index, argv=command['argv'], returncode=returncode,
+                          seconds=round(time.monotonic() - started, 3), output_tail=output_tail))
+        if returncode:
+            failure = _error('install_command_failed', f'Install command {index + 1} exited {returncode}; later commands did not run',
+                             index=index, returncode=returncode, argv=command['argv'])
             break
     check: dict[str, Any] | None = None
     if failure is None and steps:
