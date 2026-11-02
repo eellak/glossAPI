@@ -114,9 +114,10 @@ Only measured values. Each entry names its machine, workload, date and evidence 
 4. **install (after the user agrees)**: `glossapi install --device cpu --package download --yes --json`. Runs exactly the previewed commands, then re-checks capabilities and reports what changed.
 5. **plan (preview)**: `glossapi plan --corpus CORPUS --manifest MANIFEST.json --json`. The exact targets, exclusions, required capabilities, device allocation and deletion policy. Writes nothing.
 6. **run**: `glossapi run --corpus CORPUS --plan PLAN.json --json`. Runs the saved plan; refuses if any input byte, setting or installed capability changed since the preview.
-7. **status**: `glossapi status --corpus CORPUS --json`. Progress and per-stage counts of the latest run.
-8. **report**: `glossapi report --corpus CORPUS --json`. The final census: every requested source exactly once.
-9. **report --why**: `glossapi report --corpus CORPUS --why DOCUMENT --json`. Why a document ended as it did, from the ledger alone (also after intermediates are released).
+7. **retry failed tasks (after the user agrees)**: `glossapi run --corpus CORPUS --resume RUN_ID --retry-failed --json`. An interrupted or lost attempt (killed worker, timeout) is retried automatically, at most 3 attempts per task, and every interrupted attempt counts. Past that budget the task stays failed; --retry-failed is an explicit, operator-authorised retry of the failed tasks of that run.
+8. **status**: `glossapi status --corpus CORPUS --json`. Progress and per-stage counts of the latest run.
+9. **report**: `glossapi report --corpus CORPUS --json`. The final census: every requested source exactly once.
+10. **report --why**: `glossapi report --corpus CORPUS --why DOCUMENT --json`. Why a document ended as it did, from the ledger alone (also after intermediates are released).
 
 ## Handing over files found elsewhere
 
@@ -177,7 +178,8 @@ Only measured values. Each entry names its machine, workload, date and evidence 
 | `plan_hash_mismatch` | run --plan | 2 | The saved plan no longer matches: re-run plan and show the new preview. |
 | `plan_source_changed` | run --plan | 2 | The saved plan no longer matches: re-run plan and show the new preview. |
 | `plan_capability_changed` | run --plan | 2 | The saved plan no longer matches: re-run plan and show the new preview. |
-| `disk_budget_required` | plan, run | 3 | memory_saving=extreme needs --disk-budget-bytes. |
+| `disk_budget_required` | plan, run | 3 | memory_saving=extreme needs positive disk_budget_bytes, max_source_bytes and max_attempt_bytes. |
+| `disk_guard_unavailable` | plan, run | 3 | memory_saving=extreme needs dedicated size-limited corpus and staging filesystems whose capacities fit the budget; an ordinary shared volume is refused. |
 | `credentials_unsupported` | plan, run | 2 | A source URL carries userinfo (user:pass@) or a credential query/fragment field (token, key, signature, ...), or a download setting would send credentials (domain_cookies, credentials): glossAPI downloads public targets only. Refused before anything is planned, recorded or fetched; supply the public URL. |
 | `invalid_manifest` | plan, run | 2 | A malformed manifest entry; details.field and details.index say where. |
 | `unsupported_manifest_version` | plan, run | 2 | This glossAPI reads manifest_version 1 only. |
