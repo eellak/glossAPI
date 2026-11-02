@@ -15,6 +15,7 @@ use std::sync::{
 use walkdir::WalkDir;
 
 use crate::cleaning_module;
+use crate::os_error::{py_err, FirstOsError};
 use crate::table_analysis_module;
 use crate::table_remover_module;
 
@@ -124,11 +125,7 @@ where
                 eprintln!("INFO: Creating output directory: {}", out_p.display());
             }
             fs::create_dir_all(out_p).map_err(|e| {
-                PyValueError::new_err(format!(
-                    "Failed to create output directory {}: {}",
-                    out_p.display(),
-                    e
-                ))
+                py_err(format_args!("Failed to create output directory {}", out_p.display()), &e)
             })?;
         } else if !out_p.is_dir() {
             eprintln!(
@@ -188,6 +185,10 @@ where
         .map_err(|e| PyValueError::new_err(format!("Failed to build thread pool: {}", e)))?;
 
     let results = Arc::new(Mutex::new(Vec::<PerFileOutput>::new()));
+    // An OS-level failure (a read, or an OSError from the operation's own write) is raised after the loop; a content
+    // problem is printed and the file skipped, as before (native API level 2).
+    let failure = FirstOsError::default();
+    let failure_ref = &failure;
 
     if debug_logging {
         eprintln!("DEBUG: Starting parallel processing with Rayon");
@@ -217,21 +218,25 @@ where
                                     // Operation completed but produced no data to collect (e.g. direct file write)
                                 }
                                 Err(err) => {
-                                    eprintln!(
-                                        "ERROR: Failed to process file: {}: {:?}",
-                                        md_file_path.display(),
-                                        err
-                                    );
+                                    if let Err(err) = failure_ref.python(py_thread, err) {
+                                        eprintln!(
+                                            "ERROR: Failed to process file: {}: {:?}",
+                                            md_file_path.display(),
+                                            err
+                                        );
+                                    }
                                 }
                             }
                         });
                     }
                     Err(err) => {
-                        eprintln!(
-                            "ERROR: Failed to read file: {}: {:?}",
-                            md_file_path.display(),
-                            err
-                        );
+                        if !failure_ref.io(format_args!("Failed to read file {}", md_file_path.display()), &err) {
+                            eprintln!(
+                                "ERROR: Failed to read file: {}: {:?}",
+                                md_file_path.display(),
+                                err
+                            );
+                        }
                     }
                 }
             });
@@ -240,6 +245,7 @@ where
     if debug_logging {
         eprintln!("DEBUG: process_directory_core completed processing loop");
     }
+    failure.into_result()?;
 
     // Transfer results from Arc<Mutex<Vec<...>>> to Vec<...>
     let final_results = match Arc::try_unwrap(results) {
@@ -335,19 +341,12 @@ pub fn generate_analysis_report_with_evidence(
                 if let Some(parent_dir) = Path::new(csv_path).parent() {
                     if !parent_dir.as_os_str().is_empty() && !parent_dir.exists() {
                         fs::create_dir_all(parent_dir).map_err(|e| {
-                            PyValueError::new_err(format!(
-                                "Failed to create parent for empty CSV {}: {}",
-                                parent_dir.display(),
-                                e
-                            ))
+                            py_err(format_args!("Failed to create parent for empty CSV {}", parent_dir.display()), &e)
                         })?;
                     }
                 }
                 let mut wtr = Writer::from_path(csv_path).map_err(|e| {
-                    PyValueError::new_err(format!(
-                        "Failed to create CSV for empty report {}: {}",
-                        csv_path, e
-                    ))
+                    py_err(format_args!("Failed to create CSV for empty report {}", csv_path), &e)
                 })?;
                 wtr.write_record([
                     "File Name",
@@ -355,12 +354,9 @@ pub fn generate_analysis_report_with_evidence(
                     "Greek Percentage",
                     "Latin Percentage",
                 ])
-                .map_err(|e| {
-                    PyValueError::new_err(format!("CSV header write error for empty report: {}", e))
-                })?;
-                wtr.flush().map_err(|e| {
-                    PyValueError::new_err(format!("CSV flush error for empty report: {}", e))
-                })?;
+                .map_err(|e| py_err("CSV header write error for empty report", &e))?;
+                wtr.flush()
+                    .map_err(|e| py_err("CSV flush error for empty report", &e))?;
             }
         }
         let summary = PyDict::new(py);
@@ -387,6 +383,10 @@ pub fn generate_analysis_report_with_evidence(
     let output_cleaned_path_opt_arc = Arc::new(output_cleaned_path_opt); // Used for writing cleaned files
 
     let analysis_phase_start = std::time::Instant::now();
+    // The first OS-level failure of a file (its read, its edit evidence, its stage-one write) is raised after the
+    // loop (native API level 2); before, each was printed and the file's evidence or text was silently missing.
+    let failure = FirstOsError::default();
+    let failure_ref = &failure;
 
     py.detach(|| {
         pool.install(|| {
@@ -401,7 +401,9 @@ pub fn generate_analysis_report_with_evidence(
                 let file_content = match fs::read_to_string(md_file_path) {
                     Ok(content) => content,
                     Err(e) => {
-                        eprintln!("Error reading file {}: {}", md_file_path.display(), e);
+                        if !failure_ref.io(format_args!("Error reading file {}", md_file_path.display()), &e) {
+                            eprintln!("Error reading file {}: {}", md_file_path.display(), e);
+                        }
                         let processed = progress_counter
                             .fetch_add(1, Ordering::Relaxed)
                             .saturating_add(1);
@@ -430,7 +432,9 @@ pub fn generate_analysis_report_with_evidence(
                     let path = Path::new(directory).join(md_file_path.file_name().unwrap()).with_extension("edits.csv");
                     // A missing capture is a contract failure in the adapter.
                     if let Err(error) = crate::edit_evidence::finish(&path) {
-                        eprintln!("Edit evidence write failed: {}", error);
+                        if !failure_ref.io(format_args!("Edit evidence write failed for {}", path.display()), error.as_ref()) {
+                            eprintln!("Edit evidence write failed: {}", error);
+                        }
                     }
                 }
 
@@ -476,12 +480,13 @@ pub fn generate_analysis_report_with_evidence(
                     if let Some(parent_dir) = target_file_path.parent() {
                         if !parent_dir.exists() {
                             if let Err(e) = fs::create_dir_all(parent_dir) {
-                                eprintln!(
-                                    "ERROR: Failed to create directory {}: {}",
-                                    parent_dir.display(),
-                                    e
-                                );
-                                // Decide if this error is critical enough to stop or just log
+                                if !failure_ref.io(format_args!("Failed to create directory {}", parent_dir.display()), &e) {
+                                    eprintln!(
+                                        "ERROR: Failed to create directory {}: {}",
+                                        parent_dir.display(),
+                                        e
+                                    );
+                                }
                             }
                         }
                     }
@@ -489,11 +494,13 @@ pub fn generate_analysis_report_with_evidence(
                     if let Err(e) =
                         fs::write(&target_file_path, &analysis_result.cleaned_text_content)
                     {
-                        eprintln!(
-                            "ERROR: Failed to write cleaned file {}: {}",
-                            target_file_path.display(),
-                            e
-                        );
+                        if !failure_ref.io(format_args!("Failed to write cleaned file {}", target_file_path.display()), &e) {
+                            eprintln!(
+                                "ERROR: Failed to write cleaned file {}: {}",
+                                target_file_path.display(),
+                                e
+                            );
+                        }
                     }
                 }
 
@@ -526,6 +533,7 @@ pub fn generate_analysis_report_with_evidence(
         })
     });
 
+    failure.into_result()?;
     let analysis_phase_duration = analysis_phase_start.elapsed();
     println!(
         "Parallel analysis phase completed in: {:.2?}",
@@ -553,11 +561,7 @@ pub fn generate_analysis_report_with_evidence(
                 if !parent_dir.as_os_str().is_empty() && !parent_dir.exists() {
                     // Check parent is not empty string
                     fs::create_dir_all(parent_dir).map_err(|e| {
-                        PyValueError::new_err(format!(
-                            "Failed to create parent directory '{}' for CSV: {}",
-                            parent_dir.display(),
-                            e
-                        ))
+                        py_err(format_args!("Failed to create parent directory '{}' for CSV", parent_dir.display()), &e)
                     })?;
                 }
             }
@@ -570,7 +574,7 @@ pub fn generate_analysis_report_with_evidence(
                         "Greek Percentage",
                         "Latin Percentage",
                     ])
-                    .map_err(|e| PyValueError::new_err(format!("CSV header write error: {}", e)))?;
+                    .map_err(|e| py_err("CSV header write error", &e))?;
 
                     for report_item in &collected_report_data {
                         wtr.write_record([
@@ -586,14 +590,10 @@ pub fn generate_analysis_report_with_evidence(
                                 .map_or_else(|| "N/A".to_string(), |v| format!("{:.2}%", v)),
                         ])
                         .map_err(|e| {
-                            PyValueError::new_err(format!(
-                                "CSV row write error for {}: {}",
-                                report_item.file_name, e
-                            ))
+                            py_err(format_args!("CSV row write error for {}", report_item.file_name), &e)
                         })?;
                     }
-                    wtr.flush()
-                        .map_err(|e| PyValueError::new_err(format!("CSV flush error: {}", e)))?;
+                    wtr.flush().map_err(|e| py_err("CSV flush error", &e))?;
                     let csv_writing_duration = csv_writing_start.elapsed();
                     println!(
                         "CSV writing phase completed in: {:.2?}",
@@ -601,10 +601,7 @@ pub fn generate_analysis_report_with_evidence(
                     );
                 }
                 Err(e) => {
-                    return Err(PyValueError::new_err(format!(
-                        "Failed to create CSV writer for path '{}': {}",
-                        csv_path, e
-                    )));
+                    return Err(py_err(format_args!("Failed to create CSV writer for path '{}'", csv_path), &e));
                 }
             }
         } else {
@@ -702,22 +699,14 @@ pub fn batch_clean_markdown_files(
         if let Some(parent_dir) = target_file_path.parent() {
             if !parent_dir.exists() {
                 fs::create_dir_all(parent_dir).map_err(|e| {
-                    PyValueError::new_err(format!(
-                        "Failed to create directory {}: {}",
-                        parent_dir.display(),
-                        e
-                    ))
+                    py_err(format_args!("Failed to create directory {}", parent_dir.display()), &e)
                 })?;
             }
         }
 
         // Write the cleaned file
         fs::write(&target_file_path, cleaned_content_tuple.0).map_err(|e| {
-            PyValueError::new_err(format!(
-                "Failed to write cleaned file {}: {}",
-                target_file_path.display(),
-                e
-            ))
+            py_err(format_args!("Failed to write cleaned file {}", target_file_path.display()), &e)
         })?;
 
         Ok(Some(PerFileOperationOutput::OperationSuccess(
@@ -804,11 +793,10 @@ pub fn batch_generate_table_summary_csv(
             input_dir_str
         );
         let mut wtr = Writer::from_path(output_csv_path_str)
-            .map_err(|e| PyValueError::new_err(format!("Failed to create CSV writer: {}", e)))?;
+            .map_err(|e| py_err("Failed to create CSV writer", &e))?;
         wtr.write_record(["file", "total_tables", "malformed_tables"])
-            .map_err(|e| PyValueError::new_err(format!("Failed to write CSV header: {}", e)))?;
-        wtr.flush()
-            .map_err(|e| PyValueError::new_err(format!("Failed to flush CSV: {}", e)))?;
+            .map_err(|e| py_err("Failed to write CSV header", &e))?;
+        wtr.flush().map_err(|e| py_err("Failed to flush CSV", &e))?;
         return Ok(());
     }
 
@@ -823,6 +811,8 @@ pub fn batch_generate_table_summary_csv(
         .build()
         .map_err(|e| PyValueError::new_err(format!("Failed to build Rayon thread pool: {}", e)))?;
 
+    let failure = FirstOsError::default();
+    let failure_ref = &failure;
     // Corrected GIL handling: py.allow_threads is outermost for the parallel section.
     // The `pool.install` closure itself should be Send.
     let results: Vec<FileTableSummary> = py.detach(|| {
@@ -860,7 +850,9 @@ pub fn batch_generate_table_summary_csv(
                             }
                         }
                         Err(e) => {
-                            eprintln!("Error reading file {}: {}", md_file_path.display(), e);
+                            if !failure_ref.io(format_args!("Error reading file {}", md_file_path.display()), &e) {
+                                eprintln!("Error reading file {}: {}", md_file_path.display(), e);
+                            }
                             None
                         }
                     })
@@ -868,28 +860,22 @@ pub fn batch_generate_table_summary_csv(
                 .collect()
         })
     });
+    failure.into_result()?;
 
     if let Some(parent_dir) = Path::new(output_csv_path_str).parent() {
         if !parent_dir.exists() {
             fs::create_dir_all(parent_dir).map_err(|e| {
-                PyValueError::new_err(format!(
-                    "Failed to create output directory {}: {}",
-                    parent_dir.display(),
-                    e
-                ))
+                py_err(format_args!("Failed to create output directory {}", parent_dir.display()), &e)
             })?;
         }
     }
 
     let mut wtr = Writer::from_path(output_csv_path_str).map_err(|e| {
-        PyValueError::new_err(format!(
-            "Failed to create CSV writer for {}: {}",
-            output_csv_path_str, e
-        ))
+        py_err(format_args!("Failed to create CSV writer for {}", output_csv_path_str), &e)
     })?;
 
     wtr.write_record(["file", "total_tables", "malformed_tables"])
-        .map_err(|e| PyValueError::new_err(format!("Failed to write CSV header: {}", e)))?;
+        .map_err(|e| py_err("Failed to write CSV header", &e))?;
 
     for summary in results {
         wtr.write_record(&[
@@ -897,11 +883,10 @@ pub fn batch_generate_table_summary_csv(
             summary.total_tables.to_string(),
             summary.malformed_tables.to_string(),
         ])
-        .map_err(|e| PyValueError::new_err(format!("Failed to write CSV row: {}", e)))?;
+        .map_err(|e| py_err("Failed to write CSV row", &e))?;
     }
 
-    wtr.flush()
-        .map_err(|e| PyValueError::new_err(format!("Failed to flush CSV: {}", e)))?;
+    wtr.flush().map_err(|e| py_err("Failed to flush CSV", &e))?;
 
     println!(
         "Table summary CSV report generated at: {}",
@@ -937,11 +922,7 @@ pub fn batch_generate_detailed_table_report_csv(
     if let Some(parent_dir) = Path::new(output_csv_path_str).parent() {
         if !parent_dir.exists() {
             fs::create_dir_all(parent_dir).map_err(|e| {
-                PyValueError::new_err(format!(
-                    "Failed to create parent directory for CSV {}: {}",
-                    parent_dir.display(),
-                    e
-                ))
+                py_err(format_args!("Failed to create parent directory for CSV {}", parent_dir.display()), &e)
             })?;
         }
     }
@@ -949,12 +930,7 @@ pub fn batch_generate_detailed_table_report_csv(
     let mut wtr = csv::WriterBuilder::new()
         .has_headers(false) // Explicitly disable automatic header writing by serialize
         .from_path(output_csv_path_str)
-        .map_err(|e| {
-            PyValueError::new_err(format!(
-                "Failed to create CSV writer for {}: {}",
-                output_csv_path_str, e
-            ))
-        })?;
+        .map_err(|e| py_err(format_args!("Failed to create CSV writer for {}", output_csv_path_str), &e))?;
 
     // Manually write header once.
     wtr.write_record([
@@ -963,12 +939,7 @@ pub fn batch_generate_detailed_table_report_csv(
         "table_start_line",
         "table_end_line",
     ])
-    .map_err(|e| {
-        PyValueError::new_err(format!(
-            "Failed to write CSV header to {}: {}",
-            output_csv_path_str, e
-        ))
-    })?;
+    .map_err(|e| py_err(format_args!("Failed to write CSV header to {}", output_csv_path_str), &e))?;
 
     // Use a dummy config as analyze_table_file_op doesn't require a specific one.
     let dummy_config = Arc::new(());
@@ -1030,12 +1001,8 @@ pub fn batch_generate_detailed_table_report_csv(
                 files_with_issues += 1;
             }
             for entry in entries {
-                wtr.serialize(entry).map_err(|e| {
-                    PyValueError::new_err(format!(
-                        "Failed to serialize detailed issue to CSV: {}",
-                        e
-                    ))
-                })?;
+                wtr.serialize(entry)
+                    .map_err(|e| py_err("Failed to serialize detailed issue to CSV", &e))?;
                 total_issues_found += 1;
             }
         } else {
@@ -1044,12 +1011,8 @@ pub fn batch_generate_detailed_table_report_csv(
         }
     }
 
-    wtr.flush().map_err(|e| {
-        PyValueError::new_err(format!(
-            "Failed to flush CSV writer for {}: {}",
-            output_csv_path_str, e
-        ))
-    })?;
+    wtr.flush()
+        .map_err(|e| py_err(format_args!("Failed to flush CSV writer for {}", output_csv_path_str), &e))?;
     println!(
         "Detailed table report generation complete. Total issues found: {}, Files with issues: {}",
         total_issues_found, files_with_issues
@@ -1079,10 +1042,7 @@ pub fn batch_remove_tables_from_files(
         detailed_report_csv_path_str,
     )
     .map_err(|e| {
-        PyValueError::new_err(format!(
-            "Failed to load table locations from CSV {}: {}",
-            detailed_report_csv_path_str, e
-        ))
+        py_err(format_args!("Failed to load table locations from CSV {}", detailed_report_csv_path_str), e.as_ref())
     })?;
 
     let arc_table_locations_map = Arc::new(table_locations_map);
@@ -1091,11 +1051,7 @@ pub fn batch_remove_tables_from_files(
 
     // Ensure output directory exists (process_directory_core might also do this, but good to be sure)
     fs::create_dir_all(&output_base_path).map_err(|e| {
-        PyValueError::new_err(format!(
-            "Failed to create output directory {}: {}",
-            output_base_path.display(),
-            e
-        ))
+        py_err(format_args!("Failed to create output directory {}", output_base_path.display()), &e)
     })?;
 
     // Define the file operation for table removal
@@ -1114,11 +1070,7 @@ pub fn batch_remove_tables_from_files(
         if let Some(parent_dir) = target_output_file_path.parent() {
             if !parent_dir.exists() {
                 fs::create_dir_all(parent_dir).map_err(|e| {
-                    PyValueError::new_err(format!(
-                        "Failed to create parent directory for {}: {}",
-                        target_output_file_path.display(),
-                        e
-                    ))
+                    py_err(format_args!("Failed to create parent directory for {}", target_output_file_path.display()), &e)
                 })?;
             }
         }
@@ -1140,30 +1092,18 @@ pub fn batch_remove_tables_from_files(
                     locations_for_this_file,
                 );
                 fs::write(&target_output_file_path, modified_content).map_err(|e| {
-                    PyValueError::new_err(format!(
-                        "Failed to write modified file {}: {}",
-                        target_output_file_path.display(),
-                        e
-                    ))
+                    py_err(format_args!("Failed to write modified file {}", target_output_file_path.display()), &e)
                 })?;
             } else {
                 // File was in report, but no locations (empty vec), copy verbatim
                 fs::write(&target_output_file_path, content).map_err(|e| {
-                    PyValueError::new_err(format!(
-                        "Failed to copy (no-op) file {}: {}",
-                        target_output_file_path.display(),
-                        e
-                    ))
+                    py_err(format_args!("Failed to copy (no-op) file {}", target_output_file_path.display()), &e)
                 })?;
             }
         } else {
             // File not in report, copy verbatim
             fs::write(&target_output_file_path, content).map_err(|e| {
-                PyValueError::new_err(format!(
-                    "Failed to copy (verbatim) file {}: {}",
-                    target_output_file_path.display(),
-                    e
-                ))
+                py_err(format_args!("Failed to copy (verbatim) file {}", target_output_file_path.display()), &e)
             })?;
         }
         Ok(None) // No data to collect, side effect is file writing

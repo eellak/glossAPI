@@ -17,6 +17,7 @@ use regex::Regex;
 
 use crate::cleaning_module;
 use crate::directory_processor; // Add this import
+use crate::os_error::{py_err, stage_err, FirstOsError};
 
 /// Signed nanoseconds since the Unix epoch, or 0 when they do not fit in an i64 (before
 /// 1677-09-21 or after 2262-04-11). Replaces chrono's `Utc::now().timestamp_nanos_opt()
@@ -130,11 +131,7 @@ pub fn run_complete_pipeline(
             final_output_cleaned_files_path.display()
         );
         fs::create_dir_all(final_output_cleaned_files_path).map_err(|e| {
-            PyValueError::new_err(format!(
-                "Failed to create final output directory {}: {}",
-                final_output_cleaned_files_path.display(),
-                e
-            ))
+            py_err(format_args!("Failed to create final output directory {}", final_output_cleaned_files_path.display()), &e)
         })?;
         println!("Rust: Final output directory for cleaned files created.");
     }
@@ -150,11 +147,7 @@ pub fn run_complete_pipeline(
         temp_pipeline_root_dir.display()
     );
     fs::create_dir_all(&temp_pipeline_root_dir).map_err(|e| {
-        PyValueError::new_err(format!(
-            "Failed to create main temporary pipeline directory {}: {}",
-            temp_pipeline_root_dir.display(),
-            e
-        ))
+        py_err(format_args!("Failed to create main temporary pipeline directory {}", temp_pipeline_root_dir.display()), &e)
     })?;
     println!("Rust: Main temporary pipeline directory created.");
 
@@ -203,11 +196,7 @@ pub fn run_complete_pipeline(
             temp_stage1_cleaned_dir.display()
         );
         fs::create_dir_all(&temp_stage1_cleaned_dir).map_err(|e| {
-            PyValueError::new_err(format!(
-                "Failed to create stage 1 temp output directory {}: {}",
-                temp_stage1_cleaned_dir.display(),
-                e
-            ))
+            py_err(format_args!("Failed to create stage 1 temp output directory {}", temp_stage1_cleaned_dir.display()), &e)
         })?;
 
         directory_processor::generate_analysis_report_with_evidence(
@@ -225,7 +214,7 @@ pub fn run_complete_pipeline(
                 e
             );
             println!("Rust: ERROR - {}", err_msg);
-            PyValueError::new_err(err_msg)
+            stage_err(py, e, |_| err_msg)
         })?;
         println!("Rust: === STAGE 1: Initial Cleaning COMPLETED ===\n");
 
@@ -246,7 +235,7 @@ pub fn run_complete_pipeline(
                 e
             );
             println!("Rust: ERROR - {}", err_msg);
-            PyValueError::new_err(err_msg)
+            stage_err(py, e, |_| err_msg)
         })?;
         println!("Rust: === STAGE 2: Detailed Table Report Generation COMPLETED ===\n");
 
@@ -258,11 +247,7 @@ pub fn run_complete_pipeline(
         };
         if !stage3_output_dir.exists() {
             fs::create_dir_all(&stage3_output_dir).map_err(|e| {
-                PyValueError::new_err(format!(
-                    "Failed to create Stage 3 output directory {}: {}",
-                    stage3_output_dir.display(),
-                    e
-                ))
+                py_err(format_args!("Failed to create Stage 3 output directory {}", stage3_output_dir.display()), &e)
             })?;
         }
         let stage3_output_dir_str = stage3_output_dir.to_string_lossy().into_owned();
@@ -283,7 +268,7 @@ pub fn run_complete_pipeline(
         .map_err(|e| {
             let err_msg = format!("Stage 3 (batch_remove_tables_from_files) failed: {}", e);
             println!("Rust: ERROR - {}", err_msg);
-            PyValueError::new_err(err_msg)
+            stage_err(py, e, |_| err_msg)
         })?;
         println!("Rust: === STAGE 3: Table Removal COMPLETED ===\n");
 
@@ -291,6 +276,9 @@ pub fn run_complete_pipeline(
         println!("Rust: === Starting STAGE 4: Final Analysis & Report Generation ===");
         let report_entries_mutex: Arc<Mutex<Vec<FinalReportEntry>>> =
             Arc::new(Mutex::new(Vec::new()));
+        // A file that cannot be read for an OS reason fails the call after the loop (native API level 2); before, it
+        // was printed and left out of the report.
+        let failure = FirstOsError::default();
 
         let final_processed_files_for_report: Vec<PathBuf> =
             walkdir::WalkDir::new(&stage3_output_dir)
@@ -409,12 +397,15 @@ pub fn run_complete_pipeline(
                                 // println!("Rust: [S4-Thread {}] Report entry pushed for: {}", thread_id, report_relative_path.display()); // Verbose
                             }
                             Err(e) => {
-                                eprintln!("Rust: [S4-Thread {}] Error reading final file {} for analysis: {}. Skipping for report.", thread_id, final_file_path.display(), e);
+                                if !failure.io(format_args!("Error reading final file {} for analysis", final_file_path.display()), &e) {
+                                    eprintln!("Rust: [S4-Thread {}] Error reading final file {} for analysis: {}. Skipping for report.", thread_id, final_file_path.display(), e);
+                                }
                             }
                         }
                     });
             });
         }
+        failure.into_result()?;
         println!("Rust: === STAGE 4: Final Analysis & Report Generation COMPLETED ===\n");
 
         // --- Final CSV Writing (after all stages) ---
@@ -448,11 +439,7 @@ pub fn run_complete_pipeline(
                         parent_dir.display()
                     );
                     fs::create_dir_all(parent_dir).map_err(|e| {
-                        PyValueError::new_err(format!(
-                            "Failed to create parent for Parquet {}: {}",
-                            parent_dir.display(),
-                            e
-                        ))
+                        py_err(format_args!("Failed to create parent for Parquet {}", parent_dir.display()), &e)
                     })?;
                     println!("Rust: Parent directory for Parquet created.");
                 }
@@ -510,20 +497,17 @@ pub fn run_complete_pipeline(
             )
             .map_err(|e| PyValueError::new_err(format!("Failed to build RecordBatch: {}", e)))?;
 
-            let file = File::create(output_report_csv_str).map_err(|e| {
-                PyValueError::new_err(format!("Failed to create Parquet file: {}", e))
-            })?;
+            let file = File::create(output_report_csv_str)
+                .map_err(|e| py_err("Failed to create Parquet file", &e))?;
             let props = WriterProperties::builder().build();
-            let mut writer =
-                ArrowWriter::try_new(file, Arc::new(schema), Some(props)).map_err(|e| {
-                    PyValueError::new_err(format!("Failed to create Parquet writer: {}", e))
-                })?;
-            writer.write(&batch).map_err(|e| {
-                PyValueError::new_err(format!("Failed to write batch to Parquet: {}", e))
-            })?;
-            writer.close().map_err(|e| {
-                PyValueError::new_err(format!("Failed to close Parquet writer: {}", e))
-            })?;
+            let mut writer = ArrowWriter::try_new(file, Arc::new(schema), Some(props))
+                .map_err(|e| py_err("Failed to create Parquet writer", &e))?;
+            writer
+                .write(&batch)
+                .map_err(|e| py_err("Failed to write batch to Parquet", &e))?;
+            writer
+                .close()
+                .map_err(|e| py_err("Failed to close Parquet writer", &e))?;
 
             println!(
                 "Rust: Parquet report written successfully at {}.",
@@ -541,8 +525,9 @@ pub fn run_complete_pipeline(
         // Hand ownership to the orchestrator without copying and then deleting
         // an unregistered native tree. The writer seals every retained file and
         // applies the run's debug/retention policy after successful consumption.
-        fs::rename(&temp_pipeline_root_dir, &retained)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        fs::rename(&temp_pipeline_root_dir, &retained).map_err(|e| {
+            py_err(format_args!("Failed to hand over {}", temp_pipeline_root_dir.display()), &e)
+        })?;
     }
 
     println!(

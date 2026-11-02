@@ -395,10 +395,13 @@ def release_credits(corpus: Any, result: Any, *, honour_suspension: bool = True)
         if not chosen:
             continue
         done_by = PUBLICATION_ORDER.index(publication)
+        # As run.py: public raw markdown stays while the OCR publication has still to run (K4g fix 4).
+        keep_public_raw = 'ocr' in settings.get('requested_stages', ()) and done_by < PUBLICATION_ORDER.index('ocr')
         # Bytes are freed only when every link of a file goes: a released private product is often hard-linked to its
         # public compatibility copy (``link_published``), so an inode counts only when all its links are released here.
         inodes: dict[tuple[int, int], tuple[int, int, set[str]]] = {}
-        for row in _retention_candidates(writer, root, result['run_id'], settings, attempts=chosen):
+        for row in _retention_candidates(writer, root, result['run_id'], settings, attempts=chosen,
+                                         keep_public_raw=keep_public_raw):
             path = file_path(row)
             if path.is_relative_to(private) and (row['retention_class'] != 'intermediate' or row['kind'] == 'download_payload'
                     or (settings['memory_saving'] == 'extreme' and row['kind'] == 'source_snapshot')):

@@ -855,6 +855,12 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     publication_budget=DiskBudget(corpus._scheduler_writer,corpus.output_dir,result['run_id'],getattr(corpus,'_retention_settings',settings))
     # Each document version owns its compatibility locations for this run.
     corpus._publication_claims={}
+    # The OCR publication re-cleans every raw markdown in markdown/, so public raw markdown is still read until this
+    # invocation's OCR barrier has returned. retention's own check (the OCR publication task is not ok) misses a
+    # --retry-failed resume, where that task is ok from the first pass but publishes again because the covered
+    # versions changed: the clean frontier released the other documents' raw markdown first, and the repeated OCR
+    # publication then dropped their clean text and marked them extract_failed (K4g fix 4).
+    ocr_barrier_pending='ocr' in stages
     with committed_results(replays):
         for stage in ('download','extract','clean','ocr','sections','annotate','export'):
             if stage in stages or (stage=='download' and corpus._streaming_download_manifest):
@@ -871,6 +877,8 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                         check_exact(corpus,result,pending,when=f'(exact, at the {stage} publication)')
                     published=publish_barrier(corpus,result['run_id'],stage,calls[stage],retry_failed=retry_failed,
                         empty_export=not result['sources'] and stage=='export')
+                if stage=='ocr':
+                    ocr_barrier_pending=False
                 # The next compatibility reader has now consumed these private
                 # producer records. Retire at that frontier, not at run close.
                 released_stage = {'clean':'extract','sections':'clean','annotate':'sections'}.get(stage)
@@ -881,7 +889,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                         if key.endswith(':'+released_stage)]
                     retain_completed_run(corpus._scheduler_writer,corpus.output_dir,result['run_id'],
                         getattr(corpus,'_retention_settings',settings),attempts=attempts,
-                        observer=getattr(corpus,'_retention_observer',None))
+                        observer=getattr(corpus,'_retention_observer',None),keep_public_raw=ocr_barrier_pending)
     if 'export' in stages:
         reconcile_export_census(corpus,result)
     if 'annotate' in stages:

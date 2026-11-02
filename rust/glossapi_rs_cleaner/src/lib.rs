@@ -46,6 +46,7 @@ mod md_format_surgical;
 mod md_module;
 mod md_verify;
 mod normalize;
+mod os_error;
 mod pipeline_module;
 mod table_analysis_module;
 mod table_remover_module;
@@ -77,7 +78,9 @@ use pyo3::prelude::*;
 /// starts to rely on a new or changed export; `glossapi.capabilities.NATIVE_API_LEVELS` names the level it needs, and
 /// reads these bytes from the built binary without importing it, so a stale build makes its stage unavailable instead
 /// of failing per document. Exported to Python as `__glossapi_native_api__`, which also keeps the bytes in the binary.
-pub const NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:1;";
+/// Level 2 (K4g fix 4): an OS-level I/O failure raises `OSError(errno, message)` (`os_error.rs`) instead of being
+/// printed or returned as `ValueError` text, so the clean step types a full disk `disk_full`.
+pub const NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:2;";
 
 // Python module definition. gil_used = true keeps the 0.19 contract (the module requires the GIL): PyO3 0.28+
 // would otherwise declare free-threaded support, which has not been audited.

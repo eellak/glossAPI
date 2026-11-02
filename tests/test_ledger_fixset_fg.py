@@ -74,7 +74,8 @@ def test_cli_run_with_several_local_pdfs_and_partial_metadata_publishes(tmp_path
     assert len(records) == 3
     frame = pd.read_parquet(metadata)
     assert sorted(frame['filename']) == ['a.pdf', 'b.pdf', 'c.pdf']
-    # The row the user already had keeps its URL; new rows get an empty URL, never NA text.
+    # The row the user already had keeps its URL; a new row's unknown URL is null (the one metadata rule, K4BI-G9;
+    # K4g fix 4), never NA text.
     assert frame.set_index('filename').loc['a.pdf', 'url'] == 'file:///previous/a.pdf'
     assert all('extract' in str(value).split(',') for value in frame['processing_stage'])
 
@@ -89,7 +90,9 @@ def test_processing_state_tolerates_missing_cells_in_every_reader(tmp_path):
     manager.save({'a', 'b'}, {'c'})
     frame = pd.read_parquet(metadata).set_index('filename')
     assert frame.loc['a.pdf', 'extract_status'] == 'success' and frame.loc['a.pdf', 'processing_stage'] == 'extract'
-    assert frame.loc['b.pdf', 'url'] == '' and frame.loc['c.pdf', 'extract_status'] == 'problematic'
+    # A row added here has a null URL, as the artifact scan writes it (K4BI-G9; K4g fix 4: a retried document's row
+    # then equals the single-pass row), never NA text.
+    assert pd.isna(frame.loc['b.pdf', 'url']) and frame.loc['c.pdf', 'extract_status'] == 'problematic'
     processed, _ = manager.load()  # reading the rows it just wrote, including NA cells, still works
     assert {'a', 'b'} <= processed
 
