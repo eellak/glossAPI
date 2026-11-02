@@ -16,7 +16,9 @@ import shutil
 import sys
 import time
 import traceback
-from .common import STAGES, REPO, PeakRSS, environment, inventory, load_manifest, sha256, write_json
+from .common import STAGES, REPO, PeakRSS, diagnostics, environment, inventory, load_manifest, sha256, write_json
+
+SCHEMA = 2  # 2: per-stage typed wrapper return ('return') and diagnostics map (LS1-G01, LS5-G05); 1 had neither
 
 PROFILES = ('text-layer', 'docling-cpu', 'docling-cpu-pages')
 IMPORTS = None
@@ -42,6 +44,27 @@ def expected(corpus, stage):
             'sections': [corpus.sections_parquet],
             'annotate': [corpus.fully_annotated_parquet],
             'export': [corpus.output_dir / 'export.jsonl']}[stage]
+
+
+def return_receipt(value, run_root):
+    """LS1-G01: the public wrapper's typed return value. Only the run-root prefix of path strings is normalised
+    (to ``<run>``), so two runs in different directories compare equal while any other change is visible."""
+    from glossapi.ledger.journal import wrapper_return_receipt
+    prefix = str(Path(run_root).resolve())
+    if isinstance(value, Path):
+        value = str(value)
+        typed = {'type': 'path', 'value': value}
+    else:
+        typed = wrapper_return_receipt(value)
+    def normalise(item):
+        if isinstance(item, dict):
+            return {key: normalise(entry) for key, entry in item.items()}
+        if isinstance(item, list):
+            return [normalise(entry) for entry in item]
+        if isinstance(item, str) and (item == prefix or item.startswith(prefix + os.sep)):
+            return '<run>' + item[len(prefix):]
+        return item
+    return normalise(typed)
 
 
 def document_job(row, data, root, profile):
@@ -73,7 +96,10 @@ def document_job(row, data, root, profile):
                 files=[dict(f, path=f"pages{window[0]}-{window[1]}/"+f['path'])
                        for window,d in zip(ranges,segments) for f in d['stages'][stage]['files']],
                 removed_files=[f"pages{window[0]}-{window[1]}/"+p for window,d in zip(ranges,segments)
-                               for p in d['stages'][stage]['removed_files']])
+                               for p in d['stages'][stage]['removed_files']],
+                **{'return': {'type': 'segments', 'value': [s.get('return') for s in states]}},
+                diagnostics=[dict(f, path=f"pages{window[0]}-{window[1]}/"+f['path'])
+                             for window,d in zip(ranges,segments) for f in d['stages'][stage].get('diagnostics', [])])
         write_json(root/'documents'/Path(row['filename']).stem/'document.json', result)
         return result
     if ranges:
@@ -120,19 +146,23 @@ def document_job(row, data, root, profile):
              'clean': lambda: corpus.clean(num_threads=1), 'sections': corpus.section,
              'annotate': corpus.annotate, 'export': lambda: corpus.jsonl(out / 'export.jsonl')}
     for stage in STAGES:
-        before = inventory(out)
-        status, error = 'ok', None
+        before, before_diagnostics = inventory(out), diagnostics(out)
+        status, error, value = 'ok', None, None
         began = time.perf_counter()
         with PeakRSS() as rss:
             try:
-                calls[stage]()
+                value = calls[stage]()
                 required = expected(corpus, stage)
                 if not required or not all(p.is_file() for p in required):
                     status, error = 'failed', f'Corpus returned without expected {stage} product (filtered/empty input or swallowed error); see pipeline.log'
             except Exception:
                 status, error = 'failed', traceback.format_exc()
         wall = time.perf_counter() - began
-        after = inventory(out)
+        try:  # outside the timed interval; a receipt that cannot be made fails the stage (fail closed)
+            returned = return_receipt(value, root) if status == 'ok' else None
+        except Exception:
+            returned, status, error = None, 'failed', 'wrapper return receipt failed: ' + traceback.format_exc()
+        after, after_diagnostics = inventory(out), diagnostics(out)
         files = []
         for name, receipt in after.items():
             if before.get(name) != receipt:
@@ -147,7 +177,8 @@ def document_job(row, data, root, profile):
             'rss_available': getattr(rss, 'available', True),
             'rss_basis': getattr(rss, 'basis', None),
             'rss_unavailable_reason': getattr(rss, 'unavailable_reason', None),
-            'files': files, 'removed_files': sorted(set(before) - set(after))}
+            'files': files, 'removed_files': sorted(set(before) - set(after)), 'return': returned,
+            'diagnostics': [dict(fact, path=name) for name, fact in after_diagnostics.items() if before_diagnostics.get(name) != fact]}
         write_json(jobroot / 'document.json', result)
     return result
 
@@ -188,7 +219,7 @@ def run(manifest, data, output, profile='text-layer', workers=1):
     rows = load_manifest(manifest)
     if profile == 'docling-cpu-pages' and any('page_range' not in r for r in rows):
         raise ValueError('docling-cpu-pages requires frozen page_range for every document')
-    receipt = {'schema': 1, 'profile': profile, 'workers': workers, 'manifest_sha256': sha256(manifest),
+    receipt = {'schema': SCHEMA, 'profile': profile, 'workers': workers, 'manifest_sha256': sha256(manifest),
                'manifest': json.loads(Path(manifest).read_text()), 'environment': environment(),
                'scope': 'one fresh Corpus per document; default clean policy; stages called even after earlier failures',
                'rss_basis': 'sampled process + descendants absolute RSS; 10ms interval; shared pages may be counted twice',

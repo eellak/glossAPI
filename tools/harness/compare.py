@@ -109,6 +109,8 @@ def validate_snapshots(run, root):
         for stage, state in doc['stages'].items():
             if state['status'] != 'ok':
                 issues.append(f"{doc['filename']} {stage}: failed stage")
+            elif run.get('schema', 1) >= 2 and 'return' not in state:
+                issues.append(f"{doc['filename']} {stage}: schema-2 receipt without a wrapper return")
             files = state['files']
             if len({f['path'] for f in files}) != len(files):
                 issues.append(f"{doc['filename']} {stage}: duplicate product paths")
@@ -154,6 +156,10 @@ def compare(a, b, declarations=()):
             raise ValueError('only timing metric JSON files may be declared')
         accepted[key] = d
     results, used = [], set()
+    # LS1-G01: typed wrapper returns are compared when both receipts record them (schema >= 2). A schema-1 receipt
+    # (older baselines, left unchanged) has none; the comparison then says so instead of passing them silently.
+    schemas = (left.get('schema', 1), right.get('schema', 1))
+    returns_compared = all(isinstance(v, int) and v >= 2 for v in schemas)
     docs_a = {d['filename']: d for d in left['documents']}
     docs_b = {d['filename']: d for d in right['documents']}
     for doc in sorted(docs_a.keys() | docs_b.keys()):
@@ -185,6 +191,9 @@ def compare(a, b, declarations=()):
                     difference('@page_ranges', json.dumps(da.get('page_ranges')), json.dumps(db.get('page_ranges')))
                 if da.get('page_range') != db.get('page_range'):
                     difference('@page_range', json.dumps(da.get('page_range')), json.dumps(db.get('page_range')))
+                if returns_compared and sa.get('return') != sb.get('return'):
+                    # Never declarable: declarations name .metrics.json timing leaves only.
+                    difference('@return', json.dumps(sa.get('return'), sort_keys=True), json.dumps(sb.get('return'), sort_keys=True))
                 fa, fb = {f['path']: f for f in sa['files']}, {f['path']: f for f in sb['files']}
                 for path in sorted(fa.keys() | fb.keys()):
                     x, y = fa.get(path), fb.get(path)
@@ -213,7 +222,9 @@ def compare(a, b, declarations=()):
     undeclared = sum(not d['accepted_reason'] for row in results for d in row['differences'])
     return {'identical': not any(r['differences'] for r in results) and not issues,
             'passes': undeclared == 0 and not issues and not unused,
-            'undeclared_differences': undeclared, 'issues': issues, 'unused_declarations': unused, 'results': results}
+            'undeclared_differences': undeclared, 'issues': issues, 'unused_declarations': unused,
+            'wrapper_returns': 'compared' if returns_compared else f'not compared: receipt schemas {list(schemas)} (returns recorded from schema 2)',
+            'results': results}
 
 
 def main():
