@@ -96,6 +96,30 @@ def producer_binding(journal, path):
         (Path(path).absolute().as_uri(),)).fetchone()
 
 
+def _planned_text_version(journal: Any, path: Path, row: Any) -> Any:
+    """The planned version of a selected text that a sibling publication of this run generated (K4g B1b).
+
+    The text must be a registered generation whose producer attempt ran in a wrapper run of the same parent run as
+    this aggregate, and its name (chunk suffix removed) must equal the frozen publication name of exactly one source
+    this wrapper observed. Anything else (an older run's text, a caller's own file) returns None."""
+    import re
+    if row is None or not row['producer_attempt_id']:
+        return None
+    from ..ledger.reader import child_runs
+    from .._naming import canonical_stem
+    connection = journal.writer.connection
+    children = child_runs(connection)
+    parent = children.get(journal.run_id)
+    producer = connection.execute('SELECT t.run_id FROM attempts a JOIN tasks t USING(task_id) WHERE a.attempt_id=?',
+                                  (row['producer_attempt_id'],)).fetchone()
+    if parent is None or producer is None or children.get(producer[0]) != parent:
+        return None
+    name = lambda value: re.sub(r'__p\d{4}-\d{4}$', '', canonical_stem(Path(value)))
+    stem = name(path)
+    versions = {version for source, version in journal.versions.items() if name(source) == stem}
+    return next(iter(versions)) if len(versions) == 1 else None
+
+
 def execute_aggregate(corpus: Any, stage: Any, inputs: Any, specification: Any) -> Any:
     journal = active_journal()
     references = []
@@ -105,16 +129,21 @@ def execute_aggregate(corpus: Any, stage: Any, inputs: Any, specification: Any) 
         digest = binding['sha256'] if binding else sha256_file(path)
         file_id = None
         if journal:
-            row = journal.writer.connection.execute("SELECT file_id,version_id FROM current_file_state WHERE uri=? AND sha256=? AND presence='present' ORDER BY event_id DESC LIMIT 1", (path.as_uri(),digest)).fetchone()
+            row = journal.writer.connection.execute("SELECT file_id,version_id,producer_attempt_id FROM current_file_state WHERE uri=? AND sha256=? AND presence='present' ORDER BY event_id DESC LIMIT 1", (path.as_uri(),digest)).fetchone()
             if row and (role!='selected_text' or row['version_id'] is not None):
                 file_id = row[0]
             else:
                 with journal.writer.transaction():
                     version_id=None
                     if role=='selected_text':
-                        from ..ledger.journal import source_key
-                        document_id=journal.writer.document(source_key(path.as_uri()))
-                        version_id=journal.writer.version(document_id,source_sha256=digest,stored_sha256=digest)
+                        # A text this run's own publications generated without a version binding (a caller-kernel
+                        # capture, e.g. the after-OCR clean text) belongs to the planned version whose frozen
+                        # publication name it bears; only an outside text gets a document of its own (K4g B1b).
+                        version_id=_planned_text_version(journal,path,row)
+                        if version_id is None:
+                            from ..ledger.journal import source_key
+                            document_id=journal.writer.document(source_key(path.as_uri()))
+                            version_id=journal.writer.version(document_id,source_sha256=digest,stored_sha256=digest)
                     file_id = journal.writer.artifact(journal.run_id,stage.name,role,path.as_uri(),sha256=digest,
                         bytes=path.stat().st_size,version_id=version_id,ownership='initial_external',retention_class='initial')
         references.append(ArtifactReference(file_id or str(uuid.uuid4()),role,path,digest,path.stat().st_size))

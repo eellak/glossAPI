@@ -77,15 +77,24 @@ CHILD = textwrap.dedent('''
 
 @pytest.fixture(scope='module')
 def collided(tmp_path_factory):
+    return _ocr_run(tmp_path_factory, 'ocr-collide', ('scan.pdf', 'scan.pdf'))
+
+
+@pytest.fixture(scope='module')
+def distinct(tmp_path_factory):
+    return _ocr_run(tmp_path_factory, 'ocr-distinct', ('alpha.pdf', 'beta.pdf'))
+
+
+def _ocr_run(tmp_path_factory, label, names):
     if not SCAN.is_file():
         pytest.skip(f'scanned fixture missing: {SCAN}')
-    root = tmp_path_factory.mktemp('ocr-collide')
+    root = tmp_path_factory.mktemp(label)
     (root / 'stub').mkdir()
     (root / 'stub' / 'sitecustomize.py').write_text(STUB)
     (root / 'child.py').write_text(CHILD)
     sources = []
-    for label in ('first', 'second'):
-        path = root / label / 'scan.pdf'
+    for label, filename in zip(('first', 'second'), names):
+        path = root / label / filename
         path.parent.mkdir()
         path.write_bytes(SCAN.read_bytes() + f'\n% variant {label}\n'.encode())  # same basename, different bytes
         sources.append(path)
@@ -115,11 +124,18 @@ def test_same_basename_scans_get_their_own_ocr_text(collided):
         assert other not in rows[name]
 
 
-@pytest.mark.xfail(strict=True, reason='K4g B3 finding (not collision-specific; unique basenames behave the same): after '
-                   'OCR the export holds both records, but the census decides export_canonical_markdown_missing for each, '
-                   'so included=0 and report --why says omitted. Owner: ledger/run census (batch B1).')
 def test_ocr_routed_documents_are_included_in_census_and_why(collided):
     assert collided['counts'] == {'selected': 2, 'included': 2, 'omitted': 0, 'failed': 0}
     for source in collided['digests']:
         decisions = [item for item in collided['why'][source]['inclusion'] if item['product'] == 'document_jsonl']
+        assert [item['decision'] for item in decisions] == ['include']
+
+
+def test_ocr_routed_documents_with_distinct_names_are_included_in_census_and_why(distinct):
+    """K4g B1b: the same census defect without a name collision (B3 finding); the census and report --why follow the
+    records the export published."""
+    assert distinct['state'] == 'completed' and len(distinct['rows']) == 2
+    assert distinct['counts'] == {'selected': 2, 'included': 2, 'omitted': 0, 'failed': 0}
+    for source in distinct['digests']:
+        decisions = [item for item in distinct['why'][source]['inclusion'] if item['product'] == 'document_jsonl']
         assert [item['decision'] for item in decisions] == ['include']

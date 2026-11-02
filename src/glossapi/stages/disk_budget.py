@@ -10,7 +10,23 @@ import os
 from pathlib import Path
 import sys
 
+from typing import Any
+
 from .retention import resolved_settings
+
+# Typed refusals of the extreme-mode disk guard: code -> (commands, exit code, meaning). The LLM guide renders it and the
+# CLI derives its exit-3 set from it, so neither repeats the text (K3F-G1, LS7-G01).
+ERRORS: dict[str, tuple[str, int, str]] = {
+    'disk_budget_required': ('plan, run', 3, 'memory_saving=extreme needs positive disk_budget_bytes, max_source_bytes and '
+                             'max_attempt_bytes.'),
+    'disk_guard_unavailable': ('plan, run', 3, 'memory_saving=extreme needs dedicated size-limited corpus and staging '
+                               'filesystems whose capacities fit the budget; an ordinary shared volume is refused.'),
+}
+
+
+def error_contracts() -> dict[str, dict[str, Any]]:
+    """The guide rows of ``ERRORS`` (command, exit code, meaning), in registry order."""
+    return {code: dict(command=command, exit_code=exit_code, meaning=meaning) for code, (command, exit_code, meaning) in ERRORS.items()}
 
 
 class DiskBudgetError(ValueError):

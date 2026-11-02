@@ -381,12 +381,22 @@ def test_tabular_wrapper_return_is_preserved_and_bound_by_hash(tmp_path):
         assert wrapper_return_receipt(mutated)['sha256'] != receipt['sha256']
 
 
-def test_cached_repair_is_not_recorded_as_fresh_repair(tmp_path, monkeypatch):
+@pytest.mark.parametrize('kind', ['simple_pdf', 'not_a_pdf'])
+def test_cached_repair_is_not_recorded_as_fresh_repair(tmp_path, monkeypatch, kind):
+    """T2-G07: a newer repaired_pdfs/ file with unrelated bytes is neither reused nor recorded as a repair (an mtime
+    ordering does not bind it to the source bytes). Extraction reads the source, and no repair (fresh or cached) is
+    claimed for it."""
     from types import SimpleNamespace
     import time
     from glossapi.ledger import journal
     from glossapi.pdf_repair.extract import repair_for_extract
-    source=tmp_path/'source.pdf'; source.write_bytes(b'original bytes')
+    source=tmp_path/'source.pdf'
+    if kind=='simple_pdf':
+        from test_ledger_stages import simple_pdf
+        simple_pdf(source)
+    else:
+        source.write_bytes(b'original bytes')
+    original=source.read_bytes()
     output=tmp_path/'output';output.mkdir()
     target=output/'repaired_pdfs/source.pdf'; target.parent.mkdir();target.write_bytes(b'cached bytes')
     os.utime(source,ns=(1_000_000_000,1_000_000_000));os.utime(target,ns=(2_000_000_000,2_000_000_000))
@@ -394,12 +404,12 @@ def test_cached_repair_is_not_recorded_as_fresh_repair(tmp_path, monkeypatch):
     context=SimpleNamespace(input_dir=tmp_path,output_dir=output,downloads_dir=output/'downloads',_shadow_ledger_enabled=True)
     @journal.shadow_stage('extract','extract.repair_cache_fixture')
     def wrapper(self): return repair_for_extract(source,output,enabled=True,deadline=time.monotonic()+10)
-    assert wrapper(context)[0]==target
-    assert source.read_bytes()==b'original bytes' and target.read_bytes()==b'cached bytes'
+    path,data=wrapper(context)
+    assert path==source and data['font_repair_status']!='repaired'
+    assert source.read_bytes()==original
     with open_readonly(output/'corpus.sqlite3') as read:
         reasons=[row[0] for row in read.execute("SELECT reason_code FROM events WHERE event_kind='decision'")]
-        assert reasons.count('repair_cache_observed')==1
-        assert 'font_repaired' not in reasons
+        assert 'repair_cache_observed' not in reasons and 'font_repaired' not in reasons
 
 
 def test_safe_backend_failure_keeps_its_backend_reason_and_original_return(tmp_path):

@@ -79,12 +79,13 @@ def measured_costs() -> dict[str, Any]:
 
 def _cli_errors() -> dict[str, dict[str, Any]]:
     """Typed errors an LLM meets on the decision path, with exit codes, each from the registry of the module that raises
-    it: install from ``install_plan.ERRORS``, plan/run from ``plan_preview.ERRORS``, manifests from
-    ``input_manifest.ERRORS`` (CP-K3 F4)."""
+    it: install from ``install_plan.ERRORS``, plan/run from ``plan_preview.ERRORS``, the extreme-mode disk guard from
+    ``stages.disk_budget.ERRORS`` (K3F-G1), manifests from ``input_manifest.ERRORS`` (CP-K3 F4)."""
     rows: dict[str, dict[str, Any]] = {code: dict(command='install', exit_code=exit_code, meaning=meaning)
                                        for code, (exit_code, meaning) in INSTALL_ERRORS.items()}
     rows.update(plan_preview.error_contracts())
-    rows['disk_budget_required'] = dict(command='plan, run', exit_code=3, meaning='memory_saving=extreme needs --disk-budget-bytes.')
+    from .stages import disk_budget
+    rows.update(disk_budget.error_contracts())
     from .ledger import urls
     rows[urls.CODE] = dict(command='plan, run', exit_code=2, meaning=urls.MEANING)
     rows.update(input_manifest.error_contracts())
@@ -182,7 +183,7 @@ def guide_view() -> dict[str, Any]:
         schemas=[dict(name=name, file=f'glossapi/schemas/v{SCHEMA_VERSION}/{name}.json', id=load_schema(name)['$id']) for name in NAMES],
         sources=dict(stages='glossapi.capabilities', retry_limit='glossapi.stages.scheduler.StreamingScheduler (retry_limit default)', packages='glossapi.package_catalog (data/package_catalog/measured.json)',
                      settings='glossapi.settings_contract', manifest='glossapi.input_manifest', costs='glossapi/data/measured_costs.json',
-                     errors='glossapi.install_plan.ERRORS, glossapi.plan_preview.ERRORS, glossapi.input_manifest.ERRORS'))
+                     errors='glossapi.install_plan.ERRORS, glossapi.plan_preview.ERRORS, glossapi.stages.disk_budget.ERRORS, glossapi.input_manifest.ERRORS'))
 
 
 def _value(value: Any) -> str:

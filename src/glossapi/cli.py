@@ -381,7 +381,8 @@ def main(argv=None):
         envelope["errors"].append(dict(code=code, message=str(error), document_id=None, stage=None, details=getattr(error, "details", {})))
         if envelope.get("command") == "run" and not isinstance((envelope.get("data") or {}).get("state"), str):
             envelope["data"] = None  # a refused run has no run data (the plan is not its result)
-        exit_code = 3 if code in ("policy_conflict","disk_guard_unavailable","disk_budget_exceeded","disk_budget_required","waiting_for_disk","disk_full") else 2
+        from .stages.disk_budget import ERRORS as DISK_GUARD_ERRORS
+        exit_code = 3 if code in ("policy_conflict","disk_budget_exceeded","waiting_for_disk","disk_full",*DISK_GUARD_ERRORS) else 2
     return _emit(envelope, argv, exit_code)
 
 
