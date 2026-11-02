@@ -55,31 +55,69 @@ def resource_identity(raw_url,*,source_id=None,dataset_id=None,resource_index=0)
 URL_INDEX_MAX=2**63-1  # the ledger stores url_index as a SQLite INTEGER (signed 64-bit)
 
 
+def _url_index_value(value: Any, index: int | None = None) -> int | None:
+    """The url_index a cell declares: an int, None for a missing cell, or the typed refusal (CP-K4g F3, CP-K4gc2 R3).
+
+    Accepted: ``int`` (not bool), numpy/pandas integer scalars, and finite integral ``float`` (Python or numpy) from 0 to
+    ``URL_INDEX_MAX``. Integers stay exact. A missing cell is None, NaN or pandas NA. Every other type (bool,
+    strings, ``Fraction``, ``Decimal``, other numeric types) is refused with ``invalid_manifest``: nothing is converted
+    lossily before it is judged, and an out-of-range value is a typed refusal, never an OverflowError."""
+    import sys
+    numpy: Any = sys.modules.get('numpy')  # a numpy scalar implies numpy is loaded; never import it here
+    pandas: Any = sys.modules.get('pandas')
+    if value is None or (pandas is not None and value is pandas.NA):
+        return None
+    number: int | None = None
+    if isinstance(value, bool) or (numpy is not None and isinstance(value, numpy.bool_)):
+        number = None
+    elif type(value) is int or (numpy is not None and isinstance(value, numpy.integer)):
+        number = int(value)
+    elif type(value) is float or (numpy is not None and isinstance(value, numpy.floating)):
+        floating = float(value)  # exact for Python floats; numpy floats widen exactly to a Python float
+        if floating != floating:
+            return None  # NaN: a missing cell
+        if floating not in (float('inf'), float('-inf')) and floating.is_integer():
+            number = int(floating)
+    if number is None or number < 0 or number > URL_INDEX_MAX:
+        from ..input_manifest import ManifestError
+        raise ManifestError('invalid_manifest', f'url_index must be an integer from 0 to {URL_INDEX_MAX}', field='url_index',
+                            index=index, value=str(value))
+    return number
+
+
 def row_resource_index(row: Any, *, index: int | None = None) -> int:
-    """The resource index of a one-URL source row (CRED-F8): its declared ``url_index`` (a nonnegative integer), else 0.
+    """The resource index of a one-URL source row (CRED-F8): its declared ``url_index`` (``_url_index_value``), else 0.
 
     Plan (``cli._plan_data``) and run (``_remote_inventory``) both key a declared ``source_id`` by
     (dataset_id, source_id, this index), so two rows of one source_id with url_index 0 and 1 are two resources in
     both. A list-valued URL cell is expanded by run and keyed by each URL's position instead."""
-    import math
-    import numbers
-    import operator
-    value=row.get('url_index') if isinstance(row,dict) else None
-    if value is None or (isinstance(value,numbers.Real) and not isinstance(value,numbers.Integral) and math.isnan(float(value))):
-        return 0  # a missing cell (pandas NaN)
-    number: int | None=None
-    # Integers stay exact (CP-K4g F3: 2**53 and 2**53+1 are two indices); only a non-integer number is examined as a
-    # float, and only to accept one with an integral value. bool is not an index.
-    if isinstance(value,numbers.Integral) and not isinstance(value,bool):
-        number=operator.index(value)
-    elif isinstance(value,numbers.Real) and not isinstance(value,(bool,numbers.Integral)):
-        floating=float(value)
-        if math.isfinite(floating) and floating.is_integer():
-            number=int(floating)
-    if number is None or number<0 or number>URL_INDEX_MAX:
-        from ..input_manifest import ManifestError
-        raise ManifestError('invalid_manifest',f'url_index must be an integer from 0 to {URL_INDEX_MAX}',field='url_index',index=index,value=str(value))
-    return number
+    number = _url_index_value(row.get('url_index') if isinstance(row, dict) else None, index)
+    return 0 if number is None else number
+
+
+def normalize_url_index_cells(manifest: Any) -> Any:
+    """A manifest whose url_index cells are plain ints or None (CP-K4gc2 R4), so plan hashing and the identities plan
+    and run build see the same value. Invalid cells raise the typed refusal; the caller's objects are not mutated."""
+    def documents(value: Any) -> Any:
+        rows = value
+        if not isinstance(rows, list):
+            return value
+        changed = False
+        out = []
+        for index, row in enumerate(rows):
+            if isinstance(row, dict) and 'url_index' in row:
+                normalized = _url_index_value(row['url_index'], index)
+                if type(row['url_index']) is not int or isinstance(row['url_index'], bool) or normalized != row['url_index']:
+                    row = {**row, 'url_index': normalized}
+                    changed = True
+            out.append(row)
+        return out if changed else value
+    if isinstance(manifest, list):
+        return documents(manifest)
+    if isinstance(manifest, dict) and isinstance(manifest.get('documents'), list):
+        rows = documents(manifest['documents'])
+        return manifest if rows is manifest['documents'] else {**manifest, 'documents': rows}
+    return manifest
 
 
 def _bind(found,identity,url,*,index=None):

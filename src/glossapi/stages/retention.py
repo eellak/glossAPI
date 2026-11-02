@@ -563,6 +563,29 @@ class PublicationInputsReleasedError(ValueError):
             'new run over these sources.')
 
 
+def pending_release_file_ids(connection: Any, run_id: str) -> set[str]:
+    """Files named by retention intents that are committed but not finished (read only, CP-K4gc2 R2): the next
+    ``RetentionController.recover()`` releases them. Same queries as ``recover`` and ``recover_private_releases``."""
+    table = 'retention_events' if connection.compact else 'events'
+    retention_filter = '' if connection.compact else " AND e.event_kind='retention'"
+    pending = {row[0] for row in connection.execute(f"""SELECT file_id FROM {table} e
+        WHERE reason_code='delete_planned' AND file_id IS NOT NULL {retention_filter} AND NOT EXISTS
+        (SELECT 1 FROM {table} c WHERE c.file_id=e.file_id AND c.event_id>e.event_id
+         AND c.reason_code IN ('delete_completed','delete_recovered','delete_failed'))""")}
+    events = connection.event_table
+    for intent, encoded in connection.execute(f"SELECT event_id,details_json FROM {events} WHERE run_id=? AND event_kind='retention' "
+                                              "AND reason_code='delete_planned' AND message='private_stage_release'", (run_id,)).fetchall():
+        completed = any(json.loads(value).get('intent_event_id') == intent for value, in connection.execute(
+            f"SELECT details_json FROM {events} WHERE run_id=? AND reason_code='delete_completed' AND message='private_stage_release' "
+            "AND event_id>?", (run_id, intent)))
+        if not completed:
+            detail = json.loads(encoded)
+            manifest = connection.execute('SELECT json FROM snapshots WHERE sha256=?', (detail['manifest_sha256'],)).fetchone()
+            if manifest:
+                pending.update(json.loads(manifest[0])['file_ids'])
+    return pending
+
+
 def document_releases_suspended(writer: Any, run_id: str) -> bool:
     """THE release-eligibility rule for a run's document attempts (K4g B1c; CP-K4g F1). While a document task of the
     run is failed, a --retry-failed resume can still bring it to ok and then re-publishes every corpus product from the

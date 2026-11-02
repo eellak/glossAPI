@@ -170,6 +170,11 @@ def _plan_data(connection, root, *, files=(), manifest=None, stages=None, device
     Stages/devices/workers given both as arguments and in a v1 manifest must agree.
     """
     from .input_manifest import parse_manifest
+    if manifest is not None:
+        # Supported url_index cells (numpy/pandas integers, NaN) become plain values once, before both the identities and
+        # the plan hash read them (CP-K4gc2 R4).
+        from .stages.run import normalize_url_index_cells
+        manifest = normalize_url_index_cells(manifest)
     parsed = parse_manifest(manifest) if manifest is not None else None
     settings = {**(parsed.settings if parsed else {}), **(settings or {})}
     for name, value in (flags or {}).items():

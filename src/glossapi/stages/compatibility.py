@@ -395,8 +395,12 @@ def materialize_stage_outputs(corpus, result, workspace, paths):
                 register_publication(journal.writer, producer_run, fact['stage'], fact['kind'], destination.as_uri(),
                     version_id=fact['version_id'], producer_attempt_id=result.attempt_id,
                     sha256=fact['sha256'], bytes=fact['bytes'], retention_class=fact['retention_class'])
-    if not isinstance(journal, ResultJournal):
-        # Only the owned temporary attempt, after outputs have been consumed.
+    if not isinstance(journal, ResultJournal) and not Path(workspace).absolute().is_relative_to(
+            (Path(corpus.output_dir)/'.glossapi'/'artifacts').absolute()):
+        # Only the owned temporary attempt, after outputs have been consumed. A committed streaming attempt (the OCR
+        # publication replays one inside its caller-kernel capture, where no ResultJournal is active) keeps its
+        # directory: it holds the recovery frontiers (worker receipt, OCR page state) a resume verifies, and retention
+        # releases the rest (CP-K4gc2: a plain resume of a finished OCR run was refused, or re-ran OCR and failed).
         shutil.rmtree(workspace.parent)
 
 
