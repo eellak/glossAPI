@@ -97,21 +97,30 @@ def _code_identity():
     shipped = root / ".code-receipt.json"
     if shipped.is_file():
         receipt = json.loads(shipped.read_text())
-        return receipt["commit"], receipt["tree_sha256"]
+        # A receipt without a commit (an uncommitted-tree ship) names none rather than failing every run (FG-NEW-1).
+        return receipt.get("commit") or "unknown_not_recorded", receipt.get("tree_sha256")
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, stderr=subprocess.DEVNULL).strip(), None
     except (OSError, subprocess.SubprocessError): return "unknown_not_recorded", None
 
 
+# The modules whose identity a tools snapshot records when they are loaded (sys.modules only, never imported here):
+# the core data stack, the extraction and OCR backends, the transport and browser adapters, the Python font-repair
+# reference and the bundled native modules (LS3-G04). Module name -> distribution name where they differ.
+LOADED_TOOL_MODULES = ("pandas", "numpy", "pyarrow", "pypdfium2", "docling", "torch", "sklearn", "glossapi_rs_cleaner", "glossapi_rs_noise",
+                       "glossapi_rs_pdfrepair", "aiohttp", "playwright", "PIL", "yaml", "pypdf", "fontTools", "onnxruntime", "greekocr")
+TOOL_DISTRIBUTIONS = {"sklearn": "scikit-learn", "PIL": "Pillow", "yaml": "PyYAML", "fontTools": "fonttools", "greekocr": "greek-ocr-toolkit"}
+
+
 def loaded_tools():
     """Actual loaded modules only; never import a backend to identify it."""
     packages, native = [], []
-    for name in ("pandas", "numpy", "pyarrow", "pypdfium2", "docling", "torch", "sklearn", "glossapi_rs_cleaner", "glossapi_rs_noise", "glossapi_rs_pdfrepair"):
+    for name in LOADED_TOOL_MODULES:
         module = sys.modules.get(name)
         if module is None: continue
         key = (name, getattr(module, "__file__", None))
         if key not in _loaded_tools_cache:
-            distribution = {"sklearn": "scikit-learn"}.get(name, name)
+            distribution = TOOL_DISTRIBUTIONS.get(name, name)
             try: version = importlib.metadata.version(distribution)
             except importlib.metadata.PackageNotFoundError: version = getattr(module, "__version__", None)
             path = getattr(module, "__file__", None)
@@ -166,8 +175,17 @@ if hasattr(os, 'register_at_fork'):
     os.register_at_fork(after_in_child=_forget_original_hashes_after_fork)
 
 
+# K4F1-G1 (c), the "racy-git" rule: a stat identity proves nothing about a write within its own timestamp tick, so the
+# cache records an original only when its mtime and ctime were already older than this margin when it was observed.
+# A later write then always stamps a later time (on one clock), and a recently written original is hashed again by the
+# next phase instead. Same margin as the run-close directory-fsync cache. User originals are rarely that fresh.
+RACY_MARGIN_NS = 1_000_000_000
+
+
 def observed_original_hash(stage: str, path: Path, cached: 'list[tuple[Path, str]] | None' = None) -> str:
+    import time
     from .encoding import own_hash_key
+    observed_at = time.time_ns()
     key = own_hash_key(path.stat())
     if stage not in ORIGINAL_READING_STAGES:
         recorded = _original_hashes.get(str(path))
@@ -177,7 +195,10 @@ def observed_original_hash(stage: str, path: Path, cached: 'list[tuple[Path, str
             return recorded[1]
     digest = file_hash(path)
     if stage in ORIGINAL_READING_STAGES:
-        _original_hashes[str(path)] = (key, digest)
+        if max(key[3], key[4]) < observed_at - RACY_MARGIN_NS:
+            _original_hashes[str(path)] = (key, digest)
+        else:
+            _original_hashes.pop(str(path), None)
     return digest
 
 

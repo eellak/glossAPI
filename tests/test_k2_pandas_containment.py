@@ -46,7 +46,8 @@ for name, argv in (('plan', ['plan', '--corpus', absent, '--files', '/absent.pdf
     with contextlib.redirect_stdout(out):
         codes[name] = main([*argv, '--json'])
     envelope = json.loads(out.getvalue())
-    assert not envelope['errors'], (name, envelope['errors'])
+    # status exits 1 for the seeded failed task and names it as a typed error (INTEG-G2); the others report none.
+    assert [error['code'] for error in envelope['errors']] == (['pdf_open_failed'] if name == 'status' else []), (name, envelope['errors'])
 assert codes == {'plan': 0, 'status': 1, 'report': 0, 'why': 0}, codes
 # K3: capabilities and doctor detect from metadata only (doctor's exit code reflects this environment's health).
 for argv in (['capabilities'], ['doctor', '--corpus', absent],

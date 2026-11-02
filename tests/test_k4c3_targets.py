@@ -1,5 +1,6 @@
 """K4(c) part 3: coordinator decisions 1, 2 and 4 (hash reuse within one run, aggregate clean selection, VACUUM)."""
 import hashlib
+import time
 import json
 import os
 from pathlib import Path
@@ -166,6 +167,7 @@ def test_legacy_model_preloaded_during_the_dag_is_the_object_the_barrier_loads(t
 def test_originals_are_hashed_by_reading_stages_and_bound_by_the_others(tmp_path, monkeypatch):
     from glossapi.ledger import journal
     original = tmp_path/'source.pdf'; original.write_bytes(b'%PDF user bytes')
+    time.sleep(journal.RACY_MARGIN_NS/1e9 + 0.1)  # an original older than the racy margin (K4F1-G1) is cached
     monkeypatch.setattr(journal, '_original_hashes', {})
     reads = []
     real = journal.file_hash

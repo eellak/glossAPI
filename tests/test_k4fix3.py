@@ -178,6 +178,7 @@ def test_r4_second_deletion_rechecks_changed_original(tmp_path, monkeypatch):
     """Reviewer reproducer (probe test_second_deletion_rechecks_changed_original): the original changes (100 ms later,
     larger) right after the first shard deletion. The second deletion re-stats it, re-hashes the changed file and
     refuses; the second old shard stays and the wrapper records the failure."""
+    monkeypatch.setattr('glossapi.ledger.journal.RACY_MARGIN_NS', -(1 << 62))  # originals count as old: the cache engages (K4F1-G1 racy rule)
     root, sources, shards, initial = _three_shards(tmp_path, monkeypatch)
     def edit(count):
         if count == 1:
@@ -193,6 +194,7 @@ def test_r4_second_deletion_rechecks_changed_original(tmp_path, monkeypatch):
 
 def test_r4_pre_outcome_rechecks_changed_original(tmp_path, monkeypatch):
     """An edit after the last deletion is caught at the pre-outcome frontier: the wrapper outcome is the failure."""
+    monkeypatch.setattr('glossapi.ledger.journal.RACY_MARGIN_NS', -(1 << 62))  # originals count as old: the cache engages (K4F1-G1 racy rule)
     root, sources, shards, initial = _three_shards(tmp_path, monkeypatch)
     def edit(count):
         if count == 2:
@@ -207,6 +209,7 @@ def test_r4_pre_outcome_rechecks_changed_original(tmp_path, monkeypatch):
 
 def test_r4_unchanged_original_hashed_once_across_frontiers(tmp_path, monkeypatch):
     """Cost: the first verification of an original hashes it; later frontiers re-stat it and hash nothing."""
+    monkeypatch.setattr('glossapi.ledger.journal.RACY_MARGIN_NS', -(1 << 62))  # originals count as old: the cache engages (K4F1-G1 racy rule)
     root, sources, shards, initial = _three_shards(tmp_path, monkeypatch)
     observed = _shard_deletions(monkeypatch, lambda count: None)
     hashed, verifying = [], []

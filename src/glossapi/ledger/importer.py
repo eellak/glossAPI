@@ -1,6 +1,6 @@
-"""Explicit, atomic legacy import for shadow setup; never a scheduling input.
+"""Explicit, atomic import of an existing corpus's files into the ledger, as observations; never a scheduling input.
 
-Call import_corpus from the sole orchestrator. Read commands never call it.
+``glossapi run`` calls import_corpus once before a new run (the sole writer); read commands never call it.
 Mapping keys are relative file paths, or '<path>#<row>:<url_index>' for rows.
 Mappings provide source_key/document_id and, for chunks, a parent input hash
 and inclusive range. Unresolved observations stay in the ledger, not tasks.

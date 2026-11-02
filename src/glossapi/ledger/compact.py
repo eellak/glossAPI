@@ -10,6 +10,7 @@ marker. A v2 frame is never 16 or 32 bytes long, so it cannot be mistaken for a
 UUID or digest BLOB. Readers decode v1 and v2 frames alike.
 """
 from __future__ import annotations
+import functools
 import re
 import json
 import sqlite3
@@ -92,8 +93,22 @@ def _rooted(value, root, prefix):
     return _parameter(value)
 
 
-def _parameters(values, connection):
+# LS8-G03: the creation metadata (ledger_info.corpus_id, schema_migrations.migration_sha256) is written before compact
+# binding starts, so it is TEXT in every version-two-or-later ledger. A statement that names only these tables binds its
+# parameters as given (TEXT), so an equality predicate on them matches through this adapter as it does in plain SQL.
+METADATA_TABLES = frozenset(('ledger_info', 'schema_migrations'))
+_TABLE_NAMES = re.compile(r'\b(?:FROM|JOIN|INTO|UPDATE)\s+["`\[]?(\w+)', re.I)
+
+
+@functools.lru_cache(maxsize=1024)
+def _metadata_only(sql):
+    tables = {name.lower() for name in _TABLE_NAMES.findall(sql)}
+    return bool(tables) and tables <= METADATA_TABLES
+
+
+def _parameters(values, connection, sql=None):
     if not connection.compact:return values
+    if sql is not None and _metadata_only(sql):return values
     root=connection.path_root
     prefix=root+'/' if root else None
     if isinstance(values,dict):return {key:_rooted(value,root,prefix) for key,value in values.items()}
@@ -108,9 +123,9 @@ def _row(cursor,row):
 
 class LedgerCursor(sqlite3.Cursor):
     def execute(self,sql,parameters=()):
-        return super().execute(sql,_parameters(parameters,self.connection))
+        return super().execute(sql,_parameters(parameters,self.connection,sql))
     def executemany(self,sql,parameters):
-        return super().executemany(sql,(_parameters(row,self.connection) for row in parameters))
+        return super().executemany(sql,(_parameters(row,self.connection,sql) for row in parameters))
 
 
 class LedgerConnection(sqlite3.Connection):

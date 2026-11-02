@@ -564,6 +564,13 @@ def status_view(connection, *, run=None, stage=None, selector=None):
     return result
 
 
+def _selected_run_id(connection: Any, run_id: str) -> str:
+    """The id of an explicitly named run (``select_run`` raises ``run_not_found`` for an unknown id; STATE-2)."""
+    run = select_run(connection, run_id)
+    assert run is not None  # an explicit id either selects its run or raises
+    return run["run_id"]
+
+
 def run_failure_errors(connection, run_id: str, *, state: str, counts: Any = None) -> list[dict[str, Any]]:
     """Typed errors for a run that ran and found failures (`run` exit 1; docs/cli_json_schema.md "Exit codes").
 
@@ -573,7 +580,7 @@ def run_failure_errors(connection, run_id: str, *, state: str, counts: Any = Non
     rows = _rows(connection, "SELECT s.stage,s.operation,s.status,s.reason_code,s.event_id,s.version_id,v.document_id "
                              "FROM current_task_state s LEFT JOIN document_versions v ON v.version_id=s.version_id "
                              "WHERE s.run_id=? AND (s.status='failed' OR (s.status='skipped' AND s.reason_code='source_unavailable')) "
-                             "ORDER BY s.status, s.ordinal, s.task_id", (select_run(connection, run_id)["run_id"],))
+                             "ORDER BY s.status, s.ordinal, s.task_id", (_selected_run_id(connection, run_id),))
     errors: list[dict[str, Any]] = []
     unavailable: set[Any] = set()
     for row in rows:
@@ -598,6 +605,18 @@ def run_failure_errors(connection, run_id: str, *, state: str, counts: Any = Non
     return errors
 
 
+def status_failure_errors(connection, run: dict[str, Any], status: dict[str, Any]) -> list[dict[str, Any]]:
+    """Typed errors for ``status`` exit 1 (INTEG-G2): the failed tasks this status lists (its ``--stage`` and ``--file``
+    filters apply), each as ``run_failure_errors`` reports it. A failure the task table does not name still gets one
+    summary error, so a failed status never reports an empty ``errors`` list."""
+    listed = {(row["stage"], row["version_id"], row["operation"]) for row in status["documents"] if row["status"] == "failed"}
+    errors = [error for error in run_failure_errors(connection, run["run_id"], state=status["state"], counts=status["counts"])
+              if error["details"].get("status") == "failed"
+              and (error["stage"], error["details"].get("version_id"), error["details"].get("operation")) in listed]
+    return errors or [dict(code="run_completed_with_failures", message=f"the run ended {status['state']}; see `report --why`",
+                           document_id=None, stage=None, details=dict(state=status["state"], counts=status["counts"]))]
+
+
 def report_view(connection, *, run=None, stage=None):
     status = status_view(connection, run=run, stage=stage)
     conflicts = [dict(event_id=e["event_id"], **evidence(connection, e)) for e in _history(connection, run) if e["reason_code"] == "legacy_conflict"]
@@ -605,6 +624,7 @@ def report_view(connection, *, run=None, stage=None):
     for row in rows:
         row["source_key"] = connection.execute("SELECT source_key FROM documents WHERE document_id=?", (row["document_id"],)).fetchone()[0] if row["document_id"] else None
         row["scope"] = "document" if row["document_id"] else "corpus"
+        assert run is not None  # status_view lists task rows only for a selected run (STATE-2, type-only)
         task = connection.execute("SELECT task_id FROM tasks WHERE run_id=? AND version_id IS ? AND stage=? AND operation=?",
                                   (run["run_id"], row["version_id"], row["stage"], row["operation"])).fetchone()
         events = _rows(connection, "SELECT * FROM events WHERE task_id=? ORDER BY event_id", (task[0],))
@@ -726,8 +746,9 @@ def plan_view(connection=None, *, selectors=None, stages=None, settings=None, de
             except OSError as error:observation['read_error']=type(error).__name__  # the run records it as unavailable
         inventory.append(dict(source_key=key, version=version,observation=observation))
         document_stages = set(selected_stages)
-        remote_source = key.startswith("url:v1:") or urlsplit(selector).scheme.lower() in ("http", "https")
+        remote_source = str(key).startswith("url:v1:") or urlsplit(selector).scheme.lower() in ("http", "https")
         if known and not remote_source:
+            assert connection is not None  # a known document was resolved through the connection (STATE-2, type-only)
             remote_source = any(r[0] == "url" for r in connection.execute("SELECT source_kind FROM source_records WHERE document_id=?", (identifier,)))
         if remote_source and "extract" in document_stages:
             # A run acquires every remote source again (no cross-run reuse), including one an earlier run
@@ -751,7 +772,7 @@ def plan_view(connection=None, *, selectors=None, stages=None, settings=None, de
     source_inventory_hash = snapshot_hash(dict(records=inventory, manifest=manifest))
     present = connection.execute("SELECT COALESCE(SUM(bytes),0) FROM current_file_state WHERE presence='present'").fetchone()[0] if connection else 0
     from ..ocr.defaults import planned_device, package_entry
-    pools = [dict(stage=s, device_id=planned_device((devices or {}).get(s) or settings.get('ocr',{}).get('options',{}).get('device')) if s=='ocr' else (devices or {}).get(s,'cpu'), workers=(workers or {}).get(s, 1), queue_capacity=max(2, 2*(workers or {}).get(s, 1)), cpu_tokens=1) for s in STAGE_ORDER if s in pooled_stages]
+    pools: list[dict[str, Any]] = [dict(stage=s, device_id=planned_device((devices or {}).get(s) or settings.get('ocr',{}).get('options',{}).get('device')) if s=='ocr' else (devices or {}).get(s,'cpu'), workers=(workers or {}).get(s, 1), queue_capacity=max(2, 2*(workers or {}).get(s, 1)), cpu_tokens=1) for s in STAGE_ORDER if s in pooled_stages]
     from ..ocr.defaults import default_values, accelerator_claims
     for pool in pools:
         if pool['stage']=='ocr':

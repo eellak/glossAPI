@@ -52,11 +52,32 @@ def resource_identity(raw_url,*,source_id=None,dataset_id=None,resource_index=0)
     return source_key(raw_url)
 
 
-def _bind(found,identity,url):
+def row_resource_index(row: Any, *, index: int | None = None) -> int:
+    """The resource index of a one-URL source row (CRED-F8): its declared ``url_index`` (a nonnegative integer), else 0.
+
+    Plan (``cli._plan_data``) and run (``_remote_inventory``) both key a declared ``source_id`` by
+    (dataset_id, source_id, this index), so two rows of one source_id with url_index 0 and 1 are two resources in
+    both. A list-valued URL cell is expanded by run and keyed by each URL's position instead."""
+    value=row.get('url_index') if isinstance(row,dict) else None
+    if value is None or (isinstance(value,float) and value!=value):
+        return 0
+    number: float | None
+    try:number=None if isinstance(value,(bool,str,bytes)) else float(value)
+    except (TypeError,ValueError):number=None
+    if number is None or number<0 or not number.is_integer():
+        from ..input_manifest import ManifestError
+        raise ManifestError('invalid_manifest','url_index must be a nonnegative integer',field='url_index',index=index,value=str(value))
+    return int(number)
+
+
+def _bind(found,identity,url,*,index=None):
+    """One URL per resource identity (CRED-F8): plan and run refuse a second, different URL with the same typed error."""
     previous=found.get(identity)
     if previous is not None and previous!=url:
-        raise ValueError('ambiguous_source_identity: two different source URLs map to one resource identity ('
-            +url+'); give each resource its own source_id, or supply one URL per source_id')
+        from ..input_manifest import ManifestError
+        raise ManifestError('invalid_manifest','ambiguous_source_identity: two different source URLs map to one resource identity ('
+            +url+'); give each resource its own source_id or url_index, or supply one URL per source_id',
+            field='source_id',index=index,reason='ambiguous_source_identity',identity=identity,urls=[previous,url])
     found[identity]=url
 
 
@@ -171,18 +192,22 @@ def _remote_inventory(rows,root,claimed: dict[str, set[str]] | None = None):
     urls=[value if isinstance(value,str) else '' for value in named['url']]
     expanded=any(isinstance(row.get('url'),(list,tuple,dict)) or (isinstance(row.get('url'),str) and row['url'].strip().startswith(('[','{')))
                  for row in rows)
-    identities=[]
+    identities=[];positions=[]
     for index,url in enumerate(urls):
         identity=None
+        position=int(named['source_row'].iloc[index]) if expanded else index
         if _is_url(url):
-            row=rows[int(named['source_row'].iloc[index])] if expanded else rows[index]
+            row=rows[position]
+            # A list cell's URL is keyed by its position; a one-URL row by its declared url_index (CRED-F8), as plan does.
+            cell=row.get('url')
+            listed=isinstance(cell,(list,tuple,dict)) or (isinstance(cell,str) and cell.strip().startswith(('[','{')))
             identity=resource_identity(url,source_id=row.get('source_id'),dataset_id=row.get('dataset_id'),
-                resource_index=max(0,int(named['url_index'].iloc[index])) if expanded else 0)
-        identities.append(identity)
+                resource_index=max(0,int(named['url_index'].iloc[index])) if listed else row_resource_index(row,index=position))
+        identities.append(identity);positions.append(position)
     seen={}
-    for identity,url in zip(identities,urls):
+    for identity,url,position in zip(identities,urls,positions):
         if identity is not None:
-            _bind(seen,identity,url)
+            _bind(seen,identity,url,index=position)
     # A corpus that already holds downloads keeps their names; new sources never take a name in use (K4BP-G4).
     renamed=_rename_against_corpus((named,),identities,root,claimed)
     declared=any(isinstance(identity,str) and identity.startswith('source:v1:') for identity in identities)
