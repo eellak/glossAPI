@@ -180,6 +180,7 @@ Only measured values. Each entry names its machine, workload, date and evidence 
 | `plan_capability_changed` | run --plan | 2 | The saved plan no longer matches: re-run plan and show the new preview. |
 | `disk_budget_required` | plan, run | 3 | memory_saving=extreme needs positive disk_budget_bytes, max_source_bytes and max_attempt_bytes. |
 | `disk_guard_unavailable` | plan, run | 3 | memory_saving=extreme needs dedicated size-limited corpus and staging filesystems whose capacities fit the budget; an ordinary shared volume is refused. |
+| `post_close_edit` | run | 3 | A corpus copy the last run left unflushed (export.jsonl, a metadata parquet) was changed after that run closed; it is kept. Move or delete it (it is republished from the managed source) or use another corpus. |
 | `credentials_unsupported` | plan, run | 2 | A source URL carries userinfo (user:pass@) or a credential query/fragment field (token, key, signature, ...), or a download setting would send credentials (domain_cookies, credentials): glossAPI downloads public targets only. Refused before anything is planned, recorded or fetched; supply the public URL. |
 | `invalid_manifest` | plan, run | 2 | A malformed manifest entry; details.field and details.index say where. |
 | `unsupported_manifest_version` | plan, run | 2 | This glossAPI reads manifest_version 1 only. |

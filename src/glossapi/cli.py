@@ -382,7 +382,7 @@ def main(argv=None):
         if envelope.get("command") == "run" and not isinstance((envelope.get("data") or {}).get("state"), str):
             envelope["data"] = None  # a refused run has no run data (the plan is not its result)
         from .stages.disk_budget import ERRORS as DISK_GUARD_ERRORS
-        exit_code = 3 if code in ("policy_conflict","disk_budget_exceeded","waiting_for_disk","disk_full",*DISK_GUARD_ERRORS) else 2
+        exit_code = 3 if code in ("policy_conflict","disk_budget_exceeded","waiting_for_disk","disk_full","post_close_edit",*DISK_GUARD_ERRORS) else 2
     return _emit(envelope, argv, exit_code)
 
 

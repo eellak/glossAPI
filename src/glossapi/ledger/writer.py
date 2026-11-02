@@ -87,11 +87,18 @@ class PostCloseEditError(LedgerError):
     """A copy the last run close left unflushed was changed after that close (CP-K4ac2 R2).
 
     The edited copy and its managed source are both kept. Nothing runs or publishes until the caller resolves it: move
-    or delete the edited copy (it is then republished from the managed source), or write to another corpus."""
+    or delete the edited copy (it is then republished from the managed source), or write to another corpus.
+
+    Typed for the CLI (``code``): exit 3, a conflict the user resolves, as for the other refusals (K4g B1c)."""
+    code = 'post_close_edit'
+    EXIT_CODE = 3
+    MEANING = ('A corpus copy the last run left unflushed (export.jsonl, a metadata parquet) was changed after that run '
+               'closed; it is kept. Move or delete it (it is republished from the managed source) or use another corpus.')
 
     def __init__(self, copies: list[dict[str, Any]]) -> None:
         self.copies: list[dict[str, Any]] = list(copies)
         names = ', '.join(sorted({str(entry['path']) for entry in self.copies})[:5])
+        self.details: dict[str, Any] = {'paths': sorted({str(entry['path']) for entry in self.copies})}
         super().__init__('post_close_edit: changed after the last run closed, kept as is: ' + names +
                          '. Move or delete these files (they are republished from the managed source) or use another corpus')
 

@@ -1,4 +1,11 @@
-"""Read-only replay of T1.7 defaults; write receipts only outside evidence roots."""
+"""Read-only replay of T1.7 defaults; write receipts only outside evidence roots.
+
+Historical provenance helper, not part of the test suite (no ``test_`` prefix, never collected) (T0-G05). ``--evidence``
+must point at the experiments root that holds ``glossapi_improvement_20261006/node/archive/r_run`` (page_quality.jsonl),
+``glossapi_improvement_20261006/analysis/routed_ocr_pages_all.csv`` and
+``compute_reduction_20261006/integrated_run/out/download_results/download_results.parquet``. These inputs are not in
+this repository; the replay records the sha256 of each input it reads in its receipt (``--out``).
+"""
 import argparse
 from collections import Counter
 import hashlib

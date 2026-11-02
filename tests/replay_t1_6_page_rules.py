@@ -1,5 +1,11 @@
 """Read-only T1.6 replay; full native PDF text is required for exact folding.
 
+Historical provenance helper, not part of the test suite (no ``test_`` prefix, never collected) (T0-G05). It needs
+external inputs that are not in this repository: ``--archive`` (the page-quality archive of the
+glossapi_improvement_20261006 node run), ``--outcomes`` (the archived evaluator's outcome table), ``--originals`` (the
+original PDFs) and ``--wordlist`` (the Greek word list). Their locations and hashes are recorded with the experiment
+receipts (T1_6_NOTES.md in the compute-reduction 20261006 archive), not here.
+
 Run with the experiment Python and PYTHONPATH=src; see T1_6_NOTES.md.
 Outcomes use the archived evaluator's classes, independent of routing mode.
 """

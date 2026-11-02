@@ -35,7 +35,7 @@ the installed extension was built from older Rust source. Rebuild with `python i
 
 A corpus copy that the previous run left unflushed (for example `export.jsonl`) was changed after that run closed.
 glossAPI keeps your edit and refuses every start until you move or delete the file; it is then republished from the
-managed source. See [Resumability, recovery and retention](architecture/resumability_recovery_and_retention.md).
+managed source. The CLI reports the typed code `post_close_edit` (exit 3) with the edited paths in `details.paths`. See [Resumability, recovery and retention](architecture/resumability_recovery_and_retention.md).
 
 ## `conversion.log` appears in the working directory
 

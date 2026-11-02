@@ -9,8 +9,8 @@ extract attempts typed disk_full, resume state ``completed``, 19-21 product diff
 reference, every ``*.compatibility_publish`` task ``ok`` with 1 attempt.
 
 Mac reproduction: a ``sitecustomize`` in the child (and its spawned stage workers) makes the first extract attempt of
-``beta.pdf`` raise OSError(ENOSPC); the worker types it disk_full (stages/execution.failed_result). Strict xfail until the
-ledger/run owner (batch B1b) fixes the resume; the test needs no tmpfs and no model.
+``beta.pdf`` raise OSError(ENOSPC); the worker types it disk_full (stages/execution.failed_result). ledger/run owner fixed the resume (K4g B1c: a publication records the versions it covers and is repeated when they
+change); the test needs no tmpfs and no model.
 """
 from __future__ import annotations
 
@@ -100,8 +100,6 @@ def test_the_injected_worker_enospc_is_a_typed_document_failure(retried):
     assert retried['resume']['state'] == 'completed'
 
 
-@pytest.mark.xfail(strict=True, reason='K4g B4-N finding for B1b (stages/run.py publish_barrier; scheduler retry_failed): '
-                   'the resume re-runs the failed document but keeps the first, partial barrier publications')
 def test_retry_failed_resume_republishes_the_recovered_document(retried):
     resume = retried['resume']
     assert len(resume['records']) == 2 and len(resume['clean']) == 2
