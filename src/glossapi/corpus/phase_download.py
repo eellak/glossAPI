@@ -158,6 +158,13 @@ class DownloadPhaseMixin:
                 return [not ((identity in successful_identities) if identity else (str(url) in successful_urls))
                         for identity, url in zip(identities, frame[url_column].tolist())]
 
+            def _resume_columns(frame):
+                # The pending rows go to the downloader with the input's own columns (source fields, a preassigned
+                # filename_base) plus the provenance columns, exactly as a first run would pass them (T2-G02); the
+                # downloader's working columns that the expansion resets are recomputed by the downloader.
+                provenance = (url_column, "source_row", "url_index", "collection_slug", "source_id", RESOURCE_IDENTITY_COLUMN)
+                return [c for c in frame.columns if c in input_df.columns or c in provenance]
+
             if successful_urls:
                 self.logger.info(f"Found {len(successful_urls)} previously successful downloads")
 
@@ -181,8 +188,10 @@ class DownloadPhaseMixin:
                         # Reuse downloader's expansion to mirror runtime behavior
                         dl_tmp = GlossDownloader(url_column=url_column, output_dir=str(self.output_dir))
                         expanded_df = dl_tmp._expand_and_mark_duplicates(input_df.copy())  # type: ignore[attr-defined]
-                        # Keep URL and provenance columns if present
-                        keep_cols = [url_column] + [c for c in ("source_row", "url_index", "collection_slug", "source_id", RESOURCE_IDENTITY_COLUMN) if c in expanded_df.columns]
+                        # Every source column (title, a preassigned filename_base, ...) and the provenance columns
+                        # go on, as on a first run (T2-G02); only the downloader's own working columns, which the
+                        # expansion reset, are recomputed by the downloader.
+                        keep_cols = _resume_columns(expanded_df)
                         remaining_df = expanded_df[_pending(expanded_df)][keep_cols]
                         self.logger.info(
                             f"Expanded list/JSON URLs to {len(expanded_df)} rows; pending {len(remaining_df)}"
@@ -191,32 +200,35 @@ class DownloadPhaseMixin:
                         # Fallback: basic JSON parse expansion
                         import json as _json
                         rows = []
-                        for _, row in input_df.iterrows():
+                        for source_row, row in input_df.iterrows():
                             val = row.get(url_column)
+                            links = []
                             if isinstance(val, str) and _looks_like_list(val):
                                 try:
                                     arr = _json.loads(val)
                                     if isinstance(arr, list):
-                                        rows.extend([str(u) for u in arr if isinstance(u, (str,))])
+                                        links = [str(u) for u in arr if isinstance(u, (str,))]
                                     elif isinstance(arr, dict):
                                         u = arr.get('url') or arr.get('href') or arr.get('link')
                                         if u:
-                                            rows.append(str(u))
+                                            links = [str(u)]
                                 except Exception:
                                     pass
                             elif isinstance(val, str) and val.strip():
-                                rows.append(val.strip())
+                                links = [val.strip()]
+                            # Each expanded URL keeps its row's source columns (T2-G02).
+                            for position, link in enumerate(links):
+                                rows.append({**row.to_dict(), url_column: link, 'source_row': source_row, 'url_index': position})
                         import pandas as _pd
-                        expanded_df = _pd.DataFrame({url_column: rows})
-                        keep_cols = [url_column]
+                        expanded_df = _pd.DataFrame.from_records(rows, columns=list(dict.fromkeys([*input_df.columns, 'source_row', 'url_index'])))
+                        keep_cols = _resume_columns(expanded_df)
                         remaining_df = expanded_df[_pending(expanded_df)][keep_cols]
                         self.logger.info(
                             f"Expanded (fallback) to {len(expanded_df)} rows; pending {len(remaining_df)}"
                         )
                 else:
-                    # Simple string URLs: filter directly and keep provenance if present
-                    keep_cols = [url_column] + [c for c in ("source_row", "url_index", "collection_slug", "source_id", RESOURCE_IDENTITY_COLUMN) if c in input_df.columns]
-                    remaining_df = input_df[_pending(input_df)][keep_cols]
+                    # Simple string URLs: filter directly; every source column goes on (T2-G02)
+                    remaining_df = input_df[_pending(input_df)][_resume_columns(input_df)]
 
                 # If all URLs already downloaded, return existing results
                 if len(remaining_df) == 0:

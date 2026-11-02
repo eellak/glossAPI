@@ -132,8 +132,12 @@ __all__ = [
 def update_math_enrich_results(parquet_path: Path, stem: str, *, items: int, accepted: int, time_sec: float) -> None:
     """Record math enrichment results for a document.
 
-    Default: write sidecar under sidecars/math/{stem}.json. If GLOSSAPI_PARQUET_COMPACTOR=0,
-    update consolidated parquet in place (legacy behavior).
+    The sidecar ``sidecars/math/{stem}.json`` is written unless ``GLOSSAPI_PARQUET_COMPACTOR=0``; the consolidated
+    metadata parquet, when it exists, is updated in every case (one locked read-modify-write).
+
+    ``enriched_math``/``math_enriched`` is a compatibility projection: it is set to True when this function runs,
+    including a run that found no formula (``items == 0``, recorded as ``math_items = 0``). It does not distinguish
+    an empty success from a placeholder or a failure; the ledger holds those distinct states (T2-G11).
     """
     import os as _os
     use_sidecars = _os.getenv("GLOSSAPI_PARQUET_COMPACTOR", "1").strip() not in {"0", "false", "no"}

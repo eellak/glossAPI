@@ -85,3 +85,6 @@ deepseek-ocr/DeepSeek-OCR-empty/
 # Local DeepSeek checkout and repro scripts (keep out of master)
 deepseek-ocr/
 deepseek-ocr-2/
+
+# Runtime extraction log a standalone run appends to in the working directory (LS6-G06); not source.
+/conversion.log

@@ -20,7 +20,7 @@ import uuid
 from contextlib import contextmanager
 from numbers import Number
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union, cast
 
 import numpy as np
 import pandas as pd
@@ -110,6 +110,41 @@ def _nullable_or(lhs: object, rhs: object) -> object:
     if lhs_norm is pd.NA or rhs_norm is pd.NA:
         return pd.NA
     return False
+
+
+def _named_filenames(filenames: Any) -> pd.Series:
+    """True where a row has a filename to merge by (a non-blank string); a skipped duplicate URL or a failed download
+    has ``""`` (or no value) and is an occurrence row that no filename-keyed merge may match (LS6-G04)."""
+    return pd.Series(filenames).map(lambda value: isinstance(value, str) and bool(value.strip())).astype(bool)
+
+
+_FLOAT_EXACT_LIMIT = 2 ** 53
+
+
+def exact_integer_columns(*frames: pd.DataFrame) -> list:
+    """The same frames, where a numpy integer column that holds a value a float64 cannot represent exactly
+    (``|value| > 2**53``) in *any* of them is made nullable (``Int64``/``UInt64``) in *all* of them.
+
+    Legacy pandas row unions (``combine_first``/``update``/reindex) turn an integer column into float64 as soon as one
+    row is missing; that is exact for every value up to 2**53 and rounds the rest (K2E-F3). Converting only the
+    columns that would round keeps every other column's dtype and value exactly as the legacy merge produced them."""
+    unsafe = set()
+    for frame in frames:
+        for column in frame.columns:
+            values: Any = frame[column]
+            dtype = values.dtype
+            if (pd.api.types.is_integer_dtype(dtype) and not isinstance(dtype, pd.api.extensions.ExtensionDtype)
+                    and len(frame) and bool(values.max() > _FLOAT_EXACT_LIMIT
+                                            or (dtype.kind == 'i' and values.min() < -_FLOAT_EXACT_LIMIT))):
+                unsafe.add(column)
+    result = []
+    for frame in frames:
+        frame = frame.copy() if unsafe & set(frame.columns) else frame
+        for column in unsafe & set(frame.columns):
+            column_values: Any = frame[column]
+            frame[column] = _nullable(column_values)
+        result.append(frame)
+    return result
 
 
 def _nullable_integers(df: pd.DataFrame) -> pd.DataFrame:
@@ -522,6 +557,34 @@ def _same_value(left, right) -> bool:
     return np.array_equal(np.asarray(left, dtype=object), np.asarray(right, dtype=object))
 
 
+def _dtype_family(dtype) -> Optional[str]:
+    """The typed family a persisted column must keep through a union, or ``None`` when exact values suffice (numeric,
+    boolean, string and object columns: ``_nullable`` moves those between numpy and nullable dtypes on purpose).
+    Supported persisted extension boundary (K2E-F4): these families round-trip through pyarrow parquet; decimal and
+    list values are objects and keep only what the parquet serializer keeps."""
+    if isinstance(dtype, pd.CategoricalDtype):
+        return 'category'
+    if isinstance(dtype, pd.DatetimeTZDtype):
+        return 'datetime with time zone'
+    if isinstance(dtype, pd.PeriodDtype):
+        return 'period'
+    if isinstance(dtype, pd.IntervalDtype):
+        return 'interval'
+    return None
+
+
+def _unify_categories(frames: list, column: str) -> None:
+    """Give every frame's categorical ``column`` the union of all their categories (first-seen order), so the union
+    stays categorical instead of falling back to object (K2E-F4). Ordered categoricals are left to the family check."""
+    dtypes = [frame[column].dtype for frame in frames if column in frame.columns]
+    if len(dtypes) < 2 or not all(isinstance(d, pd.CategoricalDtype) and not d.ordered for d in dtypes):
+        return
+    categories = list(dict.fromkeys(value for d in dtypes for value in d.categories))
+    for frame in frames:
+        if column in frame.columns and list(frame[column].cat.categories) != categories:
+            frame[column] = frame[column].cat.set_categories(categories)
+
+
 def _require_exact(original: pd.DataFrame, result: pd.DataFrame, start: int, what: str) -> None:
     """Every value of ``original`` reappears exactly at ``result`` rows ``start:start+len`` (compared as Python
     objects, so 9007199254740993 never equals 9007199254740992.0); else ``MetadataSchemaError``."""
@@ -530,6 +593,13 @@ def _require_exact(original: pd.DataFrame, result: pd.DataFrame, start: int, wha
         after = result[column].iloc[start:start + len(original)]
         if after.dtype == before.dtype:
             continue  # same dtype: no conversion happened
+        family = _dtype_family(before.dtype)
+        if family is not None and _dtype_family(after.dtype) != family:
+            # Equal labels are not enough (K2E-F4): a categorical, tz-aware, period or interval column that becomes
+            # object/str has lost its type (categories and order, time zone, frequency, closed side).
+            raise MetadataSchemaError(
+                f'Merging {what} would change column {column!r} from {before.dtype} ({family}) to {after.dtype}; '
+                'nothing was replaced.')
         for position, (left, right) in enumerate(zip(before.astype(object), after.astype(object))):
             if not _same_value(left, right):
                 raise MetadataSchemaError(
@@ -559,6 +629,8 @@ def lossless_concat(frames, *, what: str = 'metadata rows') -> pd.DataFrame:
                 like = next(other[column] for other in frames if column in other.columns)
                 frame[column] = _missing_like(like, frame.index)
         aligned.append(frame[columns])
+    for column in columns:
+        _unify_categories(aligned, column)
     result = pd.concat(aligned, ignore_index=True)
     start = 0
     for frame in frames:
@@ -718,33 +790,31 @@ class ParquetSchema:
     else:  # pragma: no cover - pyarrow not installed
         DOWNLOAD_SCHEMA = None
     
+    # The section and annotation outputs as emitted (T2-G12): ``gloss_section.section_schema()`` and the classifier's
+    # output, which adds ``predicted_section``. tests/test_k4g_b2_legacy.py binds these constants to the emitter.
     if pa is not None:
         SECTION_SCHEMA = pa.schema(
             [
-                ("id", pa.string()),
-                ("row_id", pa.int64()),
+                ("id", pa.int64()),
+                ("row_id", pa.string()),
                 ("filename", pa.string()),
-                ("title", pa.string()),
-                ("content", pa.string()),
+                ("has_table", pa.bool_()),
+                ("has_list", pa.bool_()),
+                ("has_other", pa.bool_()),
+                ("has_text", pa.bool_()),
+                ("header", pa.string()),
+                ("place", pa.string()),
                 ("section", pa.string()),
+                ("json_section", pa.string()),
+                ("section_length", pa.int64()),
+                ("section_propo", pa.int64()),
             ]
         )
     else:  # pragma: no cover - pyarrow not installed
         SECTION_SCHEMA = None
-    
+
     if pa is not None:
-        CLASSIFIED_SCHEMA = pa.schema(
-            [
-                ("id", pa.string()),
-                ("row_id", pa.int64()),
-                ("filename", pa.string()),
-                ("title", pa.string()),
-                ("content", pa.string()),
-                ("section", pa.string()),
-                ("predicted_section", pa.string()),
-                ("probability", pa.float64()),
-            ]
-        )
+        CLASSIFIED_SCHEMA = pa.schema([*SECTION_SCHEMA, pa.field("predicted_section", pa.string())])  # type: ignore[union-attr]
     else:  # pragma: no cover - pyarrow not installed
         CLASSIFIED_SCHEMA = None
     
@@ -1291,18 +1361,39 @@ class ParquetSchema:
             if combined.empty and not existing_df.empty:
                 combined = existing_df.copy()
             elif not combined.empty and not existing_df.empty and "filename" in existing_df.columns:
-                base_idx = combined.set_index("filename", drop=False)
-                # Exact union (S1): integer columns become nullable before the row union, so a value above 2**53
-                # survives rows the existing table does not have (plain int64 would be promoted to float64).
-                existing_idx = _nullable_integers(existing_df).set_index("filename", drop=False)
-                base_idx = base_idx.combine_first(existing_idx)
-                base_idx.update(existing_idx)
-                # Fresh extraction evidence wins over older parquet state.
-                evidence = df_records.set_index("filename")
-                for column in extraction_columns:
-                    known = evidence[column].notna() & (evidence[column] != "")
-                    base_idx.loc[evidence.index[known], column] = evidence.loc[known, column]
-                combined = base_idx.reset_index(drop=True)
+                def _merge_unique(records, existing):
+                    base_idx = records.set_index("filename", drop=False)
+                    # Exact union (S1): integer columns become nullable before the row union, so a value above
+                    # 2**53 survives rows the existing table does not have (plain int64 would become float64).
+                    existing_idx = _nullable_integers(existing).set_index("filename", drop=False)
+                    base_idx = base_idx.combine_first(existing_idx)
+                    base_idx.update(existing_idx)
+                    # Fresh extraction evidence wins over older parquet state.
+                    evidence = records.set_index("filename")
+                    for column in extraction_columns:
+                        known = evidence[column].notna() & (evidence[column] != "")
+                        base_idx.loc[evidence.index[known], column] = evidence.loc[known, column]
+                    return base_idx.reset_index(drop=True)
+
+                if not bool(existing_df["filename"].duplicated().any()):
+                    combined = _merge_unique(combined, existing_df)
+                else:
+                    # Occurrence rows (LS6-G04): a skipped duplicate URL and a failed URL both have filename "".
+                    # Only a named row is merged by filename; a row without a name matches no artifact and is
+                    # carried through as it is. A name on several rows gets the artifact evidence on each
+                    # occurrence (occurrence k is merged with the evidence of its own name), so no row is lost,
+                    # duplicated or merged into another row.
+                    named = _named_filenames(existing_df["filename"]).to_numpy()
+                    keyed: Any = existing_df[named]
+                    occurrence = keyed.groupby("filename", sort=False).cumcount().to_numpy()
+                    parts: List[Any] = [] if len(keyed) else [combined]
+                    for k in sorted(set(occurrence.tolist())):
+                        layer: Any = keyed[occurrence == k]
+                        records: Any = combined if k == 0 else combined[combined["filename"].isin(list(layer["filename"]))]
+                        parts.append(_merge_unique(records, layer) if len(records) else layer)
+                    if (~named).any():
+                        parts.append(existing_df[~named])
+                    combined = cast(Any, lossless_concat(parts, what="metadata occurrence rows"))
             elif combined.empty:
                 combined = existing_df.copy()
 
@@ -1598,18 +1689,37 @@ def fold_download_rows(output_dir: Union[str, Path], published: Union[str, Path]
     rows = pd.read_parquet(published)
     if 'filename' not in rows.columns or rows.empty:
         return []
-    rows = _nullable_integers(rows[rows['filename'].notna()])
-    rows = rows[~rows['filename'].duplicated(keep='last')]
     conflicts: list = []
 
     def text(value):
         return value if isinstance(value, str) and value else None
 
+    # Occurrence rows (LS6-G04): a skipped duplicate URL or a failed download has no filename, so it is never keyed
+    # by filename (two of them are two decisions, not one "" row, and never a filename conflict). Each is matched by
+    # its URL instead: it replaces the canonical row without a filename that records the same URL (a re-fold or a
+    # retried failure), else it is added.
+    named = _named_filenames(rows['filename']).to_numpy()
+    urls = rows['url'].map(text) if 'url' in rows.columns else pd.Series(None, index=rows.index, dtype=object)
+    occurrence = ~named & urls.notna().to_numpy()
+    folded: Any = _nullable_integers(rows[(named & ~rows['filename'].where(named).duplicated(keep='last').to_numpy())
+                                     | (occurrence & ~urls.where(occurrence).duplicated(keep='last').to_numpy())])
+    blank: Any = folded[~_named_filenames(folded['filename']).to_numpy()]
+    rows: Any = folded[_named_filenames(folded['filename']).to_numpy()]
+    if folded.empty:
+        return []
+
+    def nonempty_concat(parts):
+        filled = [part for part in parts if len(part)]
+        if len(filled) > 1:
+            return lossless_concat(filled, what='folded download results')
+        return filled[0] if filled else parts[0]
+
     def fold(current):
         if current.empty or 'filename' not in current.columns:
-            return rows
+            return folded
         current = _nullable_integers(current)
-        recorded = current.drop_duplicates('filename', keep='last').set_index('filename')
+        current_named = _named_filenames(current['filename']).to_numpy()
+        recorded = current.loc[current_named].drop_duplicates('filename', keep='last').set_index('filename')
         keep = []
         for name, url, identity in zip(rows['filename'], rows['url'] if 'url' in rows.columns else [None]*len(rows),
                                        rows['resource_identity'] if 'resource_identity' in rows.columns else [None]*len(rows)):
@@ -1627,6 +1737,16 @@ def fold_download_rows(output_dir: Union[str, Path], published: Union[str, Path]
         merged = indexed.loc[indexed.index.intersection(merged.index)].combine_first(merged).reindex(
             columns=[*current.columns, *[c for c in update.columns if c not in current.columns]])
         added = update[~update['filename'].isin(list(current['filename']))]
+        if len(blank):
+            current_urls = pd.Series(current['url'].map(text) if 'url' in current.columns else None, index=current.index, dtype=object)
+            again = ~current_named & current_urls.isin(list(blank['url'])).to_numpy()
+            if again.any():
+                replaced = current[again].reset_index(drop=True)
+                published_rows = blank.set_index(blank['url']).loc[list(current_urls[again])].reset_index(drop=True)
+                merged = nonempty_concat([merged.reset_index(drop=True), published_rows.combine_first(replaced).reindex(
+                    columns=list(merged.columns))])
+                known = known | pd.Series(again, index=current.index)
+            added = nonempty_concat([added, blank[~blank['url'].isin(list(current_urls[again]))]])
         result = lossless_concat([current[~known], merged.reset_index(drop=True), added], what='folded download results')
         return result.sort_values('filename', kind='stable').reset_index(drop=True)[
             [*current.columns, *[c for c in result.columns if c not in current.columns]]]

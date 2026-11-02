@@ -188,7 +188,7 @@ def test_corpus_forwards_parquet_ranges(tmp_path, monkeypatch):
     ]).to_parquet(parquet, index=False)
     calls = []
     monkeypatch.setattr(runner, 'run_plugin_ocr', lambda self_ref, files, **kw: calls.append((files, kw)))
-    corpus.ocr(backend='docling', mode='ocr_bad', math_enhance=False)
+    corpus.ocr(backend='docling', mode='ocr_bad', math_enhance=False, page_routing='flagged')
     assert calls[0][0] == ['routed.pdf', 'whole.pdf']
     assert calls[0][1]['page_ranges'] == ['routed.pdf:3:9', 'routed.pdf:14:14', 'routed.pdf:20:22']
 

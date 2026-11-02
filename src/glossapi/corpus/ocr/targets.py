@@ -60,7 +60,7 @@ def build_ocr_selection(
     *,
     mode: str,
     reprocess_completed: bool,
-    page_routing: str = "flagged",
+    page_routing: str = "all",
 ) -> OcrSelection:
     if page_routing not in {"flagged", "all"}:
         raise ValueError("page_routing must be 'flagged' or 'all'")
