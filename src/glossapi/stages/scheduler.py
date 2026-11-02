@@ -345,29 +345,78 @@ class StreamingScheduler:
             else:return False
         return True
 
-    def _unrepeatable(self, tasks, operations):
-        """Committed document attempts whose outputs vanished outside retention (so recovery would run them again) while
-        an input they read was released by retention: they cannot run again (CP-K4g F2). Read only."""
-        released = []
-        stage = None
-        for operation in operations:
-            row = self.writer.connection.execute(f"SELECT a.attempt_id,e.status FROM attempts a LEFT JOIN {self.writer.connection.event_table} e ON e.event_id=(SELECT MAX(event_id) FROM {self.writer.connection.event_table} WHERE attempt_id=a.attempt_id AND event_kind='lifecycle') WHERE a.task_id=? ORDER BY a.attempt_number DESC LIMIT 1",(tasks[operation.key],)).fetchone()
-            if row is None or row['status'] != 'ok' or (self._verified(row['attempt_id']) and all(
-                    artifact.path.is_file() and sha256_file(artifact.path) == artifact.sha256 for artifact in operation.document.artifacts)):
-                continue
-            gone = [row_[0] for row_ in self.writer.connection.execute(
-                "SELECT s.uri FROM attempt_inputs i JOIN current_file_state s USING(file_id) WHERE i.attempt_id=? AND s.presence='deleted'",
-                (row['attempt_id'],))]
-            if gone:
-                released.extend(local_path(uri) for uri in gone)
-                stage = stage or operation.stage
-        return stage, released
+    def _recovery_plan(self, run, tasks, operations, *, retry_failed=False) -> dict[str, Any]:
+        """THE read-only plan a resume follows (CP-K4gc2 R1), computed before anything is written: every operation's
+        latest attempt, the reusable set after dependency invalidation, the operations that will execute, and the inputs
+        an executing operation cannot get.
 
-    def _recover(self, run, tasks, operations):
-        stage, released = self._unrepeatable(tasks, operations)
-        if released:
+        Reusable: the latest attempt is ok, its committed outputs verify (or were released by retention) and so do its
+        document artifacts, and every producer it reads is reusable (a producer that runs again invalidates its readers).
+        Executing: neither reusable nor kept terminal (a failed task without ``retry_failed``, as ``execute`` decides), and
+        no producer is kept terminal. An executing operation's input is satisfied when its producer executes (the input
+        is produced again) or when the reusable producer's committed output of that kind still exists and is not about to
+        be released (a pending retention intent counts as released: retention recovery finishes it next). Anything else
+        is unsatisfied: the resume would dispatch work with an input that is gone."""
+        from .retention import pending_release_file_ids
+        connection = self.writer.connection
+        pending = pending_release_file_ids(connection, run)
+        latest = {}
+        for operation in operations:
+            latest[operation.key] = connection.execute(f"SELECT a.*,e.status,e.reason_code FROM attempts a LEFT JOIN {connection.event_table} e ON e.event_id=(SELECT MAX(event_id) FROM {connection.event_table} WHERE attempt_id=a.attempt_id AND event_kind='lifecycle') WHERE a.task_id=? ORDER BY a.attempt_number DESC LIMIT 1",(tasks[operation.key],)).fetchone()
+        verified = {}
+        for operation in operations:
+            row = latest[operation.key]
+            if row is not None and row['status'] == 'ok':
+                verified[operation.key] = bool(self._verified(row['attempt_id']) and all(
+                    artifact.path.is_file() and sha256_file(artifact.path) == artifact.sha256 for artifact in operation.document.artifacts))
+        reusable = {operation.key: latest[operation.key]['attempt_id'] for operation in operations if verified.get(operation.key)}
+        # A producer invalidation also invalidates every dependent completion (operations are in dependency order).
+        for operation in operations:
+            if operation.key in reusable and any(edge[0] not in reusable for edge in operation.inputs):
+                reusable.pop(operation.key)
+        kept_terminal = set()
+        if not retry_failed:
+            for operation in operations:
+                state = connection.execute('SELECT status,reason_code FROM current_task_state WHERE task_id=?', (tasks[operation.key],)).fetchone()
+                count = connection.execute('SELECT COUNT(*) FROM attempts WHERE task_id=?', (tasks[operation.key],)).fetchone()[0]
+                if state['status'] == 'failed' and (count >= self.retry_limit or state['reason_code'] not in
+                        ('attempt_interrupted', 'worker_lost', 'worker_process_crashed', 'extract_timeout')):
+                    kept_terminal.add(operation.key)
+        executing = set()
+        blocked = set(kept_terminal)
+        for operation in operations:
+            if operation.key in reusable or operation.key in kept_terminal:
+                continue
+            if any(edge[0] in blocked for edge in operation.inputs):
+                blocked.add(operation.key)  # skipped upstream_failed, never dispatched
+                continue
+            executing.add(operation.key)
+        unsatisfied = []
+        for operation in operations:
+            if operation.key not in executing:
+                continue
+            for producer, kind, _role in operation.inputs:
+                if producer not in reusable:
+                    continue  # produced again before this reader runs
+                for row in connection.execute("SELECT file_id,uri,presence FROM current_file_state WHERE producer_attempt_id=? AND kind=? "
+                                              "AND uri LIKE ?", (reusable[producer], kind, (self.root/'.glossapi/artifacts').as_uri()+'/%')):
+                    path = local_path(row['uri'])
+                    if row['presence'] != 'present' or row['file_id'] in pending or not path.is_file():
+                        unsatisfied.append((operation, path))
+        return dict(latest=latest, verified=verified, reusable=reusable, executing=executing, unsatisfied=unsatisfied)
+
+    def _refuse_unsatisfied(self, plan: dict[str, Any]) -> None:
+        """The typed refusal, before any recovery write (CP-K4g F2, CP-K4gc2 R1/R2)."""
+        if plan['unsatisfied']:
             from .retention import PublicationInputsReleasedError
-            raise PublicationInputsReleasedError(stage, released)
+            operation, _ = plan['unsatisfied'][0]
+            raise PublicationInputsReleasedError(operation.stage, [path for _, path in plan['unsatisfied']])
+
+    def _recover(self, run, tasks, operations, plan: dict[str, Any] | None = None):
+        """Apply ``plan`` (``_recovery_plan``): fence interrupted attempts, record invalidations, quarantine uncommitted
+        directories, and return the reusable set dispatch starts from. Refuses first when an input is unsatisfied."""
+        plan = plan if plan is not None else self._recovery_plan(run, tasks, operations)
+        self._refuse_unsatisfied(plan)
         done = {}
         # A run the filesystem stopped (W18 M10) names that cause on its interrupted attempts, not bare process death.
         # Tied to each interrupted attempt's start (CP-K4a F3): an earlier ENOSPC never explains a later death.
@@ -385,16 +434,16 @@ class StreamingScheduler:
         with self.writer.batch():
             for operation in operations:
                 task = tasks[operation.key]
-                row = self.writer.connection.execute(f"SELECT a.*,e.status,e.reason_code FROM attempts a LEFT JOIN {self.writer.connection.event_table} e ON e.event_id=(SELECT MAX(event_id) FROM {self.writer.connection.event_table} WHERE attempt_id=a.attempt_id AND event_kind='lifecycle') WHERE a.task_id=? ORDER BY a.attempt_number DESC LIMIT 1",(task,)).fetchone()
+                row = plan['latest'][operation.key]
                 if row is None:
                     continue
                 if row['status'] == 'running' or row['status'] is None:
                     self.writer.finish(run,task,row['attempt_id'],status='failed',reason_code='attempt_interrupted',
                         details={'lease_token':row['lease_token'],'recovery':'old parent fenced before replacement',**cause_of(cast(str, row['attempt_id']))})
-                elif row['status']=='ok' and self._verified(row['attempt_id']) and all(
-                    artifact.path.is_file() and sha256_file(artifact.path)==artifact.sha256 for artifact in operation.document.artifacts):
-                    done[operation.key] = row['attempt_id']
-                    self._trace('reuse', key=operation.key, attempt_id=row['attempt_id'])
+                elif row['status']=='ok' and plan['verified'].get(operation.key):
+                    if operation.key in plan['reusable']:
+                        done[operation.key] = row['attempt_id']
+                        self._trace('reuse', key=operation.key, attempt_id=row['attempt_id'])
                 elif row['status']=='ok':
                     self.writer.event(run,event_kind='invalidation',reason_code='output_hash_mismatch',task_id=task,
                         version_id=operation.document.version_id,details={'attempt_id':row['attempt_id']})
@@ -411,10 +460,7 @@ class StreamingScheduler:
                                 version_id=operation.document.version_id,details={'quarantined_uri':quarantine.as_uri()})
         if any(found['basis'] == 'record allocated at run start' for found in attributed):
             consume(root, run_id)  # attributed and committed: the record cannot explain a replacement attempt
-        # A producer invalidation also invalidates every dependent completion.
-        for operation in operations:
-            if operation.key in done and any(edge[0] not in done for edge in operation.inputs):
-                done.pop(operation.key)
+        # Dependency invalidation is part of the plan: done is exactly its reusable set.
         return done
 
     def execute(self, run, *, resume=False, retry_failed=False):
@@ -440,8 +486,13 @@ class StreamingScheduler:
         budget=DiskBudget(self.writer,self.root,run,{**frozen_settings,'disk_budget_bytes':cast(Any, self.disk_capacity)})
         budget.observe()
         from .retention import RetentionController
+        # One read-only plan before any write (CP-K4gc2 R1/R2): the refusal precedes retention recovery too, which
+        # finishes pending release intents (the plan already counts their files as released).
+        plan = self._recovery_plan(run, tasks, operations, retry_failed=retry_failed) if resume else None
+        if plan is not None:
+            self._refuse_unsatisfied(plan)
         RetentionController(self.writer,self.root,run,frozen_settings).recover()
-        done = self._recover(run,tasks,operations) if resume else {}
+        done = self._recover(run,tasks,operations,plan) if resume else {}
         terminal = set(done)
         for operation in operations:
             self.attempt_counts[operation.key] = self.writer.connection.execute(
