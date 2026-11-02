@@ -33,8 +33,10 @@ device, no batching, no OCR plugin).
   documents to `ok`, every publication is repeated, so `clean_markdown/`, `export.jsonl` and the census include them.
   A resume without `--retry-failed` changes nothing and republishes nothing. A run that ends with failed documents
   keeps its other documents' private stage products until a later resume completes, because a repeated publication
-  is made from them. If one is gone anyway, the resume refuses with `republish_inputs_released` (exit 2) before
-  writing; start a new run over those sources. An amended plan is a new run with its own publications.
+  is made from them. If one is gone anyway and the work cannot be repeated (its own input, for example a download
+  retired under `memory_saving=extreme`, was released), the resume refuses with `republish_inputs_released` (exit 2)
+  before it repeats or publishes anything; start a new run over those sources. A vanished product whose input is still
+  there is simply produced again. An amended plan is a new run with its own publications.
 - A stage worker that misses its deadline is stopped together with its descendants before its replacement starts. On
   Linux this includes descendants that moved to another process group (found through `/proc`). On macOS only the
   worker's own process group is signalled, so a descendant that detached into its own group (for example a browser)
@@ -109,7 +111,8 @@ runs one attempt at a time.
 Before the first publication, and again before each publication, the run checks that the corpus filesystem has room for
 what the remaining publications add: their input snapshots, products, the export's generation and published copy,
 re-published metadata tables and parquet footprints, minus the private scratch the run releases between publications
-(only files fully released, after their last reader). After the clean publication only the documents selected for
+(only files fully released, after their last reader, and nothing while a document of the run is failed, because those
+releases then do not happen). After the clean publication only the documents selected for
 sections are charged to sections and annotation. Measured on a 242-PDF cohort, the charge was 1.01–1.12× the real need
 at every check made after the selection is known and 1.04–1.08× for document-export-only runs; before the selection
 exists, the sections and annotation charge counts every document (7.2× there). A run that does not fit is refused with
@@ -128,8 +131,10 @@ interruption record, and can be resumed.
   index/threshold post-processing, and the full-annotation step reads `classified_sections.parquet` whole. Memory
   therefore grows with the total section text of the corpus. Measured on a 242-PDF cohort (409 sections, a 53.2 MB
   `sections_for_annotation.parquet`): peak RSS 983 MB (125 MB when the call started, +859 MB, 5.4 s); each whole read
-  turns about 52.6 MB of parquet into a 122.7 MB frame. The peak is about 16 times the size of the sections parquet;
-  assuming linear growth (not measured beyond that cohort), a corpus with a 1 GB sections parquet needs about 16 GB.
+  turns about 52.6 MB of parquet into a 122.7 MB frame. The measured total peak (983,224,320 bytes) is 18.49 times the
+  sections parquet (53,185,990 bytes); the increase over the start of the call (858,636,288 bytes) is 16.14 times it.
+  Projection, not measured beyond that cohort: assuming the increase grows linearly with the parquet on top of a fixed
+  starting footprint of about 125 MB, a corpus with a 1 GB sections parquet needs about 16.3 GB at peak.
 
 ## Phase methods
 

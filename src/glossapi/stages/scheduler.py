@@ -345,7 +345,29 @@ class StreamingScheduler:
             else:return False
         return True
 
+    def _unrepeatable(self, tasks, operations):
+        """Committed document attempts whose outputs vanished outside retention (so recovery would run them again) while
+        an input they read was released by retention: they cannot run again (CP-K4g F2). Read only."""
+        released = []
+        stage = None
+        for operation in operations:
+            row = self.writer.connection.execute(f"SELECT a.attempt_id,e.status FROM attempts a LEFT JOIN {self.writer.connection.event_table} e ON e.event_id=(SELECT MAX(event_id) FROM {self.writer.connection.event_table} WHERE attempt_id=a.attempt_id AND event_kind='lifecycle') WHERE a.task_id=? ORDER BY a.attempt_number DESC LIMIT 1",(tasks[operation.key],)).fetchone()
+            if row is None or row['status'] != 'ok' or (self._verified(row['attempt_id']) and all(
+                    artifact.path.is_file() and sha256_file(artifact.path) == artifact.sha256 for artifact in operation.document.artifacts)):
+                continue
+            gone = [row_[0] for row_ in self.writer.connection.execute(
+                "SELECT s.uri FROM attempt_inputs i JOIN current_file_state s USING(file_id) WHERE i.attempt_id=? AND s.presence='deleted'",
+                (row['attempt_id'],))]
+            if gone:
+                released.extend(local_path(uri) for uri in gone)
+                stage = stage or operation.stage
+        return stage, released
+
     def _recover(self, run, tasks, operations):
+        stage, released = self._unrepeatable(tasks, operations)
+        if released:
+            from .retention import PublicationInputsReleasedError
+            raise PublicationInputsReleasedError(stage, released)
         done = {}
         # A run the filesystem stopped (W18 M10) names that cause on its interrupted attempts, not bare process death.
         # Tied to each interrupted attempt's start (CP-K4a F3): an earlier ENOSPC never explains a later death.

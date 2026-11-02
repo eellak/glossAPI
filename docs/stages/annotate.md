@@ -29,7 +29,8 @@ This stage depends on model availability. If the model is missing, the stage sho
 ## Memory
 
 Annotation reads the whole classified output back into memory twice, so its memory grows with the total section text
-of the corpus (about 16 times the size of `sections_for_annotation.parquet` at peak on the measured cohort). See
+of the corpus (on the measured cohort the peak RSS was 18.49 times the size of `sections_for_annotation.parquet`, and its
+increase over the start of the call 16.14 times). See
 "Known limitations" in [Resumability, Recovery, and Retention](../architecture/resumability_recovery_and_retention.md).
 
 ## Metadata role
