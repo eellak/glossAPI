@@ -824,7 +824,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                 # The next compatibility reader has now consumed these private
                 # producer records. Retire at that frontier, not at run close.
                 released_stage = {'clean':'extract','sections':'clean','annotate':'sections'}.get(stage)
-                if released_stage and published:
+                if released_stage and published and not _has_failed_documents(corpus._scheduler_writer,result['run_id']):
                     publication_budget.observe()
                     from .retention import retain_completed_run
                     attempts = [attempt for key,attempt in result['attempts'].items()
@@ -846,6 +846,12 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     publication_states=[task['status'] for task in writer.task_states(result['run_id']) if task['operation'].endswith('.compatibility_publish')]
     publication_budget.observe()
     if all(status=='ok' for status in publication_states):
+        # A run that ends with failed documents keeps the products of its document attempts: a --retry-failed resume
+        # that brings the failed ones to ok re-publishes every corpus product from them (K4g B1c), and the completing
+        # resume releases them. The publications' own scratch and temporaries are released as before.
+        if _has_failed_documents(writer,result['run_id']):
+            documents=set(result['attempts'].values())
+            all_attempts=[attempt for attempt in all_attempts if attempt not in documents]
         retain_completed_run(writer,corpus.output_dir,result['run_id'],getattr(corpus,'_retention_settings',settings),attempts=all_attempts,observer=getattr(corpus,"_retention_observer",None))
     from .retention import retention_summary
     # Current present/free bytes after retention; the high-water keeps the
@@ -977,6 +983,9 @@ def reconcile_section_census(corpus,result):
     result['section_counts']={'selected':len(planned),'included':included,'omitted':len(planned)-included}
 
 
+OCR_PUBLISHED_KINDS=('ocr_markdown','ocr_metrics','ocr_native','ocr_page_state')
+
+
 @shadow_stage('ocr', 'ocr.wrapper')
 def publish_ocr_results(self):
     """Publish committed OCR bytes at the existing single-writer barrier."""
@@ -994,7 +1003,7 @@ def publish_ocr_results(self):
             if result.reason_code != 'ocr_completed':
                 continue
             paths={output.relative_path:corpus.output_dir/output.relative_path for output in result.outputs
-                if output.kind in ('ocr_markdown','ocr_metrics','ocr_native','ocr_page_state')}
+                if output.kind in OCR_PUBLISHED_KINDS}
             materialize_stage_outputs(corpus,result,workspace,paths)
             markdown=next(output for output in result.outputs if output.kind=='ocr_markdown')
             filenames.append(Path(markdown.relative_path).with_suffix('.pdf').name)
@@ -1010,6 +1019,77 @@ def skip_barrier(corpus,run,stage):
     with writer.transaction():
         attempt=writer.attempt(task['task_id'],worker_id='single-publisher',device_id='cpu',fingerprint={'reuse_eligible':False},inputs={'files':[]},settings={},tools={})
         writer.finish(run,task['task_id'],attempt,status='skipped',reason_code='upstream_failed')
+
+
+class PublicationInputsReleasedError(ValueError):
+    """A corpus publication must be repeated (the documents it covers changed) but a committed document product it
+    publishes from was already released (K4g B1c). Nothing was written."""
+    code='republish_inputs_released'
+
+    def __init__(self,stage,missing):
+        self.details={'stage':stage,'missing':[str(path) for path in missing[:20]],'missing_count':len(missing)}
+        super().__init__(f'republish_inputs_released: the {stage} publication must be repeated to cover the documents that '
+            f'are now complete, but {len(missing)} committed document products it publishes from were already released '
+            '(for example '+str(missing[0])+'). Nothing was written; start a new run over these sources.')
+
+
+def _republication_inputs_missing(corpus,stage):
+    """Committed document products a repeated per-document publication (extract, ocr) materializes again, that are
+    gone. The corpus-level publications (clean, sections, annotate, export) recompute from the public products of the
+    publications before them and read no released private file."""
+    if stage not in ('extract','ocr'):
+        return []
+    from .workers import read_result
+    writer=corpus._scheduler_writer
+    missing=[]
+    for (replay_stage,_,_),candidates in (getattr(corpus,'_streaming_ocr_replays',None) or {}).items():
+        if replay_stage!=stage:
+            continue
+        for _,_,receipt,workspace in candidates:
+            for output in read_result(receipt.path).outputs:
+                relative=output.relative_path
+                if relative.startswith(('logs/','inputs/')) or output.kind in ('attempt_diagnostic','worker_receipt'):
+                    continue
+                if stage=='ocr' and output.kind not in OCR_PUBLISHED_KINDS:
+                    continue  # publish_ocr_results materializes only these
+                path=Path(workspace)/relative
+                if path.is_file():
+                    continue
+                if output.kind=='repaired_pdf' and writer.connection.execute(
+                        "SELECT 1 FROM current_file_state WHERE uri=? AND presence='deleted' LIMIT 1",(path.as_uri(),)).fetchone():
+                    continue  # released under extreme after extraction; the publication skips it too
+                missing.append(path)
+    return missing
+
+
+def _has_failed_documents(writer,run):
+    """Whether a document task of this run ended failed (a --retry-failed resume can still bring it to ok)."""
+    return any(task['status']=='failed' and task['version_id'] is not None and not task['operation'].endswith('.compatibility_publish')
+               for task in writer.task_states(run))
+
+
+def _publication_coverage(corpus):
+    """The identity of the document versions a corpus publication covers now (those whose every document stage is
+    ok): a sha256 over the sorted version ids, or None outside a streaming run. A hash, not the list, so a barrier
+    record stays the same size for any corpus."""
+    completed=getattr(corpus,'_streaming_completed_versions',None)
+    if completed is None:
+        return None
+    from ..ledger.encoding import snapshot_hash
+    return snapshot_hash(sorted(str(version) for version in completed if version is not None))
+
+
+def _published_coverage(writer,run,task_id,attempt):
+    """The versions the barrier's committed attempt recorded as covered, or None for a commit made before coverage was
+    recorded (that commit keeps its old meaning: current)."""
+    if not attempt:
+        return None
+    row=writer.connection.execute(f"SELECT details_json FROM {writer.connection.event_table} WHERE task_id=? AND attempt_id=? "
+        "AND event_kind='lifecycle' AND status='ok' ORDER BY event_id DESC LIMIT 1",(task_id,attempt['attempt_id'])).fetchone()
+    if not row:
+        return None
+    from ..ledger.reader import evidence
+    return evidence(writer.connection,{'details_json':row[0]}).get('covered_versions_sha256')
 
 
 def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=False):
@@ -1030,6 +1110,15 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
     if wrapper_run:
         wrapper_operations=(stage+'.wrapper',stage+'.clean' if stage=='clean' else stage+'.jsonl' if stage=='export' else stage+'.extract')
         wrapper_ok=any(task['scope_key'].startswith('corpus:') and task['status']=='ok' and task['operation'] in wrapper_operations for task in writer.task_states(wrapper_run))
+    covering=_publication_coverage(corpus)
+    if task['status']=='ok' and _published_coverage(writer,run,task['task_id'],previous) not in (None,covering):
+        # The document versions this publication covers changed since it committed (a --retry-failed resume brought
+        # failed documents to ok, or an earlier commit covered fewer): it is not current, so it publishes again, from
+        # the committed document products, which must all still exist (refused, typed, before any write otherwise).
+        missing=_republication_inputs_missing(corpus,stage)
+        if missing:
+            raise PublicationInputsReleasedError(stage,missing)
+        task={**task,'status':'stale'}
     if task['status']=='ok':
         for row in writer.connection.execute('SELECT f.uri,i.sha256 FROM attempt_inputs i JOIN files f USING(file_id) WHERE attempt_id=?',(previous['attempt_id'],)):
             path=local_path(row['uri'])
@@ -1093,6 +1182,8 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
                 writer.input(attempt,source['file_id'],'source_reader:'+source['file_id'],source['sha256'])
         status='ok' if outcome and outcome['status']=='ok' else 'failed'
         details={'wrapper_run_id':wrapper_run,'bound_product_files':len(outputs),'recovered_wrapper_commit':wrapper_ok}
+        if covering is not None:
+            details['covered_versions_sha256']=covering
         if status=='failed' and stage=='download' and outcome is not None:
             # The publication replays committed acquisitions only. A source whose acquisition failed is that
             # document's own typed outcome (its download.acquire task); it does not fail the corpus-wide

@@ -3163,7 +3163,7 @@ class CleanPhaseMixin:
             num_threads: Rayon thread-count to pass to Rust.
             drop_bad: If True, documents rejected by those fixed gates are removed from downstream processing. Set to False to keep all files and only record the score.
             write_cleaned_files: Set False to skip writing cleaned markdown files; metrics and parquet updates still occur.
-            ocr_model_dir: [DEPRECATED – no effect] Use Corpus.ocr(model_dir=...) instead.
+            ocr_model_dir: [DEPRECATED – no effect] Configure OCR through Corpus.ocr(backend=..., ocr_options=..., device=...).
             force_ocr_fallback: [DEPRECATED – no effect] Use Corpus.ocr(fix_bad=True) instead.
             empty_char_threshold: Character threshold (after stripping comments and whitespace) that flags markdown as nearly empty. Default 0 only enforces the zero-character safeguard.
             empty_min_pages: Minimum page count for a low-character document to trigger an OCR rerun recommendation.

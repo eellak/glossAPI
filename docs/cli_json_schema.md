@@ -44,8 +44,9 @@ the ledger reason code, e.g. `clean_process_failed`, with `document_id`, `stage`
 `data` and adds one error per failed task it lists (its `--stage` and `--file` filters apply), each exactly as `run`
 reports it, or one `run_completed_with_failures` summary when the task table names none; `errors` is never empty
 then. `2` a typed error (`errors[0].code`); `3` a policy or disk conflict (`disk_budget_required`,
-`disk_budget_exceeded`, `policy_conflict`, `waiting_for_disk`, `disk_full`, `disk_guard_unavailable`) or a run waiting
-for disk.
+`disk_budget_exceeded`, `policy_conflict`, `waiting_for_disk`, `disk_full`, `disk_guard_unavailable`), a run refused
+because a corpus copy the last run left unflushed was edited after it closed (`post_close_edit`, the edited paths in
+`details.paths`; move or delete them), or a run waiting for disk.
 
 ## `plan --json`: the exact preview
 
@@ -88,6 +89,9 @@ the content observed now (`documents[].source_observation.sha256`); the ledger's
 (`invalid_request`). Interrupted or lost attempts (a killed worker, a timeout) are retried automatically, at most 3
 attempts per task, and every interrupted attempt counts. Past that budget, and for any other failure, the task stays
 failed; `run --resume RUN_ID --retry-failed` is the explicit, operator-authorised retry of the failed tasks of that run.
+When the retry brings documents to `ok`, the corpus products are published again to cover them (a publication is
+current only for the document versions it recorded); a committed product that was already released makes the resume
+refuse with `republish_inputs_released` before it writes.
 
 `run --plan FILE` is bound to the plan identity. Before the ledger is touched it refuses with a typed error when
 the file is not a plan (`invalid_plan`), the plan body was edited (`plan_hash_mismatch`, for example a changed setting), a planned input changed size,

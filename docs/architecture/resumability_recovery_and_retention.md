@@ -28,6 +28,13 @@ device, no batching, no OCR plugin).
   counts, so a task whose worker is killed three times stays failed.
 - Other failures, and tasks past that budget, stay failed. `glossapi run --resume RUN_ID --retry-failed` is the
   explicit, operator-authorised retry of the failed tasks of that run.
+- A corpus publication (raw and cleaned markdown, sections, annotation, export) records which document versions it
+  covers. It is current only while that set equals the documents that are now complete: when a retry brings failed
+  documents to `ok`, every publication is repeated, so `clean_markdown/`, `export.jsonl` and the census include them.
+  A resume without `--retry-failed` changes nothing and republishes nothing. A run that ends with failed documents
+  keeps its other documents' private stage products until a later resume completes, because a repeated publication
+  is made from them. If one is gone anyway, the resume refuses with `republish_inputs_released` (exit 2) before
+  writing; start a new run over those sources. An amended plan is a new run with its own publications.
 - A stage worker that misses its deadline is stopped together with its descendants before its replacement starts. On
   Linux this includes descendants that moved to another process group (found through `/proc`). On macOS only the
   worker's own process group is signalled, so a descendant that detached into its own group (for example a browser)
@@ -73,8 +80,8 @@ Two settings, fixed when the run starts:
   source is durable) are verified at the next start. A copy whose bytes no longer match is restored from its managed
   source only when its bytes are what a power loss can leave: a torn image of the managed bytes (a prefix, or blocks
   that read as zeros) or the copy this ledger registered there before. Timestamps never prove a copy unchanged. Any
-  other content is treated as your edit: it is kept, and every start refuses (`PostCloseEditError`, message
-  `post_close_edit: ...`; the CLI reports it with the generic code `unsupported_schema`, exit 2) until you move or
+  other content is treated as your edit: it is kept, and every start refuses (`PostCloseEditError`, typed code
+  `post_close_edit`; the CLI reports it with that code, `details.paths`, and exit 3) until you move or
   delete it, after which it is republished from the managed source. Between a run close and the next start, a reader of such a copy can see a torn file after a power loss.
 
 Declared residuals: an edit that only truncates a copy to a prefix of the managed bytes, within the same clock tick as

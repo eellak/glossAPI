@@ -108,7 +108,10 @@ class OcrMathPhaseMixin:
         every page that page quality routes is OCRed, in flagged and unflagged documents alike. ``"flagged"``
         restricts OCR to documents the cleaner flagged (``needs_ocr``), the API default before. ``mode="math_only"``
         performs no OCR and by default still excludes only cleaner-flagged documents. A flagged document with no
-        routed page is OCRed whole in both modes (``run`` leaves it as extracted; FG-G03 residual)."""
+        routed page is OCRed whole in both modes (``run`` leaves it as extracted; FG-G03 residual).
+
+        ``limit`` and ``dpi`` are accepted for compatibility and ignored: they have no effect (T2-G19). Use
+        ``max_pages`` to bound pages and ``math_dpi_base`` for the math crops."""
 
         del limit, dpi
         request = normalize_ocr_request(
