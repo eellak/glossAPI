@@ -464,6 +464,13 @@ class RetentionController:
                 for file_id in file_ids[offset:offset+128]:
                     row,facts,pins=self.eligibility(file_id)
                     if pins or row['presence']!='present':continue
+                    # Physical existence before the intent (LS9-G04): a file already absent externally is recorded
+                    # missing, never admitted as a policy deletion that recovery would then report as delete_recovered.
+                    try:os.lstat(file_path(row))
+                    except FileNotFoundError:
+                        self.writer.event(self.run_id,event_kind='artifact',reason_code='missing',file_id=file_id,
+                            version_id=row['version_id'],details={'policy_deletion':False})
+                        continue
                     details=dict(file_id=file_id,sha256=row['sha256'],bytes=row['bytes'],
                         policy_sha256=snapshot_hash(facts['declaration']),consumer_ok_event_ids=facts['consumer_ok_event_ids'],pin_check=[])
                     intent=self.writer.event(self.run_id,event_kind='retention',reason_code='delete_planned',
@@ -642,7 +649,9 @@ def _collect_candidates(writer: Any, root: Any, controller: Any, candidates: lis
 
 def defer_owned_cleanup(corpus,path):
     from .products import active_journal
-    journal=active_journal()
+    # active_journal's inferred type is None alone (its ContextVar is declared without a type), so pyright narrowed
+    # the journal to Never after the falsy check (STATE-2): type-only.
+    journal: Any=active_journal()
     if not journal:return False
     path=Path(path).absolute()
     with journal.writer.transaction():

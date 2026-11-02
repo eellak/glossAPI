@@ -51,7 +51,8 @@ def test_closed_wal_ledger_reads_leave_entire_directory_unchanged(tmp_path, caps
     before = {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.iterdir()}
     code, result = invoke(capsys, command, "--corpus", str(tmp_path))
     assert code == (1 if command == "status" else 0)
-    assert not result["errors"]
+    # status exit 1 names the seeded failed task as a typed error (INTEG-G2)
+    assert [error["code"] for error in result["errors"]] == (["pdf_open_failed"] if command == "status" else [])
     assert before == {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.iterdir()}
 
 

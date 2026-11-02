@@ -310,6 +310,7 @@ def _two_documents(tmp_path, monkeypatch, debug='off'):
 
 def test_k4b_r2_original_verified_before_shard_retirement(tmp_path, monkeypatch):
     """Reviewer reproducer: an external edit after aggregate generation, before publication retires a shard."""
+    monkeypatch.setattr('glossapi.ledger.journal.RACY_MARGIN_NS', -(1 << 62))  # originals count as old: the cache engages (K4F1-G1 racy rule)
     from glossapi.stages import export as export_module, retention
     corpus, output, sources = _two_documents(tmp_path, monkeypatch)
     corpus.clean(drop_bad=False, num_threads=1)
@@ -332,6 +333,7 @@ def test_k4b_r2_original_verified_before_shard_retirement(tmp_path, monkeypatch)
 
 def test_k4b_r2_original_verified_before_outcome_and_retention(tmp_path, monkeypatch):
     """The verification precedes the wrapper's outcome: a changed original is the recorded failure, nothing deleted."""
+    monkeypatch.setattr('glossapi.ledger.journal.RACY_MARGIN_NS', -(1 << 62))  # originals count as old: the cache engages (K4F1-G1 racy rule)
     from glossapi.stages import retention
     corpus, output, sources = _two_documents(tmp_path, monkeypatch)
     deleted = []
@@ -379,6 +381,7 @@ def test_k4b_r2_no_rehash_without_pending_deletions(tmp_path, monkeypatch):
 
 
 def test_k4b_r2_each_original_rehashed_once_per_phase(tmp_path, monkeypatch):
+    monkeypatch.setattr('glossapi.ledger.journal.RACY_MARGIN_NS', -(1 << 62))  # originals count as old: the cache engages (K4F1-G1 racy rule)
     corpus, output, sources = _two_documents(tmp_path, monkeypatch)
     counted = _rehashes(monkeypatch, sources)
     Corpus(tmp_path/'inputs', output).clean(drop_bad=False, num_threads=1)

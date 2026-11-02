@@ -570,7 +570,8 @@ def test_k4b_f3_original_rewrite_preserving_mtime_is_caught(tmp_path):
     assert cached == []  # ctime differs: no cache hit
 
 
-def test_k4b_f3_cached_original_is_byte_verified_before_destruction(tmp_path):
+def test_k4b_f3_cached_original_is_byte_verified_before_destruction(tmp_path, monkeypatch):
+    monkeypatch.setattr('glossapi.ledger.journal.RACY_MARGIN_NS', -(1 << 62))  # originals count as old: the cache engages (K4F1-G1 racy rule)
     from glossapi.ledger import journal as J
     original = tmp_path/'original.pdf'
     original.write_bytes(b'AAAA')

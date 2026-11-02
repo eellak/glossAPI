@@ -130,7 +130,9 @@ def test_seed_corpus_outputs_and_typed_errors_validate(tmp_path):
                       ('report', '--corpus', str(tmp_path), '--format', 'parquet', '--output', str(tmp_path / 'out.parquet')),
                       ('capabilities',), ('doctor', '--corpus', str(tmp_path))):
         code, envelope = cli(*arguments)
-        assert not envelope['errors'], (arguments, envelope['errors'])
+        # status exits 1 for the seeded failed task and names it as a typed error (INTEG-G2)
+        expected_errors = ['pdf_open_failed'] if arguments[0] == 'status' else []
+        assert [error['code'] for error in envelope['errors']] == expected_errors, (arguments, envelope['errors'])
     for arguments, expected in ((('status', '--corpus', str(tmp_path / 'absent')), 'ledger_not_initialized'),
                                 (('report', '--corpus', str(tmp_path), '--why', 'nothing'), 'file_not_found'),
                                 (('plan', '--corpus', str(tmp_path), '--stages', 'bogus'), 'invalid_stage'),

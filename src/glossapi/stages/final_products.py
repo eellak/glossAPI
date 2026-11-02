@@ -123,7 +123,11 @@ def require_room(root: Any, settings: dict[str, Any], need: int, *, when: str, p
                               + '. Enlarge the corpus filesystem (and disk_budget_bytes) or request fewer products')
 
 
-# ---- The publication charge (CP-K4c3 R3) --------------------------------------------------------------------------
+# ---- The publication charge (CP-K4c3 R3, calibrated in K4g K4F3-G1) -----------------------------------------------
+# Each remaining publication's addition, derived from the writers' own input and product lists; ``remaining_need``
+# combines them with the private scratch the run releases between publications (``release_credits``). K4F3-G1: only
+# the documents selected for sections are charged to sections/annotation once the selection exists, and the export's
+# view and published copy are not counted as present together.
 # A conservative charge derived from the writers' own input and product lists. Every publication adds its frozen input
 # snapshots, (export) a transient view of the same inputs, its products twice (generation and published copy) and its
 # generation manifest; a metadata-writing publication re-publishes the compatibility table three times (input snapshot,
@@ -216,7 +220,15 @@ def publication_charges(corpus: Any, result: Any, stages: Iterable[str]) -> dict
     documents = len(text_rows)
     facts = [(row['bytes'] or 0, *_text_fact(local_path(row['uri']), row['sha256'])) for row in text_rows]
     text_bytes = sum(size for size, _, _ in facts)
-    section_rows = sum(headers + 1 for _, _, headers in facts)
+    # K4F3-G1: only the documents the clean publication accepted for sections are sectioned and annotated. The
+    # selection exists once that publication ran in this process (``good_files``); before it, every text counts.
+    selected = getattr(owner, 'good_files', None) if 'clean' not in remaining else None
+    if isinstance(selected, (list, tuple, set)):
+        stems = set(selected)
+        section_facts = [fact for fact, row in zip(facts, text_rows) if canonical_stem(local_path(row['uri'])) in stems]
+    else:
+        section_facts = facts
+    section_rows = sum(headers + 1 for _, _, headers in section_facts)
     from .export import metadata_table as selected_table
     try:
         table: Any = selected_table(owner)
@@ -249,11 +261,11 @@ def publication_charges(corpus: Any, result: Any, stages: Iterable[str]) -> dict
                 report = _size(Path(owner.output_dir)/'cleaning_report.parquet')
                 charge += 3*(report + CLEANING_REPORT_BYTES + CLEANING_REPORT_ROW_BYTES*documents) + GENERATION_FIXED_BYTES
         if stage == 'sections':
-            charge += sections_charge(facts)
+            charge += sections_charge(section_facts)
         if stage == 'annotate':
             sections_parquet = Path(getattr(owner, 'sections_parquet', '') or '')
             produced_now = 'sections' not in remaining and sections_parquet.is_file()
-            parquet = _size(sections_parquet) if produced_now else sections_parquet_bound(facts)
+            parquet = _size(sections_parquet) if produced_now else sections_parquet_bound(section_facts)
             charge += annotate_charge(parquet, section_rows, _model_bytes(owner))
         if stage == 'export':
             texts_final = not any(earlier in remaining for earlier in ('download', 'extract', 'clean', 'ocr'))
@@ -349,7 +361,82 @@ def export_charge(corpus: Any, text_rows: list[Any], facts: list[tuple[int, int,
     if metadata_path is None or not Path(metadata_path).is_file():
         row_bytes += METADATA_TABLE_ROW_BYTES*documents
     records = record_text + row_bytes
-    return 2*inputs_bytes + 2*records + GENERATION_FIXED_BYTES + GENERATION_DOCUMENT_BYTES*documents
+    # The frozen input snapshots and the generation stay; the transient view of the inputs is removed before the
+    # publication copies the generation to export.jsonl, so the peak holds the larger of the two, not both (K4F3-G1).
+    return inputs_bytes + records + max(inputs_bytes, records) + GENERATION_FIXED_BYTES + GENERATION_DOCUMENT_BYTES*documents
+
+
+RELEASED_AFTER = {'clean': 'extract', 'sections': 'clean', 'annotate': 'sections'}  # run.py: retained after each publication
+
+
+def release_credits(corpus: Any, result: Any) -> dict[str, int]:
+    """Bytes released right after each publication (K4F3-G1): the run retires the private scratch of the streaming
+    attempts the publication was the last reader of (``run.py`` calls ``retain_completed_run`` for
+    ``RELEASED_AFTER[stage]``). Counted from the same candidate rule retention applies (``_retention_candidates``, minus
+    the private rows ``_collect_candidates`` keeps), only for files present now whose every hard link is released and
+    whose planned readers are done by then; nothing is credited with ``debug=on``, which keeps them."""
+    from .retention import _retention_candidates, file_path, resolved_settings
+    owner: Any = corpus
+    settings = resolved_settings({**(getattr(owner, '_retention_settings', {}) or {})})
+    if settings.get('debug') == 'on':
+        return {}
+    writer: Any = owner._scheduler_writer
+    root = Path(owner.output_dir)
+    private = root.resolve()/'.glossapi/artifacts'
+    attempts: dict[str, Any] = result.get('attempts', {})
+    credits: dict[str, int] = {}
+    tasks: dict[str, Any] = writer.control()['tasks']
+    for publication, stage in RELEASED_AFTER.items():
+        chosen = [attempt for key, attempt in attempts.items() if str(key).endswith(':'+stage)]
+        if not chosen:
+            continue
+        done_by = PUBLICATION_ORDER.index(publication)
+        # Bytes are freed only when every link of a file goes: a released private product is often hard-linked to its
+        # public compatibility copy (``link_published``), so an inode counts only when all its links are released here.
+        inodes: dict[tuple[int, int], tuple[int, int, set[str]]] = {}
+        for row in _retention_candidates(writer, root, result['run_id'], settings, attempts=chosen):
+            path = file_path(row)
+            if path.is_relative_to(private) and (row['retention_class'] != 'intermediate' or row['kind'] == 'download_payload'
+                    or (settings['memory_saving'] == 'extreme' and row['kind'] == 'source_snapshot')):
+                continue
+            # release_private_scratch (and delete_many) release a file only after every planned reader finished: a
+            # reader that is a later publication (the export reading the cleaned texts) keeps it past this release.
+            if not _readers_done_by(writer, result['run_id'], row, tasks, done_by):
+                continue
+            try:
+                info = os.lstat(path)
+            except OSError:
+                continue
+            key = (info.st_dev, info.st_ino)
+            entry = inodes.setdefault(key, (info.st_size, info.st_nlink, set()))
+            entry[2].add(str(path))
+        total = sum(size for size, links, paths in inodes.values() if len(paths) >= links)
+        credits[publication] = total
+    return credits
+
+
+def _readers_done_by(writer: Any, run_id: str, row: Any, tasks: dict[str, Any], done_by: int) -> bool:
+    """Every planned reader of ``row`` has finished, or belongs to a publication at or before ``PUBLICATION_ORDER[done_by]``."""
+    for reader in writer.planned_readers(run_id, row):
+        status, reason = writer.reader_state(reader)
+        if status == 'ok' or (status == 'skipped' and reason == 'not_in_plan'):
+            continue
+        stage = (tasks.get(reader) or {}).get('stage')
+        if stage not in PUBLICATION_ORDER or PUBLICATION_ORDER.index(stage) > done_by:
+            return False
+    return True
+
+
+def remaining_need(charges: dict[str, int], credits: dict[str, int]) -> int:
+    """The corpus-filesystem bytes the remaining publications need at their peak: before each publication t, every
+    earlier remaining publication's addition is present and every release that followed one of them has happened."""
+    need = present = 0
+    for stage in PUBLICATION_ORDER:
+        if stage not in charges:
+            continue
+        need = max(need, present + charges[stage])
+        present += charges[stage] - credits.get(stage, 0)
+    return max(need, 0)
 
 
 def check_exact(corpus: Any, result: Any, stages: Iterable[str], *, when: str) -> None:
@@ -365,5 +452,5 @@ def check_exact(corpus: Any, result: Any, stages: Iterable[str], *, when: str) -
         return
     remaining = [stage for stage in PUBLICATION_ORDER if stage in set(stages)]
     charges = publication_charges(owner, result, remaining)
-    require_room(owner.output_dir, settings, sum(charges.values()), when=when,
+    require_room(owner.output_dir, settings, remaining_need(charges, release_credits(owner, result)), when=when,
                  present=DiskBudget(owner._scheduler_writer, owner.output_dir, result['run_id'], settings).present_bytes())

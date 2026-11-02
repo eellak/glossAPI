@@ -317,9 +317,14 @@ def test_replaced_legacy_locations_invalidate_presence_without_deleting_history(
             run,document,version,task,attempt=start(writer)
             old=writer.artifact(run,'extract','markdown','file:///mutable.md',sha256='a'*64,bytes=1,version_id=version)
             new=writer.artifact(run,'extract','markdown','file:///mutable.md',sha256='b'*64,bytes=1,version_id=version)
-        assert writer.connection.execute('SELECT presence FROM current_file_state WHERE file_id=?',(old,)).fetchone()[0]=='corrupt'
+        # A managed registration that replaces the bytes is a supersession (K4g LS4-G02), not corruption.
+        assert writer.connection.execute('SELECT presence FROM current_file_state WHERE file_id=?',(old,)).fetchone()[0]=='missing'
         assert writer.connection.execute('SELECT presence FROM current_file_state WHERE file_id=?',(new,)).fetchone()[0]=='present'
-        assert writer.connection.execute('SELECT COUNT(*) FROM files').fetchone()[0]==2
+        with writer.transaction():
+            writer.artifact(run,'extract','markdown','file:///mutable.md',sha256='c'*64,bytes=1,version_id=version,ownership='legacy_external')
+        # An observation nobody published that finds other bytes still marks the earlier registration corrupt.
+        assert writer.connection.execute('SELECT presence FROM current_file_state WHERE file_id=?',(new,)).fetchone()[0]=='corrupt'
+        assert writer.connection.execute('SELECT COUNT(*) FROM files').fetchone()[0]==3
 
 
 def test_source_manifest_snapshot_keeps_original_byte_hash_and_file_id(tmp_path):

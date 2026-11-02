@@ -188,9 +188,17 @@ def _plan_data(connection, root, *, files=(), manifest=None, stages=None, device
     identities = None
     if any(str(selector).startswith(("http://", "https://")) for selector in selectors):
         # The plan carries each URL's resource identity (a declared source_id keys its own).
-        from .stages.run import resource_identity
-        identities = [resource_identity(selector, source_id=row.get("source_id"), dataset_id=row.get("dataset_id"))
-                      if str(selector).startswith(("http://", "https://")) else None for selector, row in zip(selectors, rows)]
+        # A declared source_id is keyed by (dataset_id, source_id, url_index), exactly as run keys it (CRED-F8), and
+        # two different URLs on one identity are refused with run's typed error instead of collapsing into one target.
+        from .stages.run import _bind, resource_identity, row_resource_index
+        identities = [resource_identity(selector, source_id=row.get("source_id"), dataset_id=row.get("dataset_id"),
+                                        resource_index=row_resource_index(row, index=index))
+                      if str(selector).startswith(("http://", "https://")) else None
+                      for index, (selector, row) in enumerate(zip(selectors, rows))]
+        bound: dict[str, str] = {}
+        for index, (identity, selector) in enumerate(zip(identities, selectors)):
+            if identity is not None:
+                _bind(bound, identity, selector, index=index)
     # Only an omitted selection (no manifest, no files) means every corpus document;
     # a manifest is an explicit selection even when it selects nothing (CP-K3 F1).
     explicit = parsed is not None or bool(files)
@@ -304,6 +312,10 @@ def main(argv=None):
             elif args.command == "status":
                 data = status_view(connection, run=run, stage=args.stage, selector=args.file)
                 exit_code = 1 if data["counts"]["failed"] else 0
+                if exit_code and run is not None:
+                    # Exit 1 names its failures as typed errors, as run does (INTEG-G2), never an empty list.
+                    from .ledger.reader import status_failure_errors
+                    envelope["errors"].extend(status_failure_errors(connection, run, data))
             else:
                 data = report_why(connection, args.why, run=run, stage=args.stage) if args.why else report_view(connection, run=run, stage=args.stage)
             envelope["data"] = data

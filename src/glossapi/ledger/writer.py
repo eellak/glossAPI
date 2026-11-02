@@ -635,8 +635,9 @@ class LedgerWriter:
             record['excluded_copy_file_ids']=excluded
             summary['run_close_excluded_copy_file_ids']=excluded
             # Pre-close identity of each unflushed copy, aligned with the ids: [mtime_ns, ctime_ns] (CP-K4a F6). A torn
-            # copy keeps (or lowers) them; any write after the close (a user's edit, even with mtime restored) raises
-            # ctime, and such a copy is never overwritten.
+            # copy keeps (or lowers) them; a write after the close's clock tick (a user's edit, even with mtime
+            # restored) raises ctime, and such a copy is never overwritten. A write within the same tick keeps them:
+            # the next start then classifies the copy by its bytes (K4F1-G1, ``_left_by_power_loss``).
             identities: list[list[int] | None] = []
             for file_id in excluded:
                 try:
@@ -695,6 +696,40 @@ class LedgerWriter:
         if getattr(self, 'ambiguous_copies', None):
             raise PostCloseEditError(self.ambiguous_copies)
 
+    def _left_by_power_loss(self, path: Path, source: Path, row: dict[str, Any]) -> bool:
+        """Could a power loss after the run close have left these copy bytes (K4F1-G1, by content, never by time)?
+
+        Two images qualify. (1) A torn image of the managed bytes: no longer than them, and every 512-byte sector
+        either equals the managed bytes at that offset or is all zeros (blocks never written back read as zeros;
+        a truncation leaves a prefix). (2) Bytes this ledger registered earlier at the same path: the copy is
+        published by a temporary file and an atomic replace, so an undurable rename can leave the previous
+        registered copy. Anything else is complete content nobody but a user wrote, and is never overwritten.
+        The bytes are read only on this rare path (a named copy that no longer matches its registration)."""
+        import stat as _stat
+        try:
+            info=os.lstat(path)
+        except FileNotFoundError:
+            return True
+        if not _stat.S_ISREG(info.st_mode):
+            return False
+        if info.st_size<=os.stat(source).st_size:
+            sector=512;zero=bytes(sector);torn=True
+            with open(path,'rb') as copy, open(source,'rb') as managed:
+                while torn:
+                    block=copy.read(1<<20)
+                    if not block:break
+                    expected=managed.read(len(block))
+                    if block==expected:continue
+                    for offset in range(0,len(block),sector):
+                        piece=block[offset:offset+sector]
+                        if piece!=expected[offset:offset+sector] and piece!=zero[:len(piece)]:
+                            torn=False;break
+            if torn:
+                return True
+        earlier={self.file_catalog()[other]['sha256'] for other in self._uri_index().get(row['uri'],[])
+            if other!=row['file_id'] and self.file_catalog()[other]['ownership']=='managed'}-{row['sha256']}
+        return bool(earlier) and file_hash(path) in earlier
+
     def verify_excluded_copies(self):
         """Run start: verify the byte copies the last run-close barrier left unflushed (K4C-M2).
 
@@ -702,7 +737,10 @@ class LedgerWriter:
         a power loss after run close can tear the copy while its source is
         intact. Each copy named by the latest run-close barrier record is
         checked (size and sha256). A torn or missing copy whose source still
-        matches its registration is republished from that source; every checked
+        matches its registration is republished from that source (a changed copy
+        counts as torn only by its bytes, ``_left_by_power_loss``; a later
+        timestamp or complete different content is a user's edit, kept and
+        refused by ``refuse_ambiguous_copies``); every checked
         copy is then made durable, so the window closes at the next run start.
         A copy without an intact source is left for verification to report
         ("Committed publication is missing or corrupt"). Returns the file_ids
@@ -729,26 +767,37 @@ class LedgerWriter:
             if row is None or row['presence']!='present':continue
             path=local(row)
             intact=path.is_file() and not path.is_symlink() and path.stat().st_size==row['bytes'] and file_hash(path)==row['sha256']
-            # Only bytes the barrier left behind are restored (CP-K4a F6): the copy must still carry its pre-close
-            # identity (mtime and ctime no later than recorded at the barrier). A copy written after the close is never
-            # overwritten; without a recorded identity (an older ledger) the repair is ambiguous and refused. Both the
-            # copy and its managed source are kept; verification still reports the copy.
-            if not intact and path.exists():
-                before=identity_of.get(file_id)
-                info=path.lstat()
-                if not before or info.st_mtime_ns>before[0] or info.st_ctime_ns>before[1]:
-                    self.ambiguous_copies.append(dict(file_id=file_id,path=str(path),recorded_identity=before,
-                        current_identity=[info.st_mtime_ns,info.st_ctime_ns]))
-                    continue
-            if not intact:
-                source=next((other for other in catalog.values() if other['file_id']!=file_id and other['presence']=='present'
-                    and other['ownership']=='managed' and other['producer_attempt_id']==row['producer_attempt_id']
-                    and other['sha256']==row['sha256'] and '/.glossapi/artifacts/' in other['uri']
-                    and local(other).is_file() and file_hash(local(other))==other['sha256']),None)
-                if source is None:continue
-                _restore_copy(local(source),path)
-                if file_hash(path)!=row['sha256']:continue
-                restored.append((row,source))
+            # Only bytes the barrier left behind are restored (CP-K4a F6). Timestamps can only prove a change: a copy
+            # whose mtime or ctime is later than recorded at the barrier was written after the close and is never
+            # overwritten; without a recorded identity (an older ledger) the repair is ambiguous and refused. Equal
+            # timestamps prove nothing (a write in the barrier's own clock tick keeps them; K4F1-G1), so such a copy is
+            # classified by its bytes: only a torn image of the managed bytes, or bytes this ledger registered earlier
+            # at the same path (a replace the power loss rolled back), is restored. Any other complete content is a
+            # user's edit. Both the copy and its managed source are kept; verification still reports the copy.
+            if intact:
+                checked.append(path);durable.append(file_id)
+                continue
+            before=identity_of.get(file_id)
+            try:info: os.stat_result | None=path.lstat()
+            except FileNotFoundError:info=None
+            reason=None
+            if info is not None and (not before or info.st_mtime_ns>before[0] or info.st_ctime_ns>before[1]):
+                reason='changed_after_close'
+            source=None if reason else next((other for other in catalog.values() if other['file_id']!=file_id and other['presence']=='present'
+                and other['ownership']=='managed' and other['producer_attempt_id']==row['producer_attempt_id']
+                and other['sha256']==row['sha256'] and '/.glossapi/artifacts/' in other['uri']
+                and local(other).is_file() and file_hash(local(other))==other['sha256']),None)
+            if source is not None and info is not None and not self._left_by_power_loss(path,local(source),row):
+                reason='complete_different_content'
+            if reason:
+                assert info is not None
+                self.ambiguous_copies.append(dict(file_id=file_id,path=str(path),recorded_identity=before,
+                    current_identity=[info.st_mtime_ns,info.st_ctime_ns],reason=reason))
+                continue
+            if source is None:continue
+            _restore_copy(local(source),path)
+            if file_hash(path)!=row['sha256']:continue
+            restored.append((row,source))
             checked.append(path);durable.append(file_id)
         _map_bounded(_fsync_path,checked)
         for directory in sorted({path.parent for path in checked},key=lambda path:len(path.parts),reverse=True):
@@ -1179,6 +1228,12 @@ class LedgerWriter:
             changed = presence == "present" and previous[2] is not None and previous[2] != sha256
             absent = presence == "missing"
             if previous[3] == "present" and (changed or absent):
+                if changed and ownership == "managed":
+                    # glossAPI's own publication replaced the bytes at this fixed path (a re-published mirror or
+                    # metadata table): a supersession, not corruption and not a policy deletion (LS4-G02, K1W12-G07).
+                    self.event(run_id, event_kind="artifact", reason_code="missing", file_id=previous[0], version_id=previous[1],
+                        details={"observation": "replaced_by_later_publication", "observed_sha256": sha256, "policy_deletion": False})
+                    continue
                 self.event(run_id, event_kind="artifact", reason_code="corrupt" if changed else "missing", file_id=previous[0], version_id=previous[1],
                     details={"observation": "legacy_location_bytes_replaced" if changed else "location_observed_missing", "observed_sha256":sha256})
         identifier = new_id()
