@@ -11,10 +11,14 @@ The toolkit registers `glossapi = "greekocr.deploy.docling_plugin.docling_plugin
 in the Docling `docling` entry-point group. Docling loads `ocr_engines()` with
 `allow_external_plugins=True`; the engine owns its options, model files and inference.
 
-`page_routing="flagged"` retains the cleaner's document gate (default).
-`page_routing="all"` additionally admits unflagged documents with `ocr_pages` evidence.
-Ranges are inclusive, one-based physical pages; a flagged document with no range
-runs whole-document OCR. Skip-list and completed-document filtering still apply.
+`page_routing="all"` (the default for the OCR modes) uses the page policy of
+`glossapi run`: every page that page quality routes is OCRed, in documents the
+cleaner flagged and in documents it did not. `page_routing="flagged"` restricts
+OCR to the documents the cleaner flagged (`needs_ocr`), the default before K4g.
+`mode="math_only"` performs no OCR and by default still skips only
+cleaner-flagged documents. Ranges are inclusive, one-based physical pages. A
+cleaner-flagged document with no routed page is OCRed whole by `Corpus.ocr` in
+both settings, while `glossapi run` keeps its extracted text (`ocr_not_routed`). Skip-list and completed-document filtering still apply.
 Partial OCR preserves native Markdown and replaces only selected page text where
 page boundaries are known; ambiguous boundaries retain the original and append
 an OCR supplement. The latest replacement per physical page is retained on reruns.

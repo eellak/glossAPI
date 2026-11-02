@@ -60,6 +60,8 @@ Typical inputs:
 
 ### L3: Multi-GPU and operational recovery
 
+Multi-GPU OCR is a target that has not been qualified; the external OCR plugin runs on one device.
+
 Purpose:
 
 - prove the runtime behavior remains correct under parallel execution and rerun conditions
@@ -86,8 +88,8 @@ The following must remain true unless a change explicitly revises the contract a
 - canonical Markdown is written to `markdown/<stem>.md`
 - Docling JSON artifacts are emitted when requested
 - cleaner output still drives `needs_ocr`
-- OCR remains selective rather than defaulting to all documents
-- metadata parquet remains the durable operational record
+- OCR remains selective: only pages that page quality routes (`page_routing="all"`, the default) or only documents the cleaner flagged (`page_routing="flagged"`)
+- the ledger `corpus.sqlite3` is the durable record of a streaming run; the metadata parquet stays the compatibility record of the phase methods
 - reruns skip completed work unless forced
 - skiplist semantics remain explicit and stable
 - no production path silently falls back to stub OCR
@@ -107,7 +109,7 @@ The following must remain true unless a change explicitly revises the contract a
 | `RES-001` | L3 | Resumability | interrupted or partial run | rerun with defaults | completed items skipped correctly | no duplicate reprocessing by default |
 | `RES-002` | L3 | Force/reprocess semantics | prior successful run | rerun with force/reprocess flag | selected items are reprocessed | no stale completion flags blocking intended rerun |
 | `SKP-001` | L3 | Skiplist semantics | run with known problematic items | extract/OCR rerun | skiplist excludes intended stems only | no hidden filtering of healthy items |
-| `GPU-001` | L3 | Multi-GPU OCR | real PDF slice on 2 GPUs | external plugin OCR in parallel | work is distributed and completes per GPU | no worker success masking failures |
+| `GPU-001` | L3 | Multi-GPU OCR (**target, not qualified**: the external plugin runs on one device today; see [OCR plugin migration](../ocr_plugin_migration.md)) | real PDF slice on 2 GPUs | external plugin OCR in parallel | work is distributed and completes per GPU | no worker success masking failures |
 | `CMP-001` | L4 | Baseline quality comparison | Pergamos sample slice | compare pre/post change outputs | no material regression in artifact completeness and downstream usability | runtime improvement alone does not justify quality loss |
 | `CMP-002` | L4 | Whole-text vs page-level experiment | long PDFs | compare baseline branch vs page-level branch | quality/runtime tradeoff explicitly measured | experimental branch does not replace baseline without evidence |
 

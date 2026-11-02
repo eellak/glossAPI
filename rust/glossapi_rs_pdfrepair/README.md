@@ -8,28 +8,36 @@ returns an error-bearing `PdfFontReport`; repair returns an error-bearing
 `RepairResult`, matching the reference dataclasses. Neither function raises for
 ordinary document/font failures.
 
-## Build offline
+## Build
 
-From the repository root, using the supplied experiment environment:
+The root package bundles this extension: `pip install .` (or `pip install -e .`,
+or `python install_glossapi.py core`) from the repository root builds it with
+setuptools-rust together with the cleaner and noise extensions. That is the
+supported install. The glossAPI installer refuses an environment that also holds
+a standalone `glossapi_rs_pdfrepair` distribution.
+
+For development of this crate alone, from the repository root, in any virtual
+environment with maturin >=1.15 (`$VENV` below):
 
 ```sh
-export PATH="$HOME/.cargo/bin:$PATH"
 export PYTHONDONTWRITEBYTECODE=1
 cargo test --offline --locked --manifest-path rust/glossapi_rs_pdfrepair/Cargo.toml
-.venv-exp/bin/maturin build --release --offline --locked \
+"$VENV/bin/maturin" build --release --offline --locked \
   --manifest-path rust/glossapi_rs_pdfrepair/Cargo.toml \
-  --out rust/glossapi_rs_pdfrepair/target/wheels --interpreter .venv-exp/bin/python
+  --out rust/glossapi_rs_pdfrepair/target/wheels --interpreter "$VENV/bin/python"
 cargo build --release --offline --locked \
   --manifest-path rust/glossapi_rs_pdfrepair/Cargo.toml \
   --no-default-features --features cli
 ```
 
-Install the wheel in a user-selected environment, or run
-`.venv-exp/bin/python rust/glossapi_rs_pdfrepair/fixtures/unpack_wheel.py`
-and add `target/python` to `PYTHONPATH`. During development, replace
-extracted files atomically (do not truncate an extension loaded by another process
-on macOS). This task's validation used local extraction and did not install into
-or change `.venv-exp`.
+`"$VENV/bin/python" rust/glossapi_rs_pdfrepair/fixtures/unpack_wheel.py` unpacks
+the newest wheel from `target/wheels` into `target/python`; the tests put that
+directory first on `sys.path`. Unpacking replaces each file atomically (do not
+truncate an extension loaded by another process on macOS). Do not install the
+standalone wheel into a glossAPI environment.
+
+`cargo clippy --all-targets -- -D warnings` passes for this crate, and for the
+cleaner, noise and common crates.
 
 ## API
 
@@ -74,7 +82,7 @@ No Rust API launches Python.
 ## CLI
 
 ```sh
-export GLOSSAPI_PDFREPAIR_PYTHON="$PWD/.venv-exp/bin/python"
+export GLOSSAPI_PDFREPAIR_PYTHON="$VENV/bin/python"   # default: python3
 export PYTHONPATH="$PWD/rust/glossapi_rs_pdfrepair/target/python:$PWD/src"
 rust/glossapi_rs_pdfrepair/target/release/pdfrepair classify \
   --pdfs /path/to/pdfs --out /tmp/classification.jsonl
@@ -118,19 +126,20 @@ and unsupported encodings are refused as in the reference.
 ## Verification
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 .venv-exp/bin/pytest -q \
-  rust/glossapi_rs_pdfrepair/tests/test_backend.py -p no:cacheprovider
-PYTHONDONTWRITEBYTECODE=1 .venv-exp/bin/python \
-  docs/experiments/glossapi_improvement_20261006/equivalence_pdfrepair.py
+PYTHONDONTWRITEBYTECODE=1 python -m pytest -q -p no:cacheprovider \
+  rust/glossapi_rs_pdfrepair/tests/test_backend.py
 ```
 
-The equivalence script compares every report field in order, repair results,
-repaired text on the first 20 pages, after-repair reports, all original objects,
-all new object IDs, original-byte prefixes and source SHA-256 hashes. It writes
-artifacts under `/tmp` and exits nonzero on any mismatch. `--limit` and
-`--skip-object-check` are diagnostic options, not full acceptance runs.
+This is the supported entry point. It runs the reference's generated PDF
+fixtures (`tests/test_pdf_font_repair.py`) through the native analysis and
+repair, and checks extracted text on the first 20 pages, the original objects and
+the new object IDs with the helpers in `tests/pdf_invariants.py`. It needs the
+extension (the root install or `target/python`) and `pypdf` (the `font-repair`
+extra or the `test` dependency group). The generated AGL/CFF/post/Greek lookup
+tables are standard oracle data, not precomputed sample decisions. Tiny synthetic
+font fixtures have no dependency on copyrighted system-font binaries.
 
-See `docs/experiments/glossapi_improvement_20261006/T1_1_NOTES.md` for actual
-measurements and limitations. The generated AGL/CFF/post/Greek lookup tables are
-standard oracle data, not precomputed sample decisions. Tiny synthetic font
-fixtures have no dependency on copyrighted system-font binaries.
+The full equivalence driver and the measurement notes of the original port
+(`docs/experiments/glossapi_improvement_20261006/` on the
+`codex/compute-reduction-20261006` branch) are historical and are not part of
+this repository.

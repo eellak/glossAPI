@@ -26,6 +26,12 @@ The annotate stage classifies extracted sections and optionally produces more co
 
 This stage depends on model availability. If the model is missing, the stage should fail clearly or skip clearly rather than silently pretending annotation succeeded.
 
+## Memory
+
+Annotation reads the whole classified output back into memory twice, so its memory grows with the total section text
+of the corpus (about 16 times the size of `sections_for_annotation.parquet` at peak on the measured cohort). See
+"Known limitations" in [Resumability, Recovery, and Retention](../architecture/resumability_recovery_and_retention.md).
+
 ## Metadata role
 
 This stage can enrich downstream outputs with document-type and processing-stage information.

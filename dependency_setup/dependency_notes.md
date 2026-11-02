@@ -2,7 +2,7 @@
 
 `./dependency_setup/setup_glossapi.sh` creates a **core-only** environment. The
 root `requirements.txt` delegates to the same `pyproject.toml` runtime metadata;
-there are no parallel vanilla/Docling requirements lists. Python 3.11–3.14 is
+there is no second requirements list. Python 3.11–3.14 is
 supported. A Rust toolchain is needed when building from source; the root wheel
 bundles the cleaner, noise and PDF font-repair extensions.
 
@@ -22,18 +22,37 @@ To add optional packages to an environment that already has glossAPI, use `gloss
 --package NAME` (a dry run that prints the exact commands; add `--yes` to run them). It installs only the named
 profiles' requirements and never reinstalls glossAPI; `glossapi capabilities --catalog` lists the profiles with their
 measured install sizes (`tools/catalog/measure_profiles.py` re-measures them from fresh locks when requirements change).
+With `--yes`, each command's output is copied to stderr line by line while it runs, and the last 40 lines are kept in
+`output_tail`. The dry run's `would_change.from_lock` is an estimate from the measured locks; the installer resolves
+for real and may install something different. Requirement lines are shown with their version specifiers in one order
+(exact and lower bounds, then upper bounds, then `!=`), so a wheel install and a checkout show the same lines.
 
 The Python entry point installs in the active interpreter. Both entry points
 accept `--dry-run` and print the exact commands without creating environments or
 installing packages. The shell also accepts `--python`, `--venv`, `--editable`
 and `--run-tests`; only `--run-tests` installs build/test tools in the target
-runtime. The old `--mode docling` spelling selects `layout`; vanilla is removed.
+runtime. The shell also accepts `--mode core` and `--mode docling` as aliases of
+`core` and `layout`.
 
 Upgrading an environment containing standalone `glossapi_rs_cleaner`,
 `glossapi_rs_noise` or `glossapi_rs_pdfrepair` distributions is refused before
 installation. Follow the printed uninstall command in that interpreter, then
 rerun the installer. After installation a fresh process verifies native module
 origins and root-wheel RECORD hashes (editable installs verify source origins).
+
+**Rebuild the native extensions after pulling Rust changes.** The cleaner and noise
+crates embed a native API marker (`NATIVE_API_MARKER`, exported to Python as
+`__glossapi_native_api__`), and `glossapi.capabilities.NATIVE_API_LEVELS` names the
+level this Python code needs. `glossapi capabilities` reads the marker from the
+extension file without importing it. A build with no marker or another level is
+reported as `status: "missing"` with `api_level`, `required_api_level` and a
+`detail` that starts `stale native module` and ends `rebuild core`; `clean` is then
+unavailable (`missing_native_module`, install command
+`python install_glossapi.py core`) and `glossapi doctor` reports an error. Rebuild
+with `python install_glossapi.py core` (add `--editable` for a checkout) or
+`pip install -e .`. When Python starts to rely on a new or changed native export,
+raise `NATIVE_API_MARKER` in the crate and the level in `NATIVE_API_LEVELS` in the
+same change.
 
 - `download`: aiohttp and YAML support (retries and file writes use the standard library).
 - `browser`: download plus Playwright and Pillow. Browser engines are a separate
@@ -45,6 +64,19 @@ origins and root-wheel RECORD hashes (editable installs verify source origins).
   Silicon `cpu` and `mps` use normal PyPI wheels. These choices install packages;
   they do not select the device of a later extraction run. CUDA needs compatible
   NVIDIA hardware and a driver supporting the chosen runtime.
+  `dependency_setup/extra-layout.txt` names only `docling==2.81.0`. glossAPI's
+  layout and math code also imports `docling_core` (`ocr/math/enrich.py`,
+  `ocr/utils/json_io.py`) and `torch` (`ocr/math/enrich.py`,
+  `corpus/ocr/dispatch.py`, `ocr/defaults.py`, `doctor.py`); both arrive through
+  Docling 2.81's own dependencies, and the installer pins the torch build. The
+  math early-stop wrapper imports `transformers` only if it is present
+  (`ocr/math/earlystop.py`) and does nothing without it.
+- `ocr`: the pinned external Greek OCR toolkit plugin
+  (`greek-ocr-toolkit[docling]`) with Docling, docling-core, torch/torchvision and
+  the exact inference pins in `src/glossapi/ocr_package.txt`, which both the
+  installer and the `glossapi[ocr]` extra read. Like `layout`, it installs the
+  device's torch build first (`cpu`, `cuda126`, `cuda132`, `mps`). See
+  [OCR plugin migration](../docs/ocr_plugin_migration.md).
 - `annotate`: no extra packages. The packaged section classifier is a neutral export
   (`glossapi/models/section_classifier/`: JSON manifest, vocabulary, float64 weights, hash-checked) scored by
   glossAPI's own numpy inference (`glossapi.section_model`); scikit-learn and joblib are not imported. The extra
@@ -77,9 +109,8 @@ Retired, with no replacement fallback (accepted install-path behaviour change):
   or zero-page), the extraction work estimator counts it as one page and the
   strict counters (checkpoint, Docling cost and batched benchmarks, OCR
   reassembly) raise PDFium's error.
-- **PyMuPDF** (`fitz`) is no longer used at runtime (it went with the DeepSeek
-  backend) or in the tests, whose fixture PDFs are now built with PDFium
-  (`tests/pdf_fixtures.py`).
+- **PyMuPDF** (`fitz`) is not used at runtime or in the tests, whose fixture PDFs
+  are built with PDFium (`tests/pdf_fixtures.py`).
 
 ## Test environments
 
@@ -92,8 +123,11 @@ oracle fails its test instead of skipping it.
 mkdocs-material 9.8.0) with hashes.
 
 `requirements-tooling.txt` pins the surveyed build/test tools, including pip. Standalone Rust
-builds use maturin >=1.15; root builds use setuptools >=84.2.1. The serialized
-classifier does not support Python 3.14; the declared interpreter range describes
-core. The original qualification exercised core on Python 3.11; Python 3.13
-had not been run in that qualification. See the cycle-1 dead-weight reply for
-the subsequent Python 3.13 run and its exact test scope.
+builds use maturin >=1.15; root builds use setuptools >=84.2.1 with setuptools-rust.
+The declared interpreter range is Python 3.11–3.14 (`requires-python = ">=3.11,<3.15"`);
+the native extensions are built for the stable ABI from Python 3.11 (`abi3-py311`).
+The default section classifier is the packaged neutral export scored with numpy,
+so annotation has no interpreter limit of its own; only `annotate-legacy`
+depends on scikit-learn 1.6.1 wheels being available for the interpreter. Which
+interpreter versions have been run end to end is recorded in the release
+qualification, not here.

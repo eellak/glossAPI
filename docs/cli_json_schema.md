@@ -40,8 +40,12 @@ a real extract → clean → export run, `capabilities`, `doctor` and every type
 `error` check). A `run` that exits 1 keeps its `data` and lists the failures in `errors`: one per failed task (`code` =
 the ledger reason code, e.g. `clean_process_failed`, with `document_id`, `stage`, the error message and
 `details.error_type`), one `source_unavailable` per unavailable source, and otherwise one summary error
-(`run_completed_with_failures` or `run_cancelled`); `2` a typed error (`errors[0].code`); `3` a policy or disk conflict (`disk_budget_required`,
-`disk_budget_exceeded`, `policy_conflict`, `waiting_for_disk`, `disk_guard_unavailable`) or a run waiting for disk.
+(`run_completed_with_failures` or `run_cancelled`). A `status` that exits 1 (a listed task failed) also keeps its
+`data` and adds one error per failed task it lists (its `--stage` and `--file` filters apply), each exactly as `run`
+reports it, or one `run_completed_with_failures` summary when the task table names none; `errors` is never empty
+then. `2` a typed error (`errors[0].code`); `3` a policy or disk conflict (`disk_budget_required`,
+`disk_budget_exceeded`, `policy_conflict`, `waiting_for_disk`, `disk_full`, `disk_guard_unavailable`) or a run waiting
+for disk.
 
 ## `plan --json`: the exact preview
 
@@ -60,8 +64,11 @@ Its data adds to the hashed plan body:
 - `conflicts`: every conflict with its severity. `error` conflicts fail `plan` itself (exit 2, the preview stays in
   `data`): `device_unsupported_for_stage`, `device_unavailable` (an explicitly chosen device this machine does not
   have), `device_option_conflict`. `blocking` conflicts (`missing_capability`, `empty_selection`) keep `plan` at
-  exit 0 with `execution.ready: false` and a warning, and make `run` refuse. `memory_saving=extreme` without a disk
-  budget fails with `disk_budget_required` (exit 3).
+  exit 0 with `execution.ready: false` and a warning, and make `run` refuse. `memory_saving=extreme` needs positive
+  `disk_budget_bytes`, `max_source_bytes` and `max_attempt_bytes` (`disk_budget_required`, exit 3 otherwise) and
+  dedicated size-limited corpus and staging filesystems (`disk_guard_unavailable`, exit 3, on an ordinary shared
+  volume); the exact requirements are in
+  [Resumability, recovery and retention](architecture/resumability_recovery_and_retention.md#memory_savingextreme-setup).
 
 Downloads are public targets only. A source URL with userinfo (`user:pass@`) or a credential query/fragment field
 (`token`, `key`, `signature`, `X-Amz-Signature`, ...), or a `download` setting that would send credentials
@@ -77,6 +84,11 @@ Every present local target is hashed at planning, including a source the ledger 
 the content observed now (`documents[].source_observation.sha256`); the ledger's previous hash is kept separately as
 `source_observation.stored_sha256`. An edited, previously processed file therefore plans and runs as a new version.
 
+`run --resume RUN_ID` restores that run's frozen plan; any planning argument next to it is refused
+(`invalid_request`). Interrupted or lost attempts (a killed worker, a timeout) are retried automatically, at most 3
+attempts per task, and every interrupted attempt counts. Past that budget, and for any other failure, the task stays
+failed; `run --resume RUN_ID --retry-failed` is the explicit, operator-authorised retry of the failed tasks of that run.
+
 `run --plan FILE` is bound to the plan identity. Before the ledger is touched it refuses with a typed error when
 the file is not a plan (`invalid_plan`), the plan body was edited (`plan_hash_mismatch`, for example a changed setting), a planned input changed size,
 modification time or bytes, or appeared/disappeared (`plan_source_changed`), the installed capabilities changed
@@ -89,6 +101,13 @@ the required native modules, the visible devices and the install command for eac
 uses `importlib.metadata` and `importlib.util.find_spec` only: no torch, docling, pandas or OCR backend is imported.
 CUDA and MPS are `unknown_until_probe` unless the platform rules them out. A stage is available under the scheduler's
 own rule (the OCR stage checks versions, the toolkit source and its entry point).
+
+Each `native_modules` row of a required extension that carries a native API level (the cleaner and the noise
+module) also has `api_level` (found in the built file), `required_api_level` (what this glossapi needs) and `detail`.
+The level is read from the extension file's bytes, without importing it. A build from other source (no marker, or
+another level) is shown as `status: "missing"` with a `detail` that starts `stale native module` and ends
+`rebuild core`; `clean` is then unavailable with `reason_code: missing_native_module` and the install command
+`python install_glossapi.py core`. These keys are additive optional fields of schema v1.
 
 `doctor` adds environment checks, each with a fix hint: Python version, the Rust extensions (imported in a child
 process), standalone native distributions that shadow the root wheel, free disk and writability at the corpus, and the
@@ -128,9 +147,15 @@ in `unmeasured`. Each lock records the hash of its inputs; when the requirements
 - The default is a **dry run**: `data.commands` holds the exact commands (installer, index URLs, requirement lines),
   `data.requirements` the installed state of each line, and `data.would_change` what would change (the missing or
   mismatched requirements, and an estimate from the measured locks of the packages added and their bytes). Nothing runs.
+  `would_change.from_lock` is labelled an estimate: the exact answer needs the network (the installer resolves for
+  real and may differ).
 - `--yes` runs exactly `data.commands` in order and stops at the first failure, then re-runs the capability check in a
   fresh interpreter: `data.executed` (each step's exit code, time and output tail, and the installer's dependency check)
   and `data.changes` (distributions added/removed/changed, stages whose availability changed, capability fingerprints).
+  While a command runs, its output is copied to stderr line by line; `output_tail` keeps its last 40 lines. stdout
+  stays one JSON envelope.
+- Requirement lines are shown with their version specifiers in one canonical order (exact and lower bounds, then upper
+  bounds, then `!=`), so a wheel install and a source checkout show the same lines, commands and lock-input hash.
 - Only what was requested: the commands carry the requested profiles' own requirement lines, with `glossapi[...]` self
   references expanded (browser includes download), and nothing else. glossapi itself is never reinstalled (the source
   installer `install_glossapi.py` does that). A device-bound profile (layout, ocr) first installs the device's
@@ -142,8 +167,8 @@ in `unmeasured`. Each lock records the hash of its inputs; when the requirements
 ## `guide --json`
 
 The versioned LLM guide (`guide_version` 1): the phases and the two products, the choices (files, devices, packages,
-`debug`, `memory_saving`) with their measured costs, the workflow (capabilities, choose, plan, run, status/report,
-`report --why`), how to hand over files found elsewhere (input manifest v1; glossAPI does not scrape), the typed errors
+`debug`, `memory_saving`) with their measured costs, the workflow (capabilities, choose, plan, run, retry failed tasks
+after the user agrees, status/report, `report --why`), how to hand over files found elsewhere (input manifest v1; glossAPI does not scrape), the typed errors
 and the schema files. `docs/llm_guide.md` is the same content rendered by `python -m glossapi.llm_guide`. Every fact
 comes from the module that owns it; `tests/test_k3b_interface.py` fails when the guide, the Markdown file, the schemas,
 the settings contract or the catalog disagree.
@@ -186,6 +211,12 @@ Warnings: `nothing_selected`, `installer_unavailable` (dry run), `dependency_che
 - Each entry names exactly one source: `path` (absolute), `url` (unchanged URL behaviour), or a ledger reference
   (`document_id`, `source_key`, `source_uri`). `metadata` and any other entry fields are the caller's original
   metadata; `status --file` and `report` return them verbatim (`sources[].metadata.manifest_row`).
+- A remote entry may give `source_id` and `url_index` (a nonnegative integer). Plan and run key a declared source by
+  (dataset_id, source_id, url_index); a list of URLs in one entry is keyed by each URL's position. Two different URLs
+  with the same identity are refused by plan and run with `invalid_manifest` (`details.reason:
+  ambiguous_source_identity`, `details.index`, `details.urls`); an invalid `url_index` (negative, fractional, a string
+  or a boolean) with `invalid_manifest` (`details.field: url_index`). The same URL twice stays one target (the repeat is
+  a `duplicate_source` exclusion).
 - `selection` (optional) names the `selection_id`s to process. Other entries appear in `exclusions` and are never
   opened, hashed or processed. An empty `selection` selects nothing (`empty_selection`, see `plan`); omit it to
   process every entry.

@@ -58,14 +58,6 @@ targets = { 'JSM_564': [(14,1), (23,2)] }
 c.ocr(math_targets=targets, math_batch_size=4)
 ```
 
-## Targeted Phase‑2 From CLI
-
-- Probe early‑stop status:
-  - `python scripts/probe_formula_earlystop.py`
-- Target the 5 longest formulas in a run folder (uses Corpus under the hood):
-  - `python scripts/phase2_target_longest.py --run-dir OUTS/phase1_math_json_* --device cuda --batch-size 4`
-  - Writes summary to `json/top5_longest_formulas.jsonl` and re‑runs Phase‑2 for those items only.
-
 ## OCR/Model Constraints (recap)
 
 - Optional Torch CUDA: needed for GPU layout/enrichment; see README for the CUDA wheels.
@@ -73,9 +65,10 @@ c.ocr(math_targets=targets, math_batch_size=4)
 ## Multi‑GPU
 
 - Extract: uses a shared work queue across all visible GPUs (`use_gpus='multi'`).
-- OCR/Phase‑2: runs on GPU; integrated targeted processing supports small batches. Roadmap: multi‑GPU queue for OCR as well.
+- Phase‑2 math: `Corpus.ocr(use_gpus='multi')` spreads math enrichment over the visible GPUs; targeted processing supports small batches.
+- OCR: the external plugin runs on one device (see [OCR plugin migration](ocr_plugin_migration.md)). Multi-GPU OCR is a target that has not been qualified.
 
 ## Troubleshooting
 
-- If outputs still look repetitive: tighten early‑stop (`MAX_REPEAT`, `MAX_CHARS`) and rerun targeted Phase‑2.
+- If outputs still look repetitive: tighten early‑stop (`MAX_REPEAT`, `MAX_CHARS`) and rerun targeted Phase‑2 with `Corpus.ocr(math_targets=...)` or `Corpus.formula_enrich_from_json(targets_by_stem=...)`.
 - To observe cleanup: enable post‑processing flags and inspect `*.latex_map.jsonl` (`post_applied`, `truncated_by_*`, `tail_run`).

@@ -20,7 +20,31 @@
 - When a GPU crashes repeatedly, the controller stops respawning it after `GLOSSAPI_MATH_RESPAWN_CAP` attempts. Any pending stems are added to the skip‑list and their inputs are copied to `downloads/problematic_math/` (PDFs) and `json/problematic_math/` (Docling artifacts); inspect those folders, address the issue, then rerun `Corpus.ocr(..., reprocess_completed=True)` or move the quarantined files back into `downloads/`.
 - Check the corresponding worker log under `logs/math_workers/` (or the directory set via `GLOSSAPI_WORKER_LOG_DIR`) for stack traces and the active stem list stored in `gpu<N>.current`.
 
+## A script that calls `Corpus.run()` fails at start-up
+
+The stage workers of a streaming run are started with `spawn`, so each one imports your script again. Put the call
+under `if __name__ == "__main__":`.
+
+## `clean` is unavailable after pulling new code
+
+`glossapi capabilities` shows the cleaner or noise module as `missing` with `stale native module ...; rebuild core`:
+the installed extension was built from older Rust source. Rebuild with `python install_glossapi.py core` (add
+`--editable` for a checkout) or `pip install -e .`.
+
+## A run refuses to start with `post_close_edit`
+
+A corpus copy that the previous run left unflushed (for example `export.jsonl`) was changed after that run closed.
+glossAPI keeps your edit and refuses every start until you move or delete the file; it is then republished from the
+managed source. See [Resumability, recovery and retention](architecture/resumability_recovery_and_retention.md).
+
+## `conversion.log` appears in the working directory
+
+Standalone scripts that construct the extractor write `conversion.log` in the working directory unless
+`GLOSSAPI_CONVERSION_LOG_FILE` names another path. Point it outside the checkout for long runs.
+
 ## Where are my files?
 
 - Enriched Markdown overwrites `markdown/<stem>.md`.
 - JSON/indices/latex maps: `json/`. Metrics: `json/metrics/`.
+- A streaming run's ledger: `corpus.sqlite3`; its document export: `export.jsonl`; its private stage outputs:
+  `.glossapi/artifacts/`.
