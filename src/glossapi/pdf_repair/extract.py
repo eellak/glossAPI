@@ -4,7 +4,6 @@ from __future__ import annotations
 from ..ledger.journal import observe, observe_store, observe_source_rows
 
 from contextlib import contextmanager
-import json
 import os
 from pathlib import Path
 import signal
@@ -45,8 +44,10 @@ def _deadline(seconds: float):
 def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: float, backend_name: str | None = None):
     """Return (input path, metadata); any pre-pass failure keeps the source.
 
-    Reuse is based on PDF mtime; saved extract metadata supplies the original
-    font count/rates without reanalyzing. Missing cache metadata stays nullable.
+    No reuse of an existing ``repaired_pdfs/`` file (T2-G07): an mtime ordering does not bind the repaired PDF to the
+    current source bytes, so every call derives it from the source again (the repair is deterministic). The ledger
+    paths reuse a repair by the source hash they record; the legacy persistent-root paths (multi-GPU, batched) repair
+    again, which costs one analysis and repair per re-extracted document.
     """
     data = {"font_repair_status": "skipped", "font_repair_backend": "none", "font_repair_fonts": 0,
             "font_repair_valid_rate_before": None, "font_repair_valid_rate_after": None,
@@ -73,23 +74,6 @@ def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: flo
             if target.resolve().is_relative_to((root / "downloads").resolve()):
                 raise ValueError("Repaired PDF path resolves inside downloads/")
             protect_sources(target, (source,))
-            if target.is_file() and target.stat().st_mtime_ns > source.stat().st_mtime_ns:
-                data["font_repair_backend"] = "unknown"
-                sidecar = root / "sidecars" / "extract" / f"{source.stem}.json"
-                try:
-                    saved = json.loads(sidecar.read_text(encoding="utf-8"))
-                    if saved.get("font_repair_status") == "repaired":
-                        for key in data:
-                            data[key] = saved.get(key, data[key])
-                except Exception:
-                    pass
-                data["font_repair_fonts"] = max(0, int(data["font_repair_fonts"] or 0))
-                data["font_repair_valid_rate_before"] = rate(source)
-                data["font_repair_valid_rate_after"] = rate(target)
-                data["font_repair_status"] = "repaired"
-                data["font_repair_error"] = ""
-                observe("repair_cache_observed", path=source, repair=data, cache_path=str(target))
-                return target, data
 
             backend = get_backend(backend_name) if backend_name is not None else get_backend()
             data["font_repair_backend"] = backend.name

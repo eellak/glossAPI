@@ -132,7 +132,6 @@ REASON_CODES = frozenset((
     'pdf_backend_missing',
     'pdf_open_failed',
     'present',
-    'repair_cache_observed',
     'repair_disabled_or_non_pdf',
     'required_extract_artifact_missing',
     'retention_pinned',
