@@ -19,6 +19,15 @@ from PIL import Image, ImageDraw, ImageFont
 _FONT_PATH = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
 
 
+def _require_cuda(purpose: str) -> None:
+    """GPU-only tests skip with a reason on CPU profiles (T3b-G02); GLOSSAPI_REQUIRE_GPU=1 makes a missing GPU fail."""
+    if torch.cuda.is_available():
+        return
+    if os.environ.get("GLOSSAPI_REQUIRE_GPU", "").strip().lower() in {"1", "true", "yes"}:
+        pytest.fail(f"CUDA GPU required for {purpose} (GLOSSAPI_REQUIRE_GPU is set) but torch reports none")
+    pytest.skip(f"GPU-only: {purpose} needs a CUDA GPU; this profile has none")
+
+
 def _render_formula_image(text: str, dest: Path) -> None:
     font_size = 28
     if _FONT_PATH.exists():
@@ -105,7 +114,7 @@ def _assert_dir_contents(
 
 
 def test_pipeline_smoke_and_artifacts(tmp_path, monkeypatch):
-    assert torch.cuda.is_available(), "CUDA GPU expected for pipeline smoke test"
+    _require_cuda("the pipeline smoke test")
 
     device_idx = 0
     if torch.cuda.device_count() > 1:
@@ -203,7 +212,7 @@ def test_pipeline_smoke_and_artifacts(tmp_path, monkeypatch):
 
 
 def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
-    assert torch.cuda.is_available(), "CUDA GPU expected for docling pipeline test"
+    _require_cuda("the docling pipeline test")
 
     device_idx = 0
     if torch.cuda.device_count() > 1:
@@ -334,7 +343,7 @@ def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
 
 
 def test_clean_skips_files_with_successful_ocr(tmp_path, monkeypatch):
-    assert torch.cuda.is_available(), "CUDA GPU expected for OCR recovery test"
+    _require_cuda("the OCR recovery test")
 
     device_idx = 0
     if torch.cuda.device_count() > 1:

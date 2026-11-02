@@ -1015,9 +1015,39 @@ def test_corpus_repeat_refreshes_repair_budget_and_honors_pipeline_timeout(tmp_p
     assert budgets == [0.01, 0.01]
 
 
+# T3b-G03: the native witness PDF is an external, hash-bound fixture. GLOSSAPI_NATIVE_WITNESS_PDF names it; the default is
+# the historical Mac location. Absent -> explicit skip; present with other bytes -> failure (never a silent substitute).
+NATIVE_WITNESS_PDF_ENV = "GLOSSAPI_NATIVE_WITNESS_PDF"
+NATIVE_WITNESS_PDF_SHA256 = "a58e3a241c3af817a95892fc7d3db437ccaa616a7f57dbd5e24974b829eb0b05"  # ABO_768.pdf
+
+
+def _native_witness_pdf() -> Path:
+    import hashlib
+    configured = os.environ.get(NATIVE_WITNESS_PDF_ENV, "").strip()
+    path = Path(configured).expanduser() if configured else (
+        Path.home() / 'Projects/glossapi-ocr-local/reports/artifacts-20260407-ocr-box/pdfs/ABO_768.pdf')
+    if not path.is_file():
+        pytest.skip(f"native witness PDF unavailable: {path} (set {NATIVE_WITNESS_PDF_ENV} to the ABO_768.pdf fixture)")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert digest == NATIVE_WITNESS_PDF_SHA256, f"{path} sha256 {digest} is not the bound ABO_768.pdf witness"
+    return path
+
+
+def test_native_witness_pdf_is_hash_bound_and_skips_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv(NATIVE_WITNESS_PDF_ENV, str(tmp_path / 'missing.pdf'))
+    with pytest.raises(pytest.skip.Exception, match=NATIVE_WITNESS_PDF_ENV):
+        _native_witness_pdf()
+    other = tmp_path / 'other.pdf'
+    other.write_bytes(b'%PDF-1.7\nnot the witness\n')
+    monkeypatch.setenv(NATIVE_WITNESS_PDF_ENV, str(other))
+    with pytest.raises(AssertionError, match='not the bound ABO_768.pdf witness'):
+        _native_witness_pdf()
+
+
 def test_native_cached_backend_corrupt_healthy_alternation(tmp_path):
     """CP-B1 native_review.py witness; real parser/models/export in offline CPU env."""
     pytest.importorskip("docling", reason="native parser witness requires optional Docling and cached models")
+    witness_pdf = _native_witness_pdf()
     import subprocess
     import textwrap
     repo = Path(__file__).resolve().parents[1]
@@ -1042,7 +1072,7 @@ def test_native_cached_backend_corrupt_healthy_alternation(tmp_path):
             task()
         def main():
             root = Path(sys.argv[1])
-            original = Path.home() / 'Projects/glossapi-ocr-local/reports/artifacts-20260407-ocr-box/pdfs/ABO_768.pdf'
+            original = Path(sys.argv[2])
             healthy = root / 'ABO_768.pdf'
             repeat = root / 'ABO_768_repeat.pdf'
             shutil.copyfile(original, healthy)
@@ -1128,7 +1158,7 @@ def test_native_cached_backend_corrupt_healthy_alternation(tmp_path):
     '''))
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", HF_HUB_OFFLINE="1",
                TRANSFORMERS_OFFLINE="1", PYTHONPATH=str(repo / "src"))
-    completed = subprocess.run([sys.executable, str(script), str(tmp_path)],
+    completed = subprocess.run([sys.executable, str(script), str(tmp_path), str(witness_pdf)],
                                env=env, capture_output=True, text=True, timeout=180)
     assert completed.returncode == 0, completed.stdout + completed.stderr
 

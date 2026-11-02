@@ -53,11 +53,23 @@ WORKFLOW: Final[tuple[tuple[str, tuple[str, ...], str], ...]] = (
      'The exact targets, exclusions, required capabilities, device allocation and deletion policy. Writes nothing.'),
     ('run', ('run', '--corpus', 'CORPUS', '--plan', 'PLAN.json', '--json'),
      'Runs the saved plan; refuses if any input byte, setting or installed capability changed since the preview.'),
+    ('retry failed tasks (after the user agrees)', ('run', '--corpus', 'CORPUS', '--resume', 'RUN_ID', '--retry-failed', '--json'),
+     'An interrupted or lost attempt (killed worker, timeout) is retried automatically, at most {retry_limit} attempts per '
+     'task, and every interrupted attempt counts. Past that budget the task stays failed; --retry-failed is an explicit, '
+     'operator-authorised retry of the failed tasks of that run.'),
     ('status', ('status', '--corpus', 'CORPUS', '--json'), 'Progress and per-stage counts of the latest run.'),
     ('report', ('report', '--corpus', 'CORPUS', '--json'), 'The final census: every requested source exactly once.'),
     ('report --why', ('report', '--corpus', 'CORPUS', '--why', 'DOCUMENT', '--json'),
      'Why a document ended as it did, from the ledger alone (also after intermediates are released).'),
 )
+
+
+def _retry_limit() -> int:
+    """The scheduler's automatic retry budget per task (its ``retry_limit`` default; LS9-G05)."""
+    import inspect
+    from .stages.scheduler import StreamingScheduler
+    scheduler = cast(Any, StreamingScheduler)  # untyped module: read through Any
+    return cast(int, inspect.signature(scheduler.__init__).parameters['retry_limit'].default)
 
 
 def measured_costs() -> dict[str, Any]:
@@ -153,7 +165,8 @@ def guide_view() -> dict[str, Any]:
         costs=dict(time_per_page=costs['time_per_page'], disk=costs['disk'], not_measured=costs['not_measured'],
                    install_size_basis=catalog['measurement']['size_basis'], measured_locks_at=catalog['measurement']['measured_at'],
                    rule=costs['rule']),
-        workflow=[dict(step=step, argv=['glossapi', *argv], command=' '.join(['glossapi', *argv]), purpose=purpose)
+        workflow=[dict(step=step, argv=['glossapi', *argv], command=' '.join(['glossapi', *argv]),
+                       purpose=purpose.format(retry_limit=_retry_limit()))
                   for step, argv, purpose in WORKFLOW],
         handover=dict(example={'manifest_version': MANIFEST_VERSION,
                                'documents': [{'url': 'https://example.org/a.pdf', 'selection_id': 'a', 'metadata': {'title': 'Found by the LLM'}},
@@ -167,7 +180,7 @@ def guide_view() -> dict[str, Any]:
                                      'task and unavailable source in errors (code = the ledger reason code)',
                     '2': 'a typed error (errors[0].code)', '3': 'a policy or disk conflict, or a run waiting for disk'},
         schemas=[dict(name=name, file=f'glossapi/schemas/v{SCHEMA_VERSION}/{name}.json', id=load_schema(name)['$id']) for name in NAMES],
-        sources=dict(stages='glossapi.capabilities', packages='glossapi.package_catalog (data/package_catalog/measured.json)',
+        sources=dict(stages='glossapi.capabilities', retry_limit='glossapi.stages.scheduler.StreamingScheduler (retry_limit default)', packages='glossapi.package_catalog (data/package_catalog/measured.json)',
                      settings='glossapi.settings_contract', manifest='glossapi.input_manifest', costs='glossapi/data/measured_costs.json',
                      errors='glossapi.install_plan.ERRORS, glossapi.plan_preview.ERRORS, glossapi.input_manifest.ERRORS'))
 

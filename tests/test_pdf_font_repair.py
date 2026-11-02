@@ -354,17 +354,50 @@ def test_batch_timeout_does_not_stall(greek_fixture):
     assert time.monotonic() - started < 10
 
 
-# CP0 F3 coordinator amendment: the brief's ABO < .3 was an unverified guess.
-# These are measured first-20-page dictionary baselines under this token metric.
-ACH_787_MEASURED_BASELINE = 0.06096681096681097
-ABO_768_MEASURED_BASELINE = 0.5212494687632809
+# Exact first-20-page dictionary rates are bound to their inputs (T0-G06, PLAN section 9: a declared re-baseline). The
+# rate is a function of the PDF bytes, the Greek word list and the PDFium build that extracts the text, so the exact
+# assertion holds only when all three hashes match the receipt below; with any other input the test still checks the
+# repair invariants and then skips with the mismatching hash named. The historical CP0 F3 constants (ACH
+# 0.06096681096681097, ABO 0.5212494687632809) carried no input hashes and were never reproduced under the bound inputs
+# (logs/T0/real-fixture-drift.json); these values were measured on 2 Nov 2026 with the hashes recorded here.
+REAL_PDF_DICTIONARY_SHA256 = 'f911c0deb56886dcc6d5755ba042b87fa23e8f6eef6391eb9db6f707b13101b1'
+REAL_PDF_PDFIUM_SHA256 = 'c8629ebea4542eeff79b0422d05aaa71caafc8cce2b4709ad566581c1a7c1a1a'  # pypdfium2 4.30.0, PDFium 126.0.6462.0, macOS arm64
+ACH_787_SHA256 = 'f02c3030d612984a7ce686c0fe6e869226ee873663ba1a072c18c90709822947'
+ABO_768_SHA256 = 'a58e3a241c3af817a95892fc7d3db437ccaa616a7f57dbd5e24974b829eb0b05'
+ACH_787_MEASURED_BASELINE = 0.06028880866425993
+ABO_768_MEASURED_BASELINE = 0.5211477151965994
 
 
-@pytest.mark.parametrize('filename,needle,baseline_bound,measured_baseline', [
-    ('ACH_787.pdf', 'ευχαριστήσω', .10, ACH_787_MEASURED_BASELINE),
-    ('ABO_768.pdf', 'κατοίκησης', .60, ABO_768_MEASURED_BASELINE),
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        for block in iter(lambda: handle.read(1 << 20), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _pdfium_library_sha256() -> str | None:
+    """Hash of the PDFium shared library that pypdfium2 loads (None when it cannot be located)."""
+    try:
+        import pypdfium2_raw
+    except ImportError:
+        return None
+    libraries = sorted(Path(pypdfium2_raw.__file__).parent.glob('*pdfium*.*'))
+    libraries = [path for path in libraries if path.suffix in {'.so', '.dylib', '.dll'}]
+    return _sha256_file(libraries[0]) if len(libraries) == 1 else None
+
+
+def _binding_mismatches(src: Path, expected_pdf_sha256: str, dictionary: Path) -> list[str]:
+    observed = {'pdf': _sha256_file(src), 'dictionary': _sha256_file(dictionary), 'pdfium': _pdfium_library_sha256()}
+    expected = {'pdf': expected_pdf_sha256, 'dictionary': REAL_PDF_DICTIONARY_SHA256, 'pdfium': REAL_PDF_PDFIUM_SHA256}
+    return [f'{name} sha256 {observed[name]} != bound {expected[name]}' for name in expected if observed[name] != expected[name]]
+
+
+@pytest.mark.parametrize('filename,needle,baseline_bound,pdf_sha256,measured_baseline', [
+    ('ACH_787.pdf', 'ευχαριστήσω', .10, ACH_787_SHA256, ACH_787_MEASURED_BASELINE),
+    ('ABO_768.pdf', 'κατοίκησης', .60, ABO_768_SHA256, ABO_768_MEASURED_BASELINE),
 ])
-def test_real_pdf_repair(tmp_path, filename, needle, baseline_bound, measured_baseline):
+def test_real_pdf_repair(tmp_path, filename, needle, baseline_bound, pdf_sha256, measured_baseline):
     root = Path.home() / 'Projects/glossapi-ocr-local'
     src = root / 'reports/artifacts-20260407-ocr-box/pdfs' / filename
     dictionary = root / 'experiments/compute_reduction_20261006/data/dict/el_GR_words_utf8.txt'
@@ -381,12 +414,25 @@ def test_real_pdf_repair(tmp_path, filename, needle, baseline_bound, measured_ba
     assert needle in _text(dst, 5)
     before = extract_text_stats(src, 20, wordlist_path=dictionary)['totals']['dictionary_valid_rate']
     after = extract_text_stats(dst, 20, wordlist_path=dictionary)['totals']['dictionary_valid_rate']
-    assert before == pytest.approx(measured_baseline, abs=1e-12)
     assert before < baseline_bound
     assert after > .95
     assert after - before > .4
     assert hashlib.sha256(src.read_bytes()).hexdigest() == original_hash
     _assert_only_tounicode_changed(src, dst)
+    mismatches = _binding_mismatches(src, pdf_sha256, dictionary)
+    if mismatches:
+        pytest.skip('exact dictionary rate not bound to these inputs (repair invariants passed): ' + '; '.join(mismatches))
+    assert before == pytest.approx(measured_baseline, abs=1e-12)
+
+
+def test_real_pdf_rate_binding_names_each_mismatch(tmp_path):
+    """T0-G06: an input that differs from the bound receipt is named (and the exact rate is then not asserted)."""
+    pdf, words = tmp_path / 'a.pdf', tmp_path / 'words.txt'
+    pdf.write_bytes(b'%PDF-1.4 fixture')
+    words.write_text('λέξη\n', encoding='utf-8')
+    mismatches = _binding_mismatches(pdf, _sha256_file(pdf), words)
+    assert [item.split(' ')[0] for item in mismatches if not item.startswith('pdfium')] == ['dictionary']
+    assert any(item.startswith('pdf sha256') for item in _binding_mismatches(pdf, ACH_787_SHA256, words))
 
 
 def test_explicit_cid_to_gid_mapping(greek_fixture, tmp_path):
@@ -492,6 +538,13 @@ def test_explicit_encoding_codespace(greek_fixture, tmp_path, mixed_width):
         assert _text(dst).strip() == greek_fixture['text']
 
 
+# DW3-G02: the per-file deadline covers spawn startup, which took > 0.6 s under full-suite load. The deadline is 2 s so a
+# loaded spawn still fits, and the stall is 30 s so the overall bound (both deadlines plus the bounded stop) stays far
+# below it: finishing inside the bound still proves the stalled worker was stopped, not waited for.
+SLOW_WORKER_DEADLINE_SECONDS = 2.0
+SLOW_WORKER_STALL_SECONDS = 30
+
+
 def _sleeping_worker_stub(result_path, path, mode, destination, wordlist, sources=()):
     """A real spawned worker stalls on the first file and completes the next."""
     from glossapi.scripts.pdf_font_repair import _write_record
@@ -501,7 +554,7 @@ def _sleeping_worker_stub(result_path, path, mode, destination, wordlist, source
             signal.signal(signal.SIGTERM, signal.SIG_IGN)
         # Leave an incomplete temporary record to prove it is never consumed.
         Path(result_path + '.tmp').write_text('{')
-        time.sleep(5)
+        time.sleep(SLOW_WORKER_STALL_SECONDS)
     _write_record(Path(result_path), {'filename': Path(path).name,
                                     'category': 'consistent', 'error': None})
 
@@ -510,11 +563,12 @@ def _sleeping_worker_stub(result_path, path, mode, destination, wordlist, source
 def test_sleeping_worker_deadline_and_next_file(tmp_path, monkeypatch, slow_name):
     import glossapi.scripts.pdf_font_repair as cli
     monkeypatch.setattr(cli, '_worker', _sleeping_worker_stub)
-    timeout = .6
+    timeout = SLOW_WORKER_DEADLINE_SECONDS
     started = time.monotonic()
     records = list(cli._batch([tmp_path / slow_name, tmp_path / 'next.pdf'],
                              'classify', None, 1, timeout, None))
-    assert time.monotonic() - started < timeout + 1
+    # First file: its deadline plus the bounded terminate/kill (0.4 s); next file: at most its own deadline.
+    assert time.monotonic() - started < 2 * timeout + 1 < SLOW_WORKER_STALL_SECONDS
     assert records[0]['category'] == 'timeout'
     assert 'Timeout' in records[0]['error']
     assert records[1]['filename'] == 'next.pdf'

@@ -195,7 +195,7 @@ fn table_line_ratio_and_filtered(text: &str) -> (f64, Option<String>, usize, usi
 fn compute_latin_pct(buf: &[u8]) -> f64 {
     let latin_chars = buf
         .iter()
-        .filter(|&&b| (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A))
+        .filter(|&&b| (0x41..=0x5A).contains(&b) || (0x61..=0x7A).contains(&b))
         .count();
     latin_chars as f64 / (buf.len() as f64)
 }
@@ -867,7 +867,7 @@ fn merge_debug_spans(
             let same_category_gap_merge = !overlaps
                 && debug_match_merge_category(span.match_type).is_some()
                 && types.iter().any(|kind| {
-                    debug_match_merge_category(*kind) == debug_match_merge_category(span.match_type)
+                    debug_match_merge_category(kind) == debug_match_merge_category(span.match_type)
                 })
                 && gap_has_fewer_than_n_nonwhitespace_chars(
                     text,
@@ -2213,8 +2213,7 @@ fn hybrid_classify_numeric_field(token: &str) -> Option<(HybridFieldKind, Vec<u3
         numbers.push(part.parse::<u32>().ok()?);
     }
 
-    let mut shape = std::iter::repeat("#")
-        .take(numbers.len())
+    let mut shape = std::iter::repeat_n("#", numbers.len())
         .collect::<Vec<_>>()
         .join(".");
     if trailing_paren {
@@ -2223,11 +2222,11 @@ fn hybrid_classify_numeric_field(token: &str) -> Option<(HybridFieldKind, Vec<u3
         shape.push('.');
     }
 
-    let field_kind = if trailing_paren || trailing_dot {
-        HybridFieldKind::HeaderCounter
-    } else if numbers.len() >= 3 {
-        HybridFieldKind::HeaderCounter
-    } else if numbers.len() == 2 && parts.last().map(|part| part.len()).unwrap_or(0) <= 2 {
+    let field_kind = if trailing_paren
+        || trailing_dot
+        || numbers.len() >= 3
+        || (numbers.len() == 2 && parts.last().map(|part| part.len()).unwrap_or(0) <= 2)
+    {
         HybridFieldKind::HeaderCounter
     } else {
         HybridFieldKind::NumericValue
@@ -2673,7 +2672,7 @@ fn hybrid_partial_body_matches(candidate_body_key: &str, target_body_key: &str) 
     let target_len = target_body_key.chars().count();
     let candidate_len = candidate_body_key.chars().count();
     let min_chars = std::cmp::min(4usize, target_len);
-    let min_ratio_chars = std::cmp::max(1usize, (target_len + 1) / 2);
+    let min_ratio_chars = std::cmp::max(1usize, target_len.div_ceil(2));
     candidate_len >= std::cmp::min(min_chars, min_ratio_chars)
 }
 
@@ -3435,7 +3434,7 @@ fn analyse_bytes(buf: &[u8]) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u6
                 }
                 if word_len >= LONG_WORD_LIMIT {
                     long_word_count += 1;
-                    let extra = (word_len - LONG_WORD_LIMIT) as u64; // >= 0
+                    let extra = word_len - LONG_WORD_LIMIT; // >= 0
                     let mut weight = 1 + extra; // equals (len - 20)
                     if weight > 380 {
                         weight = 380;
@@ -3512,7 +3511,7 @@ fn analyse_bytes(buf: &[u8]) -> (u64, u64, u64, u64, u64, u64, u64, u64, u64, u6
         }
         if word_len >= LONG_WORD_LIMIT {
             long_word_count += 1;
-            let extra = (word_len - LONG_WORD_LIMIT) as u64;
+            let extra = word_len - LONG_WORD_LIMIT;
             let mut weight = 1 + extra; // equals (len - 20)
             if weight > 380 {
                 weight = 380;
@@ -3790,7 +3789,7 @@ pub fn score_markdown_directory_internal(
             .into_iter()
             .par_bridge()
             .filter_map(Result::ok)
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
             .map(|e| {
                 let path = e.path();
                 let buf = fs::read(path).expect("read");
@@ -3802,6 +3801,7 @@ pub fn score_markdown_directory_internal(
 }
 
 // Detailed variants for analysis layer
+#[allow(clippy::type_complexity)] // positional metric tuple consumed by the PyO3 wrappers
 pub fn score_markdown_file_detailed_internal(
     path: &Path,
 ) -> anyhow::Result<(
@@ -3836,6 +3836,7 @@ pub fn score_markdown_file_detailed_internal(
     Ok(compute_score_and_details(&buf))
 }
 
+#[allow(clippy::type_complexity)] // positional metric tuple consumed by the PyO3 wrappers
 pub fn score_markdown_directory_detailed_internal(
     root: &Path,
     n_threads: Option<usize>,
@@ -3873,7 +3874,7 @@ pub fn score_markdown_directory_detailed_internal(
             .into_iter()
             .par_bridge()
             .filter_map(Result::ok)
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
             .map(|e| {
                 let path = e.path();
                 let buf = fs::read(path).expect("read");
@@ -3945,7 +3946,7 @@ pub fn score_markdown_directory_ocr_profile_internal(
             .into_iter()
             .par_bridge()
             .filter_map(Result::ok)
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
             .map(|e| {
                 let path = e.path();
                 let buf = fs::read(path).expect("read");
@@ -3994,7 +3995,7 @@ pub fn export_ocr_match_debug_pages_internal(
                 .into_iter()
                 .par_bridge()
                 .filter_map(Result::ok)
-                .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
                 .map(|e| {
                     let path = e.path();
                     let source_stem = path
@@ -4052,7 +4053,7 @@ pub fn export_ocr_match_debug_pages_internal(
             .into_iter()
             .par_bridge()
             .filter_map(Result::ok)
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
             .map(|e| {
                 let path = e.path();
                 let source_stem = path
@@ -4142,7 +4143,7 @@ pub fn export_numeric_match_debug_pages_internal(
                 .into_iter()
                 .par_bridge()
                 .filter_map(Result::ok)
-                .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
                 .map(|e| {
                     let path = e.path();
                     let source_stem = path
@@ -4208,7 +4209,7 @@ pub fn export_numeric_match_debug_pages_internal(
             .into_iter()
             .par_bridge()
             .filter_map(Result::ok)
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
             .map(|e| {
                 let path = e.path();
                 let source_stem = path
@@ -4311,7 +4312,7 @@ pub fn export_token_category_debug_pages_internal(
                     .into_iter()
                     .par_bridge()
                     .filter_map(Result::ok)
-                    .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
                     .map(|e| {
                         let path = e.path();
                         let source_stem = path
@@ -4371,7 +4372,7 @@ pub fn export_token_category_debug_pages_internal(
             .into_iter()
             .par_bridge()
             .filter_map(Result::ok)
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
             .map(|e| {
                 let path = e.path();
                 let source_stem = path

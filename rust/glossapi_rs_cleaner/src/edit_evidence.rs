@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::path::Path;
 
 thread_local! {
+    #[allow(clippy::type_complexity)] // (rule, start, end, replacement) edit records
     static EDITS: RefCell<Option<Vec<(String, usize, usize, String)>>> = const { RefCell::new(None) };
 }
 

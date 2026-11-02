@@ -533,10 +533,8 @@ fn line_is_hard_break(line: &str) -> bool {
         if c.is_ascii_digit() {
             digit_run += 1;
         } else {
-            if digit_run > 0 && (c == '.' || c == ')') {
-                if chars.next() == Some(' ') {
-                    return true;
-                }
+            if digit_run > 0 && (c == '.' || c == ')') && chars.next() == Some(' ') {
+                return true;
             }
             break;
         }
@@ -559,69 +557,69 @@ fn line_is_hard_break(line: &str) -> bool {
 // Phase A orchestrator — run all Phase A transforms in the correct order.
 // ---------------------------------------------------------------------------
 
-/// Per-transform counters for Phase A. Populated by
-/// `normalize_md_syntax_with_stats`; the plain `normalize_md_syntax`
-/// drops the counter side for callers that don't need them.
-///
-/// All char-saved counters are `chars_before - chars_after` for the
-/// lines the specific transform touched. Count counters are the
-/// number of lines / rows / joins the transform performed.
-/// Instrumented variant of `normalize_md_syntax`: returns the
-/// transformed text AND per-transform counters. Used for the
-/// "most-altered files" corpus audit (see
-/// `cleaning_scripts/compute_phase_a_stats_per_doc.py`).
-/// PyO3 entry: run Phase A on `text` and return the per-transform
-/// counters as a Python dict. Used by the "most-altered files" corpus
-/// audit so it doesn't need to shell through the full cleaner.
-///
-/// Keys in the returned dict:
-/// - `hr_lines_normalized`
-/// - `hr_chars_saved`
-/// - `gfm_rows_normalized`
-/// - `gfm_chars_saved`
-/// - `reflow_joins`
-/// - `total_chars_saved`
-/// - `input_chars`
-/// - `output_chars`
-/// PyO3 entry: apply Phase A (orchestrator) to `text` and return
-/// the transformed string. Used by the "most-altered files" review
-/// so the sampler can show RAW vs POST-Phase-A side-by-side without
-/// running the heavier per-char cleaner.
-/// PyO3 entry: compute Phase A stats for one doc and return a
-/// ready-to-write JSON line (no trailing newline). This exists so
-/// the corpus-audit driver doesn't have to round-trip through a
-/// Python dict + `json.dumps` per doc — per the
-/// `feedback_rust_for_corpus_pipelines` rule, the hot per-doc path
-/// stays in Rust.
-///
-/// Field order matches the Python-side jsonl the driver used to
-/// emit; existing downstream consumers (the sampler) parse by key,
-/// so field order is documentation-only.
-/// Minimal JSON string encoder: quotes, then escapes control chars
-/// and the two required characters (`"`, `\`). Covers what the
-/// corpus fields contain (dataset names, doc IDs, parquet
-/// filenames). Emits as a valid JSON string literal.
-/// Format an `f64` without scientific notation and finite-only
-/// (NaN / inf collapse to 0.0 per JSON-safe convention since they
-/// can't appear for our ratios anyway — input_chars guards div-by-0).
-/// Run the full MD-syntax normalization phase in the correct order.
-///
-/// Order rationale:
-///
-/// 1. **GFM table separator minimization first.** Runs against raw
-///    input lines so it can pair each separator row with its header
-///    row. If reflow ran before this, a long `|-----|-----|` row
-///    would pass through unchanged (table rows are hard-breaks for
-///    reflow anyway, but any future subtle interaction is avoided by
-///    running this first).
-/// 2. **HR thematic-break minimization.** Per-line pass; order mostly
-///    independent of the other two.
-/// 3. **Paragraph reflow LAST.** Reflow depends on being able to
-///    identify hard-break lines (including table rows and HRs, both
-///    of which should already be in canonical form so the hard-break
-///    detector is reliable).
-///
-/// Returns the rewritten text.
+// Per-transform counters for Phase A. Populated by
+// `normalize_md_syntax_with_stats`; the plain `normalize_md_syntax`
+// drops the counter side for callers that don't need them.
+//
+// All char-saved counters are `chars_before - chars_after` for the
+// lines the specific transform touched. Count counters are the
+// number of lines / rows / joins the transform performed.
+// Instrumented variant of `normalize_md_syntax`: returns the
+// transformed text AND per-transform counters. Used for the
+// "most-altered files" corpus audit (see
+// `cleaning_scripts/compute_phase_a_stats_per_doc.py`).
+// PyO3 entry: run Phase A on `text` and return the per-transform
+// counters as a Python dict. Used by the "most-altered files" corpus
+// audit so it doesn't need to shell through the full cleaner.
+//
+// Keys in the returned dict:
+// - `hr_lines_normalized`
+// - `hr_chars_saved`
+// - `gfm_rows_normalized`
+// - `gfm_chars_saved`
+// - `reflow_joins`
+// - `total_chars_saved`
+// - `input_chars`
+// - `output_chars`
+// PyO3 entry: apply Phase A (orchestrator) to `text` and return
+// the transformed string. Used by the "most-altered files" review
+// so the sampler can show RAW vs POST-Phase-A side-by-side without
+// running the heavier per-char cleaner.
+// PyO3 entry: compute Phase A stats for one doc and return a
+// ready-to-write JSON line (no trailing newline). This exists so
+// the corpus-audit driver doesn't have to round-trip through a
+// Python dict + `json.dumps` per doc — per the
+// `feedback_rust_for_corpus_pipelines` rule, the hot per-doc path
+// stays in Rust.
+//
+// Field order matches the Python-side jsonl the driver used to
+// emit; existing downstream consumers (the sampler) parse by key,
+// so field order is documentation-only.
+// Minimal JSON string encoder: quotes, then escapes control chars
+// and the two required characters (`"`, `\`). Covers what the
+// corpus fields contain (dataset names, doc IDs, parquet
+// filenames). Emits as a valid JSON string literal.
+// Format an `f64` without scientific notation and finite-only
+// (NaN / inf collapse to 0.0 per JSON-safe convention since they
+// can't appear for our ratios anyway — input_chars guards div-by-0).
+// Run the full MD-syntax normalization phase in the correct order.
+//
+// Order rationale:
+//
+// 1. **GFM table separator minimization first.** Runs against raw
+//    input lines so it can pair each separator row with its header
+//    row. If reflow ran before this, a long `|-----|-----|` row
+//    would pass through unchanged (table rows are hard-breaks for
+//    reflow anyway, but any future subtle interaction is avoided by
+//    running this first).
+// 2. **HR thematic-break minimization.** Per-line pass; order mostly
+//    independent of the other two.
+// 3. **Paragraph reflow LAST.** Reflow depends on being able to
+//    identify hard-break lines (including table rows and HRs, both
+//    of which should already be in canonical form so the hard-break
+//    detector is reliable).
+//
+// Returns the rewritten text.
 // ---------------------------------------------------------------------------
 // Non-destructive canonicalization — single source of truth for what
 // the cleaner WOULD produce if every pass were non-destructive.

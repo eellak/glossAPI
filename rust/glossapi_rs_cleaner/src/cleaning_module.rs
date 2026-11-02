@@ -916,7 +916,7 @@ pub fn core_clean_text_with_stats_with_mode(
     let trace_enabled = crate::edit_evidence::enabled();
     let mut trace_fragments = text.split_inclusive('\n');
     let mut trace_cursor = 0usize;
-    for (_line_index, line) in text.lines().enumerate() {
+    for line in text.lines() {
         let trace_byte_start = cleaned_output_string_builder.len();
         let trace_offset = trace_cursor;
         let trace_fragment = trace_fragments.next().unwrap_or(line);
@@ -1147,16 +1147,12 @@ pub fn core_clean_text_with_stats_with_mode(
             }
 
             let ch_u32 = ch as u32;
-            let is_char_allowed_by_scripts;
-            let is_char_in_unusual_set;
 
-            if ch_u32 < 1024 {
-                is_char_allowed_by_scripts = local_allowed_bitmap[ch_u32 as usize];
-                is_char_in_unusual_set = local_unusual_bitmap[ch_u32 as usize];
+            let (is_char_allowed_by_scripts, is_char_in_unusual_set) = if ch_u32 < 1024 {
+                (local_allowed_bitmap[ch_u32 as usize], local_unusual_bitmap[ch_u32 as usize])
             } else {
-                is_char_allowed_by_scripts = allowed_chars.contains(&ch);
-                is_char_in_unusual_set = unusual_chars_set.contains(&ch);
-            }
+                (allowed_chars.contains(&ch), unusual_chars_set.contains(&ch))
+            };
 
             let should_remove_char = is_unicode_noise_char(ch)
                 || (is_char_in_unusual_set && !is_char_allowed_by_scripts);
@@ -1347,10 +1343,8 @@ pub fn core_clean_text_with_stats_with_mode(
     // Adjust final newline if original text didn't have one.
     // This affects the final string, but sum_kept_line_content_chars and original_chars_for_badness
     // are based on line contents only, so they remain unaffected by this specific string manipulation.
-    if !text.is_empty() && !text.ends_with('\n') {
-        if final_cleaned_text.ends_with('\n') {
-            final_cleaned_text.pop();
-        }
+    if !text.is_empty() && !text.ends_with('\n') && final_cleaned_text.ends_with('\n') {
+        final_cleaned_text.pop();
     }
 
     crate::edit_evidence::change("preserve_final_newline", &before_newline, &final_cleaned_text, 0);
@@ -2263,7 +2257,7 @@ see https://example.org/path/hyphenminus/file\n";
             .lines()
             .skip_while(|l| !l.starts_with("```"))
             .collect();
-        assert!(fence_block.iter().any(|l| *l == "----"));
+        assert!(fence_block.contains(&"----"));
     }
 
     #[test]

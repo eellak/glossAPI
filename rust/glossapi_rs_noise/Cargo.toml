@@ -1,6 +1,6 @@
 [package]
 name = "glossapi_rs_noise"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.85"
 authors = ["GlossAPI Team <glossapi.team@eellak.gr>"]

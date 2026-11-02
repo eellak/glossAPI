@@ -1,3 +1,13 @@
+"""HISTORICAL PROBE - provenance copy only; not runnable from the repository and run by no test (T1-G10).
+
+Verbatim copy (below this docstring) of the CP-R1c2 review reproducer
+`glossapi_improvement_20261006/review_scratch/CP-R1c2/name_decoding_probe.py`, original sha256
+1a2a6cd5c9a8c085257b0c3fa19016daba388baeda3cefb79f312f39b3a9a4da. It needs that review scratch: `adversarial.py`
+(sha256 fd5bca4155b455a1e51e5bea2b9e69213bfeca91823b507f6bde8821cb1663ed) and `independent_invariants.py`
+(sha256 66d414af79f5c5ae7d4cb40f1066da5e5f054d60446e3f7dabbea84f657cffd0, a review-only helper, not a package), a
+`/tmp/CP-R1c2-native` build and the `/tmp/CP-R1c2-glyph-probe` binary. The self-contained replacement is
+`generate_name_decoding_fixtures.py`; its outputs are committed under `fixtures/review/name_decoding_*`.
+"""
 from pathlib import Path
 import sys,json,re,subprocess
 SCRATCH=Path('/Users/foivoskarounos-zamparloukos/Projects/glossapi-ocr-local/experiments/glossapi_improvement_20261006/review_scratch/CP-R1c2')

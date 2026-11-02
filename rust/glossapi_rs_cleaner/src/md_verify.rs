@@ -442,8 +442,8 @@ pub fn classify_subsequence_failure(
 fn is_concat_of_adjacent_input_tokens(needle: &str, input: &[String]) -> bool {
     for start in 0..input.len() {
         let mut acc = String::new();
-        for i in start..input.len() {
-            acc.push_str(&input[i]);
+        for (i, token) in input.iter().enumerate().skip(start) {
+            acc.push_str(token);
             if acc.len() > needle.len() {
                 break;
             }

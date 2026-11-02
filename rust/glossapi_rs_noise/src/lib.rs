@@ -37,6 +37,8 @@
 // branches don't currently reach them. Real bugs (unused vars,
 // unread assignments) still warn.
 #![allow(dead_code)]
+// PyO3 entry points mirror the Python keyword surfaces, so their argument counts are part of the API (STATE-4).
+#![allow(clippy::too_many_arguments)]
 
 mod noise_metrics;
 
@@ -650,10 +652,17 @@ fn evaluate_page_character_noise(py: Python<'_>, page: &str) -> PyResult<Py<PyDi
     Ok(item.into())
 }
 
+/// Native API marker (INTEG-G1): `GLOSSAPI_NATIVE_API:<module>:<level>;`. Raise the level whenever the Python package
+/// starts to rely on a new or changed export; `glossapi.capabilities.NATIVE_API_LEVELS` names the level it needs, and
+/// reads these bytes from the built binary without importing it, so a stale build makes its stage unavailable instead
+/// of failing per document. Exported to Python as `__glossapi_native_api__`, which also keeps the bytes in the binary.
+pub const NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:glossapi_rs_noise:1;";
+
 // gil_used = true keeps the 0.19 contract (the module requires the GIL): PyO3 0.28+ would otherwise declare
 // free-threaded support, which has not been audited.
 #[pymodule(gil_used = true)]
 fn glossapi_rs_noise(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("__glossapi_native_api__", NATIVE_API_MARKER)?;
     m.add_function(wrap_pyfunction!(score_markdown_file, m)?)?;
     m.add_function(wrap_pyfunction!(score_markdown_directory, m)?)?;
     m.add_function(wrap_pyfunction!(score_markdown_file_detailed, m)?)?;

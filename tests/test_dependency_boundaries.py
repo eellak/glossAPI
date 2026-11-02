@@ -28,15 +28,23 @@ GlossExtract()
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize(('module', 'missing', 'extra'), [
-    ('glossapi.gloss_downloader', 'aiohttp', 'download'),
-    ('glossapi.gloss_browser_downloader', 'PIL', 'browser'),
-    ('glossapi.ocr.docling.pipeline', 'docling', 'layout'),
-    ('glossapi.ocr.math.enrich', 'docling_core', 'layout'),
-    ('glossapi.pdf_repair.tounicode', 'fontTools', 'font-repair'),
-    ('glossapi.pdf_repair.tounicode', 'pypdf', 'font-repair'),
+# DWF1-G03: each cell qualifies one missing package inside a profile where the module's other optional packages are
+# present. `needs` names those prerequisites (skipped when absent); the subprocess also reports the package that really
+# failed to import, so a cell can never pass or fail because a different optional package is missing.
+PREREQUISITE_ABSENT = 3
+
+
+@pytest.mark.parametrize(('module', 'missing', 'extra', 'needs'), [
+    ('glossapi.gloss_downloader', 'aiohttp', 'download', ()),
+    ('glossapi.gloss_browser_downloader', 'PIL', 'browser', ('aiohttp',)),
+    ('glossapi.ocr.docling.pipeline', 'docling', 'layout', ()),
+    ('glossapi.ocr.math.enrich', 'docling_core', 'layout', ()),
+    ('glossapi.pdf_repair.tounicode', 'fontTools', 'font-repair', ()),
+    ('glossapi.pdf_repair.tounicode', 'pypdf', 'font-repair', ('fontTools',)),
 ])
-def test_missing_optional_dependency_names_installable_package(module, missing, extra):
+def test_missing_optional_dependency_names_installable_package(module, missing, extra, needs):
+    for name in needs:
+        pytest.importorskip(name)
     result = isolated(f'''
 import importlib, importlib.abc, sys
 class MissingOptional(importlib.abc.MetaPathFinder):
@@ -47,11 +55,20 @@ sys.meta_path.insert(0, MissingOptional())
 try:
     importlib.import_module({module!r})
 except ImportError as exc:
+    root = exc
+    while root.__cause__ is not None:
+        root = root.__cause__
+    absent = (getattr(root, 'name', None) or '').split('.')[0]
+    if absent and absent != {missing!r}:
+        print(absent)
+        sys.exit({PREREQUISITE_ABSENT})
     assert {missing!r} in str(exc), str(exc)
     assert {('glossapi[' + extra + ']')!r} in str(exc), str(exc)
 else:
     raise AssertionError('optional package unexpectedly imported')
 ''')
+    if result.returncode == PREREQUISITE_ABSENT:
+        pytest.skip(f'{module}: optional prerequisite {result.stdout.strip()!r} is absent in this profile')
     assert result.returncode == 0, result.stderr
 
 

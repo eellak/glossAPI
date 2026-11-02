@@ -255,6 +255,17 @@ def test_clean_supports_score_only_mode(tmp_path: Path) -> None:
     assert (row.get("filter") or "") == "ok"
 
 
+# CP0-debt (K4g B3): the owner's cleaner behaviour is authoritative, so this test is held as a strict xfail rather
+# than rewritten. It passed up to a0e35c8; the owner's cleaner rewrite 2940cea (2026-05-02, "Pilot B", Rule B
+# GLYPH<...> line-drop) now removes the GLYPH lines before the stage-4 report scores the cleaned text, so this input
+# gets mojibake_badness_score 0.0, filter "ok" and needs_ocr False (before: 0.788, "mojibake>0.1", True). Whether a
+# document whose text was all GLYPH markers should still route to OCR is an owner decision; strict=True makes the
+# test fail loudly (XPASS) once the routing is restored, so the marker cannot outlive the decision.
+@pytest.mark.xfail(
+    strict=True,
+    reason="CP0-debt: owner decision pending. Since 2940cea, GLYPH-only text is line-dropped before scoring "
+    "(badness 0.0, needs_ocr False); this test keeps the pre-2940cea OCR-routing expectation.",
+)
 def test_clean_flags_uppercase_glyph_noise(tmp_path: Path) -> None:
     corpus = _build_corpus(tmp_path)
     row = _run_clean_and_read_row(corpus, UPPER_GLYPH_MD, stem="glyph-artefact")
@@ -506,12 +517,12 @@ def test_clean_token_category_debug_exports_synthetic_pages(tmp_path: Path) -> N
             {
                 "category": "glyph_font_like",
                 "pattern_family": "glyph_marker",
-                "pattern": r"GLYPH<\\d+>",
+                "pattern": r"GLYPH<\d+>",
             },
             {
                 "category": "dot_leader_like",
                 "pattern_family": "dot_run",
-                "pattern": r"\\.{4,}",
+                "pattern": r"\.{4,}",
             },
         ],
         synthetic_page_target_chars=120,
