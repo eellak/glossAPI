@@ -21,6 +21,35 @@ from .contracts import OutputArtifact, StageError, StageResult
 
 _producer_hashes=ContextVar('glossapi_producer_hashes',default=None)
 
+# Variables the extractors cap to one thread while they run (GlossExtract._apply_thread_caps, the batched adapter).
+THREAD_CAP_VARIABLES=('OMP_NUM_THREADS','OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','NUMEXPR_NUM_THREADS',
+    'VECLIB_MAXIMUM_THREADS','NUMBA_NUM_THREADS')
+
+
+@contextmanager
+def thread_caps_scope():
+    """Restore the caller's thread variables after an in-process extraction (K4F2-G1).
+
+    Inside the scope the extractors set their caps as before (worker processes started there inherit them). On exit
+    every capped variable has its prior value again, and an unset one is unset, so the frozen execution environment a
+    same-process resume compares is the caller's own. The caller's settings are never removed or rewritten."""
+    prior={name:os.environ.get(name) for name in THREAD_CAP_VARIABLES}
+    try:yield
+    finally:
+        for name,value in prior.items():
+            if value is None:os.environ.pop(name,None)
+            else:os.environ[name]=value
+
+
+def preserving_thread_caps(function):
+    """Decorator form of ``thread_caps_scope`` for an in-process extraction entry."""
+    import functools
+    @functools.wraps(function)
+    def wrapper(*args,**kwargs):
+        with thread_caps_scope():
+            return function(*args,**kwargs)
+    return wrapper
+
 
 @contextmanager
 def producer_hash_scope():

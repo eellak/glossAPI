@@ -8,7 +8,7 @@ from pathlib import Path
 import time
 
 from .contracts import PackageRequirement, PlannedOperation, StagePlan, StageResult, StageSpecification
-from .execution import failed_result, freeze_inputs, outputs_in, run_fenced, sha256_file
+from .execution import failed_result, freeze_inputs, outputs_in, run_fenced, sha256_file, thread_caps_scope
 from .receipts import capture_backend_observations
 
 
@@ -49,7 +49,9 @@ class ExtractStage:
         raise ValueError("Extraction has no aggregate finalize operation")
 
     def run_document(self, request, *, reporter):
-        return run_fenced(self, request, reporter=reporter)
+        # An in-process attempt leaves the caller's thread variables as they were (K4F2-G1).
+        with thread_caps_scope():
+            return run_fenced(self, request, reporter=reporter)
 
     def _run_document(self, request, *, reporter):
         if len(request.inputs) != 1:

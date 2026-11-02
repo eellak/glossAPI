@@ -354,8 +354,6 @@ class GlossExtract:
             pass
 
     def _apply_thread_caps(self) -> None:
-        if self._thread_caps_applied:
-            return
         import os as _os
 
         defaults = {
@@ -366,8 +364,12 @@ class GlossExtract:
             "VECLIB_MAXIMUM_THREADS": "1",
             "NUMBA_NUM_THREADS": "1",
         }
+        # Set for the extraction in progress (and the workers it starts); the in-process extraction entries restore
+        # the caller's values afterwards (stages.execution.thread_caps_scope, K4F2-G1), so set them on every call.
         for key, value in defaults.items():
             _os.environ.setdefault(key, value)
+        if self._thread_caps_applied:
+            return
         torch_mod = _maybe_import_torch()
         try:
             if torch_mod is not None and hasattr(torch_mod, "set_num_threads"):
@@ -1481,6 +1483,9 @@ class GlossExtract:
                 else:
                     problematic.append(Path(file_path).name)
             except Exception as e:
+                from .stages.compatibility import PublicationSourceConflictError
+                if isinstance(e, PublicationSourceConflictError):
+                    raise  # a refused publication is the caller's decision, never a per-file failure (CP-K4c3 R1)
                 problematic.append(Path(file_path).name)
                 self._log.error(f"Failed during chunked processing for {Path(file_path).name}: {e}")
 

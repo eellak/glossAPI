@@ -29,9 +29,13 @@ _OPEN_WRITERS = set()
 # (first open in a process, a file changed by anyone else, a leftover WAL) runs the full check. The schema/migration
 # checks still run at every open.
 #
-# CP-K4b F1/F3/F4: trust is installed only by a writer that validated the ledger at open (full check, or an unchanged
-# trusted identity), saw no other connection commit during its lifetime (``PRAGMA data_version`` unchanged) and closed
-# cleanly with the file unchanged across its own close. A failed constructor or close removes the entry and never
+# CP-K4b F1/F3/F4, CP-K4c3 R2: trust is installed only by a writer that validated the ledger at open (full check, or
+# an unchanged trusted identity) and closed cleanly through one fence: after its own complete checkpoint it observes the
+# file identity (empty WAL), then finds ``PRAGMA data_version`` unchanged since the baseline taken right after
+# connecting, and after closing finds that same identity with no WAL. What this guarantees: no other connection
+# committed between the open baseline and the version comparison, and the file changed neither by size nor by
+# timestamp between the identity observation and the close. It does not cover a same-size write that keeps both mtime
+# and ctime (one timestamp tick; K4F1-G1). A failed constructor or close removes the entry and never
 # installs one. The identity includes ``st_ctime_ns`` (set by the kernel on any write or metadata change; ``utime``
 # cannot restore it). A forked child starts with no trust (``os.register_at_fork``).
 _integrity_known: dict[str, tuple[int, int, int, int, int]] = {}
@@ -57,6 +61,14 @@ def _ledger_identity(path: Path, *, allow_wal: bool = False) -> tuple[int, int, 
     if not allow_wal and os.path.exists(str(path)+'-wal'):
         return None
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _wal_empty(path: Path) -> bool:
+    """No committed frames outstanding: the ``-wal`` is absent or truncated to zero bytes."""
+    try:
+        return os.stat(str(path)+'-wal').st_size == 0
+    except FileNotFoundError:
+        return True
 
 
 def _forget_integrity_after_fork() -> None:
@@ -489,10 +501,15 @@ class LedgerWriter:
                 if hasattr(self,'_durable_files'):self.durable_barrier()
                 if self.barrier_context:self._vacuum_at_run_close()
                 if getattr(self, '_validated', False):
-                    # Fold our own WAL into the file, then require that no other connection committed since open.
-                    self.connection.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+                    # The close fence (CP-K4c3 R2). Fold our own WAL into the file completely; then observe the
+                    # candidate identity (with an empty WAL) BEFORE the last data_version comparison. A commit by
+                    # another connection before that comparison changes data_version; one after it changes the file
+                    # (or leaves a WAL), which the post-close comparison below rejects.
+                    checkpoint = self.connection.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()
+                    complete = checkpoint is not None and checkpoint[0] == 0 and checkpoint[1] == checkpoint[2]
+                    candidate = _ledger_identity(self.path, allow_wal=True) if complete and _wal_empty(self.path) else None
                     unchanged = self.connection.execute('PRAGMA data_version').fetchone()[0] == self._data_version
-                    before = _ledger_identity(self.path, allow_wal=True) if unchanged else None
+                    before = candidate if unchanged else None
                     trusted = before is not None
         except BaseException as error:
             failure = error
@@ -506,8 +523,9 @@ class LedgerWriter:
             if key is not None:
                 _integrity_known.pop(key, None)
                 if trusted and failure is None:
-                    # The file must be exactly as our checkpoint left it: a commit by anyone between the check and
-                    # our close changes it (or leaves a WAL), and then nothing is trusted.
+                    # The file must still have the identity observed inside the fence, with no WAL outstanding: a
+                    # commit by anyone after the data_version comparison changes it (or leaves a WAL), and then
+                    # nothing is trusted. Only a same-size write within the same timestamp tick escapes (K4F1-G1).
                     after = _ledger_identity(self.path)
                     if after is not None and after == before:
                         _integrity_known[key] = after

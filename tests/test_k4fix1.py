@@ -421,8 +421,9 @@ def test_f7_large_producer_metadata_is_charged_before_publication(tmp_path, monk
     from glossapi.stages import final_products, disk_budget
     from glossapi.stages.disk_budget import DiskBudgetError
     monkeypatch.setattr(disk_budget, 'require_disk_guard', lambda root, settings: (Path(root)/'.glossapi/staging').mkdir(parents=True, exist_ok=True))
-    # Room for the metadata-table allowance of a first run (CP-K4ac2 R3) but not for 2 x 300 KB of producer metadata.
-    monkeypatch.setattr(final_products, 'corpus_room', lambda *a: 512*1024)
+    # Room for the run's charge without producer metadata (CP-K4c3 R3: every publication, measured 1.36 MB for this
+    # one-document run) but not for 2 x 300 KB of producer metadata on top of it (measured 2.30 MB).
+    monkeypatch.setattr(final_products, 'corpus_room', lambda *a: 1800*1024)
     checks = []
     original = final_products.require_room
     def checked(root, settings, need, **kwargs):

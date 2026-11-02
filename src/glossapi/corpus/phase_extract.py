@@ -4,6 +4,7 @@ from __future__ import annotations
 from ..stages.profile import adapters_enabled
 
 from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows, accept_worker_observations
+from ..stages.execution import preserving_thread_caps
 
 from glossapi.optional_dependencies import optional_dependencies
 
@@ -373,6 +374,7 @@ class ExtractPhaseMixin:
         )
 
     @shadow_stage("extract", "extract.wrapper")
+    @preserving_thread_caps
     def extract(
         self,
         input_format: str = "all",
