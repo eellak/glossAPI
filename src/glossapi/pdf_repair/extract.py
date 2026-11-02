@@ -42,7 +42,7 @@ def _deadline(seconds: float):
 
 
 def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: float, backend_name: str | None = None):
-    """Return (input path, metadata); any pre-pass failure keeps the source.
+    """Return (input path, metadata); any pre-pass failure keeps the source, except a full disk, which is raised.
 
     No reuse of an existing ``repaired_pdfs/`` file (T2-G07): an mtime ordering does not bind the repaired PDF to the
     current source bytes, so every call derives it from the source again (the repair is deterministic). The ledger
@@ -116,6 +116,11 @@ def repair_for_extract(source: Path, root: Path, *, enabled: bool, deadline: flo
                 "not_needed" if report.category == "consistent" else "unsupported")
             data["font_repair_valid_rate_after"] = data["font_repair_valid_rate_before"]
     except (_RepairDeadline, Exception) as exc:
+        from ..stages.execution import disk_full
+        if disk_full(exc):
+            # K4g fix 3: a full disk is the attempt's failure (typed disk_full, retried by the resume), never a
+            # repair error that carries on with the unrepaired PDF as a successful extract.
+            raise
         observe("font_repair_error", path=source, error=exc, fallback="original_pdf")
         data.update(font_repair_status="error", font_repair_fonts=0,
                     font_repair_valid_rate_after=None,

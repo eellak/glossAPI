@@ -10,7 +10,7 @@ from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 
 from .contracts import ArtifactReference, DocumentSnapshot, StageSpecification
-from .execution import sha256_file
+from .execution import disk_full, sha256_file  # disk_full: one definition, shared with the worker typing
 from .replay import committed_results
 from .scheduler import ScheduledOperation, StreamingScheduler, local_path
 from ..ledger.writer import LedgerWriter
@@ -1252,19 +1252,6 @@ class DiskFullError(OSError):
         super().__init__(errno.ENOSPC,message)
         self.details={'errno':errno.ENOSPC,'run_id':run_id,'location':location,
             'action':'free space (or enlarge the filesystem), then resume: glossapi run --resume '+(run_id or 'RUN_ID')}
-
-
-def disk_full(error):
-    """True when an exception (or its cause chain) is an exhausted filesystem: ENOSPC or SQLite's disk-full."""
-    import errno
-    import sqlite3
-    seen=set()
-    while error is not None and id(error) not in seen:
-        seen.add(id(error))
-        if isinstance(error,OSError) and error.errno in (errno.ENOSPC,errno.EDQUOT):return True
-        if isinstance(error,sqlite3.Error) and (getattr(error,'sqlite_errorcode',None)==13 or 'disk is full' in str(error)):return True
-        error=error.__cause__ or error.__context__
-    return False
 
 
 def _record_disk_full(writer,corpus,error):

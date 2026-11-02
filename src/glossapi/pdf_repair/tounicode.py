@@ -380,6 +380,14 @@ def _document_category(fonts: list[FontReport], has_text: bool) -> str:
     return next(iter(categories)) if len(categories) == 1 else "mixed" if categories else "unsupported"
 
 
+def _raise_os_error(exc: Exception) -> None:
+    """An OS-level I/O failure (an OSError with an errno: ENOSPC, EDQUOT, EIO, ENOENT ...) is raised, as the native
+    backend raises it (K4g fix 3): only document and font problems become an error-bearing report, so a full disk is
+    never read as a broken PDF."""
+    if isinstance(exc, OSError) and exc.errno is not None:
+        raise exc
+
+
 def analyze_pdf(path: str | Path) -> PdfFontReport:
     """Analyze without writing; bad PDFs return an error-bearing report."""
     report = PdfFontReport(str(path))
@@ -391,6 +399,7 @@ def analyze_pdf(path: str | Path) -> PdfFontReport:
         report.fonts = [_inspect_font(font)[0] for font in _iter_fonts(reader)]
         report.category = _document_category(report.fonts, has_text)
     except Exception as exc:
+        _raise_os_error(exc)
         report.error = f"{type(exc).__name__}: {exc}"
         logging.getLogger(__name__).debug("PDF analysis failed for %s", path, exc_info=True)
     return report
@@ -461,6 +470,7 @@ def repair_pdf(src: str | Path, dst: str | Path, *,
         temporary = None
         result.written = True
     except Exception as exc:
+        _raise_os_error(exc)
         result.error = f"{type(exc).__name__}: {exc}"
         logging.getLogger(__name__).debug("PDF repair failed for %s", src, exc_info=True)
     finally:

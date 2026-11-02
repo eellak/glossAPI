@@ -36,6 +36,10 @@ pub struct PdfFontReport {
     pub sampled_pages: Vec<usize>,
     pub fonts: Vec<FontReport>,
     pub error: Option<String>,
+    /// The OS-level I/O failure behind `error` (errno, message), if any: not serialized; the Python binding raises
+    /// it as `OSError` so a full disk is never read as a document error (K4g fix 3).
+    #[serde(skip)]
+    pub os_error: Option<(i32, String)>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RepairResult {
@@ -46,6 +50,9 @@ pub struct RepairResult {
     pub fonts: Vec<FontReport>,
     pub written: bool,
     pub error: Option<String>,
+    /// As `PdfFontReport::os_error`.
+    #[serde(skip)]
+    pub os_error: Option<(i32, String)>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Sample {
@@ -70,6 +77,15 @@ fn error(e: anyhow::Error) -> String {
     } else {
         format!("ValueError: {s}")
     }
+}
+/// The OS-level I/O failure in an error's cause chain: an `io::Error` that carries an errno (ENOSPC, EDQUOT, EIO,
+/// EACCES ...), with the error's message. A decoder `io::Error` (flate2 `InvalidData`) carries no errno and stays a
+/// document error.
+fn os_error(e: &anyhow::Error) -> Option<(i32, String)> {
+    e.chain()
+        .filter_map(|c| c.downcast_ref::<std::io::Error>())
+        .find_map(std::io::Error::raw_os_error)
+        .map(|code| (code, e.to_string()))
 }
 fn descendant(pdf: &mut Pdf, f: &Obj) -> Result<Obj> {
     let a = pdf.get(f, "DescendantFonts")?.array();
@@ -437,6 +453,7 @@ fn analyze_inner(
         sampled_pages: vec![],
         fonts: vec![],
         error: None,
+        os_error: None,
     };
     let res = (|| -> Result<Analysis> {
         let mut pdf = Pdf::open(path)?;
@@ -463,6 +480,7 @@ fn analyze_inner(
     match res {
         Ok(a) => (r, Some(a)),
         Err(e) => {
+            r.os_error = os_error(&e);
             r.error = Some(error(e));
             (r, None)
         }
@@ -584,6 +602,7 @@ fn repair_core<'a>(
         fonts: vec![],
         written: false,
         error: None,
+        os_error: None,
     };
     let mut temp = None;
     let res = (|| -> Result<()> {
@@ -686,6 +705,7 @@ fn repair_core<'a>(
         let _ = std::fs::remove_file(temp);
     }
     if let Err(e) = res {
+        r.os_error = os_error(&e);
         r.error = Some(error(e))
     }
     r
@@ -697,14 +717,35 @@ pub fn repair_protected(src: &str, dst: &str, sources: &[PathBuf]) -> RepairResu
 pub fn repair(src: &str, dst: &str) -> RepairResult {
     repair_protected(src, dst, &[])
 }
+/// Native API marker (INTEG-G1): `GLOSSAPI_NATIVE_API:<module>:<level>;`. Raise the level whenever the Python package
+/// starts to rely on a new or changed export; `glossapi.capabilities.NATIVE_API_LEVELS` names the level it needs, and
+/// reads these bytes from the built binary without importing it. Level 1 (K4g fix 3): an OS-level I/O failure raises
+/// `OSError` with its errno instead of returning a `ValueError` text; the repair selector does not use an older build.
+/// Exported to Python as `__glossapi_native_api__`, which also keeps the bytes in the binary.
+pub const NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:1;";
 #[cfg(all(feature = "python", not(test)))]
 mod python {
     use super::*;
+    use pyo3::exceptions::{PyOSError, PyValueError};
     use pyo3::prelude::*;
     fn dict(py: Python<'_>, r: &impl Serialize) -> PyResult<Py<PyAny>> {
-        let s = serde_json::to_string(r)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let s = serde_json::to_string(r).map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(py.import("json")?.getattr("loads")?.call1((s,))?.unbind())
+    }
+    /// An OS-level I/O failure raises `OSError(errno, message)` (Python picks the errno's subclass, e.g.
+    /// FileNotFoundError); document and font problems stay in the returned report's `error` (K4g fix 3).
+    fn raise_os(os_error: &Option<(i32, String)>) -> PyResult<()> {
+        match os_error {
+            Some((code, message)) => Err(PyOSError::new_err((*code, message.clone()))),
+            None => Ok(()),
+        }
+    }
+    /// A diagnostics error: `OSError` with its errno for an OS-level I/O failure, otherwise `ValueError`.
+    fn py_err(e: anyhow::Error) -> PyErr {
+        match os_error(&e) {
+            Some((code, message)) => PyOSError::new_err((code, message)),
+            None => PyValueError::new_err(e.to_string()),
+        }
     }
     /// Opaque result of `analyze_for_repair`, accepted by `repair_pdf(..., analysis=)`.
     #[pyclass(module = "glossapi_rs_pdfrepair", frozen)]
@@ -718,12 +759,15 @@ mod python {
     }
     #[pyfunction]
     fn analyze_pdf(py: Python<'_>, path: &str) -> PyResult<Py<PyAny>> {
-        dict(py, &analyze(path))
+        let report = analyze(path);
+        raise_os(&report.os_error)?;
+        dict(py, &report)
     }
     /// `(report dict, PdfAnalysis | None)`: the analysis is None exactly when the report has an error.
     #[pyfunction(name = "analyze_for_repair")]
     fn py_analyze_for_repair(py: Python<'_>, path: &str) -> PyResult<(Py<PyAny>, Option<Py<PdfAnalysis>>)> {
         let (report, analysis) = super::analyze_for_repair(path);
+        raise_os(&report.os_error)?;
         let handle = match analysis {
             Some(a) => Some(Py::new(py, PdfAnalysis(std::sync::Mutex::new(a)))?),
             None => None,
@@ -743,36 +787,39 @@ mod python {
             .into_iter()
             .map(PathBuf::from)
             .collect::<Vec<_>>();
-        match analysis {
+        let result = match analysis {
             Some(a) => {
                 let mut guard = a
                     .get()
                     .0
                     .lock()
                     .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("PdfAnalysis lock poisoned"))?;
-                dict(py, &repair_with_analysis(src, dst, &sources, &mut guard))
+                repair_with_analysis(src, dst, &sources, &mut guard)
             }
-            None => dict(py, &repair_protected(src, dst, &sources)),
-        }
+            None => repair_protected(src, dst, &sources),
+        };
+        raise_os(&result.os_error)?;
+        dict(py, &result)
     }
     /// Diagnostics for the equality gates: per-page native text presence for every page.
     #[pyfunction]
     fn _native_page_flags_json(path: &str) -> PyResult<String> {
-        let mut pdf = Pdf::open(path).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        let s = text::page_flags(&mut pdf).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        serde_json::to_string(&s).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+        let mut pdf = Pdf::open(path).map_err(py_err)?;
+        let s = text::page_flags(&mut pdf).map_err(py_err)?;
+        serde_json::to_string(&s).map_err(|e| PyValueError::new_err(e.to_string()))
     }
     /// Diagnostics for the equality gates: the native text sample, shaped like `_sample_json`'s JSON.
     #[pyfunction]
     fn _native_sample_json(path: &str) -> PyResult<String> {
-        let mut pdf = Pdf::open(path).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        let s = text::native_sample(&mut pdf).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
-        serde_json::to_string(&s).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+        let mut pdf = Pdf::open(path).map_err(py_err)?;
+        let s = text::native_sample(&mut pdf).map_err(py_err)?;
+        serde_json::to_string(&s).map_err(|e| PyValueError::new_err(e.to_string()))
     }
     // gil_used = true keeps the 0.19 contract (the module requires the GIL); PyO3 0.28+ would otherwise declare
     // free-threaded support, which has not been audited (abi3 builds cannot load on free-threaded Python anyway).
     #[pymodule(gil_used = true)]
     fn glossapi_rs_pdfrepair(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        m.add("__glossapi_native_api__", NATIVE_API_MARKER)?;
         m.add_function(wrap_pyfunction!(analyze_pdf, m)?)?;
         m.add_function(wrap_pyfunction!(repair_pdf, m)?)?;
         m.add_function(wrap_pyfunction!(py_analyze_for_repair, m)?)?;
@@ -1003,6 +1050,57 @@ mod tests {
         std::fs::write(&p, b"<html>503</html>").unwrap();
         let (report, analysis) = analyze_for_repair(p.to_str().unwrap());
         assert!(report.error.is_some() && analysis.is_none());
+        assert!(report.os_error.is_none(), "a malformed PDF is a document error, not an OS error");
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn os_errors_keep_their_errno_and_decoder_errors_have_none() {
+        // K4g fix 3: a full disk (errno 28) under context is found in the cause chain, with the error's message.
+        let full = anyhow::Error::from(std::io::Error::from_raw_os_error(28)).context("writing the staged PDF");
+        let (code, message) = os_error(&full).unwrap();
+        assert_eq!(code, 28);
+        assert_eq!(message, "writing the staged PDF");
+        let bare = anyhow::Error::from(std::io::Error::from_raw_os_error(28));
+        assert_eq!(os_error(&bare).unwrap().0, 28);
+        assert!(bare.to_string().contains("os error 28"));
+        // A decoder io::Error (no errno) and a plain document error are not OS errors.
+        let inflate = anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::InvalidData, "corrupt deflate stream"));
+        assert!(os_error(&inflate).is_none());
+        assert!(os_error(&anyhow!("Missing DescendantFonts")).is_none());
+        // The serialized report never carries the field (the Python binding raises it instead).
+        let r = RepairResult {
+            src: "a".into(),
+            dst: "b".into(),
+            category: "unsupported".into(),
+            repaired_fonts: 0,
+            fonts: vec![],
+            written: false,
+            error: Some(error(full)),
+            os_error: Some((28, "x".into())),
+        };
+        assert!(!json(&r).contains("os_error"));
+    }
+    #[test]
+    fn real_io_failures_are_typed_in_analysis_and_repair() {
+        let d = scratch("oserr");
+        let missing = d.join("missing.pdf");
+        let (report, analysis) = analyze_for_repair(missing.to_str().unwrap());
+        assert!(analysis.is_none());
+        assert_eq!(report.os_error.as_ref().map(|e| e.0), Some(2)); // ENOENT
+        // The output's parent is a regular file: creating the staging directory fails with ENOTDIR (20).
+        let blocker = d.join("blocker");
+        std::fs::write(&blocker, b"file").unwrap();
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/review/name_decoding_valid_utf8.pdf");
+        let dst = blocker.join("sub").join("repaired.pdf");
+        let r = repair_with_sample(src.to_str().unwrap(), dst.to_str().unwrap(), &[], |_| {
+            Ok(Sample {
+                pages: 1,
+                sampled_pages: vec![1],
+                has_text: true,
+            })
+        });
+        assert!(!r.written && r.error.is_some());
+        assert_eq!(r.os_error.as_ref().map(|e| e.0), Some(20), "{:?}", r.error);
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]

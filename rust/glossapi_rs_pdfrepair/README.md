@@ -6,7 +6,13 @@ text-presence sample run in Rust (K5a: the sample is decided from content-stream
 text operators; the former Rust→Python→PDFium callback is gone). Analysis
 returns an error-bearing `PdfFontReport`; repair returns an error-bearing
 `RepairResult`, matching the reference dataclasses. Neither function raises for
-ordinary document/font failures.
+ordinary document/font failures. An OS-level I/O failure (an `io::Error` with an
+errno, such as ENOSPC on a full disk, EDQUOT, EIO or ENOENT) raises `OSError`
+with that errno instead (Python picks the subclass, e.g. `FileNotFoundError`), as
+the reference does, so a full disk is never read as a broken PDF. The module
+exports `__glossapi_native_api__` (`GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:1;`,
+level 1 = this contract); glossAPI's repair selector does not use a build
+without it.
 
 ## Build
 

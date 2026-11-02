@@ -3,6 +3,11 @@
 Native execution errors retain Rust provenance and are never silently retried
 with Python. Selection is lazy and uncached so installing an optional extension
 does not require importing heavy extraction components.
+
+A build without this package's native API level (``capabilities.NATIVE_API_LEVELS``)
+counts as not installed (K4g fix 3): an older build returns an OS-level I/O
+failure such as a full disk as ``ValueError`` text, which extraction would read
+as a broken PDF. ``glossapi capabilities``/``doctor`` report it as stale.
 """
 from dataclasses import dataclass
 from importlib import import_module
@@ -22,6 +27,18 @@ class RepairBackend:
     analyze_for_repair: Optional[Callable] = None
 
 
+def _require_native_api(native) -> None:
+    """Raise ImportError unless the imported extension declares the native API level this package needs."""
+    from ..capabilities import NATIVE_API_LEVELS
+    module = "glossapi_rs_pdfrepair"
+    wanted = f"GLOSSAPI_NATIVE_API:{module}:{NATIVE_API_LEVELS[module]};"
+    extension = getattr(native, module, native)  # maturin package: the extension is the same-named submodule
+    found = getattr(extension, "__glossapi_native_api__", None)
+    if found != wanted:
+        raise ImportError(f"stale native module {module}: declares {found!r}, this glossapi needs {wanted!r}; "
+                          "rebuild core")
+
+
 def get_backend(name: str | None = None) -> RepairBackend:
     if name not in (None, "rust", "python"):
         raise ValueError("Repair backend must be rust or python")
@@ -30,6 +47,7 @@ def get_backend(name: str | None = None) -> RepairBackend:
         return RepairBackend("python", tounicode.analyze_pdf, tounicode.repair_pdf)
     try:
         native = import_module("glossapi_rs_pdfrepair")
+        _require_native_api(native)
     except ImportError:
         if name == "rust":
             raise

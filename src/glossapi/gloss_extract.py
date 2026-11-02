@@ -84,6 +84,14 @@ PyPdfiumDocumentBackend = None
 _DOCLING_PARSE_BACKEND_NAME = "docling_parse"
 
 
+def _disk_full(error: BaseException) -> bool:
+    """K4g fix 3: the best-effort handlers on the per-document path let a full disk (ENOSPC/EDQUOT, SQLite disk-full,
+    also as a cause) propagate, so the attempt fails typed disk_full and the resume retries it, instead of carrying on
+    with a skipped sidecar, artefact or font repair as a successful extract."""
+    from .stages.execution import disk_full
+    return disk_full(error)
+
+
 class _NoOpOption:  # minimal stand-ins for optional helpers
     def __init__(self, *args, **kwargs):
         pass
@@ -846,14 +854,17 @@ class GlossExtract:
                 success_count, partial_success_count, failure_count = self._export_documents(conv_results, output_dir=output_dir)
                 return (success_count + partial_success_count) > 0 and failure_count == 0
             except Exception as e:
+                if _disk_full(e):
+                    raise
                 self._log.error(f"Fallback non-chunked processing failed for {file_path.name}: {e}")
                 return False
 
         # Mark as chunked in existing metadata parquet (minimal provenance)
         try:
             self._mark_is_chunked(output_dir=output_dir, src_file=file_path)
-        except Exception:
-            pass
+        except Exception as _error:
+            if _disk_full(_error):
+                raise
 
         chunk_dir = output_dir / "chunks" / stem
         chunk_dir.mkdir(parents=True, exist_ok=True)
@@ -910,6 +921,8 @@ class GlossExtract:
                     status = "timeout"
                     last_error = str(te)
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     observe("chunk_error", path=self._original_extract_file(file_path), error=e,
                         status="failed", page_first=start, page_last=end, inner_attempt=tries)
                     status = "error"
@@ -945,6 +958,8 @@ class GlossExtract:
             with manifest_path.open("w", encoding="utf-8") as fp:
                 json.dump(manifest, fp, ensure_ascii=False, indent=2)
         except Exception as e:
+            if _disk_full(e):
+                raise
             self._log.error(f"Failed to write chunk manifest for {file_path.name}: {e}")
 
         # Always attempt to assemble whatever chunks succeeded (best-effort)
@@ -956,6 +971,8 @@ class GlossExtract:
                 out_md_path.write_text(final_md, encoding="utf-8")
                 final_md_written = True
             except Exception as e:
+                if _disk_full(e):
+                    raise
                 self._log.error(f"Failed to assemble final markdown for {file_path.name}: {e}")
 
         if not completed:
@@ -975,12 +992,16 @@ class GlossExtract:
                     no_partial_output=not final_md_written,
                 )
             except Exception as e:
+                if _disk_full(e):
+                    raise
                 self._log.warning(f"Failed to record chunked extraction metadata for {file_path.name}: {e}")
             # Copy source file to timeout_dir for inspection if provided
             if timeout_dir is not None:
                 try:
                     copy2(file_path, timeout_dir / file_path.name)
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     self._log.error(f"Failed to copy timeout/failed file {file_path.name}: {e}")
             return False
 
@@ -1000,6 +1021,8 @@ class GlossExtract:
                 chunk_manifest_path=manifest_path,
             )
         except Exception as e:
+            if _disk_full(e):
+                raise
             self._log.warning(f"Failed to record chunked extraction metadata for {file_path.name}: {e}")
 
         return True
@@ -1053,6 +1076,8 @@ class GlossExtract:
             import json as _json
             p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
+            if _disk_full(e):
+                raise
             self._log.warning(f"Failed to write extract sidecar for {src_file}: {e}")
 
 
@@ -1091,6 +1116,8 @@ class GlossExtract:
                     copy2(file_path, timeout_dir / filename)
                     self._log.info(f"Copied timeout file to {timeout_dir / filename}")
                 except Exception as copy_exc:
+                    if _disk_full(copy_exc):
+                        raise
                     self._log.error(f"Failed to copy timeout file {filename}: {copy_exc}")
             try:
                 self._update_extraction_metadata(
@@ -1101,9 +1128,13 @@ class GlossExtract:
                     page_count=self._get_pdf_page_count(Path(file_path)),
                 )
             except Exception as meta_exc:
+                if _disk_full(meta_exc):
+                    raise
                 self._log.warning(f"Failed to record timeout metadata for {filename}: {meta_exc}")
             return False
         except Exception as individual_error:
+            if _disk_full(individual_error):
+                raise
             observe("extract_exception", path=self._original_extract_file(Path(file_path)), error=individual_error,
                 status="failed", operation="extract.convert_and_export")
             self._log.error("Failed to process file %s: %s", filename, individual_error, exc_info=True)
@@ -1117,6 +1148,8 @@ class GlossExtract:
                 page_count=self._get_pdf_page_count(Path(file_path)),
             )
         except Exception as meta_exc:
+            if _disk_full(meta_exc):
+                raise
             self._log.warning(f"Failed to record failure metadata for {filename}: {meta_exc}")
         return False
 
@@ -1215,15 +1248,19 @@ class GlossExtract:
                     extraction_mode="pypdfium",
                     page_count=page_count or None,
                 )
-            except Exception:
-                pass
+            except Exception as _error:
+                if _disk_full(_error):
+                    raise
             if timeout_dir is not None:
                 try:
                     copy2(file_path, timeout_dir / Path(file_path).name)
-                except Exception:
-                    pass
+                except Exception as _error:
+                    if _disk_full(_error):
+                        raise
             return False
         except Exception as exc:
+            if _disk_full(exc):
+                raise
             observe("extract_exception", path=self._original_extract_file(Path(file_path)), error=exc, status="failed")
             self._log.error("PyPDFium extraction failed for %s: %s", Path(file_path).name, exc)
             try:
@@ -1234,13 +1271,15 @@ class GlossExtract:
                     extraction_mode="pypdfium",
                     page_count=page_count or None,
                 )
-            except Exception:
-                pass
+            except Exception as _error:
+                if _disk_full(_error):
+                    raise
             if timeout_dir is not None:
                 try:
                     copy2(file_path, timeout_dir / Path(file_path).name)
-                except Exception:
-                    pass
+                except Exception as _error:
+                    if _disk_full(_error):
+                        raise
             return False
         finally:
             try:
@@ -1310,6 +1349,8 @@ class GlossExtract:
             import json as _json
             p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
+            if _disk_full(e):
+                raise
             observe("extract_exception", path=src_file, error=e, warning=True, operation="extract.metadata_write", backend_result_unchanged=True)
             self._log.warning(f"Failed to write extraction sidecar for {src_file}: {e}")
 
@@ -1652,6 +1693,8 @@ class GlossExtract:
                         page_count=self._get_pdf_page_count(Path(conv_res.input.file)),
                     )
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     self._log.warning(f"Failed to update extraction metadata for {doc_filename}: {e}")
                 # Optional Phase-1 artifacts for later enrichment/scheduling
                 try:
@@ -1660,6 +1703,8 @@ class GlossExtract:
                     if getattr(self, "emit_formula_index", False):
                         self._emit_formula_index(conv_res, output_dir, doc_filename)
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     observe("required_extract_artifact_missing", path=conv_res.input.file, error=e, required=False, warning=True)
                     self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
 
@@ -1697,6 +1742,8 @@ class GlossExtract:
                         no_partial_output=True,
                     )
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     self._log.warning(f"Failed to update extraction metadata for {doc_filename}: {e}")
                 # Optional Phase-1 artifacts for later enrichment/scheduling
                 try:
@@ -1705,6 +1752,8 @@ class GlossExtract:
                     if getattr(self, "emit_formula_index", False):
                         self._emit_formula_index(conv_res, output_dir, doc_filename)
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     observe("required_extract_artifact_missing", path=conv_res.input.file, error=e, required=False, warning=True)
                     self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
             else:
@@ -1744,6 +1793,8 @@ class GlossExtract:
                         no_partial_output=True,
                     )
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     self._log.warning(f"Failed to update extraction metadata for {Path(conv_res.input.file).name}: {e}")
                 # Optional Phase-1 artifacts even on fail->partial
                 try:
@@ -1752,6 +1803,8 @@ class GlossExtract:
                     if doc_filename and getattr(self, "emit_formula_index", False):
                         self._emit_formula_index(conv_res, output_dir, doc_filename)
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     observe("required_extract_artifact_missing", path=conv_res.input.file, error=e, required=False, warning=True)
                     self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
             # Write per-document metrics JSON (Docling timings) and per-page metrics (skipped in benchmark mode)
@@ -1800,8 +1853,12 @@ class GlossExtract:
                                     int(row.get("code_count", 0)),
                                 )
                     except Exception as _e:
+                        if _disk_full(_e):
+                            raise
                         self._log.warning("Failed to compute per-page metrics for %s: %s", doc_filename, _e)
                 except Exception as _e:
+                    if _disk_full(_e):
+                        raise
                     self._log.debug("Metrics export failed for %s: %s", doc_filename, _e)
 
         return success_count, partial_success_count, failure_count
@@ -1837,6 +1894,8 @@ class GlossExtract:
             out_json = json_dir / f"{stem}.docling.json"
             export_docling_json(conv_res.document, out_json, compress="zstd", meta=meta)  # type: ignore
         except Exception as e:
+            if _disk_full(e):
+                raise
             observe("required_extract_artifact_missing", path=conv_res.input.file, error=e,
                 required=False, warning=True, artifact_kind="docling_json")
             self._log.warning(f"JSON export failed for {stem}: {e}")
@@ -1940,6 +1999,8 @@ class GlossExtract:
                     fp.write("\n".join(out_lines) + "\n")
                 return len(out_lines)
         except Exception as e:
+            if _disk_full(e):
+                raise
             self._log.warning(f"Formula index emit failed for {stem}: {e}")
             return 0
 
