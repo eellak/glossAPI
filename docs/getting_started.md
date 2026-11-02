@@ -4,9 +4,11 @@ This guide gets a new GlossAPI contributor from clone → first extraction with 
 
 ## Checklist
 
-- Python 3.10+
-- Recent `pip` (or `uv`) and a C/C++ toolchain for Rust wheels
-- Optional: NVIDIA GPU with CUDA drivers for Docling acceleration
+- Python 3.11–3.14 (`requires-python = ">=3.11,<3.15"`)
+- Recent `pip` (or `uv`)
+- A Rust toolchain when you build from a checkout: the root wheel compiles and bundles the cleaner, noise and PDF
+  font-repair extensions (`rust-toolchain.toml` pins the qualified toolchain)
+- Optional: an NVIDIA GPU with a CUDA driver, or Apple Silicon, for Docling layout and OCR
 
 On fresh Linux hosts, make these assumptions explicit instead of relying on shell startup files:
 
@@ -18,51 +20,47 @@ On fresh Linux hosts, make these assumptions explicit instead of relying on shel
 
 ### Recommended setup
 
-Use `./dependency_setup/setup_glossapi.sh --mode docling --run-tests` for the layout environment.
-Install the default Greek OCR package with `python install_glossapi.py ocr --device cpu`
-(or `mps` / `cuda126` / `cuda132`); see [OCR setup](ocr_plugin_migration.md).
-
-### Option 1 — pip (evaluate quickly)
-
-```bash
-export PYTHONNOUSERSITE=1  # keep ~/.local packages out of the way
-pip install glossapi
-```
-
-### Option 2 — local development (recommended)
-
 ```bash
 git clone https://github.com/eellak/glossAPI.git
 cd glossAPI
+./dependency_setup/setup_glossapi.sh                       # core only, in .venv_glossapi_core
+./dependency_setup/setup_glossapi.sh layout --device cpu   # adds Docling layout (cpu, cuda126, cuda132 or mps)
+```
+
+Add `--venv PATH` to choose the environment, `--editable` for an editable install, `--run-tests` to install the test
+tools and run the suite, and `--dry-run` to print every command without running it. Install the default Greek OCR
+package with `python install_glossapi.py ocr --device cpu` (or `mps` / `cuda126` / `cuda132`); see
+[OCR setup](ocr_plugin_migration.md). The full package list is in
+[Dependency setup](https://github.com/eellak/glossAPI/blob/main/dependency_setup/dependency_notes.md).
+
+### Manual editable install
+
+```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -U pip maturin
+pip install -U pip
 pip install -e .
 ```
 
-This builds the Rust extensions needed for `Corpus.clean()` and noise metrics. Re-run `pip install -e .` after pulling changes that touch Rust crates.
+This builds the Rust extensions needed for `Corpus.clean()` and the noise metrics. Re-run `pip install -e .` (or
+`python install_glossapi.py core --editable`) after pulling changes that touch `rust/`. `glossapi capabilities`
+reports a cleaner or noise extension built from older source as missing, with the detail
+`stale native module ...; rebuild core`, and `glossapi doctor` reports it as an error.
 
-### Option 3 — conda on SageMaker / Amazon Linux
+### Adding packages later
+
+In an environment that already has glossAPI, `glossapi install --device cpu --package download` prints the exact
+install commands for the named packages without running them; add `--yes` to run them. Each command's output is
+shown on stderr while it runs.
+
+## GPU prerequisites (optional)
+
+`setup_glossapi.sh layout --device cuda126` (or `cuda132`, `mps`) installs the matching torch build before Docling.
+The device name selects the wheel source only; it does not choose the device of a later run. To check that torch sees
+the GPU:
 
 ```bash
-git clone https://github.com/eellak/glossAPI.git
-cd glossAPI
-chmod +x scripts/setup_conda.sh
-./scripts/setup_conda.sh
-conda activate glossapi
+python -c "import torch; print(torch.cuda.is_available())"
 ```
-
-The helper script provisions Python 3.10, installs Rust + `maturin`, and performs an editable install.
-
-## GPU prerequisites (optional but recommended)
-
-`setup_glossapi.sh` installs the Docling environment. If you are curating dependencies manually, make sure you:
-
-- Select the PyTorch build that matches your driver/toolkit.
-- Verify the providers with:
-
-  ```bash
-  python -c "import torch; print(torch.cuda.is_available())"
-  ```
 
 ## First run (lightweight corpus)
 
@@ -81,10 +79,12 @@ PY
 ```
 
 - Inspect `artifacts/lightweight_pdf_run/markdown/` and compare with `samples/lightweight_pdf_corpus/expected_outputs.json`.
-- Run `pytest tests/test_pipeline_smoke.py` for a reproducible regression check tied to the same corpus.
+- Run `pytest tests/test_corpus_phases_lightweight.py` for a reproducible regression check on the same two PDFs
+  (extract, clean and section; no GPU or Docling).
 
 ## Next steps
 
 - Jump into [Quickstart recipes](quickstart.md) for GPU OCR, Docling, and enrichment commands.
 - Explore [Pipeline overview](pipeline.md) to understand each processing stage and emitted artifact.
-- When ready to contribute docs, expand the placeholders in `docs/divio/`.
+- Read [Resumability, recovery and retention](architecture/resumability_recovery_and_retention.md) before running
+  large corpora with `glossapi run` or `Corpus.run()`.

@@ -165,7 +165,7 @@ This allows expensive OCR to be focused on genuinely problematic files.
 The current architecture is effective but has important tradeoffs:
 
 - stage handoff depends partly on method calls and partly on filesystem conventions
-- resumability depends on both file presence and metadata parquet state
+- the phase methods resume from file presence and metadata parquet state; a streaming run (`Corpus.run()`, `glossapi run`) resumes from the ledger `corpus.sqlite3` instead
 - artifact retention improves auditing but increases long-term storage footprint
 - filename-based identity is practical but puts pressure on future chunking and storage redesigns
 

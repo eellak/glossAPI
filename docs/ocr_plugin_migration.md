@@ -156,6 +156,5 @@ recognition against the routed plugin on at most two needs-OCR pages from an
 explicit owned cohort PDF. It is a correctness test, with no speed claims.
 The 72-page owner-private equality check stays with the Mac coordinator/OCR session.
 
-DeepSeek and the old bundled C1/RapidOCR engines remain removed. Printed upright
-Greek/Latin text is the qualified input scope; handwriting, whole-page rotation,
+Printed upright Greek/Latin text is the qualified input scope; handwriting, whole-page rotation,
 vertical text and general non-text rejection are outside that scope.

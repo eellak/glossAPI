@@ -46,4 +46,9 @@ c.ocr(use_gpus='multi', math_batch_size=12)
 - Pin `OMP_NUM_THREADS`/`MKL_NUM_THREADS` to avoid CPU oversubscription on multi‑GPU nodes.
 - Keep caches (`HF_HOME`, `XDG_CACHE_HOME`, `DOCLING_CACHE_DIR`) on fast disks.
 
-External OCR engine device configuration belongs to the installed plugin.
+## OCR
+
+OCR with the external plugin runs on one device: `Corpus.ocr(use_gpus='multi')` spreads only the math enrichment
+step over GPUs, and `glossapi run` admits one OCR operation per accelerator at a time. Distributing OCR over several
+GPUs is a target that has not been qualified. The device contract is in
+[OCR plugin migration](ocr_plugin_migration.md); the plugin owns its own device options.

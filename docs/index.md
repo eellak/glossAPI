@@ -5,7 +5,7 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 ## Start here
 - [Onboarding Guide](getting_started.md) — prerequisites, install choices, and first run.
 - [Quickstart Recipes](quickstart.md) — common extraction/OCR flows in copy-paste form.
-- [Lightweight PDF Corpus](lightweight_corpus.md) — 20 one-page PDFs for smoke testing without Docling or GPUs.
+- [Lightweight PDF Corpus](lightweight_corpus.md) — two one-page PDFs for smoke testing without Docling or GPUs.
 
 ## Learn the pipeline
 - [Code Map](code_map.md) links the main documentation ideas to the classes and files that implement them.
@@ -22,4 +22,6 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 
 ## Reference
 - [Corpus API](api/corpus.md) gives the compact contract view of the main public methods.
-- [Legacy Corpus API Notes](api_corpus_tmp.md) remains available while the docs are being consolidated.
+- [CLI JSON schema](cli_json_schema.md) describes the `glossapi` commands, their JSON output, exit codes and typed errors.
+- [LLM guide](llm_guide.md) is the guide `glossapi guide` prints, rendered as Markdown.
+- [Resumability, Recovery, and Retention](architecture/resumability_recovery_and_retention.md) explains resume, retries, retention settings and durability of a streaming run.

@@ -14,8 +14,8 @@ GlossAPI is a GPU-ready document processing pipeline from [GFOSS](https://gfoss.
 ```bash
 git clone https://github.com/eellak/glossAPI.git
 cd glossAPI
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
+python -m venv .venv && source .venv/bin/activate   # Python 3.11–3.14
+pip install -e .                                    # builds the bundled Rust extensions (needs a Rust toolchain)
 
 # Run the lightweight PDF corpus (no GPU/Docling required)
 python - <<'PY'
@@ -33,20 +33,31 @@ PY
 
 - Compare the generated Markdown in `artifacts/lightweight_pdf_run/markdown/`
   with `samples/lightweight_pdf_corpus/expected_outputs.json` for a fast smoke check.
-- Rebuild the corpus anytime with `python samples/lightweight_pdf_corpus/generate_pdfs.py`.
+- `pytest tests/test_corpus_phases_lightweight.py` runs the same two PDFs through extract, clean and section without
+  GPU or Docling.
 
 ### Corpus usage contract
-`Corpus` is the organizing surface: keep contributions wired through the phase methods (`download()`, `extract()`, `clean()`, `ocr()`, `section()`, `annotate()`, `export/jsonl*()`). The intended use is a short script chaining those calls; avoid bespoke monkeypatches or side channels so resumability and artifact layout stay consistent.
+`Corpus` is the organizing surface: keep contributions wired through `Corpus.run()` and the phase methods (`download()`, `extract()`, `clean()`, `ocr()`, `section()`, `annotate()`, `jsonl()`, `jsonl_sharded()`). The intended use is a short script chaining those calls, or the `glossapi plan`/`glossapi run` commands; avoid bespoke monkeypatches or side channels so resumability and artifact layout stay consistent.
+
+`Corpus.run()` and `glossapi run` record every stage in the corpus ledger (`corpus.sqlite3`) and can resume an interrupted run (`glossapi run --resume RUN_ID`). Their stage workers are separate processes started with `spawn`, which import your script again, so a script that calls `Corpus.run()` must guard it with `if __name__ == "__main__":`. See [Resumability, recovery and retention](docs/architecture/resumability_recovery_and_retention.md) and the [CLI JSON schema](docs/cli_json_schema.md).
 
 `Corpus.extract(batched=None)` defaults to layout batch 8 with 8 rasteriser workers for single-device, layout-only Docling on CUDA; safe PyPDFium and multi-GPU runs stay sequential by default.
 
-## Automated Environment Profiles
+## Optional packages
 
-Use `dependency_setup/setup_glossapi.sh --mode docling` for layout and math enrichment.
-For selective Greek OCR, run `python install_glossapi.py ocr --device cpu`
-(or `mps`, `cuda126`, `cuda132`), then `corpus.ocr(mode='ocr_bad')`.
-`glossapi run --stages ocr,export` also uses the pinned Greek R8+x1 model by default.
-See [OCR setup, development override and qualification](docs/ocr_plugin_migration.md).
+The default install is **core**: extraction with PDFium, cleaning, sectioning, annotation and export. Add named
+packages when you need them:
+
+- `./dependency_setup/setup_glossapi.sh layout --device cpu` (or `cuda126`, `cuda132`, `mps`): Docling layout
+  extraction and math/code enrichment.
+- `python install_glossapi.py ocr --device cpu` (or `mps`, `cuda126`, `cuda132`): the pinned external Greek OCR
+  plugin. Then call `corpus.ocr(mode='ocr_bad')`, or `glossapi run --stages ocr,export`, which use that plugin by
+  default.
+- In an environment that already has glossAPI, `glossapi install --device cpu --package download` prints the exact
+  commands for the named packages; add `--yes` to run them.
+
+See [Dependency setup](dependency_setup/dependency_notes.md) and
+[OCR setup, development override and qualification](docs/ocr_plugin_migration.md).
 
 ## Browser-Gated Download Mode
 
@@ -103,19 +114,22 @@ For manual smoke checks against live browser-gated sources, build an ad hoc parq
 
 | Scenario | Commands | Notes |
 | --- | --- | --- |
-| Pip users | `pip install glossapi` | Fast vanilla evaluation with minimal dependencies. |
-| Docling environment | `./dependency_setup/setup_glossapi.sh --mode docling` | Creates the main GlossAPI venv for extraction, cleaning, sectioning, and enrichment. |
-| Manual editable install | `pip install -e .` after cloning | Keep this if you prefer to manage dependencies by hand. |
-| Conda-based stacks | `scripts/setup_conda.sh` | Provisions Python 3.10 env + Rust + editable install for Amazon Linux/SageMaker. |
+| Core from a checkout | `./dependency_setup/setup_glossapi.sh` | Creates a core-only virtual environment (Python 3.11–3.14). The root wheel bundles the cleaner, noise and PDF font-repair Rust extensions. |
+| Named optional packages | `./dependency_setup/setup_glossapi.sh layout --device cpu`, `python install_glossapi.py ocr --device cuda126` | `download`, `browser`, `layout`, `ocr`, `annotate`, `annotate-legacy`. `layout` and `ocr` install a device-specific torch build first. Add `--dry-run` to print the commands only. |
+| Manual editable install | `pip install -e .` after cloning | Core only. Needs a Rust toolchain to build the extensions; rerun it after pulling changes to `rust/`. |
+| Add packages to an existing environment | `glossapi install --device DEV --package NAME` | A dry run by default; `--yes` runs the printed commands. |
 
-See the refreshed docs (`docs/index.md`) for detailed environment notes, CUDA/ORT combinations, and troubleshooting tips.
+See [Dependency setup](dependency_setup/dependency_notes.md) for the package contents, the supported devices and the
+native-extension checks, and the docs index (`docs/index.md`) for troubleshooting tips.
 
 ## Repo Landmarks
 - `docs/code_map.md`: fast map from pipeline ideas to implementing classes and files.
 - `docs/pipeline.md`: stage contracts, key parameters, and artifact outputs.
-- `samples/lightweight_pdf_corpus/`: 20 one-page PDFs with manifest + expected Markdown.
-- `src/glossapi/`: Corpus pipeline, cleaners, and orchestration logic.
-- `tests/test_pipeline_smoke.py`: Minimal regression entry point (uses the lightweight corpus).
+- `docs/cli_json_schema.md`: the `glossapi` commands, their JSON output, exit codes and typed errors.
+- `samples/lightweight_pdf_corpus/`: two one-page PDFs (`pdfs/alpha.pdf`, `pdfs/beta.pdf`) with their expected
+  Markdown lines in `expected_outputs.json`.
+- `src/glossapi/`: Corpus pipeline, ledger, stages, cleaners, and orchestration logic.
+- `tests/test_corpus_phases_lightweight.py`: a fast regression check on the lightweight corpus (no GPU or Docling).
 - `docs/`: MkDocs site with onboarding, pipeline recipes, and configuration guides.
 
 ## Pipeline map
@@ -126,19 +140,23 @@ Use this as the shortest path from a documentation concept to the public call th
 | --- | --- | --- | --- |
 | Download | `Corpus.download(...)` | `input_parquet`, `links_column`, `parallelize_by`, `download_mode="standard"|"auto"|"browser"`, `download_policy_file`, downloader kwargs | `downloads/`, `download_results/*.parquet` |
 | Extract (Phase-1) | `Corpus.extract(...)` | `input_format`, `phase1_backend`, `use_gpus`, `workers_per_device`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json` |
-| Clean | `Corpus.clean(...)` | `threshold`, `drop_bad`, `empty_char_threshold`, `empty_min_pages` | `clean_markdown/<stem>.md`, updated parquet metrics/flags |
-| OCR / math follow-up | `Corpus.ocr(...)` | `mode`, `fix_bad`, `math_enhance`, `use_gpus`, `devices` | refreshed `markdown/<stem>.md`, optional `json/<stem>.latex_map.jsonl` |
+| Clean | `Corpus.clean(...)` | `drop_bad`, `empty_char_threshold`, `empty_min_pages` (`threshold` is deprecated and has no effect) | `clean_markdown/<stem>.md`, updated parquet metrics/flags |
+| OCR / math follow-up | `Corpus.ocr(...)` | `mode`, `fix_bad`, `page_routing` (default `"all"`), `math_enhance`, `use_gpus`, `devices` | refreshed `markdown/<stem>.md`, optional `json/<stem>.latex_map.jsonl` |
 | Section | `Corpus.section()` | uses cleaner/parquet outputs to choose inputs | `sections/sections_for_annotation.parquet` |
 | Annotate | `Corpus.annotate(...)` | `annotation_type`, `fully_annotate` | `classified_sections.parquet`, `fully_annotated_sections.parquet` |
 | Triage math density | `Corpus.triage_math()` | no required args | updated `download_results/*.parquet` routing columns |
-| JSONL export | `Corpus.jsonl(...)` | `output_path` | merged training/export JSONL |
+| JSONL export | `Corpus.jsonl(...)`, `Corpus.jsonl_sharded(...)` | `output_path` / output directory | merged training/export JSONL |
+| Whole run with a ledger | `Corpus.run(...)`, `glossapi run` | `stages`, `settings` (`debug`, `memory_saving`), `resume`, `retry_failed` | the stage products above plus `corpus.sqlite3` and `export.jsonl` |
 
 ## Contributing
-- Run `pytest tests/test_pipeline_smoke.py` for a fast end-to-end check.
-- Regenerate the lightweight corpus via `generate_pdfs.py` and commit the updated PDFs + manifest together.
-- Prefer `uv` or `pip` editable installs so Rust extensions rebuild locally.
+- Run `pytest tests/test_corpus_phases_lightweight.py` for a fast end-to-end check on CPU.
+- `tests/test_pipeline_smoke.py` needs torch, Docling and a CUDA GPU; on other machines its tests skip
+  (`GLOSSAPI_REQUIRE_GPU=1` makes a missing GPU fail instead).
+- Prefer `uv` or `pip` editable installs so Rust extensions rebuild locally. After a change to `rust/`, rebuild with
+  `python install_glossapi.py core --editable` (or `pip install -e .`): `glossapi capabilities` reports a cleaner or
+  noise build that does not carry this checkout's native API level as missing (`stale native module ...; rebuild core`).
 
-Open an issue or PR if you spot drift between expected outputs and the pipeline, or if you have doc updates for the new Divio skeleton.
+Open an issue or PR if you spot drift between expected outputs and the pipeline.
 
 ## License
 

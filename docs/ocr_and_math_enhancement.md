@@ -4,7 +4,7 @@ OCR remediation uses externally installed Docling OCR engines. See
 [OCR plugin migration](ocr_plugin_migration.md) for configuration and page routing.
 Math/code enrichment stays in the optional Docling layout stack.
 Use `Corpus.ocr(mode="math_only", fix_bad=False)` to enrich existing Docling JSON
-without requiring an OCR plugin. `ocr_bad_then_math` remediates flagged documents
+without requiring an OCR plugin. `ocr_bad_then_math` OCRs the selected pages (default `page_routing="all"`: every page page quality routes)
 and then enriches non-OCR documents with available JSON.
 
 ## Running Phase‑1 (Extract)

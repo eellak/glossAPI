@@ -57,6 +57,17 @@ See [OCR plugin migration](ocr_plugin_migration.md).
 
 All LaTeX policy knobs are loaded via `glossapi.text_sanitize.load_latex_policy()` and used consistently in early‑stop, Phase‑2 post‑processing, and metrics.
 
+## Runs, ledger and logs
+
+- `GLOSSAPI_STAGE_PROFILE`: unset for the default `cutover` profile, which writes the ledger `corpus.sqlite3` and
+  decides from it. `legacy` runs the pre-ledger stage code as a comparison control (its wrappers only record
+  observations); `sequential-adapters` is the earlier qualification profile. See
+  [Resumability, recovery and retention](architecture/resumability_recovery_and_retention.md).
+- `GLOSSAPI_CONVERSION_LOG_FILE`: where the extractor writes its conversion log. Standalone scripts that construct the
+  extractor write `conversion.log` in the working directory unless this names another path; stage workers of a
+  streaming run write it inside their own work directory. `conversion.log` is ignored by git and is not part of the
+  source tree; point the variable outside the checkout for long runs.
+
 ## Performance & Caches
 
 - `OMP_NUM_THREADS` / `MKL_NUM_THREADS`: cap CPU threads to avoid oversubscription.
@@ -66,6 +77,25 @@ All LaTeX policy knobs are loaded via `glossapi.text_sanitize.load_latex_policy(
 
 - `GLOSSAPI_WORKER_LOG_DIR`: override the directory used for per-worker logs and `gpu<N>.current` markers (defaults to `logs/ocr_workers/` or `logs/math_workers/` under the output directory).
 - `GLOSSAPI_WORKER_LOG_VERBOSE` = `1|0` (default `1`): emit (or suppress) the GPU binding banner each worker prints on startup.
+
+## Test suite
+
+- `GLOSSAPI_REFERENCE_REQUIRED=1`: a missing or different pinned reference oracle fails its test instead of skipping
+  (set by `setup_glossapi.sh --run-tests`).
+- `GLOSSAPI_OCR_GOLDEN_DIR`: root of the external real-page OCR golden fixture (`manifest.jsonl`, `inputs/`,
+  `expected/`; build it with `glossapi.scripts.build_ocr_golden_pages`). `tests/test_ocr_golden_pages.py` skips
+  without it and fails when it is set but holds no `manifest.jsonl`. Owner-private scans are never committed.
+- `GLOSSAPI_NATIVE_WITNESS_PDF`: the `ABO_768.pdf` witness for the Docling native-cache test in
+  `tests/test_batched_extract.py` (sha256 `a58e3a241c3af817a95892fc7d3db437ccaa616a7f57dbd5e24974b829eb0b05`). The
+  test skips when the file is absent and fails when its bytes differ.
+- `GLOSSAPI_REQUIRE_GPU=1`: the GPU-only tests in `tests/test_pipeline_smoke.py` fail instead of skipping when no CUDA
+  GPU is visible.
+- The exact font-repair rates in `tests/test_pdf_font_repair.py` are bound to the PDF, dictionary and PDFium library
+  hashes. With other inputs the test still checks the repair invariants and skips only the exact rate, naming each
+  hash that differs.
+- Do not wrap pytest in an inherited `alarm` (for example `perl -e 'alarm N; exec pytest ...'`). The timer survives
+  `exec`, font repair refuses to replace an active `SIGALRM` timer, and the repair tests then fail with status
+  `error`. Bound the wait from outside instead (a background job and a watcher).
 
 ## Triage & Parquet
 
