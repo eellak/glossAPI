@@ -23,7 +23,7 @@ import subprocess
 import sys
 import time
 import traceback as traceback_module
-from typing import cast
+from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from .encoding import canonical_json, dataframe_records, file_hash, pack_evidence, typed_value
@@ -285,6 +285,10 @@ class ResultJournal:
                     document_task = writer.task(self.run_id, stage, operation + ".document_observation", {"compatibility_profile": "legacy_shadow", "reuse_eligible": False}, version_id=version_id, ordinal=ordinal + 1)
                     self.document_tasks[str(path)] = (document_task, version_id)
                     writer.event(self.run_id, event_kind="lifecycle", reason_code="stage_planned", status="planned", task_id=document_task, version_id=version_id)
+            if self.cached_originals:
+                # Every destructive boundary of this writer verifies these bindings first (CP-K4bc2 R2).
+                guards: list[Any] = cast(Any, writer).__dict__.setdefault('original_guards', [])
+                guards.append(self)
             source_inventory_hash = writer.snapshot("inputs", {"kind": "inputs", "files": observed_inputs})
             self.task_id = writer.task(self.run_id, stage, operation, {"compatibility_profile": 'sequential_cutover' if self.cutover else "legacy_shadow", "required_output_kinds": [], "parameters": self.parameters, "source_inventory_sha256": source_inventory_hash}, scope_key="corpus:" + source_inventory_hash)
             self.attempt_id = writer.attempt(self.task_id, worker_id=f"orchestrator:{os.getpid()}", device_id=str(parameters.get("accel_type", "unknown_not_recorded")),
@@ -510,13 +514,27 @@ class ResultJournal:
                 document_id = self.writer.document(source_key(uri))
                 self.writer.source_record(document_id, self.run_id, uri, values, source_kind=kind, manifest_sha256=manifest, source_row=str(ordinal))
 
-    def verify_cached_originals(self):
-        """Byte-verify every original whose hash this phase took from the process cache, before a destructive step
-        (retention) relies on it (CP-K4b F3): a same-stat rewrite that the cache could not see stops the phase."""
-        for path, digest in getattr(self, 'cached_originals', ()):
+    def verify_cached_originals(self, rows: Any = None) -> None:
+        """Byte-verify the originals whose hash this phase took from the process cache and that a pending deletion
+        relies on (CP-K4b F3, CP-K4bc2 R2). ``rows``: the file rows about to be deleted; a row of a document version
+        relies on that version's original, a corpus-level row (no version) on every cached original; None means all.
+        Each original is re-read at most once per phase (the destructive boundaries of a phase share one
+        verification); a same-stat rewrite the cache could not see stops the phase before anything is deleted."""
+        cached: list[tuple[Path, str]] = getattr(self, 'cached_originals', [])
+        if not cached:
+            return
+        verified: set[tuple[str, str]] = self.__dict__.setdefault('verified_originals', set())
+        known: dict[str, Any] = getattr(self, 'versions')
+        versions: set[Any] | None = None if rows is None else {row['version_id'] for row in rows}
+        relevant = [(path, digest) for path, digest in cached
+                    if versions is None or None in versions or known.get(str(path)) in versions]
+        for path, digest in relevant:
+            if (str(path), digest) in verified:
+                continue
             if not Path(path).is_file() or file_hash(path) != digest:
                 _original_hashes.pop(str(path), None)
                 raise ValueError(f'original_changed_since_observed: {path} no longer has the hash this phase bound; run the phase again')
+            verified.add((str(path), digest))
 
     def finish(self, result, error):
         if self.cutover and error is None:
@@ -578,12 +596,12 @@ class ResultJournal:
                          "measurement_basis": "wrapper_and_observation_wall_monotonic_ns", "cpu_ns": None, "peak_rss_bytes": None})
 
 
-def shadow_stage(stage, operation=None):
+def shadow_stage(stage: Any, operation: Any = None) -> Any:
     """Signature/return-preserving boundary hook, with writer lifetime per call."""
-    def decorate(function):
+    def decorate(function: Any) -> Any:
         signature = inspect.signature(function)
         @wraps(function)
-        def recorded(self, *args, **kwargs):
+        def recorded(self: Any, *args: Any, **kwargs: Any) -> Any:
             from ..stages.profile import _public_adapter_scope
             from ..stages.workers import warm_worker_scope
             profile_token = _public_adapter_scope.set(adapters_enabled(self))
@@ -596,7 +614,7 @@ def shadow_stage(stage, operation=None):
             finally:
                 _public_adapter_scope.reset(profile_token)
 
-        def invoke(self, *args, **kwargs):
+        def invoke(self: Any, *args: Any, **kwargs: Any) -> Any:
             bound = signature.bind(self, *args, **kwargs)
             bound.apply_defaults()
             parameters = dict(bound.arguments)
@@ -617,10 +635,12 @@ def shadow_stage(stage, operation=None):
             provided_writer=getattr(self,'_scheduler_writer',None)
             own_writer = provided_writer is None and (parent is None or parent.corpus.output_dir != self.output_dir)
             writer = provided_writer or (LedgerWriter(Path(self.output_dir) / "corpus.sqlite3", code_revision=code_revision()) if own_writer else parent.writer)
+            journal: Any = None
             try:
                 if own_writer:
                     # A phase that owns its writer starts a run: verify the copies the previous run close left unflushed (K4C-M2).
                     writer.verify_excluded_copies()
+                    cast(Any, writer).refuse_ambiguous_copies()
                 journal = ResultJournal(writer, self, stage, operation or f"{stage}.{function.__name__}", parameters)
                 if own_writer:
                     # This phase owns the writer: its close is the run-close barrier.
@@ -634,18 +654,34 @@ def shadow_stage(stage, operation=None):
                         result=execute_caller_kernel(self,stage,operation or f'{stage}.{function.__name__}',lambda:function(self,*args,**kwargs))
                     else:
                         result = function(self, *args, **kwargs)
-                    return result
+                    return cast(Any, result)
                 except BaseException as caught:
                     error = caught
                     raise
                 finally:
+                    verification = None
+                    if own_writer and journal.cutover and error is None:
+                        # Before the outcome commits (CP-K4bc2 R2): the originals the pending retention relies on. A
+                        # failure is this wrapper's recorded outcome, and nothing is deleted.
+                        try:
+                            from ..stages.retention import retention_candidates
+                            pending: list[Any] = retention_candidates(writer,self.output_dir,journal.run_id,journal.retention_settings,
+                                cleanup_paths=getattr(journal,"cleanup_paths",()),assume_ok=(journal.attempt_id,))
+                            journal.verify_cached_originals(pending)
+                        except Exception as failed:
+                            verification = error = failed
+                            result = None
                     try: journal.finish(result, error)
                     finally: _active_journal.reset(token)
+                    if verification is not None:
+                        raise verification
                     if own_writer and journal.cutover and error is None:
-                        journal.verify_cached_originals()
                         from ..stages.retention import retain_completed_run
                         retain_completed_run(writer,self.output_dir,journal.run_id,journal.retention_settings,cleanup_paths=getattr(journal,"cleanup_paths",()),observer=getattr(self,"_retention_observer",None))
             finally:
+                guards: list[Any] = cast(Any, writer).__dict__.get('original_guards') or []
+                if journal is not None and journal in guards:
+                    guards.remove(journal)
                 if own_writer: writer.close()
         return recorded
     return decorate

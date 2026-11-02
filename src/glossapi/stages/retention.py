@@ -310,9 +310,18 @@ class RetentionController:
         except BaseException:
             os.close(descriptor); raise
 
-    def delete(self, file_id, *, recovering=None):
+    def _guard_originals(self, rows: list[Any]) -> None:
+        """Every destructive boundary first byte-verifies the cached originals these deletions rely on (CP-K4bc2 R2):
+        publish-with-retire, retention, recovery and bulk release all pass here, before any intent or unlink."""
+        guards: list[Any] = list(cast(Any, self.writer).__dict__.get('original_guards', ()))
+        for journal in guards:
+            journal.verify_cached_originals(rows)
+
+    def delete(self, file_id: str, *, recovering: Any = None) -> Any:
         if self.connection.in_transaction and recovering is None:
             raise ValueError('Deletion intent must commit before unlink')
+        if recovering is None:
+            self._guard_originals([cast(Any, self.writer).file_catalog()[file_id]])
         row, facts, pins = self.eligibility(file_id)
         if pins or row['presence'] == 'deleted':
             return False
@@ -442,8 +451,10 @@ class RetentionController:
                     pass
         self._completed_policy_hashes=set()
 
-    def delete_many(self,file_ids):
+    def delete_many(self,file_ids: list[str]) -> None:
         from ..ledger.writer import SyncBatch
+        catalog: dict[str, Any]=cast(Any, self.writer).file_catalog()
+        self._guard_originals([catalog[identifier] for identifier in file_ids if identifier in catalog])
         intents=[]
         # Every intent of this frontier commits, then one durability barrier
         # precedes any unlink. Completions are bounded transactions; a death
@@ -484,14 +495,18 @@ class RetentionController:
         self._prune_completed_policies()
         table = 'retention_events' if self.connection.compact else 'events'
         retention_filter = '' if self.connection.compact else " AND e.event_kind='retention'"
-        intents = list(self.connection.execute(f"""SELECT event_id,file_id FROM {table} e
+        intents: list[Any] = list(self.connection.execute(f"""SELECT event_id,file_id FROM {table} e
             WHERE reason_code='delete_planned' AND file_id IS NOT NULL {retention_filter} AND NOT EXISTS
             (SELECT 1 FROM {table} c WHERE c.file_id=e.file_id AND c.event_id>e.event_id
              AND c.reason_code IN ('delete_completed','delete_recovered','delete_failed'))"""))
         # The dead writer may have committed its NORMAL intent and died while
         # flushing consumers, before its FULL barrier. Never infer durability
         # merely from a visible intent after process death.
-        if intents:self.writer.durable_barrier([row[1] for row in intents])
+        if intents:
+            catalog: dict[str, Any]=cast(Any, self.writer).file_catalog()
+            pending_ids: list[str]=[row[1] for row in intents]
+            self._guard_originals([catalog[identifier] for identifier in pending_ids if identifier in catalog])
+            self.writer.durable_barrier([row[1] for row in intents])
         return sum(self.delete(row[1],recovering=row[0]) for row in intents)
 
     def seal(self, rows):
@@ -520,14 +535,29 @@ class RetentionController:
         return task
 
 
-def retain_completed_run(writer,root,run_id,settings=None,*,attempts=None,cleanup_paths=(),observer=None):
+def retention_candidates(writer: Any, root: Any, run_id: str, settings: Any = None, *, attempts: Any = None, cleanup_paths: Any = (),
+                         assume_ok: Any = ()) -> list[Any]:
+    """The files ``retain_completed_run`` would delete now (no side effect). ``assume_ok``: attempts counted as
+    succeeded (a wrapper's own attempt before its outcome commits; CP-K4bc2 R2 verifies before that commit)."""
+    resolved: dict[str, Any] = cast(Any, RetentionController(writer,root,run_id,settings)).settings
+    return _retention_candidates(writer,root,run_id,resolved,attempts=attempts,cleanup_paths=cleanup_paths,assume_ok=frozenset(assume_ok))
+
+
+def retain_completed_run(writer: Any, root: Any, run_id: str, settings: Any = None, *, attempts: Any = None, cleanup_paths: Any = (),
+                         observer: Any = None) -> Any:
     """Seal and collect only owned private attempts after their publication seal.
 
     Public wrapper products are requested outputs. The streaming plan supplies
     all document readers and publication barriers before this final collection.
     """
-    controller=RetentionController(writer,root,run_id,settings)
+    controller: Any=RetentionController(writer,root,run_id,settings)
     controller.recover()
+    candidates=_retention_candidates(writer,root,run_id,controller.settings,attempts=attempts,cleanup_paths=cleanup_paths,assume_ok=frozenset())
+    return _collect_candidates(writer,root,controller,candidates,observer)
+
+
+def _retention_candidates(writer: Any, root: Any, run_id: str, settings: dict[str, Any], *, attempts: Any = None, cleanup_paths: Any = (),
+                          assume_ok: frozenset[str] = frozenset()) -> list[Any]:
     if attempts is None:
         attempts=[row[0] for row in writer.connection.execute('SELECT attempt_id FROM attempts a JOIN tasks t USING(task_id) WHERE t.run_id=?',(run_id,))]
     # One pass over the owner's file catalog (current presence) instead of one view query per attempt;
@@ -544,12 +574,12 @@ def retain_completed_run(writer,root,run_id,settings=None,*,attempts=None,cleanu
     for encoded, in writer.connection.execute("SELECT json FROM snapshots WHERE kind='product_projection' ORDER BY rowid"):
         value: dict[str, Any]=json.loads(encoded);projections[value['product_uri']]=value
     current_backings={value['immutable_uri'] for value in projections.values()}
-    candidates=[]
+    candidates: list[Any]=[]
     partial_coverage={}
     # The OCR publication re-cleans every raw markdown in markdown/ (clean_ocr over the directory), so public raw
     # markdown is superseded only once that barrier has completed (it was kept until then only by an accidental
     # duplicate registration, which the K4C-H1 fix removed).
-    requested=controller.settings.get('requested_stages',())
+    requested=settings.get('requested_stages',())
     raw_still_read='ocr' in requested and any(task['operation']=='ocr.compatibility_publish' and task['status']!='ok'
         for task in writer.task_states(run_id))
     for row in rows:
@@ -559,12 +589,12 @@ def retain_completed_run(writer,root,run_id,settings=None,*,attempts=None,cleanu
         public_temporary=row['kind'] in ('annotation_partition','repaired_pdf','temporary_cleaning_report')
         if not path.is_relative_to(private) and path not in cleanup_paths and not superseded_public_raw and not public_temporary:continue
         if row['retention_class'] in ('final','evidence','recovery') or (row['uri'] in current_backings and row['kind']!='annotation_partition'):continue
-        if controller.settings['debug']=='on' and not (row['kind']=='download_payload' and controller.settings['memory_saving']=='extreme'):continue
+        if settings['debug']=='on' and not (row['kind']=='download_payload' and settings['memory_saving']=='extreme'):continue
         if row['kind']=='download_payload' and not writer.connection.execute('SELECT 1 FROM attempt_inputs WHERE file_id=?',(row['file_id'],)).fetchone():continue
         # Worker receipts are recovery frontiers and must remain replayable.
         if row['kind'] in ('worker_receipt','generation_manifest','ocr_native','ocr_page_state'):continue
         producer=writer.control()['attempts'].get(row['producer_attempt_id'])
-        if not producer or writer.task_state(producer['task_id'])['status']!='ok':continue
+        if not producer or (row['producer_attempt_id'] not in assume_ok and writer.task_state(producer['task_id'])['status']!='ok'):continue
         if row['stage']=='extract':
             # One verdict per producer attempt (its decisions are immutable), not one per output file.
             partial=partial_coverage.get(row['producer_attempt_id'])
@@ -578,6 +608,11 @@ def retain_completed_run(writer,root,run_id,settings=None,*,attempts=None,cleanu
                 partial_coverage[row['producer_attempt_id']]=partial
             if partial:continue
         candidates.append(row)
+    return candidates
+
+
+def _collect_candidates(writer: Any, root: Any, controller: Any, candidates: list[Any], observer: Any) -> Any:
+    private=Path(root).resolve()/'.glossapi/artifacts'
     private_candidates = [row for row in candidates if file_path(row).is_relative_to(private)
         and row['retention_class']=='intermediate' and row['kind']!='download_payload'
         and not (controller.settings['memory_saving']=='extreme' and row['kind']=='source_snapshot')]
@@ -866,9 +901,10 @@ def _finish_private_release(controller, intent, detail):
             message='private_stage_release',details={**detail,'intent_event_id':intent})
 
 
-def release_private_scratch(controller, rows):
+def release_private_scratch(controller: Any, rows: Any) -> None:
     """Group release after the producer/last planned reader; retain all hashes."""
     if controller.settings['debug']=='on':return
+    controller._guard_originals(list(rows))
     by_stage=defaultdict(list)
     for row in rows:
         producer=controller.writer.control()['status'].get(row['producer_attempt_id'])=='ok'
@@ -891,7 +927,7 @@ def release_private_scratch(controller, rows):
             for stage,files in by_stage.items():
                 manifest=controller.writer.snapshot('private_release_manifest',{'file_ids':[row['file_id'] for row in files],
                     'planned_reader_task_ids':sorted({reader for row in files for reader in controller.writer.planned_readers(controller.run_id,row)})})
-                detail={'stage':stage,'file_count':len(files),'bytes':sum(row['bytes'] for row in files),
+                detail: dict[str, Any]={'stage':stage,'file_count':len(files),'bytes':sum(row['bytes'] for row in files),
                     'manifest_sha256':manifest,'policy':'private_scratch_after_last_planned_reader',
                     'producer_attempt_ids':sorted({row['producer_attempt_id'] for row in files})}
                 intent=controller.writer.event(controller.run_id,event_kind='retention',reason_code='delete_planned',
@@ -917,10 +953,13 @@ def recover_private_releases(controller):
     # A dead writer may have committed its NORMAL intent without its FULL
     # barrier; only an unfinished release needs that barrier before unlink.
     if pending:
-        released=[]
+        released: list[str]=[]
         for intent,detail in pending:
             manifest=json.loads(connection.execute('SELECT json FROM snapshots WHERE sha256=?',(detail['manifest_sha256'],)).fetchone()[0])
             released.extend(manifest['file_ids'])
+        guarded=cast(Any, controller)
+        catalog: dict[str, Any]=guarded.writer.file_catalog()
+        guarded._guard_originals([catalog[file_id] for file_id in released if file_id in catalog])
         controller.writer.durable_barrier(released,private=True)
     for intent,detail in pending:_finish_private_release(controller,intent,detail)
 

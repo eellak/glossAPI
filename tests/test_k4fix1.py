@@ -421,7 +421,8 @@ def test_f7_large_producer_metadata_is_charged_before_publication(tmp_path, monk
     from glossapi.stages import final_products, disk_budget
     from glossapi.stages.disk_budget import DiskBudgetError
     monkeypatch.setattr(disk_budget, 'require_disk_guard', lambda root, settings: (Path(root)/'.glossapi/staging').mkdir(parents=True, exist_ok=True))
-    monkeypatch.setattr(final_products, 'corpus_room', lambda *a: 16384)
+    # Room for the metadata-table allowance of a first run (CP-K4ac2 R3) but not for 2 x 300 KB of producer metadata.
+    monkeypatch.setattr(final_products, 'corpus_room', lambda *a: 512*1024)
     checks = []
     original = final_products.require_room
     def checked(root, settings, need, **kwargs):
@@ -430,7 +431,7 @@ def test_f7_large_producer_metadata_is_charged_before_publication(tmp_path, monk
     monkeypatch.setattr(final_products, 'require_room', checked)
     url = 'http://fixture.invalid/metadata.pdf'
     transport[url] = pdf(tmp_path/'doc.pdf', 'Small document body').read_bytes()
-    description = 'metadata value '*1600 if where == 'manifest' else 'short'
+    description = 'metadata value '*20000 if where == 'manifest' else 'short'
     settings = {**SETTINGS, 'source_manifest': {'documents': [{'url': url, 'description': description}]}, 'memory_saving': 'extreme',
                 'disk_budget_bytes': 1 << 30, 'max_source_bytes': 8192, 'max_attempt_bytes': 16384}
     root = tmp_path/'out'
@@ -577,7 +578,7 @@ def test_k4b_f3_cached_original_is_byte_verified_before_destruction(tmp_path):
     digest = J.observed_original_hash('clean', original, cached)
     assert cached == [(original, digest)]
     holder = type('Journal', (), {})()
-    holder.cached_originals = cached
+    holder.cached_originals, holder.versions = cached, {}
     J.ResultJournal.verify_cached_originals(holder)  # unchanged: passes
     J._original_hashes[str(original)] = (J._original_hashes[str(original)][0], '0'*64)
     holder.cached_originals = [(original, '0'*64)]  # what a stale same-stat cache would have bound

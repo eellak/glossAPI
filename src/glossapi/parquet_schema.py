@@ -1578,3 +1578,61 @@ class ParquetSchema:
         # Write to parquet, through the metadata choke point (K2F round 3: resolved target, lock, atomic replace)
         replace_metadata_parquet(file_path, df_copy, serialize=lambda _frame, path: pq.write_table(table, path))
         print(f"Parquet file written to {file_path} with schema type '{schema_type}'")
+
+
+def fold_download_rows(output_dir: Union[str, Path], published: Union[str, Path]) -> list:
+    """Carry a download publication's rows into the canonical metadata table when the corpus already has one.
+
+    The download serializer writes ``download_results_<manifest>.parquet``; the metadata readers and the export
+    select ``download_results.parquet`` when it exists (a corpus that began with local inputs). Without this the URL,
+    success and identity of a later download never reached the row the export joins: CP-K4a F1 (streaming) and
+    CP-K4ac2 R1 (sequential ``download()`` → ``extract`` → ``clean`` → ``jsonl``). Under the metadata lock the
+    download-owned columns of each published row replace that filename's values (other columns are kept) and new
+    filenames are added. Identity-safe: a canonical row that already records a *different* URL or resource identity
+    for the same filename is never overwritten; those filenames are returned (and the published file keeps them).
+    """
+    canonical = Path(output_dir)/'download_results'/'download_results.parquet'
+    published = Path(published)
+    if not canonical.is_file() or not published.is_file() or canonical.resolve() == published.resolve():
+        return []
+    rows = pd.read_parquet(published)
+    if 'filename' not in rows.columns or rows.empty:
+        return []
+    rows = _nullable_integers(rows[rows['filename'].notna()])
+    rows = rows[~rows['filename'].duplicated(keep='last')]
+    conflicts: list = []
+
+    def text(value):
+        return value if isinstance(value, str) and value else None
+
+    def fold(current):
+        if current.empty or 'filename' not in current.columns:
+            return rows
+        current = _nullable_integers(current)
+        recorded = current.drop_duplicates('filename', keep='last').set_index('filename')
+        keep = []
+        for name, url, identity in zip(rows['filename'], rows['url'] if 'url' in rows.columns else [None]*len(rows),
+                                       rows['resource_identity'] if 'resource_identity' in rows.columns else [None]*len(rows)):
+            if name in recorded.index:
+                old_url = text(recorded.at[name, 'url']) if 'url' in recorded.columns else None
+                old_identity = text(recorded.at[name, 'resource_identity']) if 'resource_identity' in recorded.columns else None
+                if (old_url and text(url) and old_url != text(url)) or (old_identity and text(identity) and old_identity != text(identity)):
+                    conflicts.append(name)
+                    continue
+            keep.append(name)
+        update = rows[rows['filename'].isin(keep)]
+        known = current['filename'].isin(list(update['filename']))
+        merged = current[known].set_index('filename', drop=False)
+        indexed = update.set_index('filename', drop=False)
+        merged = indexed.loc[indexed.index.intersection(merged.index)].combine_first(merged).reindex(
+            columns=[*current.columns, *[c for c in update.columns if c not in current.columns]])
+        added = update[~update['filename'].isin(list(current['filename']))]
+        result = lossless_concat([current[~known], merged.reset_index(drop=True), added], what='folded download results')
+        return result.sort_values('filename', kind='stable').reset_index(drop=True)[
+            [*current.columns, *[c for c in result.columns if c not in current.columns]]]
+
+    update_metadata_parquet(canonical, fold)
+    if conflicts:
+        import logging
+        logging.getLogger(__name__).warning('Download rows not folded into %s: their filenames already record another URL: %s', canonical, conflicts[:10])
+    return conflicts
