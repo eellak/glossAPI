@@ -2810,6 +2810,20 @@ def _enrich_extraction_metrics(df: pd.DataFrame, output_dir: Path, markdown_dir:
     return result
 
 
+def _whole_counts_as_int64(df: pd.DataFrame, columns: Iterable[str]) -> None:
+    """A count column's dtype follows its values, not the table's history (K4g fix 4): whole numbers with no gap are
+    int64; a gap keeps float64, as before. A table persisted while a row had no count (a document that failed in an
+    earlier pass) holds float64, and the metric merge that fills the row keeps float64, where a single pass writes
+    int64, so a --retry-failed resume would publish other bytes than the uninterrupted run."""
+    for column in columns:
+        if column not in df.columns:
+            continue
+        values = pd.to_numeric(df[column], errors="coerce")
+        if (values.dtype.kind == "f" and len(values) and bool(values.notna().all())
+                and bool((values == values.round()).all())):
+            df[column] = values.astype("int64")
+
+
 def _attach_page_quality_routes(df: pd.DataFrame, metrics_dir: Path) -> pd.DataFrame:
     """Attach valid sidecar ranges to all PDFs without changing needs_ocr.
 
@@ -3592,6 +3606,17 @@ class CleanPhaseMixin:
                         "is_empty": pd.NA,
                     },
                 )
+                # A repeated clean of a table that already holds a published latin_percentage (a --retry-failed
+                # resume re-publishing after a failed document, a second clean) has both this pass's
+                # mojibake_latin_percentage and the previous latin_percentage. The rename below would make two
+                # latin_percentage columns and keep the first, the stale one (K4g fix 4: NaN for a document that
+                # failed in the first pass). This pass's value wins, as for every other merged metric (a row it did
+                # not score keeps its value); the column keeps its position, so the bytes match a single clean.
+                if "mojibake_latin_percentage" in df_final.columns and "latin_percentage" in df_final.columns:
+                    fresh = pd.to_numeric(df_final["mojibake_latin_percentage"], errors="coerce")
+                    df_final["latin_percentage"] = fresh.combine_first(
+                        pd.to_numeric(df_final["latin_percentage"], errors="coerce"))
+                    df_final.drop(columns="mojibake_latin_percentage", inplace=True)
                 # --- tidy schema ---
                 df_final.rename(columns={
                     "badness_score": "mojibake_badness_score",
@@ -3637,6 +3662,7 @@ class CleanPhaseMixin:
 
                 if "char_count_no_comments" in df_final.columns:
                     df_final["char_count_no_comments"] = pd.to_numeric(df_final["char_count_no_comments"], errors="coerce")
+                    _whole_counts_as_int64(df_final, ("char_count_no_comments",))
                 if "page_count" in df_final.columns:
                     df_final["page_count"] = pd.to_numeric(df_final["page_count"], errors="coerce")
 
@@ -4161,6 +4187,8 @@ class CleanPhaseMixin:
                 },
             )
             df = self._merge_metric_dataframe(df, df_updates[update_columns])
+            _whole_counts_as_int64(df, ("ocr_repeat_phrase_run_max", "ocr_repeat_line_run_max",
+                                        "ocr_repeat_suspicious_line_count"))
 
             if "filter" not in df.columns:
                 df["filter"] = "ok"

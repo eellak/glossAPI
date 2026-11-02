@@ -202,14 +202,19 @@ class _ProcessingStateManager:
                         filename, exists = self._guess_filename(stem)
                         file_ext = Path(filename).suffix.lstrip(".")
                         row = {col: pd.NA for col in df.columns}
-                        # Every cell of a new row starts missing; the URL is unknown here.
-                        row[self.url_column] = ""
+                        # Every cell of a new row starts missing (the one metadata rule, K4BI-G9): the URL is unknown
+                        # here, and a download is recorded only for a file found on disk, as the artifact scan of
+                        # ``ensure_metadata_parquet`` records it. A row added here (a document that failed in an
+                        # earlier pass and succeeds on --retry-failed) then equals the row the scan writes when
+                        # every document succeeds in one pass (K4g fix 4).
                         row["filename"] = filename
                         row["file_ext"] = file_ext
                         row["filename_base"] = stem
-                        row["download_success"] = bool(exists)
+                        if exists:
+                            row["download_success"] = True
+                            row["download_error"] = ""
                         row["extract_status"] = status
-                        row["extract_error"] = error
+                        row["extract_error"] = error if error else pd.NA
                         row["processing_stage"] = self._mark_stage("", "extract")
                         row["__stem__"] = stem
                         rows.append(row)

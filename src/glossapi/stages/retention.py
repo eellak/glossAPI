@@ -597,7 +597,7 @@ def document_releases_suspended(writer: Any, run_id: str) -> bool:
 
 
 def retain_completed_run(writer: Any, root: Any, run_id: str, settings: Any = None, *, attempts: Any = None, cleanup_paths: Any = (),
-                         observer: Any = None) -> Any:
+                         observer: Any = None, keep_public_raw: bool = False) -> Any:
     """Seal and collect only owned private attempts after their publication seal.
 
     Public wrapper products are requested outputs. The streaming plan supplies
@@ -605,12 +605,13 @@ def retain_completed_run(writer: Any, root: Any, run_id: str, settings: Any = No
     """
     controller: Any=RetentionController(writer,root,run_id,settings)
     controller.recover()
-    candidates=_retention_candidates(writer,root,run_id,controller.settings,attempts=attempts,cleanup_paths=cleanup_paths,assume_ok=frozenset())
+    candidates=_retention_candidates(writer,root,run_id,controller.settings,attempts=attempts,cleanup_paths=cleanup_paths,assume_ok=frozenset(),
+                                     keep_public_raw=keep_public_raw)
     return _collect_candidates(writer,root,controller,candidates,observer)
 
 
 def _retention_candidates(writer: Any, root: Any, run_id: str, settings: dict[str, Any], *, attempts: Any = None, cleanup_paths: Any = (),
-                          assume_ok: frozenset[str] = frozenset()) -> list[Any]:
+                          assume_ok: frozenset[str] = frozenset(), keep_public_raw: bool = False) -> list[Any]:
     if attempts is None:
         attempts=[row[0] for row in writer.connection.execute('SELECT attempt_id FROM attempts a JOIN tasks t USING(task_id) WHERE t.run_id=?',(run_id,))]
     # One pass over the owner's file catalog (current presence) instead of one view query per attempt;
@@ -635,6 +636,9 @@ def _retention_candidates(writer: Any, root: Any, run_id: str, settings: dict[st
     requested=settings.get('requested_stages',())
     raw_still_read='ocr' in requested and any(task['operation']=='ocr.compatibility_publish' and task['status']!='ok'
         for task in writer.task_states(run_id))
+    # ``keep_public_raw``: the caller knows the OCR publication has still to run in this invocation (a --retry-failed
+    # resume repeats it although its task is ok from the first pass; run.py, K4g fix 4).
+    raw_still_read=raw_still_read or keep_public_raw
     for row in rows:
         path=file_path(row)
         superseded_public_raw=(row['kind']=='raw_markdown' and path.is_relative_to(Path(root).resolve()/'markdown') and 'clean' in requested

@@ -72,9 +72,12 @@ def test_installed_required_natives_carry_the_required_level():
     ({'glossapi_rs_cleaner': b'GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:0;',
       'glossapi_rs_noise': b'GLOSSAPI_NATIVE_API:glossapi_rs_noise:1;'}, False),  # one older build
     ({'glossapi_rs_cleaner': b'GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:1;',
+      'glossapi_rs_noise': b'GLOSSAPI_NATIVE_API:glossapi_rs_noise:1;'}, False),  # a cleaner from before K4g fix 4
+    ({'glossapi_rs_cleaner': b'GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:2;',
       'glossapi_rs_noise': b'GLOSSAPI_NATIVE_API:glossapi_rs_noise:1;'}, True),
 ])
 def test_stale_native_makes_clean_unavailable_in_capabilities_plan_and_doctor(tmp_path, payloads, available):
+    from glossapi.capabilities import NATIVE_API_LEVELS
     for name, payload in payloads.items():
         _fake_native(tmp_path / 'site', name, payload)
     done = _child('''
@@ -92,10 +95,11 @@ def test_stale_native_makes_clean_unavailable_in_capabilities_plan_and_doctor(tm
     assert result['imported'] == [], 'detection imported a native module'
     assert clean['available'] is available
     rows = {row['module']: row for row in clean['native_modules']}
-    stale = [name for name, payload in payloads.items() if payload != f'GLOSSAPI_NATIVE_API:{name}:1;'.encode()]
+    stale = [name for name, payload in payloads.items()
+             if payload != f'GLOSSAPI_NATIVE_API:{name}:{NATIVE_API_LEVELS[name]};'.encode()]
     for name in REQUIRED_NATIVES:
         row = rows[name]
-        assert row['required_api_level'] == 1
+        assert row['required_api_level'] == NATIVE_API_LEVELS[name]
         assert row['status'] == ('missing' if name in stale else 'present')
         assert (row['detail'] or '').startswith('stale native module') is (name in stale)
     if available:
@@ -107,8 +111,10 @@ def test_stale_native_makes_clean_unavailable_in_capabilities_plan_and_doctor(tm
 
 
 def test_capability_fingerprint_changes_when_a_native_goes_stale(tmp_path):
-    for label, level in (('current', 1), ('stale', 0)):
+    from glossapi.capabilities import NATIVE_API_LEVELS
+    for label in ('current', 'stale'):
         for name in REQUIRED_NATIVES:
+            level = NATIVE_API_LEVELS[name] if label == 'current' else 0
             _fake_native(tmp_path / label, name, f'GLOSSAPI_NATIVE_API:{name}:{level};'.encode())
     code = '''
         from glossapi.capabilities import capability_fingerprint, stage_capability

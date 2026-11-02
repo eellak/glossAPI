@@ -44,7 +44,7 @@ NATIVE_MODULES: Final[dict[str, tuple[tuple[str, bool], ...]]] = {
 # failing per document. Raise a level here and in the crate together.
 # The optional PDF repair extension is listed too (K4g fix 3): a stale build is reported, and the repair selector
 # (pdf_repair/selector.py) uses the Python reference instead of it.
-NATIVE_API_LEVELS: Final[dict[str, int]] = {'glossapi_rs_cleaner': 1, 'glossapi_rs_noise': 1, 'glossapi_rs_pdfrepair': 1}
+NATIVE_API_LEVELS: Final[dict[str, int]] = {'glossapi_rs_cleaner': 2, 'glossapi_rs_noise': 1, 'glossapi_rs_pdfrepair': 1}
 _NATIVE_API_PREFIX: Final[bytes] = b'GLOSSAPI_NATIVE_API:'
 # Stages the streaming run cannot execute, with the reason (ledger/reader.RUN_UNAVAILABLE).
 RUN_UNAVAILABLE: Final[dict[str, str]] = {'math': 'math_backend_unavailable'}

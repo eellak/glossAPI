@@ -124,6 +124,7 @@ def _run(root: Path, mode: str | None, steps) -> dict[str, dict]:
         out[step]['export'] = export.read_bytes() if export.exists() else b''
         import pandas as pd
         out[step]['download_results'] = pd.read_parquet(root / 'run' / 'output' / 'download_results' / 'download_results.parquet')
+        out[step]['download_results_bytes'] = (root / 'run' / 'output' / 'download_results' / 'download_results.parquet').read_bytes()
     return out
 
 
@@ -168,17 +169,12 @@ def test_resume_reruns_the_document_and_equals_the_no_fault_run(runs):
     assert resume['sidecar']['font_repair_status'] == 'repaired'
     assert resume['sidecar'] == reference['sidecar']
     assert resume['products'] == reference['products']  # markdown and clean_markdown bytes
-    # Export and metadata equal the no-fault run except two fields that differ after ANY retried extract failure of a
-    # document without Latin letters (latin_percentage 0.0 -> NaN, char_count_no_comments int -> float). That is a
-    # separate, pre-existing clean-metrics merge difference: reproduced on 5cedabc with the generic worker ENOSPC of
-    # test_k4g_b4n_retry_failed_republish (no font repair involved; k4g/fix3/mac/probe/).
-    known = {'latin_percentage'}
-    def records(raw):
-        return [{key: value for key, value in json.loads(line).items() if key not in known} for line in raw.splitlines()]
-    assert records(resume['export']) == records(reference['export'])
+    # Export and metadata equal the no-fault run, every field and dtype (the latin_percentage / char_count_no_comments
+    # retry drift fix 3 excluded here is fixed in K4g fix 4, tests/test_k4g_fix4.py).
+    assert resume['export'] == reference['export']
     import pandas as pd
-    pd.testing.assert_frame_equal(resume['download_results'].drop(columns=sorted(known)),
-                                  reference['download_results'].drop(columns=sorted(known)), check_dtype=False)
+    pd.testing.assert_frame_equal(resume['download_results'], reference['download_results'], check_exact=True)
+    assert resume['download_results_bytes'] == reference['download_results_bytes']
 
 
 def test_a_non_disk_repair_error_still_continues_with_the_unrepaired_pdf(runs):
