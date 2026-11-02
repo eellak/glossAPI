@@ -52,22 +52,34 @@ def resource_identity(raw_url,*,source_id=None,dataset_id=None,resource_index=0)
     return source_key(raw_url)
 
 
+URL_INDEX_MAX=2**63-1  # the ledger stores url_index as a SQLite INTEGER (signed 64-bit)
+
+
 def row_resource_index(row: Any, *, index: int | None = None) -> int:
     """The resource index of a one-URL source row (CRED-F8): its declared ``url_index`` (a nonnegative integer), else 0.
 
     Plan (``cli._plan_data``) and run (``_remote_inventory``) both key a declared ``source_id`` by
     (dataset_id, source_id, this index), so two rows of one source_id with url_index 0 and 1 are two resources in
     both. A list-valued URL cell is expanded by run and keyed by each URL's position instead."""
+    import math
+    import numbers
+    import operator
     value=row.get('url_index') if isinstance(row,dict) else None
-    if value is None or (isinstance(value,float) and value!=value):
-        return 0
-    number: float | None
-    try:number=None if isinstance(value,(bool,str,bytes)) else float(value)
-    except (TypeError,ValueError):number=None
-    if number is None or number<0 or not number.is_integer():
+    if value is None or (isinstance(value,numbers.Real) and not isinstance(value,numbers.Integral) and math.isnan(float(value))):
+        return 0  # a missing cell (pandas NaN)
+    number: int | None=None
+    # Integers stay exact (CP-K4g F3: 2**53 and 2**53+1 are two indices); only a non-integer number is examined as a
+    # float, and only to accept one with an integral value. bool is not an index.
+    if isinstance(value,numbers.Integral) and not isinstance(value,bool):
+        number=operator.index(value)
+    elif isinstance(value,numbers.Real) and not isinstance(value,(bool,numbers.Integral)):
+        floating=float(value)
+        if math.isfinite(floating) and floating.is_integer():
+            number=int(floating)
+    if number is None or number<0 or number>URL_INDEX_MAX:
         from ..input_manifest import ManifestError
-        raise ManifestError('invalid_manifest','url_index must be a nonnegative integer',field='url_index',index=index,value=str(value))
-    return int(number)
+        raise ManifestError('invalid_manifest',f'url_index must be an integer from 0 to {URL_INDEX_MAX}',field='url_index',index=index,value=str(value))
+    return number
 
 
 def _bind(found,identity,url,*,index=None):
@@ -1021,16 +1033,7 @@ def skip_barrier(corpus,run,stage):
         writer.finish(run,task['task_id'],attempt,status='skipped',reason_code='upstream_failed')
 
 
-class PublicationInputsReleasedError(ValueError):
-    """A corpus publication must be repeated (the documents it covers changed) but a committed document product it
-    publishes from was already released (K4g B1c). Nothing was written."""
-    code='republish_inputs_released'
-
-    def __init__(self,stage,missing):
-        self.details={'stage':stage,'missing':[str(path) for path in missing[:20]],'missing_count':len(missing)}
-        super().__init__(f'republish_inputs_released: the {stage} publication must be repeated to cover the documents that '
-            f'are now complete, but {len(missing)} committed document products it publishes from were already released '
-            '(for example '+str(missing[0])+'). Nothing was written; start a new run over these sources.')
+from .retention import PublicationInputsReleasedError  # noqa: E402  (typed refusal, shared with scheduler recovery)
 
 
 def _republication_inputs_missing(corpus,stage):
@@ -1063,9 +1066,9 @@ def _republication_inputs_missing(corpus,stage):
 
 
 def _has_failed_documents(writer,run):
-    """Whether a document task of this run ended failed (a --retry-failed resume can still bring it to ok)."""
-    return any(task['status']=='failed' and task['version_id'] is not None and not task['operation'].endswith('.compatibility_publish')
-               for task in writer.task_states(run))
+    """Whether document releases are suspended (``retention.document_releases_suspended``, the one shared rule)."""
+    from .retention import document_releases_suspended
+    return document_releases_suspended(writer,run)
 
 
 def _publication_coverage(corpus):

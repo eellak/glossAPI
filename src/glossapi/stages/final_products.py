@@ -369,18 +369,22 @@ def export_charge(corpus: Any, text_rows: list[Any], facts: list[tuple[int, int,
 RELEASED_AFTER = {'clean': 'extract', 'sections': 'clean', 'annotate': 'sections'}  # run.py: retained after each publication
 
 
-def release_credits(corpus: Any, result: Any) -> dict[str, int]:
+def release_credits(corpus: Any, result: Any, *, honour_suspension: bool = True) -> dict[str, int]:
     """Bytes released right after each publication (K4F3-G1): the run retires the private scratch of the streaming
     attempts the publication was the last reader of (``run.py`` calls ``retain_completed_run`` for
     ``RELEASED_AFTER[stage]``). Counted from the same candidate rule retention applies (``_retention_candidates``, minus
     the private rows ``_collect_candidates`` keeps), only for files present now whose every hard link is released and
     whose planned readers are done by then; nothing is credited with ``debug=on``, which keeps them."""
-    from .retention import _retention_candidates, file_path, resolved_settings
+    from .retention import _retention_candidates, document_releases_suspended, file_path, resolved_settings
     owner: Any = corpus
     settings = resolved_settings({**(getattr(owner, '_retention_settings', {}) or {})})
     if settings.get('debug') == 'on':
         return {}
     writer: Any = owner._scheduler_writer
+    # The same rule run.py applies before each release (CP-K4g F1): while a document is failed, none happens, so
+    # none is credited. ``honour_suspension=False`` only measures what an unsuspended run would release.
+    if honour_suspension and document_releases_suspended(writer, result['run_id']):
+        return {}
     root = Path(owner.output_dir)
     private = root.resolve()/'.glossapi/artifacts'
     attempts: dict[str, Any] = result.get('attempts', {})

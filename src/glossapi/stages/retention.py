@@ -550,6 +550,29 @@ def retention_candidates(writer: Any, root: Any, run_id: str, settings: Any = No
     return _retention_candidates(writer,root,run_id,resolved,attempts=attempts,cleanup_paths=cleanup_paths,assume_ok=frozenset(assume_ok))
 
 
+class PublicationInputsReleasedError(ValueError):
+    """Work a resume must repeat needs committed inputs that were already released (K4g B1c, CP-K4g F2): a corpus
+    publication that must cover more documents, or a document attempt whose committed outputs vanished while its own
+    inputs (for example a download retired under memory_saving=extreme) are gone. Raised before anything is repeated."""
+    code='republish_inputs_released'
+
+    def __init__(self,stage,missing):
+        self.details={'stage':stage,'missing':[str(path) for path in missing[:20]],'missing_count':len(missing)}
+        super().__init__(f'republish_inputs_released: the {stage} work this resume must repeat needs {len(missing)} committed '
+            'inputs that were already released (for example '+str(missing[0])+'). Nothing was repeated or published; start a '
+            'new run over these sources.')
+
+
+def document_releases_suspended(writer: Any, run_id: str) -> bool:
+    """THE release-eligibility rule for a run's document attempts (K4g B1c; CP-K4g F1). While a document task of the
+    run is failed, a --retry-failed resume can still bring it to ok and then re-publishes every corpus product from the
+    other documents' committed products, so those are not released: neither between publications nor at run end.
+    ``run.py`` asks it before each such release, and ``final_products.release_credits`` before crediting one, so a
+    disk charge never subtracts a release that will not happen."""
+    return any(task['status'] == 'failed' and task['version_id'] is not None and not task['operation'].endswith('.compatibility_publish')
+               for task in writer.task_states(run_id))
+
+
 def retain_completed_run(writer: Any, root: Any, run_id: str, settings: Any = None, *, attempts: Any = None, cleanup_paths: Any = (),
                          observer: Any = None) -> Any:
     """Seal and collect only owned private attempts after their publication seal.
