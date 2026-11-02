@@ -37,7 +37,7 @@ def _fake_native(root: Path, name: str, payload: bytes) -> Path:
 def test_rust_markers_match_the_levels_capabilities_require():
     """Raising a level on one side only is caught: the crate marker and NATIVE_API_LEVELS agree."""
     from glossapi.capabilities import NATIVE_API_LEVELS
-    assert set(NATIVE_API_LEVELS) == set(REQUIRED_NATIVES)
+    assert set(NATIVE_API_LEVELS) == {*REQUIRED_NATIVES, 'glossapi_rs_pdfrepair'}  # pdfrepair: optional (K4g fix 3)
     for name, level in NATIVE_API_LEVELS.items():
         source = (REPO / 'rust' / name / 'src' / 'lib.rs').read_text(encoding='utf-8')
         assert re.findall(r'NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:([a-z_]+):(\d+);"', source) == [(name, str(level))]

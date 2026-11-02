@@ -9,6 +9,10 @@ from glossapi import pdf_repair
 from glossapi.pdf_repair import rust_backend, tounicode
 
 
+# A fake extension declares the native API level this package needs (K4g fix 3: the selector skips other builds).
+API = {'__glossapi_native_api__': 'GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:1;'}
+
+
 class MissingExtension(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname == 'glossapi_rs_pdfrepair':
@@ -40,7 +44,7 @@ def test_public_api_selects_available_rust_and_keeps_typed_result(tmp_path, monk
     def native(*args):
         calls.append(args)
         return report.to_dict()
-    extension = SimpleNamespace(**{operation: native})
+    extension = SimpleNamespace(**{operation: native}, **API)
     monkeypatch.setitem(sys.modules, 'glossapi_rs_pdfrepair', extension)
     monkeypatch.setattr(tounicode, operation, lambda *a, **kw: pytest.fail('Rust must be selected'))
     arguments = (tmp_path / 'source.pdf',) if operation == 'analyze_pdf' else (
@@ -60,6 +64,6 @@ def test_public_fallback_receipt_and_native_runtime_error(monkeypatch):
     assert report.to_dict()['backend'] == 'python'
     def broken_native(path):
         raise RuntimeError('injected native execution error')
-    monkeypatch.setitem(sys.modules, 'glossapi_rs_pdfrepair', SimpleNamespace(analyze_pdf=broken_native))
+    monkeypatch.setitem(sys.modules, 'glossapi_rs_pdfrepair', SimpleNamespace(analyze_pdf=broken_native, **API))
     with pytest.raises(RuntimeError, match='native execution error'):
         pdf_repair.analyze_pdf('source')

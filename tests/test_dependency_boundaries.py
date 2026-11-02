@@ -7,9 +7,21 @@ import sys
 import pytest
 
 
-def isolated(code):
+def isolated(code, *extra_paths):
+    paths = [str(Path(__file__).resolve().parents[1] / 'src'), *map(str, extra_paths)]
     return subprocess.run([sys.executable, '-c', code], text=True, capture_output=True,
-                          env={**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')})
+                          env={**os.environ, 'PYTHONPATH': os.pathsep.join(paths)})
+
+
+def _session_pdfrepair_root():
+    """The import root of the glossapi_rs_pdfrepair this session loads (an overlay build or site-packages), so a child
+    sees the same native: the selector skips a build without the current native API level (K4g fix 3)."""
+    import importlib.util
+    spec = importlib.util.find_spec('glossapi_rs_pdfrepair')
+    if spec is None or spec.origin is None:
+        pytest.skip('glossapi_rs_pdfrepair is not installed')
+    origin = Path(spec.origin)
+    return origin.parent.parent if spec.submodule_search_locations else origin.parent
 
 
 def test_local_text_setup_never_attempts_optional_imports(tmp_path):
@@ -182,7 +194,7 @@ from glossapi.page_quality import text_contamination_counts
 from glossapi.pdf_repair import get_backend
 assert get_backend().name == 'rust'
 assert 'glossapi.pdf_repair.tounicode' not in sys.modules
-""")
+""", _session_pdfrepair_root())
     assert result.returncode == 0, result.stderr
 
 

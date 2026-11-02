@@ -265,10 +265,23 @@ def outputs_in(root, required=()):
     return tuple(outputs)
 
 
-def failed_result(request, reason, error, *, decisions=(), metrics=None):
+def disk_full(error):
+    """True when an exception (or its cause chain) is an exhausted filesystem: ENOSPC/EDQUOT or SQLite's disk-full."""
     import errno
-    # An exhausted filesystem under a worker's output write is the document's typed cause (W18 M10), not a budget refusal.
-    if isinstance(error,OSError) and error.errno in (errno.ENOSPC,errno.EDQUOT):reason='disk_full'
+    import sqlite3
+    seen=set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error,OSError) and error.errno in (errno.ENOSPC,errno.EDQUOT):return True
+        if isinstance(error,sqlite3.Error) and (getattr(error,'sqlite_errorcode',None)==13 or 'disk is full' in str(error)):return True
+        error=error.__cause__ or error.__context__
+    return False
+
+
+def failed_result(request, reason, error, *, decisions=(), metrics=None):
+    # An exhausted filesystem under a worker's output write is the document's typed cause (W18 M10), not a budget
+    # refusal; also when the ENOSPC is the cause of the raised error (K4g fix 3).
+    if disk_full(error):reason='disk_full'
     return StageResult(request.task_id, request.attempt_id, request.lease_token, "failed", reason,
         tuple(replace(output, retention_class="failed_attempt", required=False)
               for output in outputs_in(request.work_directory)), tuple(decisions), metrics or {},
