@@ -145,6 +145,60 @@ def _borrowed_metadata_rows(path: Path, planned: dict[str, dict[str, Any]] | Non
     return wrong
 
 
+def metadata_table(corpus: Any, options: dict[str, Any] | None = None) -> Path:
+    """The compatibility metadata table the export reads (``metadata_path``, else the selected download table)."""
+    metadata=(options or {}).get('metadata_path')
+    if metadata is not None:
+        return Path(metadata)
+    directory=corpus.output_dir/'download_results';metadata=directory/'download_results.parquet'
+    if not metadata.exists():
+        candidates=sorted(directory.glob('*.parquet')) if directory.exists() else []
+        if not candidates:raise FileNotFoundError(f'Metadata parquet not found in {directory}')
+        preferred=[p for p in candidates if p.name.startswith('download_results_')];metadata=preferred[0] if preferred else candidates[0]
+    return metadata
+
+
+def selected_texts(corpus: Any) -> tuple[Path, list[tuple[str, Path]]]:
+    """The text directory and ``(stem, path)`` of every text the export serializes: canonical texts and chunks; a
+    streaming run's plan only."""
+    from .._naming import canonical_stem
+    import re as _re
+    root=corpus.cleaned_markdown_dir;chunks=root/'chunks'
+    if not root.exists() or (not any(root.glob('*.md')) and not (chunks.exists() and any(chunks.rglob('*.md')))):
+        root=corpus.markdown_dir;chunks=root/'chunks'
+    planned=getattr(corpus,'_streaming_publication_stems',None)
+    planned=set(planned.values()) if planned else None
+    texts=[]
+    for path in [*sorted(root.glob('*.md')),*sorted(chunks.rglob('*.md'))]:
+        stem=_re.sub(r'__p\d{4}-\d{4}$','',canonical_stem(path))
+        # A streaming run exports exactly its plan's documents; earlier runs' texts stay in their own history (K4BI-G3).
+        if planned is not None and stem not in planned:continue
+        texts.append((stem,path))
+    return root,texts
+
+
+def export_inputs(corpus: Any, options: dict[str, Any]) -> tuple[list[tuple[str, Path]], list[str], list[tuple[str, Path]]]:
+    """The export's frozen inputs: ONE list for the writer and the disk charge (CP-K4c3 R3).
+
+    The metadata table (and the caller's source metadata), the selected texts, and only the sidecars the serializer
+    reads for those texts (``<stem>.metrics.json``, ``<stem>.per_page.metrics.json``, ``<stem>.latex_map.jsonl``,
+    see ``ExportPhaseMixin.jsonl``). Other documents' sidecars are not inputs: nothing reads them. Order as before.
+    Returns (inputs, view paths, selected texts)."""
+    inputs: list[tuple[str, Path]]=[('metadata',resolved_input(corpus,metadata_table(corpus,options)))];relative_paths=['metadata.parquet']
+    if options.get('source_metadata_path') is not None:
+        inputs.append(('source_metadata',Path(options['source_metadata_path'])));relative_paths.append('source_metadata.parquet')
+    root,texts=selected_texts(corpus)
+    for _,path in texts:
+        inputs.append(('selected_text',resolved_input(corpus,path)));relative_paths.append('clean_markdown/'+str(path.relative_to(root)))
+    stems={stem for stem,_ in texts}
+    read={f'{stem}{suffix}' for stem in stems for suffix in ('.metrics.json','.per_page.metrics.json','.latex_map.jsonl')}
+    for directory,pattern,prefix in [(corpus.output_dir/'json/metrics','*.json','json/metrics'),(corpus.output_dir/'json','*.latex_map.jsonl','json')]:
+        for path in sorted(directory.glob(pattern)):
+            if path.name in read:
+                inputs.append(('metrics_or_math',resolved_input(corpus,path)));relative_paths.append(prefix+'/'+path.name)
+    return inputs,relative_paths,texts
+
+
 def export_products(corpus,output,options,*,sharded=False):
     options=dict(options)
     for key in ('metadata_fields','source_metadata_fields'):
@@ -158,32 +212,16 @@ def export_products(corpus,output,options,*,sharded=False):
         if options.get('source_metadata_key') and options.get('source_metadata_fields') is None:raise ValueError('source_metadata_fields must be provided when source_metadata_key is set')
         if options.get('source_metadata_path') and not options.get('source_metadata_key'):raise ValueError('source_metadata_key must be provided when source_metadata_path is set')
         if options.get('source_metadata_fields') and not options.get('source_metadata_key'):raise ValueError('source_metadata_key must be provided when source_metadata_fields are set')
-    metadata=options.get('metadata_path')
-    if metadata is None:
-        directory=corpus.output_dir/'download_results';metadata=directory/'download_results.parquet'
-        if not metadata.exists():
-            candidates=sorted(directory.glob('*.parquet')) if directory.exists() else []
-            if not candidates:raise FileNotFoundError(f'Metadata parquet not found in {directory}')
-            preferred=[p for p in candidates if p.name.startswith('download_results_')];metadata=preferred[0] if preferred else candidates[0]
-    inputs=[('metadata',resolved_input(corpus,metadata))];relative_paths=['metadata.parquet']
-    if options.get('source_metadata_path') is not None:
-        inputs.append(('source_metadata',Path(options['source_metadata_path'])));relative_paths.append('source_metadata.parquet')
-    root=corpus.cleaned_markdown_dir;chunks=root/'chunks'
-    if not root.exists() or (not any(root.glob('*.md')) and not (chunks.exists() and any(chunks.rglob('*.md')))):
-        root=corpus.markdown_dir;chunks=root/'chunks'
-    planned=getattr(corpus,'_streaming_publication_stems',None)
-    planned=set(planned.values()) if planned else None
-    from .._naming import canonical_stem
-    import re as _re
-    for path in [*sorted(root.glob('*.md')),*sorted(chunks.rglob('*.md'))]:
-        # A streaming run exports exactly its plan's documents; earlier runs' texts stay in their own history (K4BI-G3).
-        if planned is not None and _re.sub(r'__p\d{4}-\d{4}$','',canonical_stem(path)) not in planned:continue
-        inputs.append(('selected_text',resolved_input(corpus,path)));relative_paths.append('clean_markdown/'+str(path.relative_to(root)))
-    for directory,pattern,prefix in [(corpus.output_dir/'json/metrics','*.json','json/metrics'),(corpus.output_dir/'json','*.latex_map.jsonl','json')]:
-        for path in sorted(directory.glob(pattern)):
-            inputs.append(('metrics_or_math',resolved_input(corpus,path)));relative_paths.append(prefix+'/'+path.name)
+    inputs,relative_paths,texts=export_inputs(corpus,options)
     semantic_options={key:str(value) if isinstance(value,Path) else value for key,value in options.items()}
     sources: dict[str, dict[str, Any]] | None = getattr(cast(Any,corpus),'_streaming_publication_sources',None)
+    if not sources:
+        # Without a frozen plan (sequential), the ledger binds each produced text to its source (CP-K4c3 R1).
+        from .products import active_journal
+        journal=active_journal()
+        if journal is not None:
+            from .compatibility import ledger_publication_sources
+            sources=ledger_publication_sources(journal.writer.connection,texts)
     settings: dict[str, Any] = {'sharded':sharded,'options':semantic_options,'input_paths':relative_paths}
     if sources:
         settings['planned_sources']=dict(sorted(sources.items()))

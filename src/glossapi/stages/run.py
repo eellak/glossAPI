@@ -292,17 +292,8 @@ def _publication_sources(operations: Any, writer: Any) -> dict[str, dict[str, An
     stems = cast(dict[Any, str], _publication_stems(operations))
     remote: dict[Any, str] = {operation.document.version_id:operation.document.source_uri for operation in operations if operation.stage=='download'}
     documents: dict[Any, Any] = {operation.document.version_id:operation.document.document_id for operation in operations}
-    claims: dict[str, set[tuple[str, str]]] = {}
-    rows: list[Any] = writer.connection.execute("""SELECT s.json,d.source_key FROM tasks t JOIN snapshots s ON s.sha256=t.specification_sha256
-        JOIN document_versions v ON v.version_id=t.version_id JOIN documents d ON d.document_id=v.document_id
-        WHERE t.operation='download.acquire'""").fetchall()
-    for specification,key in rows:
-        frozen = cast(dict[str, Any], json.loads(specification))
-        operation_json = cast(dict[str, Any], frozen.get('scheduler_operation') or {})
-        settings = cast(dict[str, Any], cast(dict[str, Any], operation_json.get('specification') or {}).get('settings') or {})
-        document = cast(dict[str, Any], operation_json.get('document') or {})
-        if settings.get('filename_base') and document.get('source_uri'):
-            claims.setdefault(str(settings['filename_base']),set()).add((str(key),str(document['source_uri'])))
+    from .compatibility import download_name_claims
+    claims = download_name_claims(writer.connection)
     sources: dict[str, dict[str, Any]] = {}
     for version,stem in stems.items():
         known: Any = writer.connection.execute('SELECT source_key FROM documents WHERE document_id=?',(documents.get(version),)).fetchone()
@@ -746,7 +737,8 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
         # Before any publication (K4BI-G7): the exact cleaned text of this run decides whether the final products fit;
         # a typed refusal now, never an exhausted disk mid-publication. Resume after enlarging the filesystem.
         from .final_products import check_exact
-        check_exact(corpus,result,cast(Any,stages),when='(exact, before the publications)')
+        publications=[*stages,*(['download'] if getattr(corpus,'_streaming_download_manifest',None) else [])]
+        check_exact(corpus,result,publications,when='(exact, before the publications)')
     if result.get('run_id') and getattr(cast(Any,corpus),'_retention_settings',{}).get('memory_saving')=='extreme':
         # Streaming retirement (W18 M9) runs as document readers finish. A resume after a kill inside it (or a run
         # whose last completion raced it) finishes it here, before any publication (K4BP-G2).
@@ -795,10 +787,13 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                 if not result['sources'] and stage not in ('download','export'):
                     skip_barrier(corpus,result['run_id'],stage)
                 else:
-                    if stage=='export' and getattr(corpus,'_retention_settings',{}).get('memory_saving')=='extreme':
-                        # Again from the actual tables, just before the export writes (CP-K4ac2 R3; first runs create them).
-                        from .final_products import check_exact
-                        check_exact(corpus,result,('export',),when='(exact, at the export publication)')
+                    if getattr(corpus,'_retention_settings',{}).get('memory_saving')=='extreme':
+                        # Again before EACH publication's first write, from the state on disk now: this publication and
+                        # every later one (CP-K4c3 R3; CP-K4ac2 R3 re-checked only the export).
+                        from .final_products import check_exact, PUBLICATION_ORDER
+                        later=PUBLICATION_ORDER[PUBLICATION_ORDER.index(stage):]
+                        pending=[s for s in later if s in stages or (s=='download' and corpus._streaming_download_manifest)]
+                        check_exact(corpus,result,pending,when=f'(exact, at the {stage} publication)')
                     published=publish_barrier(corpus,result['run_id'],stage,calls[stage],retry_failed=retry_failed,
                         empty_export=not result['sources'] and stage=='export')
                 # The next compatibility reader has now consumed these private

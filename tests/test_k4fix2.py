@@ -153,19 +153,23 @@ def test_r3_first_run_counts_the_future_metadata_table(tmp_path, monkeypatch):
 
 
 def test_r3_export_barrier_recheck_uses_the_actual_table(tmp_path, monkeypatch):
-    """With the allowance removed, the pre-publication check passes; the re-check at the export publication reads the
-    table that now exists and refuses before the export writes. Resume after enlarging the room completes."""
+    """With the table allowances removed, the pre-publication check passes; the re-check before a later publication
+    reads the table that now exists and refuses before that publication writes (CP-K4c3 R3: every publication is
+    re-checked, so the first re-check that sees the table is the clean publication's). Resume with room completes."""
     from glossapi.stages import final_products
     from glossapi.stages.disk_budget import DiskBudgetError
-    monkeypatch.setattr(final_products, 'METADATA_TABLE_FIXED_BYTES', 0)
-    monkeypatch.setattr(final_products, 'METADATA_TABLE_ROW_BYTES', 0)
+    for name in ('METADATA_TABLE_FIXED_BYTES', 'METADATA_TABLE_ROW_BYTES', 'METADATA_TABLE_GROWTH_BYTES', 'GENERATION_FIXED_BYTES',
+                 'GENERATION_DOCUMENT_BYTES', 'CLEANING_REPORT_BYTES', 'CLEANING_REPORT_ROW_BYTES'):
+        monkeypatch.setattr(final_products, name, 0)
     room = {'bytes': 20000}
     checks, settings = _extreme(tmp_path, monkeypatch, lambda: room['bytes'])
     root = tmp_path/'out'
-    with pytest.raises(DiskBudgetError, match='at the export publication'):
+    with pytest.raises(DiskBudgetError, match='at the clean publication'):
         Corpus(tmp_path/'empty', root).run([pdf(tmp_path/'doc.pdf', 'A short text document')], stages=STAGES, settings=settings)
-    assert [check['when'] for check in checks if 'exact' in check['when']] == ['(exact, before the publications)', '(exact, at the export publication)']
-    assert not (root/'export.jsonl').exists()
+    assert [check['when'] for check in checks if 'exact' in check['when']] == [
+        '(exact, before the publications)', '(exact, at the extract publication)', '(exact, at the clean publication)']
+    assert (root/'download_results/download_results.parquet').stat().st_size*3 > 20000  # the actual table decided it
+    assert not (root/'export.jsonl').exists() and not any((root/'clean_markdown').glob('*.md'))  # the clean publication never wrote
     room['bytes'] = 1 << 30
     from glossapi.ledger.reader import select_run
     with W.open_readonly(root/'corpus.sqlite3') as connection:
@@ -191,29 +195,19 @@ def _unique_bytes(root):
 def test_r3_export_recheck_counts_each_text_once(tmp_path, monkeypatch):
     """Node gate reproducer (corpus > budget, extreme): at the export publication the clean publication's compatibility
     copies are present rows of the same texts; counting them again over-charged the export (1,166,291,727 needed vs
-    1,147,092,992 available; the run fits with a 0.98 GB high-water). Room between the export's actual need and the
-    double count: the run completes, and the bytes the export adds stay within the charged bound."""
-    from glossapi.stages import final_products, run as RUN
+    1,147,092,992 available; the run fits with a 0.98 GB high-water). CP-K4c3 R3: the export re-check charges the
+    writer's own input list (``export_inputs``), one text per document, and stays an upper bound of what it adds."""
+    from glossapi.stages import export as EX, run as RUN
     measured = {}
-    real_need = final_products.exact_export_need
-    def need(texts, metadata, stems):
-        texts = list(texts)
-        value = real_need(texts, metadata, stems)
-        if 'export publication' in phase.get('when', ''):  # the export re-check, after the clean publication
-            copies = sorted((tmp_path/'out'/'clean_markdown').glob('*.md'))
-            single, doubled = real_need(copies, metadata, stems), real_need(copies*2, metadata, stems)
-            measured.update(texts=len(texts), copies=len(copies), need=value, single=single, doubled=doubled)
-            room['bytes'] = (single + doubled)//2  # fixed by the test, not by the code under test
-        return value
-    monkeypatch.setattr(final_products, 'exact_export_need', need)
-    phase = {}
-    real_check = final_products.check_exact
-    def check(corpus, result, stages, *, when):
-        phase['when'] = when
-        return real_check(corpus, result, stages, when=when)
-    monkeypatch.setattr(final_products, 'check_exact', check)
-    room = {'bytes': 1 << 40}
-    checks, settings = _extreme(tmp_path, monkeypatch, lambda: room['bytes'])
+    real_inputs = EX.export_inputs
+    def inputs(corpus, options):
+        found = real_inputs(corpus, options)
+        measured['selected'] = len(found[2])
+        measured['present_texts'] = sum(1 for row in corpus._scheduler_writer.file_catalog().values()
+                                        if row['kind'] == 'clean_markdown' and row['presence'] == 'present')
+        return found
+    monkeypatch.setattr(EX, 'export_inputs', inputs)
+    checks, settings = _extreme(tmp_path, monkeypatch, lambda: 1 << 40)
     real_barrier = RUN.publish_barrier
     def barrier(corpus, run, stage, callback, **kwargs):
         before = _unique_bytes(tmp_path/'out')
@@ -222,14 +216,14 @@ def test_r3_export_recheck_counts_each_text_once(tmp_path, monkeypatch):
         finally:
             if stage == 'export':
                 measured['added'] = _unique_bytes(tmp_path/'out') - before
+                measured.setdefault('at_export', dict(measured))
     monkeypatch.setattr(RUN, 'publish_barrier', barrier)
     sources = [pdf(tmp_path/'src'/f'D{index:03d}.pdf', f'Document {index} export recheck text') for index in range(3)]
     result = Corpus(tmp_path/'empty', tmp_path/'out').run(sources, stages=STAGES, settings=settings)  # 15afe32+r2: refused
     assert result['state'] == 'completed'
-    assert measured['texts'] == 3 and measured['copies'] == 3  # one text per document, although both copies are present
-    assert measured['need'] == measured['single'] < room['bytes'] < measured['doubled']
-    assert 0 < measured['added'] <= measured['need']  # still an upper bound of what the export publication adds
-    assert any('export publication' in check.get('when', '') for check in checks)
+    assert measured['selected'] == 3 and measured['present_texts'] > 3  # one text per document, although copies are present
+    need = next(check['need'] for check in checks if check.get('when') == '(exact, at the export publication)')
+    assert 0 < measured['added'] <= need  # an upper bound of what the export publication adds
 
 
 # ------------------------------------------- B-R1 external commits over the whole lifetime ---

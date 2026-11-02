@@ -518,23 +518,42 @@ class ResultJournal:
         """Byte-verify the originals whose hash this phase took from the process cache and that a pending deletion
         relies on (CP-K4b F3, CP-K4bc2 R2). ``rows``: the file rows about to be deleted; a row of a document version
         relies on that version's original, a corpus-level row (no version) on every cached original; None means all.
-        Each original is re-read at most once per phase (the destructive boundaries of a phase share one
-        verification); a same-stat rewrite the cache could not see stops the phase before anything is deleted."""
+        A verification is valid only for the stat identity it hashed and only within one destructive frontier
+        (CP-K4c3 R4): every call is one frontier, and it re-stats every relied-on original. The first verification of
+        an original in this phase hashes it; a later frontier re-hashes it only when its (dev, ino, size, mtime_ns,
+        ctime_ns) changed. A missing original or a different hash stops the phase before anything is deleted. A
+        same-size rewrite that keeps mtime and ctime is the declared same-tick residual (K4F1-G1)."""
         cached: list[tuple[Path, str]] = getattr(self, 'cached_originals', [])
         if not cached:
             return
-        verified: set[tuple[str, str]] = self.__dict__.setdefault('verified_originals', set())
+        from .encoding import own_hash_key
+        verified: dict[tuple[str, str], tuple[int, int, int, int, int]] = self.__dict__.setdefault('verified_originals', {})
         known: dict[str, Any] = getattr(self, 'versions')
         versions: set[Any] | None = None if rows is None else {row['version_id'] for row in rows}
         relevant = [(path, digest) for path, digest in cached
                     if versions is None or None in versions or known.get(str(path)) in versions]
+        checked: set[tuple[str, str]] = set()
         for path, digest in relevant:
-            if (str(path), digest) in verified:
+            key = (str(path), digest)
+            if key in checked:
                 continue
-            if not Path(path).is_file() or file_hash(path) != digest:
+            checked.add(key)
+            try:
+                observed = own_hash_key(os.stat(path))
+            except OSError:
+                observed = None
+            if observed is not None and verified.get(key) == observed:
+                continue
+            if observed is None or not Path(path).is_file() or file_hash(path) != digest:
+                verified.pop(key, None)
                 _original_hashes.pop(str(path), None)
                 raise ValueError(f'original_changed_since_observed: {path} no longer has the hash this phase bound; run the phase again')
-            verified.add((str(path), digest))
+            after = own_hash_key(os.stat(path))
+            if after == observed:
+                verified[key] = observed
+            else:
+                # Written while it was hashed: the hash matched, but this stat identity was not the one hashed.
+                verified.pop(key, None)
 
     def finish(self, result, error):
         if self.cutover and error is None:

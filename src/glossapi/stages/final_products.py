@@ -2,15 +2,16 @@
 
 The document export and the annotated-section export are the user's output. Under memory_saving=extreme they are
 charged to the corpus filesystem, never to the per-attempt staging cap, and a run whose corpus filesystem cannot hold
-them is refused with a typed error at two points that come before any publication: at run start (estimated from the
-sources' sizes and a declared planning ratio) and after the document stages (from the exact text sizes the run
-produced). The text the corpus barriers read stays until the publications (G8, inherent: the final products are made
-from it); ``plan --json`` shows both estimates.
+them is refused with a typed error before any publication writes: at run start (estimated from the sources' sizes and a
+declared planning ratio), after the document stages, and again before each publication (CP-K4c3 R3: the publication
+charge, ``publication_charges``, derived from the writers' own input and product lists). The text the corpus barriers
+read stays until the publications (G8, inherent: the final products are made from it); ``plan --json`` shows the
+run-start estimate.
 
 Factors are bytes per byte of cleaned text, measured on the K4(b) Mac corpus (8 documents, 1.25 MB of cleaned text):
 document export 1.02, sections parquet 0.88, classified and annotated parquets 0.87 each, annotation partitions 0.98,
 section fragments 2.2. A final product is kept twice (its generation and the published copy), and an aggregate stage
-holds a transient copy of its inputs; the factors below round those up.
+holds a transient copy of its inputs; the factors below round those up. They serve only the run-start estimate.
 """
 from __future__ import annotations
 
@@ -41,7 +42,8 @@ def product_need(stages: Iterable[str], text_bytes: int, documents: int) -> int:
 
 
 def exact_export_need(texts: Iterable[Any], metadata_paths: Iterable[Any], stems: set[str] | None) -> int:
-    """Binding pre-publication bound of the document export, from actual sizes (CP-K4a F7).
+    """The round-1/2 export bound from actual sizes (CP-K4a F7). The binding check now charges every publication with
+    ``publication_charges`` (CP-K4c3 R3); this record-and-view sum stays as a lower building block of it.
 
     Each record is its text and its metadata row serialized as the export serializes them (JSON, ``ensure_ascii=False``,
     escapes included) plus ``RECORD_OVERHEAD_BYTES`` of computed fields. The export holds the records twice at once
@@ -83,13 +85,6 @@ def exact_export_need(texts: Iterable[Any], metadata_paths: Iterable[Any], stems
     return 2*record_bytes + view_bytes
 
 
-def binding_need(stages: Iterable[str], text_bytes: int, documents: int, export_bytes: int) -> int:
-    """``product_need`` with the export's text factor and per-document allowance replaced by ``exact_export_need``."""
-    requested = set(stages)
-    other = sum(value for stage, value in PRODUCT_FACTORS.items() if stage in requested and stage != 'export')
-    return int(other*text_bytes + (export_bytes if 'export' in requested else 0))
-
-
 def kept_text(stages: Iterable[str], text_bytes: int) -> int:
     """Bytes of text intermediates the corpus barriers keep until the publications (K4BI-G8)."""
     requested = set(stages)
@@ -128,37 +123,247 @@ def require_room(root: Any, settings: dict[str, Any], need: int, *, when: str, p
                               + '. Enlarge the corpus filesystem (and disk_budget_bytes) or request fewer products')
 
 
-def check_exact(corpus: Any, result: Any, stages: Iterable[str], *, when: str) -> None:
-    """The binding check from this run's actual sizes (K4BI-G7, CP-K4a F7, CP-K4ac2 R3), extreme only.
+# ---- The publication charge (CP-K4c3 R3) --------------------------------------------------------------------------
+# A conservative charge derived from the writers' own input and product lists. Every publication adds its frozen input
+# snapshots, (export) a transient view of the same inputs, its products twice (generation and published copy) and its
+# generation manifest; a metadata-writing publication re-publishes the compatibility table three times (input snapshot,
+# generation copy, published file). Fixed footprints measured on the Mac (pyarrow 26), rounded up:
+PUBLICATION_ORDER = ('download', 'extract', 'clean', 'ocr', 'sections', 'annotate', 'export')
+METADATA_STAGES = frozenset(('download', 'extract', 'clean', 'ocr'))  # their wrappers re-publish download_results/*.parquet
+METADATA_TABLE_GROWTH_BYTES = 8192  # columns a publication adds beyond the fixed schema footprint (clean: +3.8 KB measured)
+CLEANING_REPORT_BYTES = 16384       # cleaning_report.parquet (4.4 KB measured for 1-8 documents) ...
+CLEANING_REPORT_ROW_BYTES = 512     # ... plus a row per document
+PARQUET_FILE_BYTES = 16384          # one parquet file's schema, footer and statistics (3.9-9.6 KB measured)
+PARQUET_ROW_GROUP_BYTES = 4096      # per row group: the sections parquet writes one per document (2.7 KB measured)
+SECTION_ROW_BYTES = 1024            # per section row: its JSON fragment keys and computed columns (362 B measured)
+ANNOTATION_ROW_BYTES = 1024         # per section row in each annotation parquet and in the lineage manifest
+ANNOTATION_PARTITIONS = 20          # GlossSectionClassifier: 5 partitions per CPU, n_cpus=4 (AnnotatePhaseMixin.annotate)
+GENERATION_FIXED_BYTES = 8192       # generation.json (0.6-5.6 KB measured) ...
+GENERATION_DOCUMENT_BYTES = 1024    # ... plus its per-document (or per-record) entries
+SIDECAR_REWRITE_BYTES = 4096        # an extract sidecar/chunk manifest rewritten with compatibility paths
+SKIPPED_KINDS = frozenset(('source_snapshot', 'attempt_diagnostic', 'worker_receipt', 'generation_manifest'))
+_text_facts: dict[str, tuple[int, int]] = {}  # sha256 -> (JSON-escaped bytes, markdown header lines); content-only facts
 
-    Before the publications it charges every requested final product; at the export publication only the export,
-    from the metadata table that now exists. Texts: this run's cleaned texts; metadata: the selected compatibility
-    table (or the allowance for one publication will create) plus the source projection's caller columns."""
-    from .disk_budget import DiskBudget
+
+def _text_fact(path: Path, sha256: str | None) -> tuple[int, int]:
+    import json
+    cached = _text_facts.get(sha256) if sha256 else None
+    if cached is not None:
+        return cached
+    try:
+        text = Path(path).read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        # Unreadable now: the worst case of JSON escaping (every byte a \\uXXXX escape) and a section per line.
+        size = _size(path)
+        return (6*size + 2, size)
+    fact = (len(json.dumps(text, ensure_ascii=False).encode()), sum(1 for line in text.splitlines() if line.lstrip().startswith('#')))
+    if sha256:
+        _text_facts[sha256] = fact
+    return fact
+
+
+def _size(path: Any) -> int:
+    try:
+        return Path(path).stat().st_size if path is not None and Path(path).is_file() else 0
+    except OSError:
+        return 0
+
+
+def _model_bytes(corpus: Any) -> int:
+    """The classifier model files the annotation freezes (the manifest and every file beside it, or the model file)."""
+    path = Path(getattr(corpus, 'section_classifier_model_path', '') or '')
+    if path.is_dir():
+        return sum(_size(item) for item in path.rglob('*') if item.is_file())
+    if path.is_file():
+        if path.suffix == '.json':
+            return sum(_size(item) for item in path.parent.iterdir() if item.is_file())
+        return _size(path)
+    return 0
+
+
+def _copied(row: Any, settings: dict[str, Any]) -> bool:
+    """Whether a compatibility publication copies this product rather than hard-linking it (execution.links_released_copies)."""
+    from .execution import RETAINED_PRIVATE_KINDS
+    return not (settings.get('debug', 'off') == 'off' and row['retention_class'] == 'intermediate' and row['kind'] not in RETAINED_PRIVATE_KINDS)
+
+
+def publication_charges(corpus: Any, result: Any, stages: Iterable[str]) -> dict[str, int]:
+    """Bytes each remaining publication adds to the corpus filesystem, from the state on disk now (CP-K4c3 R3).
+
+    ``stages``: the publications still to run, in publication order. Inputs and products come from the lists the
+    writers use: this run's registered products (compatibility copies), the compatibility tables, the export's frozen
+    input list (``export.export_inputs``), the selected texts for sections and the sections parquet and model files
+    for the annotation. Nothing is assumed to be released between publications."""
+    import re
+    from .._naming import canonical_stem
     from .scheduler import local_path
+    owner: Any = corpus
+    settings: dict[str, Any] = getattr(owner, '_retention_settings', {}) or {}
+    remaining = [stage for stage in PUBLICATION_ORDER if stage in set(stages)]
+    attempts: dict[str, Any] = result.get('attempts', {})
+    by_stage: dict[str, set[Any]] = {}
+    for key, attempt in attempts.items():
+        by_stage.setdefault(str(key).rsplit(':', 1)[-1], set()).add(attempt)
+    produced = set(attempts.values())
+    catalog: dict[str, Any] = owner._scheduler_writer.file_catalog()
+    present = [row for row in catalog.values() if row['presence'] == 'present' and row['producer_attempt_id'] in produced]
+    # One text per document: the clean publication's compatibility copy is a second present row of the same text.
+    texts: dict[tuple[Any, Any], Any] = {}
+    for row in present:
+        if row['kind'] == 'clean_markdown':
+            texts.setdefault((row['producer_attempt_id'], row['sha256']), row)
+    text_rows = list(texts.values())
+    documents = len(text_rows)
+    facts = [(row['bytes'] or 0, *_text_fact(local_path(row['uri']), row['sha256'])) for row in text_rows]
+    text_bytes = sum(size for size, _, _ in facts)
+    section_rows = sum(headers + 1 for _, _, headers in facts)
+    from .export import metadata_table as selected_table
+    try:
+        table: Any = selected_table(owner)
+    except FileNotFoundError:
+        table = None
+    table_bytes = _size(table) or None
+    projection_bytes = _size((getattr(owner, '_streaming_download_manifest', None) or {}).get('path'))
+    charges: dict[str, int] = {}
+    for stage in remaining:
+        charge = 0
+        # Compatibility copies of this run's products that are copied, not linked (debug on, retained kinds).
+        for row in present:
+            if row['producer_attempt_id'] in by_stage.get(stage, ()) and row['kind'] not in SKIPPED_KINDS and '/.glossapi/' in str(row['uri']):
+                if row['kind'] in ('chunk_manifest', 'extract_sidecar'):
+                    charge += (row['bytes'] or 0) + SIDECAR_REWRITE_BYTES  # rewritten with compatibility paths
+                elif _copied(row, settings):
+                    charge += row['bytes'] or 0
+        if stage in METADATA_STAGES:
+            # The table the stage rewrites, re-published three times. It reaches at most the full compatibility schema's
+            # footprint (a download table has fewer columns than the one extraction completes), plus new columns and a
+            # row per document.
+            # The caller's manifest columns (the source projection) are merged into it.
+            table_bytes = max(table_bytes or 0, METADATA_TABLE_FIXED_BYTES) + METADATA_TABLE_GROWTH_BYTES + METADATA_TABLE_ROW_BYTES*documents \
+                + projection_bytes
+            charge += 3*table_bytes + GENERATION_FIXED_BYTES
+            if stage == 'download':
+                # The run's own download table (download_results_<manifest>.parquet) besides the canonical one.
+                charge += 3*(METADATA_TABLE_FIXED_BYTES + METADATA_TABLE_ROW_BYTES*documents) + GENERATION_FIXED_BYTES
+            if stage == 'clean':
+                report = _size(Path(owner.output_dir)/'cleaning_report.parquet')
+                charge += 3*(report + CLEANING_REPORT_BYTES + CLEANING_REPORT_ROW_BYTES*documents) + GENERATION_FIXED_BYTES
+        if stage == 'sections':
+            charge += sections_charge(facts)
+        if stage == 'annotate':
+            sections_parquet = Path(getattr(owner, 'sections_parquet', '') or '')
+            produced_now = 'sections' not in remaining and sections_parquet.is_file()
+            parquet = _size(sections_parquet) if produced_now else sections_parquet_bound(facts)
+            charge += annotate_charge(parquet, section_rows, _model_bytes(owner))
+        if stage == 'export':
+            texts_final = not any(earlier in remaining for earlier in ('download', 'extract', 'clean', 'ocr'))
+            charge += export_charge(owner, text_rows, facts, table_bytes, table, produced, texts_final=texts_final)
+        charges[stage] = int(charge)
+    return charges
+
+
+def sections_parquet_bound(facts: list[tuple[int, int, int]]) -> int:
+    """Upper bound of ``sections_for_annotation.parquet``: the section text uncompressed (parquet stores strings as plain
+    bytes plus a length; it never escapes), per-row columns, a row group per document and the file's schema footprint."""
+    return PARQUET_FILE_BYTES + sum(size + PARQUET_ROW_GROUP_BYTES + SECTION_ROW_BYTES*(headers + 1) for size, _, headers in facts)
+
+
+def sections_charge(facts: list[tuple[int, int, int]]) -> int:
+    """The sections publication: per document a text snapshot, its JSON fragment (escaped text plus per-row keys) and a
+    generation manifest; the aggregate's snapshot of every fragment; the parquet twice; its generation manifest."""
+    fragments = sum(escaped + SECTION_ROW_BYTES*(headers + 1) for _, escaped, headers in facts)
+    per_document = sum(size for size, _, _ in facts) + fragments + GENERATION_DOCUMENT_BYTES*len(facts)
+    return per_document + fragments + 2*sections_parquet_bound(facts) + GENERATION_FIXED_BYTES + GENERATION_DOCUMENT_BYTES*len(facts)
+
+
+def annotate_charge(sections_parquet: int, rows: int, model: int) -> int:
+    """The annotation batch: snapshots of the sections parquet and the model files; the classified and fully annotated
+    parquets and the classifier's fixed partition files, each twice; a lineage manifest with an entry per row."""
+    data = sections_parquet + ANNOTATION_ROW_BYTES*rows
+    products = 2*(data + PARQUET_FILE_BYTES) + ANNOTATION_PARTITIONS*PARQUET_FILE_BYTES + data
+    return sections_parquet + model + 2*products + GENERATION_FIXED_BYTES + ANNOTATION_ROW_BYTES*rows
+
+
+def export_charge(corpus: Any, text_rows: list[Any], facts: list[tuple[int, int, int]], table_bytes: int | None,
+                  table: Any, produced: set[Any], *, texts_final: bool) -> int:
+    """The export publication: its frozen input snapshots and the view of the same inputs (``export.export_inputs``,
+    the writer's own list), the records twice (generation and published copy) and the generation manifest.
+
+    Records: escaped text plus ``RECORD_OVERHEAD_BYTES`` per document, plus the planned documents' metadata rows (and
+    the run's source projection, an upper bound of the merged rows). Before the texts are published, the inputs are
+    this run's texts, the table as the metadata publications will leave it, and the sidecars the serializer reads."""
+    import importlib
+    import json
+    import re
+    from .._naming import canonical_stem
+    from .scheduler import local_path
+    owner: Any = corpus
+    planned: dict[Any, str] | None = getattr(owner, '_streaming_publication_stems', None)
+    stems = set(planned.values()) if planned else None
+    inputs_bytes = 0
+    metadata_path: Any = None
+    inputs: list[Any] = []
+    selected: list[Any] = []
+    if texts_final:
+        try:
+            from .export import export_inputs
+            inputs, _, selected = export_inputs(owner, {})
+        except FileNotFoundError:
+            inputs, selected = [], []
+    if inputs:
+        # Every text and table publication is done: exactly the writer's list.
+        inputs_bytes = sum(_size(path) for _, path in inputs)
+        metadata_path = inputs[0][1]
+        record_text = sum(_text_fact(path, None)[0] for _, path in selected) + RECORD_OVERHEAD_BYTES*len(selected)
+        documents = len(selected)
+    else:
+        # Before the publications: this run's texts and sidecars, the table the metadata publications will write.
+        record_text = sum(escaped for _, escaped, _ in facts) + RECORD_OVERHEAD_BYTES*len(facts)
+        documents = len(facts)
+        inputs_bytes = sum(size for size, _, _ in facts) + (table_bytes if table_bytes is not None else METADATA_TABLE_FIXED_BYTES + METADATA_TABLE_ROW_BYTES*documents)
+        names = {canonical_stem(local_path(row['uri'])) for row in text_rows}
+        catalog: dict[str, Any] = owner._scheduler_writer.file_catalog()
+        for row in catalog.values():
+            name = Path(str(row['uri'])).name
+            if row['presence'] == 'present' and row['producer_attempt_id'] in produced and name.endswith(('.metrics.json', '.latex_map.jsonl')):
+                inputs_bytes += row['bytes'] or 0
+        for stem in names:
+            for path in (Path(owner.output_dir)/'json/metrics'/f'{stem}.metrics.json', Path(owner.output_dir)/'json/metrics'/f'{stem}.per_page.metrics.json',
+                         Path(owner.output_dir)/'json'/f'{stem}.latex_map.jsonl'):
+                inputs_bytes += _size(path)
+        metadata_path = table
+    row_bytes = 0
+    pd: Any = importlib.import_module('pandas')
+    projection: dict[str, Any] = getattr(owner, '_streaming_download_manifest', None) or {}
+    for path in (metadata_path, projection.get('path')):
+        if path is None or not Path(path).is_file():
+            continue
+        frame: Any = pd.read_parquet(path)
+        names: Any = frame['filename'] if 'filename' in frame.columns else frame['filename_base'] if 'filename_base' in frame.columns else None
+        if names is None:
+            continue
+        for name, row in zip(list(names), frame.to_dict(orient='records')):
+            stem = re.sub(r'__p\d{4}-\d{4}$', '', canonical_stem(str(name or '')))
+            if stems is None or stem in stems:
+                row_bytes += len(json.dumps(row, ensure_ascii=False, default=str).encode())
+    if metadata_path is None or not Path(metadata_path).is_file():
+        row_bytes += METADATA_TABLE_ROW_BYTES*documents
+    records = record_text + row_bytes
+    return 2*inputs_bytes + 2*records + GENERATION_FIXED_BYTES + GENERATION_DOCUMENT_BYTES*documents
+
+
+def check_exact(corpus: Any, result: Any, stages: Iterable[str], *, when: str) -> None:
+    """The binding check (K4BI-G7, CP-K4a F7, CP-K4ac2 R3, CP-K4c3 R3), extreme only: the remaining publications'
+    charge (``publication_charges``) against the corpus filesystem's room now.
+
+    Called before the first publication with every requested stage, and again before each publication with that stage
+    and every later one."""
+    from .disk_budget import DiskBudget
     owner: Any = corpus
     settings: dict[str, Any] = getattr(owner, '_retention_settings', {}) or {}
     if settings.get('memory_saving') != 'extreme' or not result.get('run_id'):
         return
-    produced = set(result['attempts'].values())
-    catalog: dict[str, Any] = owner._scheduler_writer.file_catalog()
-    # One text per document: once the clean publication has run, its compatibility copy (same producer attempt, same
-    # bytes) is a second present row of the same text, and the export reads only one of them (CP-K4 r2 gate finding).
-    texts: dict[tuple[Any, Any], Any] = {}
-    for row in catalog.values():
-        if row['kind'] == 'clean_markdown' and row['presence'] == 'present' and row['producer_attempt_id'] in produced:
-            texts.setdefault((row['producer_attempt_id'], row['sha256']), row)
-    text_rows = list(texts.values())
-    text_sizes = [row['bytes'] or 0 for row in text_rows]
-    requested = [stage for stage in settings.get('requested_stages', stages) if stage in set(stages)]
-    directory = Path(owner.output_dir)/'download_results'
-    metadata_table: Any = directory/'download_results.parquet'
-    if not metadata_table.is_file():
-        candidates = sorted(path for path in directory.glob('*.parquet') if '.partial.' not in path.name) if directory.is_dir() else []
-        metadata_table = next((path for path in candidates if path.name.startswith('download_results_')), candidates[0] if candidates else None)
-    planned: dict[Any, str] | None = getattr(owner, '_streaming_publication_stems', None)
-    projection: dict[str, Any] = getattr(owner, '_streaming_download_manifest', None) or {}
-    export_bytes = exact_export_need([local_path(row['uri']) for row in text_rows], [metadata_table, projection.get('path')],
-                                     set(planned.values()) if planned else None) if 'export' in requested else 0
-    require_room(owner.output_dir, settings, binding_need(requested, sum(text_sizes), len(text_sizes), export_bytes), when=when,
+    remaining = [stage for stage in PUBLICATION_ORDER if stage in set(stages)]
+    charges = publication_charges(owner, result, remaining)
+    require_room(owner.output_dir, settings, sum(charges.values()), when=when,
                  present=DiskBudget(owner._scheduler_writer, owner.output_dir, result['run_id'], settings).present_bytes())

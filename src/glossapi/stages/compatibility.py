@@ -17,6 +17,101 @@ from .execution import ReceiptCollector, checked_path, sha256_file
 from .extract import ExtractStage
 
 
+class PublicationSourceConflictError(ValueError):
+    """A sequential extraction would replace a published product of a different source (CP-K4c3 R1).
+
+    The products keep the source stem as their name. A different input with the same name (for example a local file
+    named like an earlier download) is refused before anything is written, and the published products stay as they
+    are. Extract it into another corpus, or give the input a different file name."""
+
+
+def text_source_identity(connection: Any, version_id: Any) -> str | None:
+    """The source identity of the text a document version's products came from (CP-K4c3 R1).
+
+    Normally the document's ``source_key``. A sequential extraction binds a downloaded file by its local path; when
+    that path is a registered download payload, the identity is the acquisition's (``url:v1:`` or a declared
+    ``source:v1:`` key): the payload whose bytes the version recorded, else the latest acquisition at that path (the
+    caller changed the acquired bytes; they keep their origin). One definition for the sequential extraction and the
+    export (``planned_sources``)."""
+    if version_id is None:
+        return None
+    row = connection.execute('SELECT d.source_key,v.source_sha256 FROM document_versions v JOIN documents d '
+                             'ON d.document_id=v.document_id WHERE v.version_id=?', (version_id,)).fetchone()
+    if row is None:
+        return None
+    key = str(row[0])
+    if key.startswith('local_path:v1:'):
+        payloads = connection.execute("""SELECT d.source_key,f.sha256 FROM current_file_state f
+            JOIN document_versions v ON v.version_id=f.version_id JOIN documents d ON d.document_id=v.document_id
+            WHERE f.uri=? AND f.kind='download_payload' ORDER BY f.event_id DESC""", (key.split(':v1:', 1)[1],)).fetchall()
+        if payloads:
+            matching = [payload[0] for payload in payloads if payload[1] is not None and payload[1] == row[1]]
+            key = str(matching[0] if matching else payloads[0][0])
+    return key
+
+
+def download_name_claims(connection: Any) -> dict[str, set[tuple[str, str]]]:
+    """Every compatibility name a ``download.acquire`` task gave a source: ``{stem: {(source_key, source_uri)}}``.
+
+    One definition for the streaming plan (``run._publication_sources``) and the sequential export (CP-K4c3 R1)."""
+    import json
+    claims: dict[str, set[tuple[str, str]]] = {}
+    rows: list[Any] = connection.execute("""SELECT s.json,d.source_key FROM tasks t JOIN snapshots s ON s.sha256=t.specification_sha256
+        JOIN document_versions v ON v.version_id=t.version_id JOIN documents d ON d.document_id=v.document_id
+        WHERE t.operation='download.acquire'""").fetchall()
+    for specification, key in rows:
+        frozen = cast(dict[str, Any], json.loads(specification))
+        operation_json = cast(dict[str, Any], frozen.get('scheduler_operation') or {})
+        settings = cast(dict[str, Any], cast(dict[str, Any], operation_json.get('specification') or {}).get('settings') or {})
+        source_uri = cast(dict[str, Any], operation_json.get('document') or {}).get('source_uri')
+        if not operation_json:
+            # A sequential download's frozen specification carries the name and URL in its own settings.
+            settings = cast(dict[str, Any], frozen.get('settings') or {})
+            source_uri = settings.get('url')
+        if settings.get('filename_base') and isinstance(source_uri, str) and source_uri:
+            claims.setdefault(str(settings['filename_base']), set()).add((str(key), source_uri))
+    return claims
+
+
+def ledger_publication_sources(connection: Any, texts: Any) -> dict[str, dict[str, Any]]:
+    """``planned_sources`` for an export without a frozen plan (sequential), from the ledger (CP-K4c3 R1).
+
+    ``texts``: ``(stem, path)`` of the selected texts. A text a ledger producer published gets its own identity
+    (``text_source_identity``) and, as foreign, every other identity a download gave that name; the export then refuses
+    a metadata row that records one of those foreign sources, exactly as for a streaming plan. A text no producer
+    registered (a caller's file) is not planned: its rows keep their legacy meaning."""
+    claims = download_name_claims(connection)
+    sources: dict[str, dict[str, Any]] = {}
+    for stem, path in texts:
+        row = connection.execute("SELECT version_id FROM current_file_state WHERE uri=? AND presence='present' "
+                                 "AND ownership='managed' AND producer_attempt_id IS NOT NULL AND version_id IS NOT NULL "
+                                 "ORDER BY event_id DESC LIMIT 1", (Path(path).absolute().as_uri(),)).fetchone()
+        own = text_source_identity(connection, row[0]) if row else None
+        if own is None:
+            continue
+        named = claims.get(stem, set())
+        foreign = sorted((key, uri) for key, uri in named if key != own)
+        url = next((uri for key, uri in sorted(named) if key == own), None)
+        sources[stem] = dict(url=url, foreign_urls=sorted({uri for _, uri in foreign}), foreign_keys=sorted({key for key, _ in foreign}))
+    return sources
+
+
+def refuse_foreign_publication(connection: Any, destination: Any, version_id: Any) -> None:
+    """Raise ``PublicationSourceConflictError`` when ``destination`` holds a published product of another source."""
+    own = text_source_identity(connection, version_id)
+    if own is None:
+        return
+    rows = connection.execute("SELECT DISTINCT version_id FROM current_file_state WHERE uri=? AND presence='present' "
+                              "AND ownership='managed' AND version_id IS NOT NULL AND version_id<>?",
+                              (Path(destination).absolute().as_uri(), version_id)).fetchall()
+    for (other,) in rows:
+        theirs = text_source_identity(connection, other)
+        if theirs is not None and theirs != own:
+            raise PublicationSourceConflictError(
+                f'Ambiguous publication: {Path(destination).name} is the published product of another source; this input has the same name. '
+                'Nothing was replaced: extract it into another corpus or rename the input')
+
+
 def claim_publication(corpus, destination, version):
     """Reject, never overwrite, a second document version projected onto one location.
 
@@ -114,6 +209,7 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
         request = StageRequest(*identifiers, "extract.document", (reference,), settings, {}, "cpu", Path(temporary)/"attempt",
             time.monotonic_ns() + int(timeout_seconds*1e9))
         journal = _active_journal.get()
+        version: Any = None
         if isinstance(journal, ResultJournal):
             from .sequential import SequentialStageRunner
             version = journal.versions.get(str(source))
@@ -135,6 +231,8 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
                 "SELECT file_id FROM current_file_state WHERE uri=? AND version_id=? AND sha256=? AND presence='present' ORDER BY event_id DESC LIMIT 1",
                 (source.as_uri(), version, reference.sha256)).fetchone()[0]
             document_id = journal.writer.connection.execute("SELECT document_id FROM document_versions WHERE version_id=?", (version,)).fetchone()[0]
+            # Before any work: the canonical text location must not hold another source's product (CP-K4c3 R1).
+            refuse_foreign_publication(journal.writer.connection, output_dir/f"{source.stem}.md", version)
             snapshot = DocumentSnapshot(document_id, version, source.as_uri(), artifacts=(
                 ArtifactReference(file_id, reference.kind, source, reference.sha256, reference.bytes),))
             result, workspace = SequentialStageRunner(journal.writer, journal.corpus.output_dir).execute(
@@ -148,6 +246,11 @@ def extract_compatibility_document(extractor, source, output_dir, timeout_dir=No
         # Compatibility products use their original path spellings. This only
         # changes location references in the old serializer's chunk receipts.
         mirror_hashes = {}
+        if isinstance(journal, ResultJournal):
+            # Every destination, before the first write: never replace another source's product (CP-K4c3 R1).
+            for output in result.outputs:
+                if not output.relative_path.startswith(("logs/", "inputs/")) and output.kind not in ("attempt_diagnostic", "worker_receipt"):
+                    refuse_foreign_publication(journal.writer.connection, output_dir.parent/output.relative_path, version)
         for output in result.outputs:
             relative = output.relative_path
             if relative.startswith(("logs/", "inputs/")) or output.kind in ("attempt_diagnostic", "worker_receipt"):
