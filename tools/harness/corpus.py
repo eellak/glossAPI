@@ -19,7 +19,7 @@ import sys
 import time
 import traceback
 
-from .common import REPO, STAGES, environment, inventory, load_manifest, sha256, write_json
+from .common import REPO, STAGES, diagnostics, environment, inventory, load_manifest, sha256, write_json
 
 
 def audit_ledger(path, documents):
@@ -94,7 +94,7 @@ def audit_stage_storage(database, documents):
             for (stage,kind),group in sorted(groups.items())],
         'event_details_bytes':dict(event_bytes)}
 
-def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1, debug='off'):
+def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1, debug='off', retention_snapshots=True):
     from glossapi import Corpus
     from glossapi.ledger.journal import wrapper_return_receipt
     from .golden import expected
@@ -127,7 +127,11 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1, debug=
                     extraction_model_path=REPO/"src/glossapi/models/kmeans_weights.joblib")
     corpus._shadow_ledger_enabled = enabled
     corpus._retention_settings={'debug':debug,'memory_saving':'normal'}
-    if enabled:
+    receipt['retention_snapshots_observer'] = bool(enabled and retention_snapshots)
+    if enabled and retention_snapshots:
+        # The observer copies, fsyncs and rehashes every allowlisted file before
+        # its deletion, inside the timed phase call. Timing-only arms (K1/W12)
+        # may switch it off; they then keep no physical pre-delete proof.
         from .retention import RetentionSnapshots
         corpus._retention_observer=RetentionSnapshots(out,root/'retention_snapshots')
     calls = dict(extract=lambda: corpus.extract(input_format="pdf", file_paths=sources, phase1_backend="safe",
@@ -137,7 +141,7 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1, debug=
     capture_overhead=[]
     def capture(stage,call):
         capture_began=time.perf_counter()
-        before = inventory(out)
+        before, before_diagnostics = inventory(out), diagnostics(out)
         status, error, returned = "ok", None, None
         value=None
         started = time.perf_counter()
@@ -152,6 +156,7 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1, debug=
             status, error = "failed", traceback.format_exc()
         wall = time.perf_counter() - started
         after = inventory(out)
+        changed_diagnostics = {name: fact for name, fact in diagnostics(out).items() if before_diagnostics.get(name) != fact}
         products = {}
         additions = []
         for name, fact in after.items():
@@ -171,7 +176,8 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1, debug=
                 snapshot.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(out/name, snapshot)
         receipt["stages"][stage] = dict(status=status, error=error, wall_seconds=wall,
-            wrapper_return=returned, products=products, removed_files=sorted(set(before)-set(after)), ledger_additions=additions)
+            wrapper_return=returned, products=products, removed_files=sorted(set(before)-set(after)), ledger_additions=additions,
+            diagnostics=changed_diagnostics)
         write_json(root/"run.json", receipt)
         capture_overhead.append(time.perf_counter()-capture_began-wall)
         if error and streaming:raise RuntimeError(error)
@@ -193,7 +199,7 @@ def run_arm(manifest, data, root, enabled, *, streaming=False, workers=1, debug=
     receipt.update(complete=True, wall_seconds=time.perf_counter()-began,
                    phase_wall_seconds=(result['total_wall_seconds']-sum(capture_overhead)) if streaming else sum(s["wall_seconds"] for s in receipt["stages"].values()),
                    harness_capture_seconds=sum(capture_overhead))
-    if enabled:
+    if enabled and retention_snapshots:
         from .retention import verified_snapshots
         retained=verified_snapshots(out,root/'retention_snapshots')
         receipt['retention_deletions']=retained
@@ -298,11 +304,13 @@ def main():
     parser.add_argument('--streaming',action='store_true')
     parser.add_argument('--workers',type=int,default=1)
     parser.add_argument('--debug',choices=('off','on'),default='off')
+    parser.add_argument('--retention-snapshots',choices=('on','off'),default='on',
+        help='off: timing-only arm without the pre-delete copy observer (no physical retention proof)')
     parser.add_argument("--stage-profile", choices=("legacy", "sequential-adapters", "cutover"), default=os.environ.get("GLOSSAPI_STAGE_PROFILE", "cutover"))
     args = parser.parse_args()
     os.environ["GLOSSAPI_STAGE_PROFILE"] = args.stage_profile
     if args.arm:
-        result = run_arm(args.manifest, args.data, args.out, args.arm == "enabled",streaming=args.streaming,workers=args.workers,debug=args.debug)
+        result = run_arm(args.manifest, args.data, args.out, args.arm == "enabled",streaming=args.streaming,workers=args.workers,debug=args.debug,retention_snapshots=args.retention_snapshots=='on')
         return 0 if all(s["status"] == "ok" for s in result["stages"].values()) else 1
     if args.repeats < 1: parser.error("repeats must be positive")
     paired(args.manifest, args.data, args.out, args.repeats)
