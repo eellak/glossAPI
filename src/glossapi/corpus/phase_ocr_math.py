@@ -80,7 +80,7 @@ class OcrMathPhaseMixin:
         self,
         *,
         fix_bad: bool = True,
-        page_routing: str = "flagged",
+        page_routing: Optional[str] = None,
         mode: Optional[str] = None,
         backend: str = "docling",
         ocr_options=None,
@@ -102,7 +102,13 @@ class OcrMathPhaseMixin:
         internal_debug: bool = False,
         INTERNAL_DEBUG: Optional[bool] = None,
     ) -> None:
-        """OCR/math remediation; page_routing selects flagged documents or all page routes."""
+        """OCR/math remediation.
+
+        ``page_routing`` (default: ``"all"`` for the OCR modes, FG-G03) uses the page policy of ``glossapi run``:
+        every page that page quality routes is OCRed, in flagged and unflagged documents alike. ``"flagged"``
+        restricts OCR to documents the cleaner flagged (``needs_ocr``), the API default before. ``mode="math_only"``
+        performs no OCR and by default still excludes only cleaner-flagged documents. A flagged document with no
+        routed page is OCRed whole in both modes (``run`` leaves it as extracted; FG-G03 residual)."""
 
         del limit, dpi
         request = normalize_ocr_request(

@@ -1029,78 +1029,9 @@ class GlossExtract:
                 
         return unprocessed_files
 
-    def _find_metadata_parquet(self, input_dir: Union[str, Path]) -> Optional[Path]:
-        """
-        Locate the metadata parquet (e.g. *download_results.parquet*) starting in
-        ``input_dir``. The search order is:
-        1. ``input_dir``
-        2. ``input_dir/download_results``
-        3. ``input_dir.parent``
-        4. ``input_dir.parent/download_results``
-        The first match is cached in ``self._metadata_parquet_path`` so later
-        look-ups are O(1).
-        """
-        if self._metadata_parquet_path is not None:
-            return self._metadata_parquet_path
-
-        from glossapi.parquet_schema import ParquetSchema  # local import to avoid circular deps
-        import logging
-
-        logger = logging.getLogger(__name__)
-        input_dir = Path(input_dir)
-
-        parquet_schema = ParquetSchema({'url_column': getattr(self, 'url_column', 'url')})
-        logger.info(f"Using URL column: {parquet_schema.url_column}")
-
-        input_parquet_path: Optional[Path] = parquet_schema.find_metadata_parquet(input_dir, require_url_column=False)
-
-        # Fallback: look inside download_results sub-directory
-        if input_parquet_path is None:
-            download_results_dir = input_dir / "download_results"
-            if download_results_dir.exists():
-                input_parquet_path = parquet_schema.find_metadata_parquet(download_results_dir, require_url_column=False)
-
-        # Additional fallbacks: parent directory and its download_results
-        if input_parquet_path is None:
-            parent_dir = input_dir.parent
-            if parent_dir.exists():
-                input_parquet_path = parquet_schema.find_metadata_parquet(parent_dir, require_url_column=False)
-                if input_parquet_path is None:
-                    parent_download_dir = parent_dir / "download_results"
-                    if parent_download_dir.exists():
-                        input_parquet_path = parquet_schema.find_metadata_parquet(parent_download_dir, require_url_column=False)
-
-        if input_parquet_path is not None:
-            self._metadata_parquet_path = input_parquet_path
-            logger.info(f"Found metadata parquet file: {input_parquet_path}")
-
-        return input_parquet_path
-
-    def _ensure_metadata_parquet(self, markdown_dir: Path) -> Optional[Path]:
-        """Ensure a metadata parquet exists and return its path.
-
-        We search via _find_metadata_parquet starting from the markdown_dir. If none is
-        found, create a basic one under the pipeline root (parent of markdown_dir)
-        using currently available markdown files.
-        """
-        try:
-            from glossapi.parquet_schema import ParquetSchema
-        except Exception as e:
-            self._log.error(f"ParquetSchema import failed: {e}")
-            return None
-
-        existing = self._find_metadata_parquet(markdown_dir)
-        if existing is not None:
-            return existing
-
-        pipeline_root = markdown_dir.parent
-        schema = ParquetSchema({'url_column': getattr(self, 'url_column', 'url')})
-        created = schema.ensure_metadata_parquet(pipeline_root)
-        if created is None:
-            self._log.warning("Could not create a basic metadata parquet; extraction metadata will not be recorded.")
-        else:
-            self._metadata_parquet_path = created
-        return created
+    # The extractor has no metadata-parquet finder of its own (T2-G03): its former _find_metadata_parquet /
+    # _ensure_metadata_parquet (a third search order: input_dir, download_results, parent) had no caller. The corpus
+    # phases resolve metadata through Corpus._resolve_metadata_parquet and the clean resolver.
 
     def _mark_is_chunked(self, output_dir: Path, src_file: Path) -> None:
         """Record chunked extraction via sidecar (no direct parquet writes)."""

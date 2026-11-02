@@ -2855,6 +2855,22 @@ def _attach_page_quality_routes(df: pd.DataFrame, metrics_dir: Path) -> pd.DataF
     return result
 
 
+
+# The default of the deprecated ``Corpus.clean(threshold=)``: the plain float 0.10 the signature always had (so the
+# recorded call parameters are unchanged). A value a caller passes is another float object, so identity tells them
+# apart (LS4-G01).
+_UNSET_CLEAN_THRESHOLD = float('0.10')
+
+
+def _caller_stacklevel() -> int:
+    """The ``warnings.warn`` stacklevel of the first frame outside the glossapi package (the ledger wrappers sit
+    between ``Corpus.clean`` and its caller), so the default warning filters attribute it to the caller."""
+    package = str(Path(__file__).resolve().parents[1])
+    frame, level = sys._getframe(1), 1
+    while frame is not None and str(Path(frame.f_code.co_filename).resolve()).startswith(package):
+        frame, level = frame.f_back, level + 1
+    return level
+
 class CleanPhaseMixin:
     @staticmethod
     def _project_root() -> Path:
@@ -3064,14 +3080,40 @@ class CleanPhaseMixin:
     def _merge_metric_dataframe(
         base: pd.DataFrame, updates: pd.DataFrame, *, key: str = "filename"
     ) -> pd.DataFrame:
-        """Overlay scorer output onto the authoritative metrics dataframe."""
+        """Overlay scorer output onto the authoritative metrics dataframe.
+
+        Rows are matched by ``key``; scorer rows for a name the table lacks are added. Exact (K2E-F3): an integer
+        column that a float64 cannot hold exactly is made nullable first (``exact_integer_columns``), so a row union
+        never rounds it; every other column keeps the dtype the merge always produced. Occurrence-safe (LS6-G04): a
+        row without a name (a skipped duplicate or a failed download, ``filename == ""``) matches no scorer row and
+        is carried through unchanged; a name on several rows gets the scorer values on each occurrence."""
+        from ..parquet_schema import _named_filenames, exact_integer_columns, lossless_concat
+
         if updates.empty:
             return base
-        base_idx = base.set_index(key, drop=False)
-        update_idx = updates.set_index(key, drop=False)
-        base_idx = base_idx.combine_first(update_idx)
-        base_idx.update(update_idx)
-        return base_idx.reset_index(drop=True)
+        named_updates: Any = updates[_named_filenames(updates[key]).to_numpy()]
+
+        def overlay(rows: Any, scores: Any) -> pd.DataFrame:
+            rows, scores = exact_integer_columns(rows, scores)
+            base_idx = rows.set_index(key, drop=False)
+            update_idx = scores.set_index(key, drop=False)
+            base_idx = base_idx.combine_first(update_idx)
+            base_idx.update(update_idx)
+            return base_idx.reset_index(drop=True)
+
+        if not base[key].duplicated().any():
+            return overlay(base, named_updates)
+        named = _named_filenames(base[key]).to_numpy()
+        keyed = base[named]
+        occurrence = keyed.groupby(key, sort=False).cumcount().to_numpy()
+        parts: List[Any] = [overlay(keyed[occurrence == 0], named_updates)]
+        for k in sorted(set(occurrence.tolist()) - {0}):
+            layer: Any = keyed[occurrence == k]
+            scores: Any = named_updates[named_updates[key].isin(list(layer[key]))]
+            parts.append(overlay(layer, scores) if len(scores) else layer)
+        if (~named).any():
+            parts.append(base[~named])
+        return lossless_concat(parts, what="metric rows")
 
     def _resolve_clean_metrics_parquet(self, parquet_schema) -> Path:
         parquet_path: Optional[Path] = self._get_cached_metadata_parquet()
@@ -3101,7 +3143,7 @@ class CleanPhaseMixin:
     def clean(
         self,
         input_dir: Union[str, Path] = None,
-        threshold: float = 0.10,
+        threshold: float = _UNSET_CLEAN_THRESHOLD,
         num_threads: int = None,
         drop_bad: bool = True,
         *,
@@ -3115,9 +3157,11 @@ class CleanPhaseMixin:
 
         Args:
             input_dir: Folder with `.md` files to process (defaults to `self.markdown_dir`).
-            threshold: Badness threshold for optional dropping.
+            threshold: [DEPRECATED – no effect] Ignored; passing it raises a DeprecationWarning (LS4-G01). Selection
+                uses fixed gates: a document is rejected when ``mojibake_badness_score > 0.1`` or its Greek badness
+                score is above 60, and ``needs_ocr`` documents are not selected.
             num_threads: Rayon thread-count to pass to Rust.
-            drop_bad: If True, files with badness_score > threshold are removed from downstream processing. Set to False to keep all files and only record the score.
+            drop_bad: If True, documents rejected by those fixed gates are removed from downstream processing. Set to False to keep all files and only record the score.
             write_cleaned_files: Set False to skip writing cleaned markdown files; metrics and parquet updates still occur.
             ocr_model_dir: [DEPRECATED – no effect] Use Corpus.ocr(model_dir=...) instead.
             force_ocr_fallback: [DEPRECATED – no effect] Use Corpus.ocr(fix_bad=True) instead.
@@ -3128,6 +3172,15 @@ class CleanPhaseMixin:
         import shutil
         import pandas as pd
         from glossapi.parquet_schema import ParquetSchema, update_metadata_parquet
+
+        if threshold is not _UNSET_CLEAN_THRESHOLD:
+            # The parameter never changed selection (LS4-G01, PLAN §9): deprecated, behaviour unchanged.
+            warnings.warn(
+                "Corpus.clean(threshold=...) is deprecated and has no effect: selection uses the fixed gates "
+                "mojibake_badness_score > 0.1 and Greek badness > 60.",
+                DeprecationWarning,
+                stacklevel=_caller_stacklevel(),
+            )
 
         if input_dir is None:
             input_dir = self.markdown_dir

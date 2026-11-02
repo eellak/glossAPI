@@ -23,7 +23,7 @@ class OcrRequest:
     devices: Optional[List[int]]
     reprocess_completed: bool
     content_debug: bool
-    page_routing: str = "flagged"
+    page_routing: str = "all"
     num_threads: int = 1
 
 
@@ -60,7 +60,7 @@ def normalize_ocr_request(
     ocr_options=None,
     device: Optional[str],
     max_pages: Optional[int],
-    page_routing: str = "flagged",
+    page_routing: Optional[str] = None,
     math_enhance: bool = True,
     math_targets: Optional[Dict[str, List[Tuple[int, int]]]] = None,
     math_batch_size: int = 8,
@@ -75,7 +75,7 @@ def normalize_ocr_request(
     internal_debug: bool = False,
     INTERNAL_DEBUG: Optional[bool] = None,
 ) -> Optional[OcrRequest]:
-    if page_routing not in {"flagged", "all"}:
+    if page_routing not in {None, "flagged", "all"}:
         raise ValueError("page_routing must be 'flagged' or 'all'")
     backend_norm = str(backend or "docling").strip().lower()
     if backend_norm != "docling":
@@ -105,6 +105,11 @@ def normalize_ocr_request(
             "OCR: no operation requested (enable fix_bad and/or math_enhance or set mode='ocr_bad'|'math_only'|'ocr_bad_then_math')"
         )
         return None
+
+    if page_routing is None:
+        # FG-G03 (PLAN §9): OCR selects pages with the policy of ``glossapi run`` (every routed page, "all"). The
+        # math-only mode performs no OCR; it keeps excluding only the documents the cleaner flagged ("flagged").
+        page_routing = "flagged" if mode_norm == "math_only" else "all"
 
     reprocess_explicit = reprocess_completed is not None
     reprocess_flag = bool(reprocess_completed) if reprocess_explicit else False

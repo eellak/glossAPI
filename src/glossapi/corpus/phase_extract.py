@@ -1003,8 +1003,9 @@ class ExtractPhaseMixin:
                 except queue.Empty:
                     pass
                 if remaining_after_failure:
+                    # Never attempted, so not known to be bad (T2-G05): the cause is observed, and the fatal skiplist
+                    # (which a later extract filters by) stays reserved for files a worker failed on.
                     observe("workers_exhausted_unattempted", status="skipped", items=remaining_after_failure)
-                    skip_mgr.add(canonical_stem(x) for x in remaining_after_failure)
                     self.logger.error(
                         "No active extraction workers remain; skipped %d pending item(s)",
                         len(remaining_after_failure),

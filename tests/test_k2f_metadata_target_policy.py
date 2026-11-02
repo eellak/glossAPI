@@ -513,8 +513,6 @@ EXPECTED = {
     ('glossapi/gloss_downloader.py', 'GlossDownloader._move_temp_file_to_final', 'os.replace'): (1, DOCUMENTS),
     ('glossapi/gloss_downloader.py', 'GlossDownloader._retain_superseded_request_body', 'os.replace'): (1, DOCUMENTS),
     ('glossapi/gloss_browser_downloader.py', 'BrowserGlossDownloader._write_recovered_file', 'os.replace'): (1, DOCUMENTS),
-    ('glossapi/scripts/openarchives_ocr_merge.py', 'main', '.to_parquet'):
-        (1, 'DECLARED EXCEPTION (GAPS K2F-G2): offline operator merge; output = master would be an unlocked in-place rewrite'),
     ('glossapi/scripts/openarchives_ocr_merge.py', '_copy_once', 'shutil.copy2'): (1, DOCUMENTS),
     ('glossapi/annotation_partitions.py', 'predict_partitions', '.write_table'): (1, SECTIONS),
     ('glossapi/annotation_partitions.py', 'predict_partitions.flush', '.write_table'): (2, SECTIONS),
@@ -911,3 +909,138 @@ def test_write_manifest_refuses_a_metadata_destination(tmp_path, spelling):
         assert not destination.exists()
     written = write_manifest(manifest, tmp_path / 'manifest.json')
     assert json.loads(written.read_text(encoding='utf-8')) == manifest
+
+# ------------------------------------------------------------------ static: every write in src/ (INTEG-G3)
+# EXPECTED inventories parquet and replace/copy writes (metadata), K3_EXPECTED the interface modules call by call. This
+# per-module allowlist covers every module of src/ with the broad detector (text/byte writes, write-mode opens,
+# deletes, directories, temporary files, child processes): a module may perform only the write kinds listed for it,
+# with the reason. A new module that writes, or a new kind of write in a module, fails until it is listed here.
+# Metadata parquet is never among the reasons: those writes go through parquet_schema.metadata_target (EXPECTED above).
+PIPELINE = ('legacy pipeline products in the corpus output tree (downloads, markdown, sidecars, logs, worker markers, '
+            'section parquet, export), the corpus skiplist/state, and probe child processes (nvidia-smi, the native '
+            'build); metadata parquet only through the parquet_schema helpers')
+PIPELINE_FP = PIPELINE + '; `open(?)` here is not a file open (PIL Image.open / the batched adapter.open)'
+OCR = 'OCR and math products and sidecars in the corpus output tree (page artifacts, JSON helpers, route files)'
+LEDGER = 'the ledger database, its migration backup and sidecar files, and git provenance probes (read-only child)'
+STAGES = ('stage attempt workspaces, private generations and published products (publish_products, retention '
+          'deletes of owned files, interruption markers); metadata only through metadata_target')
+SCRIPTS = 'offline operator and benchmark scripts writing to caller-chosen output directories'
+K3 = 'decision-interface modules: inventoried call by call in K3_EXPECTED above'
+MODEL = 'copies the neutral section-classifier files named by a hash-checked manifest into the frozen model directory'
+CHOKE_MODULE = 'the metadata choke point itself: lock files, atomic replacement, staged copies (checked by EXPECTED)'
+ALL_WRITES = {
+    'glossapi/annotation_partitions.py': (['.write_table', 'ParquetWriter', 'open(wb)', 'os.makedirs'], PIPELINE),
+    'glossapi/cli.py': (['.mkdir', '.unlink', '.write_table', '.write_text', 'os.replace', 'tempfile.mkstemp'], K3),
+    'glossapi/corpus/batched_extract.py': (['.mkdir', '.unlink', 'open(?)', 'shutil.copy2'], PIPELINE_FP),
+    'glossapi/corpus/corpus_orchestrator.py': (['.mkdir', '.unlink', '.write_text', 'open(a)', 'os.makedirs', 'subprocess.run'], PIPELINE),
+    'glossapi/corpus/corpus_skiplist.py': (['.mkdir', '.write_text', 'os.replace'], PIPELINE),
+    'glossapi/corpus/ocr/dispatch.py': (['.mkdir', '.write_text'], PIPELINE),
+    'glossapi/corpus/phase_annotate.py': (['.to_parquet'], PIPELINE),
+    'glossapi/corpus/phase_clean.py': (['.mkdir', '.rename', '.unlink', '.write_text', 'open(w)', 'shutil.rmtree', 'subprocess.Popen', 'subprocess.run'], PIPELINE),
+    'glossapi/corpus/phase_download.py': (['os.makedirs', 'os.remove'], PIPELINE),
+    'glossapi/corpus/phase_export.py': (['.mkdir', '.write_text', 'open(w)', 'open(wb)'], PIPELINE),
+    'glossapi/corpus/phase_extract.py': (['.mkdir', '.unlink', 'os.makedirs', 'shutil.copy2', 'subprocess.run'], PIPELINE),
+    'glossapi/corpus/phase_ocr_math.py': (['.mkdir', '.unlink', '.write_text', 'shutil.copy2', 'subprocess.run'], PIPELINE),
+    'glossapi/corpus/phase_sections.py': (['.to_parquet', 'os.makedirs'], PIPELINE),
+    'glossapi/doctor.py': (['subprocess.run'], K3),
+    'glossapi/gloss_browser_downloader.py': (['open(?)', 'os.replace'], PIPELINE_FP),
+    'glossapi/gloss_downloader.py': (['.mkdir', '.to_parquet', '.write_text', 'open(w)', 'os.makedirs', 'os.remove', 'os.rename', 'os.replace'], PIPELINE),
+    'glossapi/gloss_extract.py': (['.mkdir', '.write_text', 'open(w)', 'shutil.copy2'], PIPELINE),
+    'glossapi/gloss_section.py': (['.write_table', 'ParquetWriter', 'os.makedirs'], PIPELINE),
+    'glossapi/gloss_section_classifier.py': (['.to_parquet', 'os.makedirs'], PIPELINE),
+    'glossapi/input_manifest.py': (['.write_text'], K3),
+    'glossapi/install_plan.py': (['subprocess.run'], K3),
+    'glossapi/ledger/importer.py': (['shutil.copyfile', 'tempfile.TemporaryDirectory'], LEDGER),
+    'glossapi/ledger/journal.py': (['subprocess.check_output'], LEDGER),
+    'glossapi/ledger/writer.py': (['os.open', 'os.replace', 'os.unlink', 'shutil.copyfile'], LEDGER),
+    'glossapi/ocr/defaults.py': (['.write_text'], OCR),
+    'glossapi/ocr/math/enrich.py': (['.mkdir', '.write_text', 'open(a)', 'open(w)'], OCR),
+    'glossapi/ocr/page_artifacts.py': (['.mkdir', '.unlink', '.write_text', 'open(xb)'], OCR),
+    'glossapi/ocr/utils/json_io.py': (['.write_text', 'open(wb)'], OCR),
+    'glossapi/ocr/utils/triage.py': (['.mkdir', '.write_text'], OCR),
+    'glossapi/page_quality.py': (['.mkdir', '.unlink', 'os.replace', 'tempfile.NamedTemporaryFile'], PIPELINE),
+    'glossapi/parquet_schema.py': (['.mkdir', '.to_parquet', '.unlink', '.write_table', 'os.makedirs', 'os.open', 'os.replace', 'os.unlink', 'shutil.copyfile'], CHOKE_MODULE),
+    'glossapi/pdf_repair/extract.py': (['.mkdir', 'os.replace', 'tempfile.TemporaryDirectory'], PIPELINE),
+    'glossapi/pdf_repair/tounicode.py': (['.mkdir', '.unlink', 'os.replace', 'shutil.copyfile', 'tempfile.mkstemp'], PIPELINE),
+    'glossapi/scripts/batched_extract_benchmark.py': (['.mkdir', '.write_text'], SCRIPTS),
+    'glossapi/scripts/batched_stability_benchmark.py': (['.mkdir', '.touch', '.unlink', '.write_text', 'open(a)', 'subprocess.Popen'], SCRIPTS),
+    'glossapi/scripts/build_ocr_golden_pages.py': (['.mkdir', '.unlink', '.write_text', 'open(w)'], SCRIPTS),
+    'glossapi/scripts/docling_cost_benchmark.py': (['.mkdir', '.touch', '.write_text', 'open(a)', 'open(w)', 'subprocess.run'], SCRIPTS),
+    'glossapi/scripts/extract_checkpoint_benchmark.py': (['.mkdir', '.write_text', 'shutil.rmtree'], SCRIPTS),
+    'glossapi/scripts/full_pipeline_checkpoint.py': (['.mkdir', '.unlink', '.write_text', 'shutil.rmtree'], SCRIPTS),
+    'glossapi/scripts/install_glossapi.py': (['subprocess.run'], SCRIPTS),
+    'glossapi/scripts/ocr_gpu_batch.py': (['.mkdir'], SCRIPTS),
+    'glossapi/scripts/openarchives_download_freeze.py': (['.mkdir'], SCRIPTS),
+    'glossapi/scripts/openarchives_download_probe.py': (['.mkdir', '.write_text'], SCRIPTS),
+    'glossapi/scripts/openarchives_hf_refresh.py': (['.mkdir', '.write_text', 'open(wb)'], SCRIPTS),
+    'glossapi/scripts/openarchives_manifest.py': (['.mkdir'], SCRIPTS),
+    'glossapi/scripts/openarchives_ocr_cutoff_shards.py': (['.mkdir', '.write_text'], SCRIPTS),
+    'glossapi/scripts/openarchives_ocr_enrich.py': (['.mkdir'], SCRIPTS),
+    'glossapi/scripts/openarchives_ocr_merge.py': (['.mkdir', '.write_text', 'shutil.copy2'], SCRIPTS),
+    'glossapi/scripts/openarchives_ocr_shards.py': (['.mkdir', '.write_text'], SCRIPTS),
+    'glossapi/scripts/openarchives_pdf_stage_pull.py': (['.mkdir', '.unlink', '.write_text', 'open(a)', 'os.replace', 'subprocess.run'], SCRIPTS),
+    'glossapi/scripts/page_quality_batch.py': (['.mkdir', '.write_text', 'open(w)', 'tempfile.TemporaryDirectory'], SCRIPTS),
+    'glossapi/scripts/pdf_font_repair.py': (['.mkdir', '.write_text', 'open(w)', 'os.replace', 'tempfile.TemporaryDirectory'], SCRIPTS),
+    'glossapi/scripts/review_manifest_materialize.py': (['.mkdir', '.unlink', '.write_text', 'open(w)'], SCRIPTS),
+    'glossapi/scripts/sample_report.py': (['.write_text'], SCRIPTS),
+    'glossapi/scripts/table_markdown_audit.py': (['.mkdir', '.unlink', '.write_text', 'open(w)'], SCRIPTS),
+    'glossapi/scripts/table_sentence_context_review.py': (['.mkdir', '.unlink', '.write_text', 'open(w)'], SCRIPTS),
+    'glossapi/section_model.py': (['.write_bytes'], MODEL),
+    'glossapi/stages/acquisition_pool.py': (['.mkdir'], STAGES),
+    'glossapi/stages/annotate.py': (['.mkdir'], STAGES),
+    'glossapi/stages/caller_kernel.py': (['.mkdir', 'shutil.copyfile'], STAGES),
+    'glossapi/stages/clean.py': (['.mkdir', '.write_bytes', 'shutil.rmtree', 'tempfile.mkdtemp'], STAGES),
+    'glossapi/stages/compatibility.py': (['.mkdir', '.write_text', 'open(w)', 'shutil.rmtree', 'tempfile.TemporaryDirectory', 'tempfile.mkdtemp'], STAGES),
+    'glossapi/stages/download.py': (['.mkdir'], STAGES),
+    'glossapi/stages/download_compatibility.py': (['shutil.rmtree', 'tempfile.mkdtemp'], STAGES),
+    'glossapi/stages/execution.py': (['.mkdir', 'open(wb)', 'os.replace', 'os.unlink', 'shutil.copyfile'], STAGES),
+    'glossapi/stages/export.py': (['.mkdir', 'shutil.copyfile', 'shutil.rmtree'], STAGES),
+    'glossapi/stages/extract.py': (['.mkdir'], STAGES),
+    'glossapi/stages/interruption.py': (['.mkdir', 'os.open'], STAGES),
+    'glossapi/stages/math.py': (['.mkdir', '.write_bytes', '.write_text'], STAGES),
+    'glossapi/stages/metadata.py': (['.mkdir', 'shutil.copyfile'], STAGES),
+    'glossapi/stages/ocr.py': (['.mkdir', '.write_bytes', '.write_text', 'shutil.copy2'], STAGES),
+    'glossapi/stages/products.py': (['.mkdir', '.unlink', 'os.replace', 'shutil.rmtree', 'tempfile.NamedTemporaryFile', 'tempfile.mkdtemp'], STAGES),
+    'glossapi/stages/retention.py': (['os.open', 'os.unlink'], STAGES),
+    'glossapi/stages/run.py': (['.mkdir', '.to_parquet'], STAGES),
+    'glossapi/stages/scheduler.py': (['.mkdir', 'os.rename'], STAGES),
+    'glossapi/stages/sections.py': (['.mkdir', '.write_table', 'ParquetWriter', 'shutil.rmtree'], STAGES),
+    'glossapi/stages/sequential.py': (['.mkdir', '.rmdir', 'os.open', 'os.rename'], STAGES),
+    'glossapi/stages/workers.py': (['.mkdir'], STAGES),
+}
+
+
+def all_write_problems(src):
+    found = {}
+    for path in sorted(Path(src).rglob('*.py')):
+        module = str(path.relative_to(src))
+        tree = ast.parse(path.read_text(), str(path))
+        aliases = _aliases(tree)
+        for node, _scope, _ancestors in _walk(tree):
+            if isinstance(node, ast.Call):
+                name = _broad_write_name(node, aliases)
+                if name:
+                    found.setdefault(module, set()).add(name)
+    problems = [f'unlisted write kind(s) {sorted(kinds - set(ALL_WRITES.get(module, ((), ""))[0]))} in {module}: add them '
+                'to ALL_WRITES with the reason, or route metadata through parquet_schema.metadata_target'
+                for module, kinds in sorted(found.items()) if kinds - set(ALL_WRITES.get(module, ((), ''))[0])]
+    stale = sorted((module, kind) for module, (kinds, _reason) in ALL_WRITES.items() for kind in kinds
+                   if kind not in found.get(module, set()))
+    return problems, stale
+
+
+def test_every_module_writes_only_its_listed_kinds():
+    problems, _stale = all_write_problems(SRC)
+    assert not problems, '\n'.join(problems)
+
+
+def test_the_all_writes_inventory_has_no_stale_entries():
+    _problems, stale = all_write_problems(SRC)
+    assert not stale, f'listed writes no longer present (update ALL_WRITES): {stale}'
+
+
+def test_the_all_writes_check_is_not_vacuous(tmp_path):
+    shadow = _shadow(tmp_path, extra={'glossapi/new_writer.py': 'from pathlib import Path\n'
+                                                                'def save(path):\n    Path(path).write_text("x")\n'})
+    problems, _stale = all_write_problems(shadow)
+    assert any('new_writer.py' in problem and '.write_text' in problem for problem in problems), problems

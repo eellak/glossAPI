@@ -9,6 +9,8 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
+from glossapi.parquet_schema import pandas_parquet, rewrite_metadata_parquet
+
 
 _MARKDOWN_SHARD_RE = re.compile(r"^(?P<stem>.+)__p(?P<start>\d+)-(?P<end>\d+)\.md$")
 
@@ -155,8 +157,6 @@ def main(argv: List[str] | None = None) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     preserve_master_columns = [c.strip() for c in str(args.preserve_master_columns or "").split(",") if c.strip()]
-    master = pd.read_parquet(master_path).copy()
-    master["_merge_key"] = _normalize_key(master, str(args.key_column))
 
     shard_frames: List[pd.DataFrame] = []
     for shard in args.shard_parquets:
@@ -165,42 +165,52 @@ def main(argv: List[str] | None = None) -> int:
         shard_frames.append(shard_df)
     shards = pd.concat(shard_frames, ignore_index=True)
     shards = shards.drop_duplicates(subset=["_merge_key"], keep="last")
-
-    master = master.set_index("_merge_key", drop=False)
     shards = shards.set_index("_merge_key", drop=False)
 
-    for column in shards.columns:
-        if column == "_merge_key":
-            continue
-        if column in preserve_master_columns:
-            continue
-        master.loc[shards.index, column] = shards[column]
-
     copied = 0
-    if args.artifact_work_roots:
-        roots = [Path(p).expanduser().resolve() for p in args.artifact_work_roots]
-        artifact_output_root = (
-            Path(args.artifact_output_root).expanduser().resolve()
-            if str(args.artifact_output_root or "").strip()
-            else None
-        )
-        copied, artifact_updates = _collect_artifact_updates(
-            shard_rows=shards.reset_index(drop=True),
-            work_roots=roots,
-            output_root=artifact_output_root,
-        )
-        if not artifact_updates.empty:
-            artifact_updates = artifact_updates.drop_duplicates(subset=["_merge_key"], keep="last").set_index("_merge_key")
-            for column in artifact_updates.columns:
-                if column in preserve_master_columns:
-                    continue
-                if column not in master.columns:
-                    master[column] = None
-                mask = artifact_updates[column].notna()
-                if bool(mask.any()):
-                    master.loc[artifact_updates.index[mask], column] = artifact_updates.loc[mask, column]
-    master = master.reset_index(drop=True).drop(columns=["_merge_key"], errors="ignore")
-    master.to_parquet(out_path, index=False)
+
+    def _merge(master: pd.DataFrame) -> pd.DataFrame:
+        # Under the metadata choke point (K2F-G2): when the output is the master itself, the master is read, merged
+        # and replaced inside one lock (a concurrent locked commit is merged, never overwritten); a distinct output
+        # is written whole and atomically. The bytes are those of the former ``to_parquet(out_path, index=False)``.
+        nonlocal copied
+        master = master.copy()
+        master["_merge_key"] = _normalize_key(master, str(args.key_column))
+        master = master.set_index("_merge_key", drop=False)
+
+        for column in shards.columns:
+            if column == "_merge_key":
+                continue
+            if column in preserve_master_columns:
+                continue
+            master.loc[shards.index, column] = shards[column]
+
+        if args.artifact_work_roots:
+            roots = [Path(p).expanduser().resolve() for p in args.artifact_work_roots]
+            artifact_output_root = (
+                Path(args.artifact_output_root).expanduser().resolve()
+                if str(args.artifact_output_root or "").strip()
+                else None
+            )
+            copied, artifact_updates = _collect_artifact_updates(
+                shard_rows=shards.reset_index(drop=True),
+                work_roots=roots,
+                output_root=artifact_output_root,
+            )
+            if not artifact_updates.empty:
+                artifact_updates = artifact_updates.drop_duplicates(subset=["_merge_key"], keep="last").set_index("_merge_key")
+                for column in artifact_updates.columns:
+                    if column in preserve_master_columns:
+                        continue
+                    if column not in master.columns:
+                        master[column] = None
+                    mask = artifact_updates[column].notna()
+                    if bool(mask.any()):
+                        master.loc[artifact_updates.index[mask], column] = artifact_updates.loc[mask, column]
+        master = master.reset_index(drop=True).drop(columns=["_merge_key"], errors="ignore")
+        return master
+
+    rewrite_metadata_parquet(master_path, out_path, _merge, serialize=pandas_parquet)
     print(f"Merged {len(shards)} shard row(s) into {master_path} -> {out_path}; copied {copied} artifact file(s)")
     return 0
 
