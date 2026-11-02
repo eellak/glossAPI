@@ -21,7 +21,14 @@ from typing import Any, Iterable
 PLANNING_TEXT_RATIO = 0.1     # ESTIMATE only: cleaned text per source byte assumed before any text exists (cohort242 ~0.06, Mac 0.08)
 PER_DOCUMENT_BYTES = 8192     # ESTIMATE only (run start, plan --json): export record metadata per document
 RECORD_OVERHEAD_BYTES = 4096  # binding check: the fixed schema's keys with null values plus computed fields (doc_id, counters, flags); measured 1.6 KB per record, rounded up. Producer metadata is counted exactly, not here
-EXPORT_TEXT_FACTOR = 3.2      # the export's share of PRODUCT_FACTORS: replaced by exact sizes in the binding check
+EXPORT_TEXT_FACTOR = 3.2
+# A compatibility metadata table that publication will create (a first run: it does not exist at the pre-publication
+# check). Allowance for the table and, separately, the export's working copy of it: a fixed parquet footprint (one row
+# measured 29,343 bytes: ~70 typed columns, schema, statistics) plus a per-document row allowance. Producer metadata
+# (the caller's manifest columns) is counted exactly from the source projection. Bound checked against measured tables
+# (CP-K4ac2 R3); the export barrier re-checks with the actual table before the export writes.
+METADATA_TABLE_FIXED_BYTES = 65536
+METADATA_TABLE_ROW_BYTES = 2048      # the export's share of PRODUCT_FACTORS: replaced by exact sizes in the binding check
 PRODUCT_FACTORS = {'export': 3.2, 'sections': 2.9, 'annotate': 5.3}
 KEPT_TEXT_FACTORS = {'extract': 1.05, 'clean': 1.0, 'sections': 2.2}  # raw markdown, cleaned text, section fragments
 
@@ -46,18 +53,25 @@ def exact_export_need(texts: Iterable[Any], metadata_paths: Iterable[Any], stems
     import json
     import re
     from .._naming import canonical_stem
-    record_bytes = view_bytes = 0
+    record_bytes = view_bytes = documents = 0
     for path in texts:
+        documents += 1
         text = Path(path).read_text(encoding='utf-8', errors='replace')
         record_bytes += len(json.dumps(text, ensure_ascii=False).encode()) + RECORD_OVERHEAD_BYTES
         view_bytes += Path(path).stat().st_size
     pd: Any = importlib.import_module("pandas")
     for index, metadata_path in enumerate(metadata_paths):
+        if index == 0 and (metadata_path is None or not Path(metadata_path).is_file()):
+            # Not created yet: publication creates the table and the export copies it into its view (both counted).
+            view_bytes += 2*(METADATA_TABLE_FIXED_BYTES + METADATA_TABLE_ROW_BYTES*documents)
+            continue
         if metadata_path is None or not Path(metadata_path).is_file():
             continue
         frame: Any = pd.read_parquet(metadata_path)
         if index == 0:
-            view_bytes += Path(metadata_path).stat().st_size
+            # The export's working copy of the table, which the pending publications may still expand by a row per
+            # document (the expansion lands in the table and in its copy).
+            view_bytes += Path(metadata_path).stat().st_size + 2*METADATA_TABLE_ROW_BYTES*documents
         names: Any = frame['filename'] if 'filename' in frame.columns else frame['filename_base'] if 'filename_base' in frame.columns else None
         if names is None:
             continue
@@ -112,3 +126,39 @@ def require_room(root: Any, settings: dict[str, Any], need: int, *, when: str, p
                               f'{room} are available after the emergency reserve and one attempt reservation'
                               + (f', and the budget leaves {limit-present}' if limit is not None and present is not None else '')
                               + '. Enlarge the corpus filesystem (and disk_budget_bytes) or request fewer products')
+
+
+def check_exact(corpus: Any, result: Any, stages: Iterable[str], *, when: str) -> None:
+    """The binding check from this run's actual sizes (K4BI-G7, CP-K4a F7, CP-K4ac2 R3), extreme only.
+
+    Before the publications it charges every requested final product; at the export publication only the export,
+    from the metadata table that now exists. Texts: this run's cleaned texts; metadata: the selected compatibility
+    table (or the allowance for one publication will create) plus the source projection's caller columns."""
+    from .disk_budget import DiskBudget
+    from .scheduler import local_path
+    owner: Any = corpus
+    settings: dict[str, Any] = getattr(owner, '_retention_settings', {}) or {}
+    if settings.get('memory_saving') != 'extreme' or not result.get('run_id'):
+        return
+    produced = set(result['attempts'].values())
+    catalog: dict[str, Any] = owner._scheduler_writer.file_catalog()
+    # One text per document: once the clean publication has run, its compatibility copy (same producer attempt, same
+    # bytes) is a second present row of the same text, and the export reads only one of them (CP-K4 r2 gate finding).
+    texts: dict[tuple[Any, Any], Any] = {}
+    for row in catalog.values():
+        if row['kind'] == 'clean_markdown' and row['presence'] == 'present' and row['producer_attempt_id'] in produced:
+            texts.setdefault((row['producer_attempt_id'], row['sha256']), row)
+    text_rows = list(texts.values())
+    text_sizes = [row['bytes'] or 0 for row in text_rows]
+    requested = [stage for stage in settings.get('requested_stages', stages) if stage in set(stages)]
+    directory = Path(owner.output_dir)/'download_results'
+    metadata_table: Any = directory/'download_results.parquet'
+    if not metadata_table.is_file():
+        candidates = sorted(path for path in directory.glob('*.parquet') if '.partial.' not in path.name) if directory.is_dir() else []
+        metadata_table = next((path for path in candidates if path.name.startswith('download_results_')), candidates[0] if candidates else None)
+    planned: dict[Any, str] | None = getattr(owner, '_streaming_publication_stems', None)
+    projection: dict[str, Any] = getattr(owner, '_streaming_download_manifest', None) or {}
+    export_bytes = exact_export_need([local_path(row['uri']) for row in text_rows], [metadata_table, projection.get('path')],
+                                     set(planned.values()) if planned else None) if 'export' in requested else 0
+    require_room(owner.output_dir, settings, binding_need(requested, sum(text_sizes), len(text_sizes), export_bytes), when=when,
+                 present=DiskBudget(owner._scheduler_writer, owner.output_dir, result['run_id'], settings).present_bytes())

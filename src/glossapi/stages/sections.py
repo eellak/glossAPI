@@ -43,9 +43,10 @@ def restore_clean_selection(corpus):
         # decision per document with the filename in the attempt settings.
         for item in _selection_rows(decision,cast(Any,settings)):
             if 'selected_file_id' not in item or not item.get('compatibility_filename'):continue
-            fact=journal.writer.connection.execute('SELECT uri,sha256 FROM files WHERE file_id=?',(item['selected_file_id'],)).fetchone()
+            fact=journal.writer.connection.execute('SELECT uri,sha256,ownership FROM files WHERE file_id=?',(item['selected_file_id'],)).fetchone()
             path=local_path(fact['uri'])
-            if not path.is_file() or sha256_file(path,own=True)!=item['selected_text_sha256']:continue
+            # Only a managed product may reuse its registered hash; a caller's selected text is byte-hashed (CP-K4bc2 R3).
+            if not path.is_file() or sha256_file(path,own=fact['ownership']=='managed')!=item['selected_text_sha256']:continue
             filename=Path(item['compatibility_filename']).stem
             selected[filename]=item['accepted_for_sections'];surfaces[filename]=path
     if selected:

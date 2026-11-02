@@ -107,8 +107,15 @@ class CleanStage:
             raise ValueError('Selection rows do not match the selected texts')
         request.work_directory.mkdir(parents=True, exist_ok=True)
         selections: list[dict[str, Any]] = []
+        from .products import active_journal
+        journal: Any = active_journal()
         for source, row in zip(request.inputs, rows):
-            if sha256_file(source.path, own=True) != source.sha256 or row['selected_text_sha256'] != source.sha256:
+            # Producer ownership decides reuse (CP-K4bc2 R3): a score-only caller text (initial_external) or any
+            # caller file is byte-hashed; only a managed product glossAPI wrote may reuse its registered hash.
+            fact: Any = journal.writer.connection.execute(
+                'SELECT ownership FROM files WHERE file_id=?', (source.file_id,)).fetchone() if journal is not None else None
+            owned = bool(fact) and fact[0] == 'managed'
+            if sha256_file(source.path, own=owned) != source.sha256 or row['selected_text_sha256'] != source.sha256:
                 raise ValueError('input_hash_changed')
             selections.append({'selected_file_id': source.file_id, **row})
         common = {key: value for key, value in selection.items() if key != 'rows'}

@@ -372,42 +372,6 @@ def _publication_sources(operations: Any, writer: Any) -> dict[str, dict[str, An
     return sources
 
 
-def fold_download_rows(corpus: Any, published: Any) -> None:
-    """Carry this publication's download rows into the canonical metadata table when the corpus already has one.
-
-    The legacy download serializer writes ``download_results_<manifest>.parquet``; the metadata readers and the
-    export use ``download_results.parquet`` when it exists (a corpus that began with local inputs). Without this the
-    URL, success and identity of a later download never reached the row the export joins (CP-K4a F1, local→remote):
-    the download-owned columns of each published row replace that filename's values, other columns are kept, and
-    new filenames are added, under the metadata lock. Called by the download serializer inside the streaming
-    download publication (its journal seals the result), never by a plain ``Corpus.download()``.
-    """
-    import importlib
-    schema: Any = importlib.import_module('glossapi.parquet_schema')
-    pd: Any = importlib.import_module("pandas")
-    canonical=Path(corpus.output_dir)/'download_results'/'download_results.parquet'
-    published=Path(published)
-    if not canonical.is_file() or not published.is_file() or canonical.resolve()==published.resolve():
-        return
-    rows: Any = pd.read_parquet(published)
-    if 'filename' not in rows.columns or rows.empty:
-        return
-    rows=schema._nullable_integers(rows[rows['filename'].notna()])
-    rows=rows[~rows['filename'].duplicated(keep='last')]
-    def fold(current: Any) -> Any:
-        if current.empty or 'filename' not in current.columns:
-            return rows
-        current=schema._nullable_integers(current)
-        known=current['filename'].isin(list(rows['filename']))
-        merged=current[known].set_index('filename',drop=False)
-        update=rows.set_index('filename',drop=False)
-        merged=update.loc[update.index.intersection(merged.index)].combine_first(merged).reindex(columns=[*current.columns,*[c for c in rows.columns if c not in current.columns]])
-        added=rows[~rows['filename'].isin(list(current['filename']))]
-        result=schema.lossless_concat([current[~known],merged.reset_index(drop=True),added],what='folded download results')
-        return result.sort_values('filename',kind='stable').reset_index(drop=True)[[*current.columns,*[c for c in result.columns if c not in current.columns]]]
-    schema.update_metadata_parquet(canonical,fold)
-
-
 def _publication_alias(root, run, name, target):
     """A run-owned alias spelling the frozen publication name of a local input."""
     import os
@@ -877,30 +841,8 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
     if result.get('run_id') and result['state'] in ('completed','completed_with_failures') and getattr(corpus,'_retention_settings',{}).get('memory_saving')=='extreme':
         # Before any publication (K4BI-G7): the exact cleaned text of this run decides whether the final products fit;
         # a typed refusal now, never an exhausted disk mid-publication. Resume after enlarging the filesystem.
-        from .final_products import binding_need, exact_export_need, require_room
-        from .disk_budget import DiskBudget
-        produced=set(result['attempts'].values())
-        owner=cast(Any,corpus)
-        exact_catalog=cast(dict[str, Any],owner._scheduler_writer.file_catalog())
-        text_rows: list[Any]=[row for row in exact_catalog.values()
-            if row['kind']=='clean_markdown' and row['presence']=='present' and row['producer_attempt_id'] in produced]
-        text_sizes=[row['bytes'] or 0 for row in text_rows]
-        requested_stages: list[str]=list(owner._retention_settings.get('requested_stages',stages))
-        # Exact (CP-K4a F7): the serialized texts and metadata rows of this run's records, both kept copies and the
-        # export's transient view, not a fixed per-document allowance.
-        results_directory=Path(owner.output_dir)/'download_results'
-        metadata_table=results_directory/'download_results.parquet'
-        if not metadata_table.is_file():
-            metadata_candidates=sorted(path for path in results_directory.glob('*.parquet') if '.partial.' not in path.name) if results_directory.is_dir() else []
-            metadata_table=next((path for path in metadata_candidates if path.name.startswith('download_results_')),metadata_candidates[0] if metadata_candidates else None)
-        planned_stems: dict[Any, str] | None=getattr(owner,'_streaming_publication_stems',None)
-        download_projection: dict[str, Any]=getattr(owner,'_streaming_download_manifest',None) or {}
-        projection_path: Any=download_projection.get('path')
-        export_bytes=exact_export_need([local_path(row['uri']) for row in text_rows],[metadata_table,projection_path],
-            set(planned_stems.values()) if planned_stems else None) if 'export' in requested_stages else 0
-        require_room(owner.output_dir,owner._retention_settings,binding_need(requested_stages,sum(text_sizes),len(text_sizes),export_bytes),
-            when='(exact, before the publications)',
-            present=DiskBudget(owner._scheduler_writer,owner.output_dir,result['run_id'],owner._retention_settings).present_bytes())
+        from .final_products import check_exact
+        check_exact(corpus,result,cast(Any,stages),when='(exact, before the publications)')
     if result.get('run_id') and getattr(cast(Any,corpus),'_retention_settings',{}).get('memory_saving')=='extreme':
         # Streaming retirement (W18 M9) runs as document readers finish. A resume after a kill inside it (or a run
         # whose last completion raced it) finishes it here, before any publication (K4BP-G2).
@@ -915,7 +857,7 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
             row=connection.execute('SELECT settings_sha256 FROM runs WHERE run_id=?',(resume,)).fetchone()
             settings=json.loads(connection.execute('SELECT json FROM snapshots WHERE sha256=?',row).fetchone()[0])
             stages=settings['requested_stages']
-    calls={
+    calls: dict[str, Any]={
         # A resumed run reads redacted credential markers; the publication replays
         # committed acquisitions and never receives a placeholder as a credential.
         'download':lambda:corpus.download(corpus._streaming_download_manifest['path'],**{key:value for key,value in settings.get('download',{}).items()
@@ -951,6 +893,10 @@ def _run_corpus(corpus,files=(),*,stages=('extract','clean','sections','export')
                 if not result['sources'] and stage not in ('download','export'):
                     skip_barrier(corpus,result['run_id'],stage)
                 else:
+                    if stage=='export' and getattr(corpus,'_retention_settings',{}).get('memory_saving')=='extreme':
+                        # Again from the actual tables, just before the export writes (CP-K4ac2 R3; first runs create them).
+                        from .final_products import check_exact
+                        check_exact(corpus,result,('export',),when='(exact, at the export publication)')
                     published=publish_barrier(corpus,result['run_id'],stage,calls[stage],retry_failed=retry_failed,
                         empty_export=not result['sources'] and stage=='export')
                 # The next compatibility reader has now consumed these private
@@ -1340,6 +1286,7 @@ def _locked_run_corpus(corpus,*args,**options):
             allocate(corpus.output_dir)
             # Copies the previous run close left unflushed are verified (and republished if torn) first (K4C-M2).
             writer.verify_excluded_copies()
+            writer.refuse_ambiguous_copies()
             # The caller's declared URL policy (public query fields, secret
             # headers) is frozen in the run settings and active for every
             # recording boundary of this run, including a resume.

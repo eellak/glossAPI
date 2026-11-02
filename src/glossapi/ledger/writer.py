@@ -74,6 +74,19 @@ class LedgerError(ValueError):
     """Invalid evidence, ownership, transition or unsupported schema."""
 
 
+class PostCloseEditError(LedgerError):
+    """A copy the last run close left unflushed was changed after that close (CP-K4ac2 R2).
+
+    The edited copy and its managed source are both kept. Nothing runs or publishes until the caller resolves it: move
+    or delete the edited copy (it is then republished from the managed source), or write to another corpus."""
+
+    def __init__(self, copies: list[dict[str, Any]]) -> None:
+        self.copies: list[dict[str, Any]] = list(copies)
+        names = ', '.join(sorted({str(entry['path']) for entry in self.copies})[:5])
+        super().__init__('post_close_edit: changed after the last run closed, kept as is: ' + names +
+                         '. Move or delete these files (they are republished from the managed source) or use another corpus')
+
+
 def _load_syncfs():
     """Linux syncfs(2); it reports writeback errors only from kernel 5.8 on."""
     import sys
@@ -321,6 +334,11 @@ class LedgerWriter:
             # The file identity before this process opens it (opening creates the WAL); see _integrity_known.
             opened_identity = _ledger_identity(self.path)
             self.connection = connect(self.path, isolation_level=None)
+            # WAL first: switching a new file into WAL mode itself advances data_version.
+            self.connection.execute("PRAGMA journal_mode=WAL")
+            # The external-commit epoch starts here, before validation or trust reuse (CP-K4bc2 R1): any commit by
+            # another connection from now on changes data_version, and the baseline is never reset afterwards.
+            self._data_version = self.connection.execute('PRAGMA data_version').fetchone()[0]
             self.connection.row_factory = sqlite3.Row
             self.connection.execute("PRAGMA foreign_keys=ON")
             self.connection.execute("PRAGMA busy_timeout=5000")
@@ -365,7 +383,9 @@ class LedgerWriter:
                 if storage_version>=3:self.connection.path_root=self.path.parent.as_uri()
             supported_schema(self.connection)
             known = _integrity_known.pop(str(self.path.resolve()), None)
-            if known is None or known != opened_identity:
+            # Trust reuse is fenced against the database actually opened: the file must still have the identity
+            # observed before connecting (no swap or rewrite between the stat and the open).
+            if known is None or known != opened_identity or _ledger_identity(self.path, allow_wal=True) != opened_identity:
                 integrity(self.connection)
             # The scheduler's indexed control projection is process local. Old
             # creation scripts/checksums and read-only historical reports stay exact.
@@ -397,8 +417,11 @@ class LedgerWriter:
             self.file_catalog()
             self._durable_files=self._durable_after_last_run_close()
             self.connection.owner_writer=self
-            # Validated: from here on, commits by any other connection change data_version (checked at close).
-            self._data_version=self.connection.execute('PRAGMA data_version').fetchone()[0]
+            # Validated at the epoch taken right after connecting. A commit by another connection during validation or
+            # initialisation means what was validated is no longer what is open: validate again now, and keep the
+            # original baseline so this writer never installs trust (CP-K4bc2 R1).
+            if self.connection.execute('PRAGMA data_version').fetchone()[0] != self._data_version:
+                integrity(self.connection)
             self._validated=True
         except BaseException:
             self.close()
@@ -653,6 +676,13 @@ class LedgerWriter:
                 and row['event_id'] is not None and row['event_id']<through and file_id not in excluded}
         return set()
 
+    def refuse_ambiguous_copies(self) -> None:
+        """Run start, after ``verify_excluded_copies``: an unresolved post-close edit stops the run before any plan
+        executes or publishes (CP-K4ac2 R2). The barrier record still names the copy, so every later start refuses
+        again until the caller resolves it; a refused start never re-records the copy as durable."""
+        if getattr(self, 'ambiguous_copies', None):
+            raise PostCloseEditError(self.ambiguous_copies)
+
     def verify_excluded_copies(self):
         """Run start: verify the byte copies the last run-close barrier left unflushed (K4C-M2).
 
@@ -793,6 +823,11 @@ class LedgerWriter:
             raise LedgerError("Migration sequence/checksum mismatch")
         integrity(self.connection)
         if Path(backup_path).exists():
+            # The live ledger is never its own backup (CP-K4bc2 R4): the same path, a symlink to it or a hard link all
+            # resolve to the ledger's (dev, ino); reusing it would upgrade the only copy.
+            live, given = os.stat(self.path), os.stat(backup_path)
+            if (live.st_dev, live.st_ino) == (given.st_dev, given.st_ino):
+                raise LedgerError("Backup path names the live ledger itself; choose an independent backup path")
             # A retry after a failed migration (CP-K4b F6): reuse the earlier backup only when it verifies and holds
             # exactly this (still unmigrated) ledger; any other file at that path is kept and refused.
             existing = None
