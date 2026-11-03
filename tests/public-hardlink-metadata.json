@@ -1,8 +1,0 @@
-{
-  "error": {
-    "type": "UnresolvedRecoveryError",
-    "message": "unresolved_recovery: recovery could not safely repair, kept as is: /private/tmp/claude-501/-Users-foivoskarounos-zamparloukos/f57fd351-b06f-49b9-83b5-5717c946890a/scratchpad/coord-f10/pt/test_public_hardlink_refusal_a0/out/download_results/download_results.parquet (hard_linked). Remove the cause (e.g. an extra hard link) and resume; nothing ran"
-  },
-  "retry_state": "completed",
-  "retry_run": "c0141667-5518-452a-8578-b9a5d32ebd90"
-}
