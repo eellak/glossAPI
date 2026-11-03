@@ -34,6 +34,9 @@ def _published(writer, root, *, before_barrier=None, earlier=None, hook=None):
             copy.write_bytes(earlier)
             writer.artifact(run, 'export', 'document_jsonl', copy.as_uri(), producer_attempt_id=old_attempt,
                             sha256=sha256_file(copy), bytes=len(earlier), retention_class='final')
+            # Fix 14 (R5): a publication commits a generation only with its publication record, as publish_products.
+            writer.snapshot('product_projection', {'kind': 'product_projection', 'product_uri': copy.as_uri(), 'immutable_uri': None,
+                                                   'sha256': sha256_file(copy), 'producer_attempt_id': old_attempt})
             writer.finish(run, old_task, old_attempt, status='ok', reason_code='export_completed')  # fix 13: committed
         attempt = writer.attempt(task, worker_id='w', device_id='cpu', fingerprint={}, inputs={}, settings={}, tools={})
         copy.write_bytes(SOURCE)
@@ -42,6 +45,9 @@ def _published(writer, root, *, before_barrier=None, earlier=None, hook=None):
                         bytes=size, retention_class='final')
         copy_id = writer.artifact(run, 'export', 'document_jsonl', copy.as_uri(), producer_attempt_id=attempt, sha256=digest,
                                   bytes=size, retention_class='final')
+        # Fix 14 (R5): the copy's publication record (product_projection, as products.publish_products writes it).
+        writer.snapshot('product_projection', {'kind': 'product_projection', 'product_uri': copy.as_uri(), 'immutable_uri': source.as_uri(),
+                                               'sha256': digest, 'producer_attempt_id': attempt})
         # Fix 13: the publication's producer attempt ends ``ok`` (``expected_products`` counts committed generations).
         writer.finish(run, task, attempt, status='ok', reason_code='export_completed')
     if before_barrier:

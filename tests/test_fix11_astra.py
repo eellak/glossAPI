@@ -117,6 +117,9 @@ def test_superseded_copy_is_resolved_by_the_later_registration(tmp_path):
             attempt = writer.attempt(task, worker_id='w', device_id='cpu', fingerprint={}, inputs={}, settings={}, tools={})
             writer.artifact(run, 'export', 'document_jsonl', path.as_uri(), producer_attempt_id=attempt,
                             sha256=hashlib.sha256(newer).hexdigest(), bytes=len(newer), retention_class='final')
+            # Fix 14 (R5): committed only with its publication record (as products.publish_products writes it).
+            writer.snapshot('product_projection', {'kind': 'product_projection', 'product_uri': path.as_uri(), 'immutable_uri': None,
+                                                   'sha256': hashlib.sha256(newer).hexdigest(), 'producer_attempt_id': attempt})
             writer.finish(run, task, attempt, status='ok', reason_code='export_completed')  # fix 13: a committed generation
         assert writer.file_catalog()[copy_id]['presence'] in ('missing', 'corrupt')
         assert writer.verify_excluded_copies() == []

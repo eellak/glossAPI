@@ -372,7 +372,13 @@ def test_f5_enospc_at_run_close_is_recorded_reported_and_resumable(tmp_path, mon
     resumed = Corpus(tmp_path/'empty', root).run([source], stages=STAGES, settings={**SETTINGS, 'resume': run})
     assert resumed['state'] == 'completed' and read(root, run) is None
     with open_readonly(root/'corpus.sqlite3') as connection:
-        assert status_view(connection, run=select_run(connection, run))['state'] == 'completed'
+        # Fix 14 (ASTRA-FIXES2c9 R2): the run that completes is reported completed. The interrupted run is completed
+        # only if its own completion gate passed (``vacuum``: the gate ran before the VACUUM that hit the full disk, and
+        # the later pass keeps the corpus current); at the ``barrier`` its gate never ran: ``unverified``, never
+        # ``completed`` (its last streaming event said completed).
+        assert status_view(connection, run=select_run(connection, resumed['run_id']))['state'] == 'completed'
+        expected = 'completed' if resumed['run_id'] == run or where == 'vacuum' else 'unverified'
+        assert status_view(connection, run=select_run(connection, run))['state'] == expected
 
 
 # ----------------------------------------------------------- F6 post-close edits ---

@@ -22,10 +22,23 @@ class MetadataProjectionStage:
                 'authority':'immutable registered generation; compatibility columns are serializer products'},))
 
 
+def _deferred_temporary_report(journal,report):
+    """Has a cleaning step declared these exact report bytes temporary (``retention.defer_owned_cleanup``: a
+    ``temporary_cleaning_report`` registration, deleted by its run's retention)? Fix 14 (R1): a nested clean wrapper
+    (the OCR stage's metric refresh) defers its report on its own journal, not on the enclosing one; the enclosing
+    journal must not then publish those temporary bytes as a committed metadata projection, a product obligation the
+    report's deletion could never discharge."""
+    from .execution import sha256_file
+    digest=sha256_file(report)
+    return journal.writer.connection.execute("SELECT 1 FROM files WHERE uri=? AND kind='temporary_cleaning_report' AND sha256=? LIMIT 1",
+        (report.absolute().as_uri(),digest)).fetchone() is not None
+
+
 def seal_metadata_projections(journal):
     paths=list((journal.corpus.output_dir/'download_results').glob('*.parquet'))
     report=journal.corpus.output_dir/'cleaning_report.parquet'
-    if report.is_file() and 'clean' in journal.adapter_stages and report not in getattr(journal,'cleanup_paths',()):paths.append(report)
+    if report.is_file() and 'clean' in journal.adapter_stages and report not in getattr(journal,'cleanup_paths',()) \
+            and not _deferred_temporary_report(journal,report):paths.append(report)
     from ..parquet_schema import metadata_target
     for path in sorted(paths):
         from .execution import sha256_file

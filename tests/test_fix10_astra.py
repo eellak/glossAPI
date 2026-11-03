@@ -101,7 +101,8 @@ def test_unresolved_recovery_is_a_typed_cli_error():
     from glossapi import llm_guide
     error = W.UnresolvedRecoveryError([{'path': '/c/export.jsonl', 'reason': 'hard_linked'}])
     assert (error.code, error.EXIT_CODE) == ('unresolved_recovery', 3)
-    assert error.details == {'paths': ['/c/export.jsonl'], 'conditions': [{'path': '/c/export.jsonl', 'reason': 'hard_linked'}]}
+    assert error.details == {'boundary': 'start', 'paths': ['/c/export.jsonl'],  # boundary: fix 14 (L1)
+                             'conditions': [{'path': '/c/export.jsonl', 'reason': 'hard_linked'}]}
     assert llm_guide._cli_errors()['unresolved_recovery']['exit_code'] == 3
 
 

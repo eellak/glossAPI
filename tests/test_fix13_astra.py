@@ -146,19 +146,18 @@ def test_gate_refuses_every_difference(tmp_path, fault):
         else:
             with writer.transaction():
                 writer.event(run, event_kind='retention', reason_code='delete_completed', file_id=copy_id, details={})
-        _, error = _refusal(lambda: writer.completion_gate(run))
+        verdict = writer.completion_gate(run)  # fix 14: a direct call returns the persisted verdict; the run close raises
         recorded = writer.completion_gate_record
-    assert getattr(error, 'code', None) == 'unresolved_recovery', repr(error)
-    assert [entry['reason'] for entry in error.conditions] == [f'completion_gate_{fault}']
+    assert [entry['reason'] for entry in verdict['all_failures']] == [f'completion_gate_{fault}']
     assert recorded['verdict'] == 'refused' and recorded['failure_count'] == 1
 
 
 def test_deleted_newer_wrapper_registration_makes_a_published_path_absent(tmp_path):
-    """Node OCR-kill reference (fix 13, first full tier): the metadata projection publishes ``cleaning_report.parquet``
-    (committed); a later legacy clean step registers its temporary report at the same path under the wrapper's
-    ``orchestrator:<pid>`` attempt (an observation), and the retention controller deletes it. The path is Absent by
-    policy, and the gate passes with the file gone; while that newer registration is not deleted the committed
-    generation still decides (the observation is never authority)."""
+    """Fix 13 added a universal newer-deletion rule for the node's OCR ``cleaning_report.parquet``; ASTRA-FIXES2c9 R1
+    rejected it, and fix 14 binds a deletion to the committed obligation. Kept under its name, with the fix-14
+    expectation: a later wrapper registration at a published path, deleted by retention, does not discharge the
+    committed generation; the gate refuses its absence. (The OCR case is re-solved at its source:
+    ``test_fix14_astra.test_a_report_declared_temporary_is_never_published_as_a_metadata_projection``.)"""
     with LedgerWriter(tmp_path / 'corpus.sqlite3') as writer:
         run, source, path, source_id, copy_id = published_copy(writer, tmp_path)
         uri = path.as_uri()
@@ -177,9 +176,9 @@ def test_deleted_newer_wrapper_registration_makes_a_published_path_absent(tmp_pa
             writer.event(run, event_kind='retention', reason_code='delete_completed', file_id=observed, details={})
         path.unlink()
         expected = W.expected_products(writer.connection)[uri]
-        assert repr(expected) == 'Absent(policy_deletion)' and expected.registration == observed
-        writer.completion_gate(run)
-        assert writer.completion_gate_record['verdict'] == 'pass'
+        assert repr(expected) == f'Sha({_sha(source)[:12]})' and expected.registration == copy_id
+        verdict = writer.completion_gate(run)
+        assert verdict['verdict'] == 'refused' and [f['reason'] for f in verdict['all_failures']] == ['completion_gate_missing']
 
 
 # ===================================================================================== falsification =========
@@ -259,8 +258,8 @@ def test_released_source_leaves_a_pending_republication_the_gate_refuses(tmp_pat
         with writer.transaction():  # an observation cannot discharge the obligation
             writer.event(run, event_kind='artifact', reason_code='present', file_id=copy_id, details={'observation': 'fix13'})
         assert repr(W.expected_products(writer.connection)[uri]) == 'Refuse(pending_republication)'
-        _, error = _refusal(lambda: writer.completion_gate(run))
-        assert [entry['reason'] for entry in error.conditions] == ['completion_gate_refused']
+        verdict = writer.completion_gate(run)  # fix 14: a direct call returns the persisted verdict; the run close raises
+        assert verdict['verdict'] == 'refused' and [entry['reason'] for entry in verdict['all_failures']] == ['completion_gate_refused']
         _register_generation(writer, run, path, b'{"republished":1}\n', tmp_path / '.glossapi/artifacts/re/x.jsonl')
         assert writer.completion_gate(run)['verdict'] == 'pass'
 
