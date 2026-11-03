@@ -58,4 +58,5 @@ def restore_metadata_projections(journal):
         from ..parquet_schema import _copy_file_locked, metadata_target
         with metadata_target(path) as written:
             if not written.exists() or sha256_file(written)!=product['sha256']:
-                _copy_file_locked(immutable,written)
+                # The installed bytes are verified, not only the source before the copy (fix 8).
+                _copy_file_locked(immutable,written,expected_sha256=product['sha256'])
