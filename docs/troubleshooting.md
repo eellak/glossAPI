@@ -64,16 +64,18 @@ The refusal comes from one of three places, each with the typed code `unresolved
   where it must be absent (`completion_gate_extra`), or has no committed generation (`completion_gate_refused`, for
   example a pending republication) is named.
 
-Every run start first marks the corpus *validation pending* in `.glossapi/validation.json`, a fixed-size file
-overwritten in place (it works on a full disk), before it validates or repairs anything; only a passing completion
-gate clears it. If even that mark cannot be written, the start stops before any repair and says so
-(`validation_mark_unwritable`; typed `disk_full` when the disk is full). A refusal is recorded as a verdict when the
-ledger can take it; when it cannot (a full ledger), the error says the refusal was not recorded
-(`details.refusal_recorded: false`), and the pending mark still keeps the corpus from reading `completed`.
+Every run start first commits a new *validation generation* to the ledger (a `validation_started` record, written
+durably) before it validates or repairs anything. From that commit on, no earlier pass counts: only a pass verdict for
+this generation makes the corpus `completed` again. If even that commit fails, the start stops before any validation or
+repair and says so (`validation_start_unrecorded`, "nothing ran"; typed `disk_full` when the disk or ledger is full). A
+refusal is recorded as a verdict when the ledger can take it; when it cannot, the error says the refusal was not
+recorded (`details.refusal_recorded: false`), and the generation committed at the start still keeps the corpus from
+reading `completed`. A run returns `completed` only when its pass verdict was durably committed; if that append fails,
+the run fails (`completion_verdict_unrecorded`, or `disk_full`).
 
 `glossapi status` and `glossapi report` (and a streaming run's status) show a run `completed` only when its own
-completion gate passed AND that pass is still current: it is the ledger's latest verdict, no product was written,
-deleted, rolled back or invalidated after it, the corpus is not marked validation pending, and the ledger's expected
+completion gate passed AND that pass is still current: it is the ledger's latest verdict, it validated the latest
+validation generation, no product was written, deleted, rolled back or invalidated after it, and the ledger's expected
 state of every product is still the one the gate verified (the verdict carries a fingerprint of that whole expected
 state, recomputed on every read). After a refusal they show `unresolved_recovery` (status exits 3); when the gate never
 ran, validation is pending, or later changes have not been verified yet, `unverified`. A later run whose gate passes

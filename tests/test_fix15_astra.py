@@ -20,7 +20,6 @@ from urllib.parse import unquote, urlsplit
 import pytest
 
 from glossapi import Corpus, cli
-from glossapi.ledger import validation_mark
 from glossapi.ledger import writer as W
 from glossapi.ledger.reader import certification, report_view, select_run, status_view
 from glossapi.ledger.writer import LedgerWriter, open_readonly
@@ -217,7 +216,9 @@ def test_a_refusal_the_ledger_cannot_record_still_revokes_the_pass(tmp_path, mon
     monkeypatch.undo()
     assert getattr(error, 'code', None) == 'unresolved_recovery', error
     seen = _surfaces(output, run_id, capfd)
-    assert validation_mark.read(output)['state'] == 'pending'
+    # Fix 16: the side-file mark is replaced by the ledger's validation generation, committed first at every start.
+    with open_readonly(output / 'corpus.sqlite3') as connection:
+        assert connection.execute("SELECT COUNT(*) FROM events WHERE reason_code='validation_started'").fetchone()[0] >= 1
     if recording == 'full':
         assert error.details['refusal_recorded'] is False and 'could not be recorded' in ' '.join(getattr(error, '__notes__', []))
         assert _states(seen) == {'unverified'} and seen['gate']['stale_reason'] == 'validation_pending', seen
@@ -225,12 +226,14 @@ def test_a_refusal_the_ledger_cannot_record_still_revokes_the_pass(tmp_path, mon
         assert error.details['refusal_recorded'] is True
         assert _states(seen) == {'unresolved_recovery'} and seen['cli_status']['exit'] == 3, seen
     run, error = _caught(lambda: Corpus(tmp_path / 'empty', output).run(resume=run_id, retry_failed=True))
-    assert error is None and run['state'] == 'completed' and validation_mark.read(output)['state'] == 'validated'
+    assert error is None and run['state'] == 'completed' and run['completion_gate']['generation'] is not None
     assert _states(_surfaces(output, run_id, capfd)) == {'completed'}
 
 
 @pytest.mark.parametrize('code', [errno.EIO, errno.ENOSPC])
 def test_a_start_that_cannot_write_the_pending_mark_stops_before_any_repair(tmp_path, monkeypatch, capfd, code):
+    """Fix 16: the start's first commit is the ledger's validation generation (the fix-15 side-file mark is gone); if it
+    cannot be committed, the start stops before any validation or repair."""
     output, run_id, path = _public(tmp_path)
     with LedgerWriter(output / 'corpus.sqlite3') as writer:
         writer.record_uncommitted_write(run_id, path, _sha(CONTENT), len(CONTENT), wrapper_stage='export', existed=True)
@@ -239,16 +242,15 @@ def test_a_start_that_cannot_write_the_pending_mark_stops_before_any_repair(tmp_
     real_verify = LedgerWriter.verify_excluded_copies
     monkeypatch.setattr(LedgerWriter, 'verify_excluded_copies', lambda self, *a, **k: repairs.append(1) or real_verify(self, *a, **k))
 
-    def unwritable(root, run_id):
+    def unwritable(self, run_id):
         raise OSError(code, os.strerror(code))
-    monkeypatch.setattr(validation_mark, 'mark_pending', unwritable)
+    monkeypatch.setattr(LedgerWriter, 'begin_validation', unwritable)
     _, error = _caught(lambda: Corpus(tmp_path / 'empty', output).run(resume=run_id, retry_failed=True))
     monkeypatch.undo()
-    assert 'validation_mark_unwritable' in str(error) and 'nothing ran' in str(error), error
-    if code == errno.ENOSPC:  # an exhausted disk stays typed disk_full (resume after freeing space), naming the mark
+    assert 'validation_start_unrecorded' in str(error) and 'nothing ran' in str(error), error
+    if code == errno.ENOSPC:  # an exhausted disk stays typed disk_full (resume after freeing space)
         assert getattr(error, 'code', None) == 'disk_full'
     else:
         assert getattr(error, 'code', None) == 'unresolved_recovery' and error.boundary == 'start'
-        assert [entry['reason'] for entry in error.conditions] == ['validation_mark_unwritable']
+        assert [entry['reason'] for entry in error.conditions] == ['validation_start_unrecorded']
     assert repairs == [] and _sha(path) == _sha(CONTENT)  # nothing validated, nothing repaired
-    assert 'completed' not in _states(_surfaces(output, run_id, capfd))  # the refusal itself was recorded

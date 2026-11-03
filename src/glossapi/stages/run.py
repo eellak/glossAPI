@@ -1371,16 +1371,16 @@ def _locked_run_corpus(corpus,*args,**options):
             # The disk_full record exists before any write can exhaust the disk (K4BI-G2).
             from .interruption import allocate
             allocate(corpus.output_dir)
-            # Before start-up validation or any repair, the corpus is durably marked validation pending (fix 15, H3); only
-            # a passing completion gate clears it, and every read surface treats it as not completed. If even the mark
-            # cannot be written, nothing is validated or repaired: the start stops here, saying so.
-            from ..ledger.validation_mark import NAME as VALIDATION_MARK, mark_pending
+            # The first act of every start, before start-up validation or any repair: commit a new validation generation
+            # to the ledger, durably (fix 16). From then on no earlier pass is current; only a pass verdict for this
+            # generation makes the corpus completed again. If even that commit fails, nothing is validated or repaired:
+            # the start stops here, typed (disk_full on a full disk or ledger), saying nothing ran.
             try:
-                mark_pending(corpus.output_dir, options.get('resume'))
-            except OSError as unwritable:
+                writer.begin_validation(options.get('resume'))
+            except Exception as unrecorded:
                 from ..ledger.writer import UnresolvedRecoveryError
-                raise UnresolvedRecoveryError([{'path': str(Path(corpus.output_dir)/VALIDATION_MARK), 'reason': 'validation_mark_unwritable',
-                    'error': f'{type(unwritable).__name__}: {unwritable}'}], boundary='start') from unwritable
+                raise UnresolvedRecoveryError([{'path': str(Path(corpus.output_dir)/'corpus.sqlite3'), 'reason': 'validation_start_unrecorded',
+                    'error': f'{type(unrecorded).__name__}: {unrecorded}'}], boundary='start') from unrecorded
             # Copies the previous run close left unflushed are verified (and republished if torn) first (K4C-M2).
             writer.verify_excluded_copies()
             writer.refuse_ambiguous_copies()
@@ -1413,13 +1413,14 @@ def _locked_run_corpus(corpus,*args,**options):
                         getattr(error,'boundary','start'))
                     error.details['refusal_recorded'] = True
                 except Exception as unrecorded:
-                    # Fix 15 (H3): explicit, never swallowed. The refusal stays the outcome; the ledger could not take its
-                    # verdict (e.g. a full ledger), but the validation mark set before any validation stays pending, so
-                    # every read surface still says the corpus is not completed.
+                    # Fix 15/16 (H3): explicit, never swallowed. The refusal stays the outcome; the ledger could not take its
+                    # verdict (e.g. a full ledger), but the validation generation this start committed first makes every
+                    # earlier pass stale, so every read surface still says the corpus is not completed.
                     error.details['refusal_recorded'] = False
                     error.details['refusal_record_error'] = f'{type(unrecorded).__name__}: {unrecorded}'
                     error.add_note('the refusal could not be recorded in the ledger (' + error.details['refusal_record_error']
-                                   + '); the corpus stays marked validation pending (.glossapi/validation.json), not completed')
+                                   + '); this start already committed a new validation generation, so no earlier pass is '
+                                   'current: the corpus reads not completed until a pass for this generation')
             raise
         finally:
             try:
