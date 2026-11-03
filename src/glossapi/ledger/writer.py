@@ -117,7 +117,8 @@ class UnresolvedRecoveryError(LedgerError):
     ``conditions``: one dict per target, ``path`` and ``reason`` (``hard_linked``, ``conflicting_locks``,
     ``lock_mismatch``, ``path_replaced``, ``source_changed``, ``no_intact_source``, ``changed_after_restore``; fix 11,
     default-deny: ``missing_at_flush``, ``changed_after_flush``, ``flush_failed``, ``missing``, ``recovery_error``,
-    ``unregistered_copy``, ``unexpected_verdict``/``unexpected_decision``).
+    ``unregistered_copy``, ``unexpected_verdict``/``unexpected_decision``; fix 12, reconcile to the authoritative target:
+    ``contradictory_registrations``, ``present_after_deletion``, ``changed_during_check``).
     Typed for the CLI (``code``): exit 3, a conflict the user resolves, as ``post_close_edit``."""
     code = 'unresolved_recovery'
     EXIT_CODE = 3
@@ -169,6 +170,47 @@ class _UnresolvedOutcome:
 
 
 Resolution = _ResolvedOutcome | _UnresolvedOutcome
+
+
+class TargetBytes:
+    """``authoritative_target``: the path must hold these bytes, those of its newest committed registration
+    (``registration``). ``source``: that registration's own intact immutable source (the only one a restore may use),
+    or ``None``; ``released``: that source's policy release (presence ``deleted``), or ``None``."""
+    __slots__ = ('registration', 'source', 'released')
+
+    def __init__(self, registration: dict[str, Any], source: dict[str, Any] | None, released: dict[str, Any] | None):
+        self.registration, self.source, self.released = registration, source, released
+
+    @property
+    def sha256(self) -> str:
+        return self.registration['sha256']
+
+    def __repr__(self) -> str:
+        return f"Bytes({self.registration['sha256'][:12]}, {self.registration['file_id']})"
+
+
+class TargetAbsent:
+    """``authoritative_target``: the newest registration of the path was deleted by policy (presence ``deleted``):
+    the path must hold nothing."""
+    __slots__ = ('registration',)
+
+    def __init__(self, registration: dict[str, Any]):
+        self.registration = registration
+
+    def __repr__(self) -> str:
+        return f"Absent({self.registration['file_id']})"
+
+
+class NoTarget:
+    """``authoritative_target``: the ledger has no managed registration of the path (a caller-seeded file, or one only
+    failed attempts wrote): recovery leaves it alone."""
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return 'NoTarget()'
+
+
+Target = TargetBytes | TargetAbsent | NoTarget
 Resolved, Unresolved = _ResolvedOutcome, _UnresolvedOutcome
 
 
@@ -1126,6 +1168,11 @@ class LedgerWriter:
         "caller-seeded". A failed act (installed bytes not the registered ones, a hard-linked target) raises
         ``UnresolvedRecoveryError`` at once; an exhausted disk propagates unchanged. An unverifiable temporary is
         retained as residue and never blocks (F4).
+        Fix 12 (reconcile): each recorded path holding recorded bytes is reconciled to its ``authoritative_target``
+        (the failed attempts excluded): the newest committed registration's bytes, restored only from ITS source (never
+        an older generation's), or ``no_intact_source``; its policy-released source leaves the failed bytes to the
+        repeating publication and takes the registration off the path; a policy deletion removes them. The bytes at the
+        path are read twice and must agree. A present managed registration that contradicts the result is refused.
         Returns the paths restored or removed."""
         from urllib.parse import unquote, urlsplit
         from .encoding import file_hash
@@ -1169,70 +1216,34 @@ class LedgerWriter:
                                                               + ','.join('?'*len(chunk)) + ')', chunk)}
         changed: list[str] = []
         events: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
-        def committed_of(rows):
-            # The committed state of the path: its newest registration that is a managed copy of an intact immutable
-            # generation (a product publication or a document mirror; whatever presence the failed wrapper's own
-            # observation gave it afterwards), never a registration made by the failed attempts themselves.
-            # Fix 11 (F1): ``None`` only when the ledger has NO such registration of the path (caller-seeded, or created
-            # by the failed attempts); registrations whose immutable source is no longer intact give
-            # ``('no_intact_source', newest)``, never "nothing to restore".
-            candidates = sorted((row for row in rows if row['ownership'] == 'managed' and row['producer_attempt_id']
-                                 and row['producer_attempt_id'] not in failed_attempts),
-                                key=lambda row: (row.get('created_at') or '', row['event_id'] or 0), reverse=True)
-            for row in candidates:
-                siblings = (catalog.get(file_id) for file_id in self._files_of_attempts([row['producer_attempt_id']]))
-                source = next((other for other in siblings if other is not None and other['file_id'] != row['file_id']
-                               and other['presence'] == 'present' and other['ownership'] == 'managed'
-                               and other['sha256'] == row['sha256'] and '/.glossapi/artifacts/' in other['uri']
-                               and local(other).is_file() and file_hash(local(other)) == other['sha256']), None)
-                if source is not None or row['presence'] == 'deleted':
-                    return (row, source)
-            if not candidates:
-                return None
-            # The newest committed registration has no intact source. Released by policy (its immutable source's
-            # presence is ``deleted``: the retention release, an event in the ledger) is positive evidence that its
-            # bytes are no longer to be restored; anything else (the source missing, corrupt, changed) is not.
-            newest = candidates[0]
-            released = next((other for other in (catalog.get(file_id) for file_id in self._files_of_attempts([newest['producer_attempt_id']]))
-                             if other is not None and other['file_id'] != newest['file_id'] and other['ownership'] == 'managed'
-                             and other['sha256'] == newest['sha256'] and '/.glossapi/artifacts/' in other['uri']
-                             and other['presence'] == 'deleted'), None)
-            if released is not None:
-                return ('source_released', newest, released)
-            return ('no_intact_source', newest)
-
         def lock_of(physical: str, current: Any = False) -> tuple[str | None, bool]:
             # The lock the records of this path bind (``_agreed_lock``, shared with the run-start recovery). ``current``
             # given: only the records that apply to the bytes now at the path (fix 10, N3), so moving or deleting a file
             # whose records contradict each other removes the condition.
             return _agreed_lock(lock for digest, lock in locks.get(physical) or () if current is False or digest == current)
 
-        def plan(physical: str, current: str | None, committed: Any) -> tuple[Any, ...]:
-            # The decision for the bytes now at the path (pure; run without the lock and again under it):
-            # ('resolved', evidence, detail) | ('unresolved', reason) | ('remove', evidence) | ('restore', row, source).
+        def plan(physical: str, current: str | None, target: Target) -> tuple[Any, ...]:
+            # The decision for the bytes now at the path against the path's authoritative target (fix 12; pure, run
+            # without the lock and again under it): ('resolved', meaning, detail) | ('unresolved', reason, detail) |
+            # ('remove', meaning) | ('restore', target) | ('release', target).
             if current is None or current not in recorded[physical]:
                 return ('resolved', 'no_recorded_bytes_at_path', {'sha256': current})
-            if committed is not None and committed[0] == 'no_intact_source':
-                return ('unresolved', 'no_intact_source', {'registration': committed[1]['file_id']})
-            if committed is not None and committed[0] == 'source_released':
-                # Superseded by the policy release of the committed generation's source (the release event): nothing
-                # registered can be restored by design; the repeated publication writes the path again.
-                return ('resolved', 'superseded_by_source_release', {'registration': committed[1]['file_id'],
-                        'released_file_id': committed[2]['file_id'], 'release_event_id': committed[2]['event_id']})
-            if committed is not None and committed[0]['sha256'] == current:
-                return ('resolved', 'committed_bytes_at_path', {'sha256': current, 'registration': committed[0]['file_id']})
-            if committed is None:
+            if isinstance(target, NoTarget):
                 if created[physical]:
                     return ('remove', 'own_created_file_removed')
-                # Proven from the ledger: no managed registration of this path by any other attempt. The file existed
-                # before the failed attempts (a caller-seeded table): nothing registered to restore (fix 7 design).
-                return ('resolved', 'caller_seeded_no_registration', {'sha256': current})
-            if committed[0]['presence'] == 'deleted':
-                return ('remove', 'superseded_by_policy_deletion')
-            return ('restore', committed[0], committed[1])
+                return ('resolved', 'no_target_caller_seeded', {'sha256': current})
+            if isinstance(target, TargetAbsent):
+                return ('remove', 'target_absent_removed')
+            if current == target.sha256:
+                return ('resolved', 'target_bytes_at_path', {'sha256': current, 'registration': target.registration['file_id']})
+            if target.source is not None:
+                return ('restore', target)
+            if target.released is not None:
+                return ('release', target)
+            return ('unresolved', 'no_intact_source', {'registration': target.registration['file_id']})
 
         def resolve(physical: str, digests: set[str]) -> Resolution:
-            # THE rollback resolution of one recorded path (fix 11, default-deny): Resolved on positive evidence only.
+            # THE rollback reconciliation of one recorded path to its authoritative target (fix 12).
             path = Path(physical)
             if path.is_symlink():
                 return _UnresolvedOutcome(physical, 'path_replaced')
@@ -1245,39 +1256,50 @@ class LedgerWriter:
             if path.is_relative_to(resolved_root):
                 spellings.add((root.absolute() / path.relative_to(resolved_root)).as_uri())
             rows = [catalog[file_id] for uri in spellings for file_id in index.get(uri, [])]
-            committed = committed_of(rows)
-            decision = plan(physical, current, committed)
+            target = self.authoritative_target(path, uris=spellings, excluded_attempts=failed_attempts)
+            decision = plan(physical, current, target)
+            if decision[0] not in ('remove', 'restore') and current != (file_hash(path) if path.is_file() else None):
+                # A decision that does not act rests on one read of the bytes: it is confirmed by a second read (an act
+                # re-reads them under the lock instead). A single read is no evidence: the fault sweep feeds one wrong
+                # digest.
+                return _UnresolvedOutcome(physical, 'changed_during_check')
             if decision[0] in ('remove', 'restore'):
                 # The look above holds no lock: check and act are one critical section of the lock the path's writers
                 # take (fix 8, N1; fix 9, F1); the decision is made again under it.
                 seen: dict[str, Any] = {}
 
-                def decide(target, path=path, rows=rows, physical=physical, seen=seen):
-                    if Path(target) != path or path.is_symlink():
+                def decide(lock_target, path=path, physical=physical, seen=seen, target=target):
+                    if Path(lock_target) != path or path.is_symlink():
                         raise UnresolvedRecoveryError([{'path': physical, 'reason': 'path_replaced'}])
                     seen['current'] = file_hash(path) if path.is_file() else None
-                    seen['committed'] = committed_of(rows)
-                    seen['decision'] = plan(physical, seen['current'], seen['committed'])
+                    seen['decision'] = plan(physical, seen['current'], target)
                     if seen['decision'][0] == 'remove':
                         return ('remove', path)
                     if seen['decision'][0] == 'restore':
-                        return ('restore', local(seen['decision'][2]), seen['decision'][1]['sha256'])
+                        restoring = cast(TargetBytes, target)
+                        return ('restore', local(restoring.source), restoring.sha256)
                     return None
                 action = _recover_locked(path, decide, lock=lock)
-                current, committed, decision = seen.get('current', current), seen.get('committed', committed), seen.get('decision', decision)
+                current, decision = seen.get('current', current), seen.get('decision', decision)
                 if action is not None and action[0] == 'remove':
                     if os.path.lexists(path):
                         return _UnresolvedOutcome(physical, 'changed_after_restore')
-                    return _ResolvedOutcome(decision[1], {}, changed=True, restored=(rows, committed, None))
+                    return _ResolvedOutcome(decision[1], {}, changed=True, restored=(rows, target, None))
                 if action is not None:
                     after = file_hash(path) if path.is_file() else None
                     if after != action[2]:
                         return _UnresolvedOutcome(physical, 'changed_after_restore', {'sha256': after})
                     _fsync_path(path)
-                    return _ResolvedOutcome('committed_bytes_restored_and_flushed', {'sha256': after}, changed=True,
-                                            restored=(rows, committed, after))
+                    return _ResolvedOutcome('target_bytes_restored_and_flushed', {'sha256': after}, changed=True,
+                                            restored=(rows, target, after))
+            if decision[0] == 'release':
+                # The target registration's only source was released by policy and the failed attempt overwrote the
+                # last copy of its bytes: nothing can restore them. The path is left to the publication that repeats
+                # right after this rollback, and the target registration no longer claims the path (marked missing).
+                return _ResolvedOutcome('target_source_released', {'registration': decision[1].registration['file_id'],
+                                        'release_event_id': decision[1].released['event_id']}, restored=(rows, target, current))
             if decision[0] == 'resolved':
-                return _ResolvedOutcome(decision[1], decision[2], restored=(rows, committed, current))
+                return _ResolvedOutcome(decision[1], decision[2], restored=(rows, target, current))
             if decision[0] == 'unresolved':
                 return _UnresolvedOutcome(physical, decision[1], decision[2])
             return _UnresolvedOutcome(physical, 'unexpected_decision', {'decision': str(decision[0])})
@@ -1289,33 +1311,42 @@ class LedgerWriter:
                 if _must_propagate(error):
                     raise
                 outcome = _unresolved_from_error(physical, error)
-            if isinstance(outcome, _UnresolvedOutcome):
-                from ..parquet_schema import MetadataAliasError
-                if isinstance(outcome.error, MetadataAliasError):
-                    # The direct API has always raised the metadata lock's hard-link refusal: raised typed at once.
-                    raise _hard_linked_recovery_error(unresolved + [outcome.condition()], outcome.error) from outcome.error
-                if outcome.reason in ('source_changed', 'changed_after_restore'):
-                    # An act that failed (installed bytes not the registered ones): typed at once (fix 11, F2).
-                    raise UnresolvedRecoveryError(_unique_conditions(unresolved + [outcome.condition()])) from outcome.error
-                unresolved.append(outcome.condition())
-                continue  # nothing changed at this path; no ledger observation either
-            if outcome.changed:
-                changed.append(physical)
-            rows, committed, after = cast(tuple[Any, Any, Any], outcome.restored if outcome.restored is not None else ([], None, None))
-            if outcome.evidence == 'own_created_file_removed' or outcome.evidence == 'superseded_by_policy_deletion':
-                after = None
-            # The ledger follows the file: the committed registration is present again when the file holds it (here, or
-            # already at the start, ``verify_excluded_copies``), and the failed attempts' own registrations of bytes the
-            # file no longer holds are missing.
-            committed_source = committed[1] if committed is not None and not isinstance(committed[0], str) else None
-            if committed_source is not None and committed[0]['presence'] not in ('present', 'deleted') \
-                    and after == committed[0]['sha256']:
-                events.append((committed[0], 'present', {'observation': 'uncommitted_write_rolled_back',
-                                                          'source_file_id': committed_source['file_id'], 'failed_wrapper_runs': run_ids}))
-            for other in rows:
-                if other['presence'] == 'present' and other['producer_attempt_id'] in failed_attempts \
-                        and other['sha256'] in digests and other['sha256'] != after:
-                    events.append((other, 'missing', {'observation': 'uncommitted_write_rolled_back', 'failed_wrapper_runs': run_ids}))
+            if isinstance(outcome, _ResolvedOutcome):
+                rows, target, after = cast(tuple[Any, Any, Any], outcome.restored if outcome.restored is not None else ([], NoTarget(), None))
+                path_events: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
+                # The ledger follows the file: the target registration is present again when the file holds it, and
+                # the failed attempts' own registrations of bytes the file no longer holds are missing.
+                if isinstance(target, TargetBytes) and after == target.sha256 and target.source is not None \
+                        and target.registration['presence'] not in ('present', 'deleted'):
+                    path_events.append((target.registration, 'present', {'observation': 'uncommitted_write_rolled_back',
+                                        'source_file_id': target.source['file_id'], 'failed_wrapper_runs': run_ids}))
+                if outcome.evidence == 'target_source_released' and target.registration['presence'] == 'present':
+                    path_events.append((target.registration, 'missing', {'observation': 'committed_source_released_bytes_overwritten',
+                                        'failed_wrapper_runs': run_ids}))
+                for other in rows:
+                    if other['presence'] == 'present' and other['producer_attempt_id'] in failed_attempts \
+                            and other['sha256'] in digests and other['sha256'] != after:
+                        path_events.append((other, 'missing', {'observation': 'uncommitted_write_rolled_back', 'failed_wrapper_runs': run_ids}))
+                # Consistency (fix 12, rule 4): once reconciled, every registration of the path that stays present
+                # agrees with the bytes there; anything else is contradictory, never accepted.
+                marked = {row['file_id']: presence for row, presence, _ in path_events}
+                contradicting = sorted(row['file_id'] for row in rows if row['ownership'] == 'managed'
+                                       and marked.get(row['file_id'], row['presence']) == 'present' and row['sha256'] != after)
+                if contradicting and outcome.evidence != 'no_recorded_bytes_at_path':
+                    outcome = _UnresolvedOutcome(physical, 'contradictory_registrations', {'registrations': contradicting})
+                else:
+                    if outcome.changed:
+                        changed.append(physical)
+                    events.extend(path_events)
+                    continue
+            from ..parquet_schema import MetadataAliasError
+            if isinstance(outcome.error, MetadataAliasError):
+                # The direct API has always raised the metadata lock's hard-link refusal: raised typed at once.
+                raise _hard_linked_recovery_error(unresolved + [outcome.condition()], outcome.error) from outcome.error
+            if outcome.reason in ('source_changed', 'changed_after_restore'):
+                # An act that failed (installed bytes not the registered ones): typed at once (fix 11, F2).
+                raise UnresolvedRecoveryError(_unique_conditions(unresolved + [outcome.condition()])) from outcome.error
+            unresolved.append(outcome.condition())
         for details in temporaries:
             # Temporary cleanup (fix 11, F4): Resolved = a verified abandoned temporary removed under its writer's lock;
             # anything else (unverifiable bytes, a lock that disagrees or is refused, any error but an exhausted disk) is
@@ -1429,115 +1460,95 @@ class LedgerWriter:
             return ('skip',)
         return ('restore',own,source)
 
-    def _resolve_excluded_copy(self, file_id: str, catalog: Any, identity_of: dict[str, Any], local: Any,
-                               flushed_directories: dict[Path, Any]) -> Resolution:
-        """THE run-start resolution of one copy the last run close named (fix 11, default-deny): ``Resolved`` only on
-        positive evidence, ``Unresolved`` otherwise. Every exception raised inside it is Unresolved
-        (``_unresolved_from_error``), except an exhausted disk and a post-close-edit refusal, which propagate."""
-        row=catalog.get(file_id)
-        path: Any=local(row) if row is not None else file_id
-        try:
-            return self._resolve_excluded_copy_checked(file_id,row,catalog,identity_of,local,flushed_directories)
-        except BaseException as error:
-            if _must_propagate(error):
-                raise
-            return _unresolved_from_error(path,error)
+    def _rolled_back_failed(self, row: dict[str, Any]) -> bool:
+        """A registration the rollback took off the path as a failed attempt's own bytes (its latest artifact event is
+        ``missing`` with ``observation: uncommitted_write_rolled_back``): never an authoritative target."""
+        if row['presence'] != 'missing' or row['event_id'] is None:
+            return False
+        found = self.connection.execute(f"SELECT details_json FROM {self.connection.event_table} WHERE event_id=?",
+                                        (row['event_id'],)).fetchone()
+        return bool(found and found[0] and json.loads(found[0]).get('observation') == 'uncommitted_write_rolled_back')
+
+    def authoritative_target(self, path: Any, *, uris: Any = None, excluded_attempts: Any = frozenset()) -> Target:
+        """THE state a managed path must be in, from the ledger alone (fix 12), shared by the run-start recovery and the
+        rollback. Among the path's managed registrations (``uris``: its spellings; ``excluded_attempts``: the failed
+        attempts being rolled back; registrations the rollback already took off as failed bytes never count), the
+        newest by registration event (never by presence-observation order) decides:
+        - none: ``NoTarget`` (ledger-proven caller-seeded or failed-only: leave the file alone);
+        - its presence is ``deleted`` (a committed policy deletion/release of the path, newer than every registration):
+          ``TargetAbsent``;
+        - otherwise ``TargetBytes`` (its sha256), with that registration's own intact immutable source, or its policy
+          release. Never an older generation, whatever its source."""
+        from urllib.parse import unquote, urlsplit
+        from .encoding import file_hash
+        local = lambda row: Path(unquote(urlsplit(row['uri']).path))
+        catalog = self.file_catalog()
+        index = self._uri_index()
+        spellings = set(uris) if uris else {Path(path).absolute().as_uri()}
+        candidates = [catalog[file_id] for uri in spellings for file_id in index.get(uri, [])]
+        candidates = [row for row in candidates if row['ownership'] == 'managed' and row['producer_attempt_id']
+                      and row['producer_attempt_id'] not in excluded_attempts and not self._rolled_back_failed(row)]
+        if not candidates:
+            return NoTarget()
+        newest = max(candidates, key=lambda row: (self._registration_event_id(row['file_id']) or 0, row.get('rowid') or 0))
+        if newest['presence'] == 'deleted':
+            return TargetAbsent(newest)
+        siblings = [catalog.get(file_id) for file_id in self._files_of_attempts([newest['producer_attempt_id']])]
+        sources = [other for other in siblings if other is not None and other['file_id'] != newest['file_id']
+                   and other['ownership'] == 'managed' and other['sha256'] == newest['sha256'] and '/.glossapi/artifacts/' in other['uri']]
+        source = next((other for other in sources if other['presence'] == 'present' and local(other).is_file()
+                       and file_hash(local(other)) == other['sha256']), None)
+        released = next((other for other in sources if other['presence'] == 'deleted'), None)
+        return TargetBytes(newest, source, released)
 
     def _supersession(self, row: dict[str, Any], catalog: Any) -> dict[str, Any] | None:
-        """Positive evidence that a named copy which is no longer ``present`` was superseded (fix 11, F1): its policy
-        deletion or release (presence ``deleted``), a later registration of the same path, or the rollback's own
-        observation that moved the path back to its committed registration. ``None``: no such evidence (a ``missing``
-        or ``corrupt`` observation alone proves nothing)."""
-        if row['presence']=='deleted':
-            return {'evidence':'superseded_by_deletion','event_id':row['event_id']}
-        registered=self._registration_event_id(row['file_id']) or 0
-        for other in catalog.values():
-            if other['file_id']!=row['file_id'] and other['uri']==row['uri'] and other['presence'] in ('present','deleted'):
-                later=self._registration_event_id(other['file_id']) or 0
-                if later>registered:
-                    return {'evidence':'superseded_by_later_registration','file_id':other['file_id'],'event_id':later}
-        if row['event_id'] is not None:
-            found=self.connection.execute(f"SELECT details_json FROM {self.connection.event_table} WHERE event_id=?",(row['event_id'],)).fetchone()
-            observation=json.loads(found[0]).get('observation') if found and found[0] else None
-            if observation=='uncommitted_write_rolled_back':
-                return {'evidence':'superseded_by_rollback_to_committed_registration','event_id':row['event_id']}
-        return None
+        """Removed as evidence (fix 12): history no longer resolves a path. Kept as a diagnostic for older probes: the
+        authoritative target of ``row``'s path (``authoritative_target``)."""
+        from urllib.parse import unquote, urlsplit
+        target = self.authoritative_target(Path(unquote(urlsplit(row['uri']).path)), uris={row['uri']})
+        return {'authoritative_target': repr(target)}
 
-    def _flush_resolved(self, path: Path, row: dict[str, Any], flushed_directories: dict[Path, Any]) -> _UnresolvedOutcome | None:
-        """The evidence "the exact committed bytes are at the path and their flush succeeded": the file is flushed
-        (``_fsync_path``: a vanished file raises), then its directory (once per call), then its bytes are hashed again.
-        ``None`` when all three hold."""
-        try:
-            _fsync_path(path)
-        except FileNotFoundError as error:
-            return _UnresolvedOutcome(path,'missing_at_flush',{'error':str(error)})
-        directory=path.parent
-        if directory not in flushed_directories:
-            try:
-                descriptor=os.open(directory,os.O_RDONLY)
-                try:os.fsync(descriptor)
-                finally:os.close(descriptor)
-                flushed_directories[directory]=None
-            except OSError as error:
-                if _must_propagate(error):raise
-                flushed_directories[directory]=f'{type(error).__name__}: {error}'
-        if flushed_directories[directory] is not None:
-            return _UnresolvedOutcome(path,'flush_failed',{'error':flushed_directories[directory]})
-        # The bytes are verified again after the flush: the evidence is that the committed bytes are what was flushed,
-        # not that they were there at some earlier look (fix 11; the fault sweep changes them right before the fsync).
+    def _reconcile_copy(self, path: Path, target: Target, before: Any, catalog: Any, local: Any) -> Resolution:
+        """Run start, phase 1 (fix 12): make the bytes at ``path`` its target's, or say why not. No flush here (phase 2,
+        after every restore). ``Resolved`` carries the target registration whose bytes are now at the path."""
         from .encoding import file_hash
-        if file_hash(path)!=row['sha256']:
-            return _UnresolvedOutcome(path,'changed_after_flush')
-        return None
-
-    def _resolve_excluded_copy_checked(self, file_id: str, row: dict[str, Any] | None, catalog: Any,
-                                       identity_of: dict[str, Any], local: Any, flushed_directories: dict[Path, Any]) -> Resolution:
-        from .encoding import file_hash
-        if row is None:
-            return _UnresolvedOutcome(file_id,'unregistered_copy')
-        path=local(row)
-        if row['presence']!='present':
-            superseded=self._supersession(row,catalog)
-            if superseded is not None:
-                return _ResolvedOutcome(superseded.pop('evidence'),superseded)
-            # missing/corrupt without supersession: not evidence of anything; resolved below only by repairing it.
-        before=identity_of.get(file_id)
-        verdict=self._excluded_copy_verdict(row,path,before,catalog,local)
-        if verdict[0]=='restore':
-            # The classification above holds no lock: the copy is classified again and restored inside one critical
-            # section of the lock its writers take (fix 8, N1), the lock the records of its current bytes agree on
-            # (fix 9, F1; fix 10, N3: ``_agreed_lock`` over the records after its registration).
+        if isinstance(target, NoTarget):
+            return _ResolvedOutcome('no_target_caller_seeded')
+        if isinstance(target, TargetAbsent):
+            if not os.path.lexists(path):
+                return _ResolvedOutcome('target_absent', {'deleted_registration': target.registration['file_id']})
+            return _UnresolvedOutcome(path, 'present_after_deletion', {'deleted_registration': target.registration['file_id']})
+        row = target.registration
+        verdict = self._excluded_copy_verdict(row, path, before, catalog, local)
+        if verdict[0] == 'restore':
+            # Restored only from the target registration's own source (``_excluded_copy_verdict`` looks no further),
+            # inside one critical section of the lock its writers take (fix 8, N1), the lock the records of the
+            # current bytes agree on (fix 9, F1; fix 10, N3).
             from ..parquet_schema import resolve_metadata_target
-            locked: dict[str, Any] = {'verdict':('skip',)}
-            def decide(target,row=row,path=path,before=before,locked=locked):
-                locked['verdict']=self._excluded_copy_verdict(row,path,before,catalog,local)
-                return ('restore',local(locked['verdict'][2]),row['sha256']) if locked['verdict'][0]=='restore' else None
-            current=file_hash(path) if path.is_file() and not path.is_symlink() else None
-            lock,conflicting=_agreed_lock(details.get('lock') for _,details in self._uncommitted_records(row,str(resolve_metadata_target(path)))
-                                          if details.get('sha256')==current)
+            locked: dict[str, Any] = {'verdict': ('skip',)}
+
+            def decide(lock_target, row=row, path=path, before=before, locked=locked):
+                locked['verdict'] = self._excluded_copy_verdict(row, path, before, catalog, local)
+                return ('restore', local(locked['verdict'][2]), row['sha256']) if locked['verdict'][0] == 'restore' else None
+            current = file_hash(path) if path.is_file() and not path.is_symlink() else None
+            lock, conflicting = _agreed_lock(details.get('lock') for _, details in self._uncommitted_records(row, str(resolve_metadata_target(path)))
+                                             if details.get('sha256') == current)
             if conflicting:
-                return _UnresolvedOutcome(path,'conflicting_locks')
-            action=_recover_locked(path,decide,lock=lock)  # refusals raise: Unresolved by the caller's default-deny
-            verdict=locked['verdict']
+                return _UnresolvedOutcome(path, 'conflicting_locks')
+            action = _recover_locked(path, decide, lock=lock)  # refusals raise: Unresolved by the caller's default-deny
+            verdict = locked['verdict']
             if action is not None:
-                _,own,source=verdict
-                if file_hash(path)!=row['sha256']:
-                    return _UnresolvedOutcome(path,'changed_after_restore')
-                failed=self._flush_resolved(path,row,flushed_directories)
-                if failed is not None:
-                    return failed
-                return _ResolvedOutcome('committed_bytes_restored_and_flushed',{'sha256':row['sha256'],'own_write_event_id':own},
-                                        restored=(row,source,own))
-        if verdict[0]=='intact':
-            failed=self._flush_resolved(path,row,flushed_directories)
-            if failed is not None:
-                return failed
-            return _ResolvedOutcome('committed_bytes_verified_and_flushed',{'sha256':row['sha256']})
-        if verdict[0]=='ambiguous':
-            return _UnresolvedOutcome(path,verdict[1]['reason'],verdict[1],post_close_edit=True)
-        if verdict[0]=='skip':
-            return _UnresolvedOutcome(path,'no_intact_source')
-        return _UnresolvedOutcome(path,'unexpected_verdict',{'verdict':str(verdict[0])})
+                _, own, source = verdict
+                if file_hash(path) != row['sha256']:
+                    return _UnresolvedOutcome(path, 'changed_after_restore')
+                return _ResolvedOutcome('target_bytes_restored', {'registration': row['file_id']}, restored=(row, source, own))
+        if verdict[0] == 'intact':
+            return _ResolvedOutcome('target_bytes_verified', {'registration': row['file_id']})
+        if verdict[0] == 'ambiguous':
+            return _UnresolvedOutcome(path, verdict[1]['reason'], verdict[1], post_close_edit=True)
+        if verdict[0] == 'skip':
+            return _UnresolvedOutcome(path, 'no_intact_source', {'registration': row['file_id']})
+        return _UnresolvedOutcome(path, 'unexpected_verdict', {'verdict': str(verdict[0])})
 
     def verify_excluded_copies(self):
         """Run start: verify the byte copies the last run-close barrier left unflushed (K4C-M2).
@@ -1565,6 +1576,11 @@ class LedgerWriter:
         intact, a copy changed right after its restore) is kept, not made durable, and listed in
         ``self.unresolved_recoveries``; ``refuse_ambiguous_copies`` then refuses the run (``UnresolvedRecoveryError``)
         before any plan executes. "Left for verification" is no longer an outcome.
+        Fix 12 (reconcile): each named path is reconciled to its ``authoritative_target`` (the newest committed
+        registration by event order, a policy deletion, or no target), restored only from that registration's own
+        source (``_reconcile_copy``); then every reconciled file and each affected directory is flushed once, after all
+        restores; then the bytes are verified again and every present registration of the path must agree with them;
+        only then are the IDs durable. There is no supersession or rollback-observation evidence any more.
         Fix 11 (default-deny): each named copy is resolved by ONE function, ``_resolve_excluded_copy``, into Resolved
         (positive evidence: committed bytes verified, flushed and verified again; or a supersession in the ledger) or
         Unresolved. Only Resolved copies are made durable; any exception inside the resolution is Unresolved, except an
@@ -1589,16 +1605,75 @@ class LedgerWriter:
         local=lambda row:Path(unquote(urlsplit(row['uri']).path))
         catalog=self.file_catalog()
         restored=[];durable=[]
-        flushed_directories: dict[Path, Any] = {}
+        # Phase 1 (fix 12): reconcile every named path to its authoritative target, all restores first. The target is
+        # per path (a successor registered after the barrier counts), so each path is reconciled once.
+        by_path: dict[Path, list[str]] = {}
         for file_id in identifiers:
-            outcome=self._resolve_excluded_copy(file_id,catalog,identity_of,local,flushed_directories)
-            if isinstance(outcome,_ResolvedOutcome):
-                durable.append(file_id)  # only a Resolved copy is made durable (fix 11, default-deny)
-                if outcome.restored is not None:restored.append(outcome.restored)
-            elif outcome.post_close_edit:
-                self.ambiguous_copies.append(dict(file_id=file_id,path=outcome.path,**outcome.detail))
+            row=catalog.get(file_id)
+            if row is None:
+                self.unresolved_recoveries.append(_UnresolvedOutcome(file_id,'unregistered_copy').condition(file_id=file_id))
+                continue
+            by_path.setdefault(local(row),[]).append(file_id)
+        reconciled: dict[Path, tuple[list[str], Any, _ResolvedOutcome]] = {}
+        def deny(path, file_ids, outcome):
+            if outcome.post_close_edit:
+                self.ambiguous_copies.append(dict(file_id=file_ids[0],path=outcome.path,**outcome.detail))
             else:
-                self.unresolved_recoveries.append(outcome.condition(file_id=file_id))
+                self.unresolved_recoveries.append(outcome.condition(file_id=file_ids[0]))
+        for path,file_ids in by_path.items():
+            try:
+                target=self.authoritative_target(path,uris={catalog[file_id]['uri'] for file_id in file_ids})
+                named=[file_id for file_id in file_ids if isinstance(target,TargetBytes) and file_id==target.registration['file_id']]
+                outcome=self._reconcile_copy(path,target,identity_of.get((named or file_ids)[0]),catalog,local)
+            except BaseException as error:
+                if _must_propagate(error):raise
+                target,outcome=None,_unresolved_from_error(path,error)
+            if isinstance(outcome,_ResolvedOutcome):
+                reconciled[path]=(file_ids,target,outcome)
+            else:
+                deny(path,file_ids,outcome)
+        # Phase 2: flush every reconciled file, then every affected directory once, after the last replacement in it.
+        def fail(path,outcome):
+            file_ids,_,_=reconciled.pop(path)
+            deny(path,file_ids,outcome)
+        for path,(file_ids,target,outcome) in list(reconciled.items()):
+            if not isinstance(target,TargetBytes):continue
+            try:
+                _fsync_path(path)
+            except BaseException as error:
+                if _must_propagate(error):raise
+                fail(path,_UnresolvedOutcome(path,'missing_at_flush',{'error':str(error)}) if isinstance(error,FileNotFoundError)
+                     else _unresolved_from_error(path,error))
+        directories: dict[Path, list[Path]] = {}
+        for path,(file_ids,target,outcome) in reconciled.items():
+            if isinstance(target,TargetBytes):directories.setdefault(path.parent,[]).append(path)
+        for directory,paths in sorted(directories.items(),key=lambda item:len(item[0].parts),reverse=True):
+            try:
+                descriptor=os.open(directory,os.O_RDONLY)
+                try:os.fsync(descriptor)
+                finally:os.close(descriptor)
+            except BaseException as error:
+                if _must_propagate(error):raise
+                for path in paths:
+                    fail(path,_UnresolvedOutcome(path,'flush_failed',{'error':f'{type(error).__name__}: {error}'}))
+        # Phase 3: the bytes are verified again after the flush, and every registration of the path still present
+        # agrees with them (rule 4); only then are the IDs durable.
+        for path,(file_ids,target,outcome) in list(reconciled.items()):
+            try:
+                if isinstance(target,TargetBytes):
+                    if file_hash(path)!=target.sha256:
+                        fail(path,_UnresolvedOutcome(path,'changed_after_flush'));continue
+                    contradicting=sorted(other['file_id'] for uri in {catalog[file_id]['uri'] for file_id in file_ids}
+                                         for other in (catalog[item] for item in self._uri_index().get(uri,[]))
+                                         if other['ownership']=='managed' and other['presence']=='present' and other['sha256']!=target.sha256)
+                    if contradicting:
+                        fail(path,_UnresolvedOutcome(path,'contradictory_registrations',{'registrations':contradicting}));continue
+                    durable.append(target.registration['file_id'])
+                durable.extend(file_ids)
+                if outcome.restored is not None:restored.append(outcome.restored)
+            except BaseException as error:
+                if _must_propagate(error):raise
+                fail(path,_unresolved_from_error(path,error))
         # Durable now: this writer's own run-close barrier need not name them again for the next start.
         self._durable_files.update(durable)
         if restored:

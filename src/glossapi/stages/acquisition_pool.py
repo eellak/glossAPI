@@ -151,5 +151,10 @@ class AsyncAcquisitionPool:
 
     def close(self):
         if self.process is not None:
-            _stop_process(self.process);self.pipe.close();self.process.close()
+            try:
+                _stop_process(self.process)
+            finally:
+                # Cleanup even if stopping failed (fix 12, R5); a live process object cannot be closed.
+                self.pipe.close()
+                if self.process.exitcode is not None:self.process.close()
         self.process=None;self.pipe=None;self.requests.clear()
