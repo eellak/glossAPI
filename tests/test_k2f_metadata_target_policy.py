@@ -951,7 +951,6 @@ ALL_WRITES = {
     'glossapi/install_plan.py': (['subprocess.run'], K3),
     'glossapi/ledger/importer.py': (['shutil.copyfile', 'tempfile.TemporaryDirectory'], LEDGER),
     'glossapi/ledger/journal.py': (['subprocess.check_output'], LEDGER),
-    'glossapi/ledger/validation_mark.py': (['.mkdir', 'os.open'], LEDGER),  # fix 15 (H3): the fixed-size validation mark under .glossapi, overwritten in place
     'glossapi/ledger/writer.py': (['os.open', 'os.replace', 'os.unlink', 'shutil.copyfile'], LEDGER),  # os.unlink: the fix 7 rollback removes a failed attempt's own uncommitted file, fix 8 a verified abandoned temporary (_recover_locked)
     'glossapi/ocr/defaults.py': (['.write_text'], OCR),
     'glossapi/ocr/math/enrich.py': (['.mkdir', '.write_text', 'open(a)', 'open(w)'], OCR),

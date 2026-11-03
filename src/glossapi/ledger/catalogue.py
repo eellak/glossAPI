@@ -1,5 +1,5 @@
 """Versioned status/reason vocabulary; details retain original backend tokens."""
-CATALOGUE_VERSION = 10  # 10: publication_bound (fix 15); 9: completion_gate, registration_invalidated, pending_republication (fix 13); 3: source_unavailable (CP-LEDGER F3); 4: source_inventory_bound (cycle-2 F4); 5: durability_barrier (K4(c)); 6: disk_full (K4(b), W18 M10); 38 codes that never had a writer removed (K4(b), W18 M14); 7: export_metadata_identity_mismatch (CP-K4a F1); 8: uncommitted_projection_write (fix 7, R1)
+CATALOGUE_VERSION = 11  # 11: validation_started (fix 16); 10: publication_bound (fix 15); 9: completion_gate, registration_invalidated, pending_republication (fix 13); 3: source_unavailable (CP-LEDGER F3); 4: source_inventory_bound (cycle-2 F4); 5: durability_barrier (K4(c)); 6: disk_full (K4(b), W18 M10); 38 codes that never had a writer removed (K4(b), W18 M14); 7: export_metadata_identity_mismatch (CP-K4a F1); 8: uncommitted_projection_write (fix 7, R1)
 STAGES = frozenset(("download", "extract", "clean", "ocr", "math", "sections", "annotate", "export"))
 STATUSES = frozenset(("planned", "running", "ok", "skipped", "failed"))
 TERMINAL_STATUSES = frozenset(("ok", "skipped", "failed"))
@@ -158,6 +158,7 @@ REASON_CODES = frozenset((
     'unsupported_download_format',
     'unsupported_legacy_doc',
     'upstream_failed',
+    'validation_started',
     'waiting_for_corpus_seal',
     'waiting_for_device',
     'waiting_for_disk',

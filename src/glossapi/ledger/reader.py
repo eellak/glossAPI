@@ -537,9 +537,10 @@ def certification(connection) -> dict[str, Any]:
     boundary: ``refused`` (a completion gate, a refused start, a refused repeated publication) -> not certified; ``pass``
     -> certified only while no later recorded mutation of a managed public product exists: a registration, presence
     change or deletion of one (``artifact`` events), a recorded uncommitted write (``uncommitted_projection_write``), a
-    rollback's invalidation (``invalidation``); AND (fix 15) while the corpus validation mark is not ``pending``
-    (``ledger.validation_mark``: set before every run start's validation, cleared only by a passing gate, so a refusal the
-    ledger could not record still revokes the pass) AND while the fingerprint of the full ``expected_products`` map,
+    rollback's invalidation (``invalidation``); AND (fix 16) only for the latest validation generation: every
+    ``Corpus.run`` start first commits a ``validation_started`` generation to the ledger, and a pass is current only if it
+    validated that generation (so a start whose refusal could not be recorded, or that died, still revokes every
+    earlier pass; no side file is involved) AND while the fingerprint of the full ``expected_products`` map,
     recomputed here from the ledger, equals the one the pass verified (H2: any change to any input of the authority
     makes the pass stale, without enumerating change kinds). Returns ``{'certified', 'epoch', 'verdict',
     'stale_reason', 'stale_event_id', 'authority_check_ns'}``."""
@@ -563,12 +564,12 @@ def certification(connection) -> dict[str, Any]:
         for event_id, file_id in touched:
             if file_id in managed:
                 return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="later_product_record", stale_event_id=event_id)
-    root = _ledger_root(connection)
-    if root is not None:
-        from .validation_mark import read as read_validation_mark
-        mark = read_validation_mark(root)
-        if mark is not None and mark.get("state") != "validated":
-            return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="validation_" + str(mark.get("state")), stale_event_id=None)
+    from .writer import latest_validation_generation
+    started_generation = latest_validation_generation(connection)
+    if details.get("generation") != started_generation:
+        # A later run start committed a new validation generation and no pass for it exists (fix 16): pending.
+        return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="validation_pending", stale_event_id=None,
+                    pass_generation=details.get("generation"), started_generation=started_generation)
     import time
     from .writer import authority_fingerprint, expected_products
     started = time.monotonic_ns()

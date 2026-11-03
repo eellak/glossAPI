@@ -276,6 +276,18 @@ Expected = ExpectedSha | ExpectedAbsent | ExpectedRefuse
 INVALIDATION_REASONS = ('registration_invalidated', 'pending_republication')
 
 
+def latest_validation_generation(connection: Any) -> int | None:
+    """The newest validation generation a ``Corpus.run`` start committed (fix 16): the ``generation`` of the ledger's
+    latest ``validation_started`` run event, or None when no start ever committed one (a corpus with no run yet). A pass
+    is current only for this generation (``ledger.reader.certification``)."""
+    table = getattr(connection, 'event_table', 'events')
+    found = connection.execute(f"SELECT details_json FROM {table} WHERE reason_code='validation_started' ORDER BY event_id DESC LIMIT 1").fetchone()
+    if found is None:
+        return None
+    value = (json.loads(found[0]) if found[0] else {}).get('generation')
+    return int(value) if isinstance(value, int) else None
+
+
 def authority_fingerprint(expected: dict[str, Expected]) -> str:
     """sha256 of the whole ``expected_products`` map (fix 15, H2): every path, sorted, with its kind and full value
     (``Sha``: digest and registration; ``Absent``: registration and basis; ``Refuse``: reason and registrations). The
@@ -1807,19 +1819,53 @@ class LedgerWriter:
                                  'actual': digest.hexdigest(), 'registration': verdict.registration})
         record = {'verdict': 'pass' if not failures else 'refused', 'boundary': 'completion', 'products': checked,
                   'bytes_read': read, 'passes': 1, 'elapsed_ns': _time.monotonic_ns() - started, 'failures': failures[:100],
-                  'failure_count': len(failures), 'authority_fingerprint': authority_fingerprint(expected)}
-        with self.transaction():
-            record['event_id'] = self.event(run_id, event_kind='run', reason_code='completion_gate', message=record['verdict'],
-                                            details={key: value for key, value in record.items() if key != 'event_id'})
-        if record['verdict'] == 'pass':
-            # Only a passing gate clears the corpus validation mark set at the run start (fix 15, H3). It lives under
-            # ``.glossapi``, never a product path; a failure to clear it leaves the corpus pending (refuse direction).
-            from .validation_mark import mark_validated
-            record['validation_mark_cleared'] = mark_validated(self.path.parent, run_id, record['event_id'], record['authority_fingerprint'])
+                  'failure_count': len(failures), 'authority_fingerprint': authority_fingerprint(expected),
+                  'generation': latest_validation_generation(self.connection)}
+        # The verdict commits durably (synchronous=FULL, fix 16) or the gate fails typed: a run is completed only when the
+        # pass verdict for its generation is committed. A failed append never leaves a usable pass.
+        try:
+            self.connection.execute('PRAGMA synchronous=FULL')
+            try:
+                with self.transaction():
+                    record['event_id'] = self.event(run_id, event_kind='run', reason_code='completion_gate', message=record['verdict'],
+                                                    details={key: value for key, value in record.items() if key != 'event_id'})
+            finally:
+                self.connection.execute('PRAGMA synchronous=NORMAL')
+        except Exception as unrecorded:
+            from ..stages.execution import disk_full
+            if disk_full(unrecorded):
+                raise  # typed disk_full by the run (resume after freeing space); the run is not completed
+            raise UnresolvedRecoveryError([{'path': str(self.path), 'reason': 'completion_verdict_unrecorded', 'verdict': record['verdict'],
+                                            'error': f'{type(unrecorded).__name__}: {unrecorded}'}], boundary='completion') from unrecorded
         # The verdict is the last act of the gate on products (fix 14, R4): nothing writes any product path after it. Its
         # cost (products, bytes read, passes, elapsed) is in the persisted verdict event itself, where measurements read it.
         self.completion_gate_record = record
         return {**record, 'all_failures': failures}
+
+    def begin_validation(self, run_id: str | None) -> int | None:
+        """Commit, durably (synchronous=FULL), a new validation generation (fix 16): the ``validation_started`` run
+        event, ``generation`` = the latest + 1. ``Corpus.run`` calls it first, before start-up validation or any repair.
+        From this commit on, no earlier pass is current (``ledger.reader.certification`` accepts a pass only for the
+        latest generation), whatever later happens to a refusal's own append. Raises if the commit fails; the caller
+        stops before validating or repairing anything. ``run_id`` None: the ledger's newest run; a ledger without any
+        run returns None (nothing was ever certified there)."""
+        self._owner(transaction=False)
+        if run_id is None or self.connection.execute('SELECT 1 FROM runs WHERE run_id=?', (run_id,)).fetchone() is None:
+            # A fresh run, or a resume of an id the run itself will refuse (run_not_found): bound to the newest run.
+            found = self.connection.execute('SELECT run_id FROM runs ORDER BY rowid DESC LIMIT 1').fetchone()
+            if found is None:
+                return None
+            run_id = found[0]
+        generation = (latest_validation_generation(self.connection) or 0) + 1
+        self.connection.execute('PRAGMA synchronous=FULL')
+        try:
+            with self.transaction():
+                self.event(run_id, event_kind='run', reason_code='validation_started', message='validation started',
+                           details={'generation': generation, 'pid': os.getpid()})
+        finally:
+            self.connection.execute('PRAGMA synchronous=NORMAL')
+        self.validation_generation = generation
+        return generation
 
     def record_refusal(self, run_id: str | None, error: BaseException, boundary: str) -> int | None:
         """Persist a refusal outside the completion gate (fix 14, R3) as a ``completion_gate`` verdict ``refused`` with
