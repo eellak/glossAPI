@@ -114,8 +114,11 @@ class SectionsStage:
 
 def section_products(corpus,good_filenames):
     from .compatibility import execute_compatibility_stage
-    # Preserve os.listdir traversal as a frozen input, never sort it here.
-    enumeration=[name for name in os.listdir(corpus.markdown_dir) if name.endswith('.md')]
+    # One canonical document order, frozen as an input: the file names sorted (the order the document export already
+    # uses). The numeric section ids follow it, so the products do not depend on the directory's listing order, which on
+    # tmpfs is the order the texts were written: after a --retry-failed resume the retried documents came first and every
+    # sequential id/row_id differed from the uninterrupted run (K4g fix 5).
+    enumeration=sorted(name for name in os.listdir(corpus.markdown_dir) if name.endswith('.md'))
     fragments=[];temporary_workspaces=[]
     for name in enumeration:
         if Path(name).stem not in good_filenames:

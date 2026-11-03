@@ -21,6 +21,21 @@
         {
           "id": 1,
           "row_id": "row_1",
+          "filename": "beta",
+          "has_table": true,
+          "has_list": false,
+          "has_other": true,
+          "has_text": true,
+          "header": "Βήτα",
+          "place": "0.00-0.86",
+          "section": "\nΚείμενο με πίνακα.\n\n| Α | Β |\n| --- | --- |\n| 1 | 2 |",
+          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Κείμενο με πίνακα.\"\n  },\n  {\n    \"text\": \"\"\n  },\n  {\n    \"table\": \"| Α | Β |\\n| --- | --- |\\n| 1 | 2 |\"\n  }\n]",
+          "section_length": 4,
+          "section_propo": 1000
+        },
+        {
+          "id": 2,
+          "row_id": "row_2",
           "filename": "zeta",
           "has_table": false,
           "has_list": false,
@@ -34,8 +49,8 @@
           "section_propo": 500
         },
         {
-          "id": 2,
-          "row_id": "row_2",
+          "id": 3,
+          "row_id": "row_3",
           "filename": "zeta",
           "has_table": false,
           "has_list": false,
@@ -47,26 +62,11 @@
           "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Δεύτερη παράγραφος.\"\n  }\n]",
           "section_length": 1,
           "section_propo": 500
-        },
-        {
-          "id": 3,
-          "row_id": "row_3",
-          "filename": "beta",
-          "has_table": true,
-          "has_list": false,
-          "has_other": true,
-          "has_text": true,
-          "header": "Βήτα",
-          "place": "0.00-0.86",
-          "section": "\nΚείμενο με πίνακα.\n\n| Α | Β |\n| --- | --- |\n| 1 | 2 |",
-          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Κείμενο με πίνακα.\"\n  },\n  {\n    \"text\": \"\"\n  },\n  {\n    \"table\": \"| Α | Β |\\n| --- | --- |\\n| 1 | 2 |\"\n  }\n]",
-          "section_length": 4,
-          "section_propo": 1000
         }
       ],
       "row_groups": [
-        2,
-        1
+        1,
+        2
       ],
       "shards": [
         {
@@ -360,36 +360,6 @@
         {
           "id": 1,
           "row_id": "row_1",
-          "filename": "zeta",
-          "has_table": false,
-          "has_list": false,
-          "has_other": true,
-          "has_text": true,
-          "header": "Ζήτα",
-          "place": "0.00-0.43",
-          "section": "\nΠρώτη παράγραφος.\n",
-          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Πρώτη παράγραφος.\"\n  },\n  {\n    \"text\": \"\"\n  }\n]",
-          "section_length": 1,
-          "section_propo": 500
-        },
-        {
-          "id": 2,
-          "row_id": "row_2",
-          "filename": "zeta",
-          "has_table": false,
-          "has_list": false,
-          "has_other": true,
-          "has_text": true,
-          "header": "Μέθοδος",
-          "place": "0.57-0.86",
-          "section": "\nΔεύτερη παράγραφος.",
-          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Δεύτερη παράγραφος.\"\n  }\n]",
-          "section_length": 1,
-          "section_propo": 500
-        },
-        {
-          "id": 3,
-          "row_id": "row_3",
           "filename": "alpha",
           "has_table": false,
           "has_list": false,
@@ -403,8 +373,8 @@
           "section_propo": 1000
         },
         {
-          "id": 4,
-          "row_id": "row_4",
+          "id": 2,
+          "row_id": "row_2",
           "filename": "beta",
           "has_table": true,
           "has_list": false,
@@ -418,8 +388,8 @@
           "section_propo": 1000
         },
         {
-          "id": 5,
-          "row_id": "row_5",
+          "id": 3,
+          "row_id": "row_3",
           "filename": "orphan__p0001-0002",
           "has_table": false,
           "has_list": false,
@@ -431,13 +401,43 @@
           "json_section": "[\n  {\n    \"text\": \"\\nΧωρίς κανονικό γονικό αρχείο.\"\n  }\n]",
           "section_length": 1,
           "section_propo": 1000
+        },
+        {
+          "id": 4,
+          "row_id": "row_4",
+          "filename": "zeta",
+          "has_table": false,
+          "has_list": false,
+          "has_other": true,
+          "has_text": true,
+          "header": "Ζήτα",
+          "place": "0.00-0.43",
+          "section": "\nΠρώτη παράγραφος.\n",
+          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Πρώτη παράγραφος.\"\n  },\n  {\n    \"text\": \"\"\n  }\n]",
+          "section_length": 1,
+          "section_propo": 500
+        },
+        {
+          "id": 5,
+          "row_id": "row_5",
+          "filename": "zeta",
+          "has_table": false,
+          "has_list": false,
+          "has_other": true,
+          "has_text": true,
+          "header": "Μέθοδος",
+          "place": "0.57-0.86",
+          "section": "\nΔεύτερη παράγραφος.",
+          "json_section": "[\n  {\n    \"text\": \"\"\n  },\n  {\n    \"other\": \"Δεύτερη παράγραφος.\"\n  }\n]",
+          "section_length": 1,
+          "section_propo": 500
         }
       ],
       "row_groups": [
-        2,
         1,
         1,
-        1
+        1,
+        2
       ],
       "shards": [
         {

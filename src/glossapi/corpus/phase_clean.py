@@ -2754,6 +2754,11 @@ def _enrich_extraction_metrics(df: pd.DataFrame, output_dir: Path, markdown_dir:
                             ("latin_word_shape_rate", pd.NA)):
         if column not in result.columns:
             result[column] = default
+    # Every row's latin_word_shape_rate is measured again below. The column starts as the object column a first pass
+    # creates (missing = NA, a measured rate = float), also when the table already holds it from an earlier pass, where
+    # reading the parquet back made it float64: the values and the Arrow type are the same, but the pandas metadata
+    # (numpy_type) differed, so a --retry-failed resume published other download_results bytes (K4g fix 5).
+    result["latin_word_shape_rate"] = pd.Series(pd.NA, index=result.index, dtype=object)
     for index, row in result.iterrows():
         stem = canonical_stem(str(row["filename"]))
         sidecar = output_dir / "sidecars" / "extract" / f"{stem}.json"
@@ -3381,9 +3386,20 @@ class CleanPhaseMixin:
                     self.logger.debug(self.last_message)
 
         progress = _CleanerProgress(self.logger, total_files)
+        # A score-only pass (write_cleaned_files=False: the refresh after OCR) produces the exported text metrics. The
+        # OCR supplement's composition lines are structure, not document text (FG-G02), so the native scorers read a
+        # marker-free copy of the marked files, in the corpus staging area, removed after scoring (K4g fix 5). The
+        # staged CleanStage does the same per document (clean.score_after_ocr); nothing changes for unmarked texts.
+        scoring_input_dir = input_dir
+        metric_surface = None
+        if not write_cleaned_files and not adapter_profile:
+            from ..stages.clean import marker_free_scoring_copy
+            metric_surface = marker_free_scoring_copy(input_dir, Path(self.output_dir) / ".glossapi" / "staging")
+            if metric_surface is not None:
+                scoring_input_dir = metric_surface
         cmd = (
             "import glossapi_rs_cleaner\n"
-            f"glossapi_rs_cleaner.run_complete_pipeline({repr(str(input_dir))}, "
+            f"glossapi_rs_cleaner.run_complete_pipeline({repr(str(scoring_input_dir))}, "
             f"{repr(str(self.cleaned_markdown_dir))}, {repr(str(report_parquet_path))}, "
             f"{repr(scripts_to_keep)}, {int(num_threads or os.cpu_count() or 4)}, "
             f"{'True' if write_cleaned_files else 'False'})\n"
@@ -3517,8 +3533,11 @@ class CleanPhaseMixin:
                 "rust/glossapi_rs_noise/Cargo.toml",
                 required_attrs=("score_markdown_directory_detailed",),
             )
+            noise_directory = self.cleaned_markdown_dir
+            if metric_surface is not None and Path(self.cleaned_markdown_dir).resolve() == Path(input_dir).resolve():
+                noise_directory = metric_surface
             results = adapter_scores if adapter_scores is not None else noise_mod.score_markdown_directory_detailed(
-                str(self.cleaned_markdown_dir), os.cpu_count()
+                str(noise_directory), os.cpu_count()
             )
             if results:
                 rows = []
@@ -3584,6 +3603,9 @@ class CleanPhaseMixin:
         except Exception as e:
             observe("clean_noise_scoring_failed", error=e, status="failed", continuation="existing_metrics")
             self.logger.warning("Noise-metrics scoring failed: %s", e)
+        finally:
+            if metric_surface is not None:
+                shutil.rmtree(metric_surface, ignore_errors=True)
 
         # Determine good / bad list based on enriched metrics
         if parquet_path.exists():
