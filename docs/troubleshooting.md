@@ -40,12 +40,25 @@ managed source. The CLI reports the typed code `post_close_edit` (exit 3) with t
 ## A run refuses to start with `unresolved_recovery`
 
 A run start (or a repeated publication) found a corpus file it must repair: a copy the previous run left unflushed, or
-bytes a failed attempt put in place. It could not repair it safely, so the file is kept and nothing runs. The CLI
-reports the typed code `unresolved_recovery` (exit 3); `details.conditions` names each path and its reason:
-`hard_linked` (remove the extra hard link), `conflicting_locks` or `lock_mismatch` (move or delete the file; it is then
-republished), `path_replaced` (the file was replaced by a symlink: remove the symlink), `source_changed` or
-`no_intact_source` (the managed source under `.glossapi/artifacts` changed or is missing: restore it or use another
-corpus). After the cause is removed, resume: the file is repaired and the run goes on.
+bytes a failed attempt put in place. Recovery accepts a file only on positive evidence (its committed bytes verified
+and flushed, a later registration or release in the ledger, or a caller-seeded file the ledger never registered);
+anything else is kept as it is and nothing runs. The CLI reports the typed code `unresolved_recovery` (exit 3);
+`details.conditions` names each path and its reason:
+
+- `hard_linked`: remove the extra hard link.
+- `conflicting_locks` or `lock_mismatch`: move or delete the file; it is then republished.
+- `path_replaced`: the file was replaced by a symlink; remove the symlink.
+- `source_changed` or `no_intact_source`: the managed source under `.glossapi/artifacts` changed or is missing;
+  restore it or use another corpus.
+- `missing_at_flush`, `missing`, `changed_after_flush`, `changed_after_restore`, `flush_failed`, `recovery_error`:
+  the file vanished, changed or could not be read or flushed while recovery checked it (the condition names the
+  error). Check the disk and anything else writing to the corpus, then resume; the check is repeated from the start.
+
+After the cause is removed, resume: the file is repaired and the run goes on.
+
+A leftover hidden temporary beside a product (`.<name>.<id>.tmp`) whose bytes recovery cannot prove to be its own
+abandoned copy is never deleted and never blocks a run, once the product itself is resolved. It is residue: delete it
+yourself if you do not need it.
 
 ## `conversion.log` appears in the working directory
 

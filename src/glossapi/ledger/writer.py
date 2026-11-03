@@ -115,7 +115,9 @@ class UnresolvedRecoveryError(LedgerError):
     removing the cause (for example the extra hard link) lets the next resume repair the file and complete.
 
     ``conditions``: one dict per target, ``path`` and ``reason`` (``hard_linked``, ``conflicting_locks``,
-    ``lock_mismatch``, ``path_replaced``, ``source_changed``, ``no_intact_source``, ``changed_after_restore``).
+    ``lock_mismatch``, ``path_replaced``, ``source_changed``, ``no_intact_source``, ``changed_after_restore``; fix 11,
+    default-deny: ``missing_at_flush``, ``changed_after_flush``, ``flush_failed``, ``missing``, ``recovery_error``,
+    ``unregistered_copy``, ``unexpected_verdict``/``unexpected_decision``).
     Typed for the CLI (``code``): exit 3, a conflict the user resolves, as ``post_close_edit``."""
     code = 'unresolved_recovery'
     EXIT_CODE = 3
@@ -132,6 +134,84 @@ class UnresolvedRecoveryError(LedgerError):
         shown = '; '.join(f"{entry['path']} ({entry['reason']})" for entry in self.conditions[:5])
         super().__init__('unresolved_recovery: recovery could not safely repair, kept as is: ' + shown +
                          '. Remove the cause (e.g. an extra hard link) and resume; nothing ran')
+
+
+class _ResolvedOutcome:
+    """Recovery resolution (fix 11, default-deny): the target is resolved, by the positive ``evidence`` named here
+    (``committed_bytes_verified_and_flushed``, ``committed_bytes_restored_and_flushed``, ``superseded_by_*``,
+    ``own_created_file_removed``, ``caller_seeded_no_registration``, ``no_recorded_bytes_at_path``, ...).
+    ``detail``: what was checked (event ids, digests); ``restored``: the restore to record in the ledger, if any."""
+    __slots__ = ('evidence', 'detail', 'restored', 'changed')
+
+    def __init__(self, evidence: str, detail: dict[str, Any] | None = None, *, restored: Any = None, changed: bool = False):
+        self.evidence, self.detail, self.restored, self.changed = evidence, dict(detail or {}), restored, changed
+
+    def __repr__(self) -> str:
+        return f'Resolved({self.evidence!r}, {self.detail!r})'
+
+
+class _UnresolvedOutcome:
+    """Recovery resolution (fix 11, default-deny): anything without positive evidence. ``path`` and ``reason`` go into
+    ``UnresolvedRecoveryError``; ``post_close_edit``: a user's edit after the close (refused as ``post_close_edit``);
+    ``error``: an act that failed (rollback raises it typed at once: hard link, installed bytes)."""
+    __slots__ = ('path', 'reason', 'detail', 'post_close_edit', 'error')
+
+    def __init__(self, path: Any, reason: str, detail: dict[str, Any] | None = None, *, post_close_edit: bool = False,
+                 error: BaseException | None = None):
+        self.path, self.reason, self.detail = str(path), reason, dict(detail or {})
+        self.post_close_edit, self.error = post_close_edit, error
+
+    def condition(self, **extra: Any) -> dict[str, Any]:
+        return {**extra, 'path': self.path, 'reason': self.reason, **self.detail}
+
+    def __repr__(self) -> str:
+        return f'Unresolved({self.path!r}, {self.reason!r}, {self.detail!r})'
+
+
+Resolution = _ResolvedOutcome | _UnresolvedOutcome
+Resolved, Unresolved = _ResolvedOutcome, _UnresolvedOutcome
+
+
+def _must_propagate(error: BaseException) -> bool:
+    """The operational errors a resolution never turns into Unresolved (fix 11): an exhausted disk (typed disk_full by
+    the run, retried after the operator frees space) and a post-close-edit refusal."""
+    from ..stages.execution import disk_full
+    return isinstance(error, PostCloseEditError) or disk_full(error) or not isinstance(error, Exception)
+
+
+def _unresolved_from_error(path: Any, error: BaseException) -> _UnresolvedOutcome:
+    """Default-deny for an exception raised inside a resolution: every error that is not one of ``_must_propagate`` is
+    Unresolved with the reason it proves (a hard link, a refused lock, bytes that are not the registered ones,
+    a file that vanished), or ``recovery_error`` naming it."""
+    from ..parquet_schema import MetadataAliasError, MetadataStaleGenerationError
+    if isinstance(error, UnresolvedRecoveryError):
+        first = error.conditions[0] if error.conditions else {'reason': 'recovery_error'}
+        return _UnresolvedOutcome(path, first['reason'], {k: v for k, v in first.items() if k not in ('path', 'reason')}, error=error)
+    if isinstance(error, MetadataAliasError):
+        return _UnresolvedOutcome(path, 'hard_linked', {'error': str(error)}, error=error)
+    if isinstance(error, (MetadataStaleGenerationError, LedgerError)):
+        return _UnresolvedOutcome(path, 'source_changed', {'error': str(error)}, error=error)
+    if isinstance(error, FileNotFoundError):
+        return _UnresolvedOutcome(path, 'missing', {'error': f'{type(error).__name__}: {error}'}, error=error)
+    return _UnresolvedOutcome(path, 'recovery_error', {'error': f'{type(error).__name__}: {error}'}, error=error)
+
+
+_hard_linked_error_class: Any = None
+
+
+def _hard_linked_recovery_error(conditions: list[dict[str, Any]], alias: BaseException) -> UnresolvedRecoveryError:
+    """The rollback's refusal of a hard-linked target: ``UnresolvedRecoveryError`` (code ``unresolved_recovery``) that is
+    also the ``MetadataAliasError`` the metadata lock raised (the direct API has always raised that type)."""
+    global _hard_linked_error_class
+    if _hard_linked_error_class is None:
+        from ..parquet_schema import MetadataAliasError
+
+        class HardLinkedRecoveryError(UnresolvedRecoveryError, MetadataAliasError):
+            def __init__(self, conditions: list[dict[str, Any]], alias: BaseException) -> None:
+                UnresolvedRecoveryError.__init__(self, conditions)
+                self.args = (str(self.args[0]) + ' (' + str(alias) + ')',)
+        _hard_linked_error_class = HardLinkedRecoveryError
+    return _hard_linked_error_class(conditions, alias)
 
 
 def _unique_conditions(conditions):
@@ -215,8 +295,16 @@ class SyncBatch:
 
 
 def _fsync_path(path):
+    """Flush one file; a missing file raises (fix 11, F1: recovery never certifies a copy it could not flush)."""
+    descriptor=os.open(path,os.O_RDONLY)
+    try:os.fsync(descriptor)
+    finally:os.close(descriptor)
+
+
+def _fsync_path_if_present(path):
+    """The barrier's flush of a registered file: one that vanished since its stat is diagnosed by verification/resume."""
     try:descriptor=os.open(path,os.O_RDONLY)
-    except FileNotFoundError:return  # Missing observations are diagnosed by verification/resume.
+    except FileNotFoundError:return
     try:os.fsync(descriptor)
     finally:os.close(descriptor)
 
@@ -817,7 +905,7 @@ class LedgerWriter:
             directories.update(parent for parent in path.parents if parent.is_relative_to(root))
             synchronized.append(row['file_id'])
         # Each path is opened, flushed and closed by one task, so at most a pool's worth of descriptors is open.
-        _map_bounded(_fsync_path,paths)
+        _map_bounded(_fsync_path_if_present,paths)
         ordered=sorted(directories,key=lambda path:len(path.parts),reverse=True)
         started=_time.time_ns()
         cache=self._durable_directories
@@ -975,11 +1063,21 @@ class LedgerWriter:
         current = file_hash(path)
         return next((event_id for event_id, details in candidates if details.get('sha256') == current), None)
 
+    def _registration_event_id(self, file_id: str) -> int | None:
+        """The registration event of a file: its first artifact event (``writer.artifact`` records it when the file is
+        registered; every later artifact event is a presence observation of the same generation)."""
+        found = self.connection.execute(f"SELECT MIN(event_id) FROM {self.connection.event_table} WHERE file_id=? "
+                                        "AND event_kind='artifact'", (file_id,)).fetchone()
+        return found[0] if found else None
+
     def _uncommitted_records(self, row: dict[str, Any], physical: str) -> list[tuple[int, dict[str, Any]]]:
         """Every recorded uncommitted write of ``physical`` after the copy's current registration, newest first: the
-        records that apply to the copy (its own uncommitted bytes, and the locks their writers held)."""
+        records that apply to the copy (its own uncommitted bytes, and the locks their writers held).
+        Fix 11 (F3): "after the registration" means after the copy's registration event (its first artifact event,
+        ``_registration_event_id``), not after its latest artifact event (``current_file_state.event_id``): a later
+        presence observation is not a new generation and does not hide an earlier intent."""
         table = self.connection.event_table
-        after = row.get('event_id')
+        after = self._registration_event_id(row['file_id']) if row.get('file_id') else row.get('event_id')
         query = (f"SELECT event_id,details_json FROM {table} WHERE reason_code='uncommitted_projection_write'"
                  + (" AND event_id>?" if after is not None else "") + " ORDER BY event_id DESC")
         candidates = [(event_id, json.loads(encoded)) for event_id, encoded in
@@ -1020,6 +1118,14 @@ class LedgerWriter:
         recovered under the lock its writers take. A path whose records bind two different locks is not acted on. A
         temporary is verified in one pass over the source bytes (``_verified_temporary``) and removed only if its name
         still names the verified file.
+        Fix 11 (default-deny): each recorded path is resolved by ONE function (``resolve``) into Resolved (positive
+        evidence: the committed bytes restored, verified and flushed; no recorded bytes at the path; the committed bytes
+        already there; the failed attempts' own created file removed; supersession by a policy deletion or by the
+        release of the committed source; a caller-seeded file the ledger never registered) or Unresolved, listed in
+        ``rollback_unresolved``; a registered generation whose source is unavailable is ``no_intact_source``, never
+        "caller-seeded". A failed act (installed bytes not the registered ones, a hard-linked target) raises
+        ``UnresolvedRecoveryError`` at once; an exhausted disk propagates unchanged. An unverifiable temporary is
+        retained as residue and never blocks (F4).
         Returns the paths restored or removed."""
         from urllib.parse import unquote, urlsplit
         from .encoding import file_hash
@@ -1067,9 +1173,13 @@ class LedgerWriter:
             # The committed state of the path: its newest registration that is a managed copy of an intact immutable
             # generation (a product publication or a document mirror; whatever presence the failed wrapper's own
             # observation gave it afterwards), never a registration made by the failed attempts themselves.
-            for row in sorted((row for row in rows if row['ownership'] == 'managed' and row['producer_attempt_id']
-                               and row['producer_attempt_id'] not in failed_attempts),
-                              key=lambda row: (row.get('created_at') or '', row['event_id'] or 0), reverse=True):
+            # Fix 11 (F1): ``None`` only when the ledger has NO such registration of the path (caller-seeded, or created
+            # by the failed attempts); registrations whose immutable source is no longer intact give
+            # ``('no_intact_source', newest)``, never "nothing to restore".
+            candidates = sorted((row for row in rows if row['ownership'] == 'managed' and row['producer_attempt_id']
+                                 and row['producer_attempt_id'] not in failed_attempts),
+                                key=lambda row: (row.get('created_at') or '', row['event_id'] or 0), reverse=True)
+            for row in candidates:
                 siblings = (catalog.get(file_id) for file_id in self._files_of_attempts([row['producer_attempt_id']]))
                 source = next((other for other in siblings if other is not None and other['file_id'] != row['file_id']
                                and other['presence'] == 'present' and other['ownership'] == 'managed'
@@ -1077,14 +1187,19 @@ class LedgerWriter:
                                and local(other).is_file() and file_hash(local(other)) == other['sha256']), None)
                 if source is not None or row['presence'] == 'deleted':
                     return (row, source)
-            return None
-
-        def ours(current, committed, physical):
-            # Exactly one of the failed attempts' recorded bytes, not the committed bytes, and something to go back to
-            # (a committed generation, or no file before the failed attempts' first write).
-            return current is not None and current in recorded[physical] \
-                and not (committed is not None and committed[0]['sha256'] == current) \
-                and (committed is not None or created[physical])
+            if not candidates:
+                return None
+            # The newest committed registration has no intact source. Released by policy (its immutable source's
+            # presence is ``deleted``: the retention release, an event in the ledger) is positive evidence that its
+            # bytes are no longer to be restored; anything else (the source missing, corrupt, changed) is not.
+            newest = candidates[0]
+            released = next((other for other in (catalog.get(file_id) for file_id in self._files_of_attempts([newest['producer_attempt_id']]))
+                             if other is not None and other['file_id'] != newest['file_id'] and other['ownership'] == 'managed'
+                             and other['sha256'] == newest['sha256'] and '/.glossapi/artifacts/' in other['uri']
+                             and other['presence'] == 'deleted'), None)
+            if released is not None:
+                return ('source_released', newest, released)
+            return ('no_intact_source', newest)
 
         def lock_of(physical: str, current: Any = False) -> tuple[str | None, bool]:
             # The lock the records of this path bind (``_agreed_lock``, shared with the run-start recovery). ``current``
@@ -1092,71 +1207,108 @@ class LedgerWriter:
             # whose records contradict each other removes the condition.
             return _agreed_lock(lock for digest, lock in locks.get(physical) or () if current is False or digest == current)
 
-        for physical, digests in recorded.items():
+        def plan(physical: str, current: str | None, committed: Any) -> tuple[Any, ...]:
+            # The decision for the bytes now at the path (pure; run without the lock and again under it):
+            # ('resolved', evidence, detail) | ('unresolved', reason) | ('remove', evidence) | ('restore', row, source).
+            if current is None or current not in recorded[physical]:
+                return ('resolved', 'no_recorded_bytes_at_path', {'sha256': current})
+            if committed is not None and committed[0] == 'no_intact_source':
+                return ('unresolved', 'no_intact_source', {'registration': committed[1]['file_id']})
+            if committed is not None and committed[0] == 'source_released':
+                # Superseded by the policy release of the committed generation's source (the release event): nothing
+                # registered can be restored by design; the repeated publication writes the path again.
+                return ('resolved', 'superseded_by_source_release', {'registration': committed[1]['file_id'],
+                        'released_file_id': committed[2]['file_id'], 'release_event_id': committed[2]['event_id']})
+            if committed is not None and committed[0]['sha256'] == current:
+                return ('resolved', 'committed_bytes_at_path', {'sha256': current, 'registration': committed[0]['file_id']})
+            if committed is None:
+                if created[physical]:
+                    return ('remove', 'own_created_file_removed')
+                # Proven from the ledger: no managed registration of this path by any other attempt. The file existed
+                # before the failed attempts (a caller-seeded table): nothing registered to restore (fix 7 design).
+                return ('resolved', 'caller_seeded_no_registration', {'sha256': current})
+            if committed[0]['presence'] == 'deleted':
+                return ('remove', 'superseded_by_policy_deletion')
+            return ('restore', committed[0], committed[1])
+
+        def resolve(physical: str, digests: set[str]) -> Resolution:
+            # THE rollback resolution of one recorded path (fix 11, default-deny): Resolved on positive evidence only.
             path = Path(physical)
             if path.is_symlink():
-                # The recorded physical file was replaced by a symlink after its record (records are resolved when
-                # written): whatever it names is not the recorded file, and following it is never safe (fix 10, N1).
-                unresolved.append({'path': physical, 'reason': 'path_replaced'})
-                continue
+                return _UnresolvedOutcome(physical, 'path_replaced')
             current = file_hash(path) if path.is_file() else None
             lock, conflicting = lock_of(physical, current)
             if conflicting:
-                # The bytes at the path are recorded under contradictory locks: neither the file nor its temporaries are
-                # touched, and the run is refused (fix 10, N3: unresolved). Moving or deleting the file removes it.
-                unresolved.append({'path': physical, 'reason': 'conflicting_locks',
-                                   'locks': sorted({str(lock) for digest, lock in locks[physical] if lock and digest == current})})
-                continue
+                return _UnresolvedOutcome(physical, 'conflicting_locks',
+                    {'locks': sorted({str(lock) for digest, lock in locks[physical] if lock and digest == current})})
             spellings = {path.as_uri()}
             if path.is_relative_to(resolved_root):
                 spellings.add((root.absolute() / path.relative_to(resolved_root)).as_uri())
             rows = [catalog[file_id] for uri in spellings for file_id in index.get(uri, [])]
             committed = committed_of(rows)
-            after = current
-            if ours(current, committed, physical):
-                # The look above holds no lock: a locked writer may commit between it and the act. Check and act are one
-                # critical section of the canonical metadata lock (fix 8, N1): symlink, bytes and committed generation
-                # are verified again under it, and only then is the file restored or removed.
-                seen = {}
+            decision = plan(physical, current, committed)
+            if decision[0] in ('remove', 'restore'):
+                # The look above holds no lock: check and act are one critical section of the lock the path's writers
+                # take (fix 8, N1; fix 9, F1); the decision is made again under it.
+                seen: dict[str, Any] = {}
 
                 def decide(target, path=path, rows=rows, physical=physical, seen=seen):
                     if Path(target) != path or path.is_symlink():
-                        # The path no longer names the recorded physical file: act on nothing, and say so (fix 10).
                         raise UnresolvedRecoveryError([{'path': physical, 'reason': 'path_replaced'}])
                     seen['current'] = file_hash(path) if path.is_file() else None
                     seen['committed'] = committed_of(rows)
-                    if not ours(seen['current'], seen['committed'], physical):
-                        return None
-                    if seen['committed'] is None or seen['committed'][0]['presence'] == 'deleted':
-                        # Created by the failed attempt (no file before its first write), or released by policy:
-                        # removing it needs no space. A file that existed before with no committed generation to
-                        # restore (e.g. a caller-seeded metadata table the failed attempt rewrote) is left as it is,
-                        # as before fix 7.
+                    seen['decision'] = plan(physical, seen['current'], seen['committed'])
+                    if seen['decision'][0] == 'remove':
                         return ('remove', path)
-                    row, source = seen['committed']
-                    assert source is not None
-                    return ('restore', local(source), row['sha256'])
-                try:
-                    action = _recover_locked(path, decide, lock=lock)
-                except UnresolvedRecoveryError as refusal:
-                    unresolved.extend(refusal.conditions)
-                    continue  # nothing changed at this path; no ledger observation either
-                if 'current' in seen:
-                    current, committed = seen['current'], seen['committed']
-                after = current
+                    if seen['decision'][0] == 'restore':
+                        return ('restore', local(seen['decision'][2]), seen['decision'][1]['sha256'])
+                    return None
+                action = _recover_locked(path, decide, lock=lock)
+                current, committed, decision = seen.get('current', current), seen.get('committed', committed), seen.get('decision', decision)
+                if action is not None and action[0] == 'remove':
+                    if os.path.lexists(path):
+                        return _UnresolvedOutcome(physical, 'changed_after_restore')
+                    return _ResolvedOutcome(decision[1], {}, changed=True, restored=(rows, committed, None))
                 if action is not None:
-                    if action[0] == 'remove':
-                        after = None
-                    else:
-                        after = file_hash(path)
-                        if after != action[2]:
-                            raise LedgerError('Rollback of an uncommitted write did not restore the committed bytes: ' + str(path))
-                    changed.append(str(path))
+                    after = file_hash(path) if path.is_file() else None
+                    if after != action[2]:
+                        return _UnresolvedOutcome(physical, 'changed_after_restore', {'sha256': after})
+                    _fsync_path(path)
+                    return _ResolvedOutcome('committed_bytes_restored_and_flushed', {'sha256': after}, changed=True,
+                                            restored=(rows, committed, after))
+            if decision[0] == 'resolved':
+                return _ResolvedOutcome(decision[1], decision[2], restored=(rows, committed, current))
+            if decision[0] == 'unresolved':
+                return _UnresolvedOutcome(physical, decision[1], decision[2])
+            return _UnresolvedOutcome(physical, 'unexpected_decision', {'decision': str(decision[0])})
+
+        for physical, digests in recorded.items():
+            try:
+                outcome = resolve(physical, digests)
+            except BaseException as error:
+                if _must_propagate(error):
+                    raise
+                outcome = _unresolved_from_error(physical, error)
+            if isinstance(outcome, _UnresolvedOutcome):
+                from ..parquet_schema import MetadataAliasError
+                if isinstance(outcome.error, MetadataAliasError):
+                    # The direct API has always raised the metadata lock's hard-link refusal: raised typed at once.
+                    raise _hard_linked_recovery_error(unresolved + [outcome.condition()], outcome.error) from outcome.error
+                if outcome.reason in ('source_changed', 'changed_after_restore'):
+                    # An act that failed (installed bytes not the registered ones): typed at once (fix 11, F2).
+                    raise UnresolvedRecoveryError(_unique_conditions(unresolved + [outcome.condition()])) from outcome.error
+                unresolved.append(outcome.condition())
+                continue  # nothing changed at this path; no ledger observation either
+            if outcome.changed:
+                changed.append(physical)
+            rows, committed, after = cast(tuple[Any, Any, Any], outcome.restored if outcome.restored is not None else ([], None, None))
+            if outcome.evidence == 'own_created_file_removed' or outcome.evidence == 'superseded_by_policy_deletion':
+                after = None
             # The ledger follows the file: the committed registration is present again when the file holds it (here, or
             # already at the start, ``verify_excluded_copies``), and the failed attempts' own registrations of bytes the
             # file no longer holds are missing.
-            committed_source = committed[1] if committed is not None else None
-            if committed is not None and committed_source is not None and committed[0]['presence'] not in ('present', 'deleted') \
+            committed_source = committed[1] if committed is not None and not isinstance(committed[0], str) else None
+            if committed_source is not None and committed[0]['presence'] not in ('present', 'deleted') \
                     and after == committed[0]['sha256']:
                 events.append((committed[0], 'present', {'observation': 'uncommitted_write_rolled_back',
                                                           'source_file_id': committed_source['file_id'], 'failed_wrapper_runs': run_ids}))
@@ -1165,26 +1317,27 @@ class LedgerWriter:
                         and other['sha256'] in digests and other['sha256'] != after:
                     events.append((other, 'missing', {'observation': 'uncommitted_write_rolled_back', 'failed_wrapper_runs': run_ids}))
         for details in temporaries:
+            # Temporary cleanup (fix 11, F4): Resolved = a verified abandoned temporary removed under its writer's lock;
+            # anything else (unverifiable bytes, a lock that disagrees or is refused, any error but an exhausted disk) is
+            # retained as residue: never deleted, never a block of its own (FIX8-G1). A product whose bytes are still in
+            # question is decided, and refused if unresolved, by the loop above.
             temporary = Path(details['temporary'])
             if not os.path.lexists(temporary):
-                continue
+                continue  # nothing left
             lock, conflicting = lock_of(details['path'])
             if details.get('lock') and details['lock'] != lock or conflicting:
-                # The path's records bind contradictory locks: the temporary is kept (never read as a product; FIX8-G1
-                # residue). If the bytes at the path are among them, the loop above already refused the run.
-                continue
+                continue  # retained: the path's records bind contradictory locks
 
             def verify_temporary(target, temporary=temporary, details=details):
                 identity = _verified_temporary(temporary, details)
                 return None if identity is None else ('remove', temporary, identity)
-            # Under the lock its writer held (fix 9, F1: the recorded lock; the canonical lock of the path for a record
-            # without one): a metadata temporary exists only while its writer holds that lock. The bytes are verified
-            # in one pass (fix 9, F2) and the name is removed only if it still names the verified file.
             try:
                 if _recover_locked(Path(details['path']), verify_temporary, lock=lock):
                     self.removed_temporaries.append(str(temporary))
-            except UnresolvedRecoveryError as refusal:
-                unresolved.extend(refusal.conditions)  # the temporary is kept (fix 10)
+            except BaseException as error:
+                if _must_propagate(error):
+                    raise
+                # retained as residue (a refused or stale lock, a hard-linked target, an unreadable file)
         unresolved[:] = _unique_conditions(unresolved)
         if events:
             with self.transaction():
@@ -1276,6 +1429,116 @@ class LedgerWriter:
             return ('skip',)
         return ('restore',own,source)
 
+    def _resolve_excluded_copy(self, file_id: str, catalog: Any, identity_of: dict[str, Any], local: Any,
+                               flushed_directories: dict[Path, Any]) -> Resolution:
+        """THE run-start resolution of one copy the last run close named (fix 11, default-deny): ``Resolved`` only on
+        positive evidence, ``Unresolved`` otherwise. Every exception raised inside it is Unresolved
+        (``_unresolved_from_error``), except an exhausted disk and a post-close-edit refusal, which propagate."""
+        row=catalog.get(file_id)
+        path: Any=local(row) if row is not None else file_id
+        try:
+            return self._resolve_excluded_copy_checked(file_id,row,catalog,identity_of,local,flushed_directories)
+        except BaseException as error:
+            if _must_propagate(error):
+                raise
+            return _unresolved_from_error(path,error)
+
+    def _supersession(self, row: dict[str, Any], catalog: Any) -> dict[str, Any] | None:
+        """Positive evidence that a named copy which is no longer ``present`` was superseded (fix 11, F1): its policy
+        deletion or release (presence ``deleted``), a later registration of the same path, or the rollback's own
+        observation that moved the path back to its committed registration. ``None``: no such evidence (a ``missing``
+        or ``corrupt`` observation alone proves nothing)."""
+        if row['presence']=='deleted':
+            return {'evidence':'superseded_by_deletion','event_id':row['event_id']}
+        registered=self._registration_event_id(row['file_id']) or 0
+        for other in catalog.values():
+            if other['file_id']!=row['file_id'] and other['uri']==row['uri'] and other['presence'] in ('present','deleted'):
+                later=self._registration_event_id(other['file_id']) or 0
+                if later>registered:
+                    return {'evidence':'superseded_by_later_registration','file_id':other['file_id'],'event_id':later}
+        if row['event_id'] is not None:
+            found=self.connection.execute(f"SELECT details_json FROM {self.connection.event_table} WHERE event_id=?",(row['event_id'],)).fetchone()
+            observation=json.loads(found[0]).get('observation') if found and found[0] else None
+            if observation=='uncommitted_write_rolled_back':
+                return {'evidence':'superseded_by_rollback_to_committed_registration','event_id':row['event_id']}
+        return None
+
+    def _flush_resolved(self, path: Path, row: dict[str, Any], flushed_directories: dict[Path, Any]) -> _UnresolvedOutcome | None:
+        """The evidence "the exact committed bytes are at the path and their flush succeeded": the file is flushed
+        (``_fsync_path``: a vanished file raises), then its directory (once per call), then its bytes are hashed again.
+        ``None`` when all three hold."""
+        try:
+            _fsync_path(path)
+        except FileNotFoundError as error:
+            return _UnresolvedOutcome(path,'missing_at_flush',{'error':str(error)})
+        directory=path.parent
+        if directory not in flushed_directories:
+            try:
+                descriptor=os.open(directory,os.O_RDONLY)
+                try:os.fsync(descriptor)
+                finally:os.close(descriptor)
+                flushed_directories[directory]=None
+            except OSError as error:
+                if _must_propagate(error):raise
+                flushed_directories[directory]=f'{type(error).__name__}: {error}'
+        if flushed_directories[directory] is not None:
+            return _UnresolvedOutcome(path,'flush_failed',{'error':flushed_directories[directory]})
+        # The bytes are verified again after the flush: the evidence is that the committed bytes are what was flushed,
+        # not that they were there at some earlier look (fix 11; the fault sweep changes them right before the fsync).
+        from .encoding import file_hash
+        if file_hash(path)!=row['sha256']:
+            return _UnresolvedOutcome(path,'changed_after_flush')
+        return None
+
+    def _resolve_excluded_copy_checked(self, file_id: str, row: dict[str, Any] | None, catalog: Any,
+                                       identity_of: dict[str, Any], local: Any, flushed_directories: dict[Path, Any]) -> Resolution:
+        from .encoding import file_hash
+        if row is None:
+            return _UnresolvedOutcome(file_id,'unregistered_copy')
+        path=local(row)
+        if row['presence']!='present':
+            superseded=self._supersession(row,catalog)
+            if superseded is not None:
+                return _ResolvedOutcome(superseded.pop('evidence'),superseded)
+            # missing/corrupt without supersession: not evidence of anything; resolved below only by repairing it.
+        before=identity_of.get(file_id)
+        verdict=self._excluded_copy_verdict(row,path,before,catalog,local)
+        if verdict[0]=='restore':
+            # The classification above holds no lock: the copy is classified again and restored inside one critical
+            # section of the lock its writers take (fix 8, N1), the lock the records of its current bytes agree on
+            # (fix 9, F1; fix 10, N3: ``_agreed_lock`` over the records after its registration).
+            from ..parquet_schema import resolve_metadata_target
+            locked: dict[str, Any] = {'verdict':('skip',)}
+            def decide(target,row=row,path=path,before=before,locked=locked):
+                locked['verdict']=self._excluded_copy_verdict(row,path,before,catalog,local)
+                return ('restore',local(locked['verdict'][2]),row['sha256']) if locked['verdict'][0]=='restore' else None
+            current=file_hash(path) if path.is_file() and not path.is_symlink() else None
+            lock,conflicting=_agreed_lock(details.get('lock') for _,details in self._uncommitted_records(row,str(resolve_metadata_target(path)))
+                                          if details.get('sha256')==current)
+            if conflicting:
+                return _UnresolvedOutcome(path,'conflicting_locks')
+            action=_recover_locked(path,decide,lock=lock)  # refusals raise: Unresolved by the caller's default-deny
+            verdict=locked['verdict']
+            if action is not None:
+                _,own,source=verdict
+                if file_hash(path)!=row['sha256']:
+                    return _UnresolvedOutcome(path,'changed_after_restore')
+                failed=self._flush_resolved(path,row,flushed_directories)
+                if failed is not None:
+                    return failed
+                return _ResolvedOutcome('committed_bytes_restored_and_flushed',{'sha256':row['sha256'],'own_write_event_id':own},
+                                        restored=(row,source,own))
+        if verdict[0]=='intact':
+            failed=self._flush_resolved(path,row,flushed_directories)
+            if failed is not None:
+                return failed
+            return _ResolvedOutcome('committed_bytes_verified_and_flushed',{'sha256':row['sha256']})
+        if verdict[0]=='ambiguous':
+            return _UnresolvedOutcome(path,verdict[1]['reason'],verdict[1],post_close_edit=True)
+        if verdict[0]=='skip':
+            return _UnresolvedOutcome(path,'no_intact_source')
+        return _UnresolvedOutcome(path,'unexpected_verdict',{'verdict':str(verdict[0])})
+
     def verify_excluded_copies(self):
         """Run start: verify the byte copies the last run-close barrier left unflushed (K4C-M2).
 
@@ -1302,10 +1565,15 @@ class LedgerWriter:
         intact, a copy changed right after its restore) is kept, not made durable, and listed in
         ``self.unresolved_recoveries``; ``refuse_ambiguous_copies`` then refuses the run (``UnresolvedRecoveryError``)
         before any plan executes. "Left for verification" is no longer an outcome.
+        Fix 11 (default-deny): each named copy is resolved by ONE function, ``_resolve_excluded_copy``, into Resolved
+        (positive evidence: committed bytes verified, flushed and verified again; or a supersession in the ledger) or
+        Unresolved. Only Resolved copies are made durable; any exception inside the resolution is Unresolved, except an
+        exhausted disk and a post-close-edit refusal.
         Returns the file_ids republished.
         """
         self._owner(transaction=False)
         self.unresolved_recoveries: list[dict[str, Any]] = []
+        self.ambiguous_copies: list[dict[str, Any]] = []
         table=self.connection.event_table
         latest=self.connection.execute(f"SELECT run_id,details_json,recorded_at FROM {table} WHERE reason_code='durability_barrier' AND event_kind='retention' "
             "AND (message='barrier_summary' OR message='barrier') ORDER BY event_id DESC LIMIT 1").fetchone()
@@ -1320,61 +1588,17 @@ class LedgerWriter:
         from .encoding import file_hash
         local=lambda row:Path(unquote(urlsplit(row['uri']).path))
         catalog=self.file_catalog()
-        restored=[];checked=[];durable=[]
+        restored=[];durable=[]
+        flushed_directories: dict[Path, Any] = {}
         for file_id in identifiers:
-            row=catalog.get(file_id)
-            if row is None or row['presence']!='present':continue
-            path=local(row)
-            before=identity_of.get(file_id)
-            verdict=self._excluded_copy_verdict(row,path,before,catalog,local)
-            unresolved=lambda reason,**extra:self.unresolved_recoveries.append(dict(file_id=file_id,path=str(path),reason=reason,**extra))
-            if verdict[0]=='restore':
-                # The classification above holds no lock: a locked writer may commit between it and the restore. The
-                # copy is classified again and restored inside one critical section of the canonical metadata lock
-                # (fix 8, N1); an edit committed meanwhile is then a user's edit, kept and refused below.
-                from ..parquet_schema import MetadataAliasError, MetadataStaleGenerationError
-                locked: dict[str, Any] = {'verdict':('skip',)}
-                def decide(target,row=row,path=path,before=before,locked=locked):
-                    locked['verdict']=self._excluded_copy_verdict(row,path,before,catalog,local)
-                    return ('restore',local(locked['verdict'][2]),row['sha256']) if locked['verdict'][0]=='restore' else None
-                # The lock the records of the copy's uncommitted bytes agree on (fix 9, F1; fix 10, N3: every record after
-                # the copy's registration that binds the bytes now at the path, as the rollback's ``_agreed_lock``); none
-                # bound: the canonical metadata lock of the path. Contradictory records: kept, unresolved (moving or
-                # deleting the copy removes the condition: it is then republished from its source).
-                from ..parquet_schema import resolve_metadata_target
-                current=file_hash(path) if path.is_file() and not path.is_symlink() else None
-                lock,conflicting=_agreed_lock(details.get('lock') for _,details in self._uncommitted_records(row,str(resolve_metadata_target(path)))
-                                              if details.get('sha256')==current)
-                if conflicting:
-                    unresolved('conflicting_locks');continue
-                try:
-                    action=_recover_locked(path,decide,lock=lock)
-                except UnresolvedRecoveryError as refusal:
-                    for entry in refusal.conditions:unresolved(entry['reason'])
-                    continue
-                except MetadataAliasError:
-                    unresolved('hard_linked');continue  # the metadata lock refuses a hard-linked copy: kept (fix 10, N1)
-                except (LedgerError,MetadataStaleGenerationError):
-                    unresolved('source_changed');continue  # the installed bytes would not be the registered ones: kept
-                verdict=locked['verdict']
-                if action is not None:
-                    _,own,source=verdict
-                    if file_hash(path)!=row['sha256']:
-                        unresolved('changed_after_restore');continue
-                    restored.append((row,source,own))
-                    checked.append(path);durable.append(file_id)
-                    continue
-            if verdict[0]=='intact':
-                checked.append(path);durable.append(file_id)
-            elif verdict[0]=='ambiguous':
-                self.ambiguous_copies.append(dict(file_id=file_id,path=str(path),**verdict[1]))
-            elif verdict[0]=='skip':
-                unresolved('no_intact_source')  # torn/missing copy, no intact managed source to republish (fix 10)
-        _map_bounded(_fsync_path,checked)
-        for directory in sorted({path.parent for path in checked},key=lambda path:len(path.parts),reverse=True):
-            descriptor=os.open(directory,os.O_RDONLY)
-            try:os.fsync(descriptor)
-            finally:os.close(descriptor)
+            outcome=self._resolve_excluded_copy(file_id,catalog,identity_of,local,flushed_directories)
+            if isinstance(outcome,_ResolvedOutcome):
+                durable.append(file_id)  # only a Resolved copy is made durable (fix 11, default-deny)
+                if outcome.restored is not None:restored.append(outcome.restored)
+            elif outcome.post_close_edit:
+                self.ambiguous_copies.append(dict(file_id=file_id,path=outcome.path,**outcome.detail))
+            else:
+                self.unresolved_recoveries.append(outcome.condition(file_id=file_id))
         # Durable now: this writer's own run-close barrier need not name them again for the next start.
         self._durable_files.update(durable)
         if restored:
