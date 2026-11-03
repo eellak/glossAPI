@@ -67,10 +67,13 @@ The refusal comes from one of three places, each with the typed code `unresolved
 Every run start first commits a new *validation generation* to the ledger (a `validation_started` record, written
 durably) before it validates or repairs anything. From that commit on, no earlier pass counts: only a pass verdict for
 this generation makes the corpus `completed` again. If even that commit fails, the start stops before any validation or
-repair and says so (`validation_start_unrecorded`, "nothing ran"; typed `disk_full` when the disk or ledger is full). A
-refusal is recorded as a verdict when the ledger can take it; when it cannot, the error says the refusal was not
-recorded (`details.refusal_recorded: false`), and the generation committed at the start still keeps the corpus from
-reading `completed`. A run returns `completed` only when its pass verdict was durably committed; if that append fails,
+repair and says so (`validation_start_unrecorded`, "nothing ran"; typed `disk_full` when the disk or ledger is full);
+that refusal is still recorded when the ledger can take it, and then every surface reads `unresolved_recovery`. Only
+when both the generation commit and the refusal's own record fail does an earlier pass stay current (nothing was
+validated or repaired by that start). A refusal is recorded as a verdict when the ledger can take it; when it cannot,
+the error says the refusal was not recorded (`details.refusal_recorded: false`), and a generation committed at the
+start still keeps the corpus from reading `completed`. A pass whose generation or fingerprint is malformed (not a plain
+integer or null, not a 64-hex digest) never counts (`malformed_generation`). A run returns `completed` only when its pass verdict was durably committed; if that append fails,
 the run fails (`completion_verdict_unrecorded`, or `disk_full`).
 
 `glossapi status` and `glossapi report` (and a streaming run's status) show a run `completed` only when its own

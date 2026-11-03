@@ -572,7 +572,21 @@ def certification(connection) -> dict[str, Any]:
         # run physically revalidates and commits a new pass (fix 17, H1). No old side file is read or trusted.
         return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="legacy_pass_without_generation", stale_event_id=None,
                     pass_generation=None, started_generation=started_generation)
-    if details.get("generation") != started_generation:
+    # Exact types before any comparison (fix 18, M1): the latest start record's generation must be a plain int, the
+    # verdict's a plain int or an explicit None (a first run on a corpus without a run, valid only while no start record
+    # exists), and the fingerprint a 64-hex string. ``True == 1`` and ``1.0 == 1`` never certify anything.
+    import re as _re
+    from .writer import exact_generation, latest_validation_start
+    start_exists, start_raw = latest_validation_start(connection)
+    pass_raw = details.get("generation")
+    fingerprint_raw = details.get("authority_fingerprint")
+    malformed = ("validation_started.generation" if start_exists and not exact_generation(start_raw) else
+                 "verdict.generation" if not (exact_generation(pass_raw) or pass_raw is None) else
+                 "verdict.authority_fingerprint" if not (type(fingerprint_raw) is str and _re.fullmatch(r"[0-9a-f]{64}", fingerprint_raw)) else None)
+    if malformed:
+        return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="malformed_generation", malformed_field=malformed,
+                    stale_event_id=None, pass_generation=pass_raw, started_generation=start_raw)
+    if pass_raw is None and start_exists or (pass_raw is not None and pass_raw != start_raw):
         # A later run start committed a new validation generation and no pass for it exists (fix 16): pending.
         return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="validation_pending", stale_event_id=None,
                     pass_generation=details.get("generation"), started_generation=started_generation)
