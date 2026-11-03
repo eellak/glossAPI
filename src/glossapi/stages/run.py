@@ -1196,6 +1196,14 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
         if found and found['basis']=='record allocated at run start':
             consume(cast(Any,corpus.output_dir),cast(str,run))
     if not (previous and task['status']=='running' and wrapper_ok):
+        if previous and task['status'] in ('failed','running'):
+            # A failed (or killed) attempt of this publication may have left bytes it never committed: metadata it
+            # rewrote in place, mirrors it replaced before their registration. Each was recorded as its own before it
+            # was written; the exact recorded bytes are rolled back now, with the space the operator freed (fix 7,
+            # R1). A user's edit (other bytes) is never touched. Otherwise the repeated publication would capture its
+            # own earlier bytes as unchanged and publish nothing (the OCR publication), or the start would refuse them.
+            writer.roll_back_uncommitted_writes(_publication_wrapper_runs(writer,run,stage,task['task_id']),corpus.output_dir,
+                observation_run=run)
         with writer.transaction():
             attempt=writer.attempt(task['task_id'],worker_id='single-publisher',device_id='cpu',
                 fingerprint={'frozen_run_id':run,'stage':stage,'reuse_eligible':False},inputs={'files':[]},settings={},tools={})
@@ -1206,14 +1214,15 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
         except Exception as error:
             if disk_full(error):
                 # An exhausted filesystem stops the run with its typed cause; resume repeats this barrier (W18 M10). The
-                # failed wrapper may already have rewritten the compatibility metadata in place (a state save, a metric
-                # merge before the failing write): those bytes were never committed, so they are rolled back to the
-                # committed projection now, as the next wrapper start would (fix 6, F3). Otherwise the run close would
-                # name them as an unflushed copy and the resume would refuse them as a post-close edit.
-                _roll_back_uncommitted_projections(writer,corpus)
+                # failed wrapper may already have rewritten compatibility products in place (a state save, a metric
+                # merge before the failing write, mirrors replaced before their registration): those bytes were never
+                # committed. They are rolled back now if the disk allows (fix 6, F3); on a disk still too full for the
+                # copy, the bytes were recorded as this run's own before they were written, and the next start (named
+                # copies) and the repeated barrier roll them back once space is freed (fix 7, R1).
+                _roll_back_uncommitted_projections(writer,corpus,run,stage,task['task_id'])
                 raise
             import traceback
-            _roll_back_uncommitted_projections(writer,corpus)  # the same uncommitted bytes after any failure (fix 6)
+            _roll_back_uncommitted_projections(writer,corpus,run,stage,task['task_id'])  # the same after any failure (fix 6)
             with writer.transaction():
                 writer.finish(run,task['task_id'],attempt,status='failed',reason_code=stage+'_exception',
                     error_type=type(error).__name__,message=str(error),traceback=''.join(traceback.format_exception(error)))
@@ -1258,12 +1267,32 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
     return status=='ok'
 
 
-def _roll_back_uncommitted_projections(writer,corpus):
-    """Best effort: restore every compatibility metadata copy whose current registration is its committed projection
-    (``restore_metadata_projections``). On a disk too full even for the copy, the original disk_full error still
-    propagates; the next start then reports the copy (post_close_edit), which the user resolves by removing it."""
+def _publication_wrapper_runs(writer,run,stage,task_id):
+    """The wrapper runs of one publication barrier task, oldest first (each attempt of the barrier starts one)."""
+    table=writer.connection.event_table
+    found=[]
+    for encoded, in writer.connection.execute(f"SELECT details_json FROM {table} WHERE run_id=? AND event_kind='run' "
+                                              "AND reason_code='legacy_observed' AND message=? ORDER BY event_id",(run,'wrapper:'+stage)):
+        details=json.loads(encoded)
+        if details.get('publication_task_id')==task_id and details.get('wrapper_run_id'):
+            found.append(details['wrapper_run_id'])
+    return found
+
+
+def _roll_back_uncommitted_projections(writer,corpus,run,stage,task_id):
+    """Best effort, right after a failed barrier: undo the failed attempt's uncommitted writes
+    (``LedgerWriter.roll_back_uncommitted_writes``: exactly the bytes it recorded as its own before writing them), then
+    restore every compatibility metadata copy whose current registration is its committed projection
+    (``restore_metadata_projections``). Both may need free space (a temporary copy). On a disk still too full, the
+    original error still propagates and nothing is lost: the uncommitted bytes stay recorded as this run's own, so the
+    next start rolls back a copy the run close named (``verify_excluded_copies``) and the repeated barrier rolls back
+    the rest (``publish_barrier``), once space is freed (fix 7, R1). A user's edit never matches such a record."""
     from types import SimpleNamespace
     from .metadata import restore_metadata_projections
+    try:
+        writer.roll_back_uncommitted_writes(_publication_wrapper_runs(writer,run,stage,task_id),corpus.output_dir,observation_run=run)
+    except Exception:
+        pass
     try:
         restore_metadata_projections(SimpleNamespace(writer=writer,corpus=corpus))
     except Exception:

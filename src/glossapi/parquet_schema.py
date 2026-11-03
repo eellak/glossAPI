@@ -7,7 +7,7 @@ pipeline, ensuring consistency between different pipeline stages.
 
 from __future__ import annotations
 
-from .ledger.journal import observe, observe_store, observe_source_rows
+from .ledger.journal import observe, observe_store, observe_source_rows, record_uncommitted_write
 
 try:
     import fcntl
@@ -398,6 +398,14 @@ def _parquet_lock(path: Path) -> Iterator[None]:
             pass
 
 
+def _replace_in_place(tmp_path: Path, target: Path) -> None:
+    """The one in-place replacement of a metadata target (fix 7, R1): inside a cutover wrapper the bytes are first
+    bound in the ledger as that wrapper's uncommitted write (``record_uncommitted_write``; durable before the
+    replace, and if the ledger cannot take the record the target is left untouched), then replaced atomically."""
+    record_uncommitted_write(tmp_path, target)
+    os.replace(tmp_path, target)
+
+
 def _write_metadata_parquet_locked(df: pd.DataFrame, parquet_path: Path, observed: Optional[Path] = None) -> None:
     """Write + atomic replace of the resolved target yielded by ``metadata_target`` (the caller holds it).
     ``observed``: the caller's spelling, recorded by the journal."""
@@ -408,7 +416,7 @@ def _write_metadata_parquet_locked(df: pd.DataFrame, parquet_path: Path, observe
     tmp_path = parquet_path.with_suffix(parquet_path.suffix + f".{uuid.uuid4().hex}.tmp")
     try:
         pq_mod.write_table(table, tmp_path)
-        os.replace(tmp_path, parquet_path)
+        _replace_in_place(tmp_path, parquet_path)
         observe_store(observed or parquet_path, kind="metadata_parquet")
     finally:
         try:
@@ -430,7 +438,7 @@ def _copy_file_locked(source: Path, target: Path) -> None:
     tmp_path = target.with_name('.' + target.name + f'.{uuid.uuid4().hex}.tmp')
     try:
         shutil.copyfile(source, tmp_path)
-        os.replace(tmp_path, target)
+        _replace_in_place(tmp_path, target)
     finally:
         try:
             if tmp_path.exists():
@@ -445,7 +453,7 @@ def _write_serialized_locked(df: pd.DataFrame, parquet_path: Path, serialize) ->
     tmp_path = parquet_path.with_suffix(parquet_path.suffix + f".{uuid.uuid4().hex}.tmp")
     try:
         serialize(df, tmp_path)
-        os.replace(tmp_path, parquet_path)
+        _replace_in_place(tmp_path, parquet_path)
     finally:
         try:
             if tmp_path.exists():

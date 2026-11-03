@@ -244,6 +244,21 @@ def publish_products(corpus,result,workspace,products,*,retire=(),physical=None,
 
 def _publish_products_locked(corpus,result,workspace,products,journal,retire,written_paths):
     selected=[]
+    if journal:
+        # The mirrors are replaced before the transaction below registers them. Their bytes (the registered immutable
+        # generation's) are bound to their paths first, durably, in one record, as this run's own uncommitted writes
+        # (fix 7, R1): if that registration then fails on a full ledger, the repeated publication rolls them back
+        # instead of capturing them as unchanged or refusing them as a user's edit; if the ledger cannot take even this
+        # record, nothing is replaced. The copies below stay one temporary file at a time, as before.
+        intents=[]
+        for relative,destination in products.items():
+            source=checked_path(workspace,relative)
+            registered=journal.writer.connection.execute('SELECT sha256,bytes FROM files WHERE producer_attempt_id=? AND uri=?',(result.attempt_id,source.as_uri())).fetchone()
+            from .execution import sha256_file
+            digest,size=(registered['sha256'],registered['bytes']) if registered else (sha256_file(source),source.stat().st_size)
+            target=Path(written_paths.get(relative,Path(destination).absolute()))
+            intents.append((target,digest,size,os.path.lexists(target)))
+        journal.writer.record_uncommitted_writes(journal.run_id,intents,wrapper_stage=journal.stage)
     for relative,destination in products.items():
         source=checked_path(workspace,relative); destination=Path(destination).absolute()
         written=Path(written_paths.get(relative,destination))

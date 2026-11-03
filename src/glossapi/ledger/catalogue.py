@@ -1,5 +1,5 @@
 """Versioned status/reason vocabulary; details retain original backend tokens."""
-CATALOGUE_VERSION = 7  # 3: source_unavailable (CP-LEDGER F3); 4: source_inventory_bound (cycle-2 F4); 5: durability_barrier (K4(c)); 6: disk_full (K4(b), W18 M10); 38 codes that never had a writer removed (K4(b), W18 M14); 7: export_metadata_identity_mismatch (CP-K4a F1)
+CATALOGUE_VERSION = 8  # 3: source_unavailable (CP-LEDGER F3); 4: source_inventory_bound (cycle-2 F4); 5: durability_barrier (K4(c)); 6: disk_full (K4(b), W18 M10); 38 codes that never had a writer removed (K4(b), W18 M14); 7: export_metadata_identity_mismatch (CP-K4a F1); 8: uncommitted_projection_write (fix 7, R1)
 STAGES = frozenset(("download", "extract", "clean", "ocr", "math", "sections", "annotate", "export"))
 STATUSES = frozenset(("planned", "running", "ok", "skipped", "failed"))
 TERMINAL_STATUSES = frozenset(("ok", "skipped", "failed"))
@@ -148,6 +148,7 @@ REASON_CODES = frozenset((
     'sections_exception',
     'stage_planned',
     'stage_started',
+    'uncommitted_projection_write',
     'unknown_not_recorded',
     'unknown_not_reported',
     'unsupported_download_format',
