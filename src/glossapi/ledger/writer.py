@@ -286,6 +286,26 @@ def latest_validation_start(connection: Any) -> tuple[bool, Any]:
     return True, (json.loads(found[0]) if found[0] else {}).get('generation')
 
 
+def latest_validation_start_event(connection: Any) -> int | None:
+    """The event id of the ledger's latest ``validation_started`` record, whatever its payload (fix 19): a pass is current
+    only if its verdict event follows it."""
+    table = getattr(connection, 'event_table', 'events')
+    found = connection.execute(f"SELECT MAX(event_id) FROM {table} WHERE reason_code='validation_started'").fetchone()
+    return found[0] if found else None
+
+
+def next_validation_generation(connection: Any) -> int:
+    """1 + the largest well-typed generation over ALL ``validation_started`` records (fix 19): a malformed record is
+    skipped for the maximum (it still counts as a start for the reader), so a generation is never reused."""
+    table = getattr(connection, 'event_table', 'events')
+    largest: int = 0
+    for encoded, in connection.execute(f"SELECT details_json FROM {table} WHERE reason_code='validation_started'"):
+        value = (json.loads(encoded) if encoded else {}).get('generation')
+        if isinstance(value, int) and not isinstance(value, bool) and value > largest:  # exact_generation, narrowed
+            largest = value
+    return largest + 1
+
+
 def exact_generation(value: Any) -> bool:
     """A well-formed generation (fix 18, M1): a plain ``int`` (never ``bool``, ``float`` or a string)."""
     return type(value) is int
@@ -1871,7 +1891,7 @@ class LedgerWriter:
             if found is None:
                 return None
             run_id = found[0]
-        generation = (latest_validation_generation(self.connection) or 0) + 1
+        generation = next_validation_generation(self.connection)  # never reuses a generation (fix 19)
         self.connection.execute('PRAGMA synchronous=FULL')
         try:
             with self.transaction():
