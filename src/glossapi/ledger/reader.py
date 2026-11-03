@@ -586,6 +586,13 @@ def certification(connection) -> dict[str, Any]:
     if malformed:
         return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="malformed_generation", malformed_field=malformed,
                     stale_event_id=None, pass_generation=pass_raw, started_generation=start_raw)
+    from .writer import latest_validation_start_event
+    start_event = latest_validation_start_event(connection)
+    if start_event is not None and latest[0] < start_event:
+        # The verdict predates the latest start (fix 19): whatever that start's payload, a pass recorded before it never
+        # certifies what the start began validating.
+        return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="validation_pending", stale_event_id=start_event,
+                    pass_generation=pass_raw, started_generation=start_raw)
     if pass_raw is None and start_exists or (pass_raw is not None and pass_raw != start_raw):
         # A later run start committed a new validation generation and no pass for it exists (fix 16): pending.
         return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="validation_pending", stale_event_id=None,

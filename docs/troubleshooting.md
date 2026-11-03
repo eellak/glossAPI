@@ -77,8 +77,8 @@ integer or null, not a 64-hex digest) never counts (`malformed_generation`). A r
 the run fails (`completion_verdict_unrecorded`, or `disk_full`).
 
 `glossapi status` and `glossapi report` (and a streaming run's status) show a run `completed` only when its own
-completion gate passed AND that pass is still current: it is the ledger's latest verdict, it validated the latest
-validation generation (a pass recorded by a release before validation generations existed never counts: run once more
+completion gate passed AND that pass is still current: it is the ledger's latest verdict, it was recorded after the
+latest run start, it validated the latest validation generation (a pass recorded by a release before validation generations existed never counts: run once more
 to revalidate), no product was written, deleted, rolled back or invalidated after it, and the ledger's expected
 state of every product is still the one the gate verified (the verdict carries a fingerprint of that whole expected
 state, recomputed on every read). After a refusal they show `unresolved_recovery` (status exits 3); when the gate never
