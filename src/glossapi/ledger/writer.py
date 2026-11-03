@@ -170,41 +170,63 @@ def _fsync_path(path):
     finally:os.close(descriptor)
 
 
-def _recover_locked(path, decide):
-    """Check and act of a recovery in ONE critical section (fix 8, N1).
+def _recover_locked(path, decide, lock=None):
+    """Check and act of a recovery in ONE critical section (fix 8, N1) of the lock its writers take (fix 9, F1).
 
     ``decide(target)`` runs while the lock is held: it re-verifies whatever the caller checked without the lock (the
     bytes, the symlink, the committed generation, a temporary's content) and returns the action, which is then done
     before the lock is released: ``None`` (nothing), ``('restore', source, sha256)`` (republish ``source``'s bytes
-    at ``target``, only if the copied bytes are exactly ``sha256``) or ``('remove', file)``. Returns the action taken.
+    at ``target``, only if the copied bytes are exactly ``sha256``) or ``('remove', file[, identity])`` (``identity``:
+    the ``(st_dev, st_ino)`` the caller verified; the name is unlinked only if it still names that single-link regular
+    file). Returns the action taken (``None`` if nothing was done).
 
-    A metadata-shaped (``.parquet``) path: the canonical metadata lock, ``parquet_schema.metadata_target``, the same
-    lock every locked writer takes (``update_metadata_parquet`` and the other choke-point writers, metadata product
-    publications); ``target`` is its resolved physical file, and nothing is done if the path no longer resolves to
-    that file under the lock (a symlink swapped in after the unlocked look). A locked writer can no longer commit
-    between the check and the act: its edit is either seen by ``decide`` or made after the act, on top of it.
-    Other products (``export.jsonl``, markdown, sidecars, sections tables published without the metadata lock) have
-    no writer lock to take: their only writer is a publication of the ledger owner (the corpus flock and the owning
-    thread), the same thread that runs every recovery, so no cooperating writer can interleave; ``target`` is the
-    path itself."""
+    The lock is never inferred from the file name (fix 9, F1; fix 8 took it only for a lowercase ``.parquet`` path, so a
+    metadata file behind a symlink to ``physical.bin`` or ``physical.PARQUET`` was recovered unlocked and a concurrent
+    locked edit was lost). It is always the canonical metadata lock of ``path`` (``parquet_schema.metadata_lock_path``,
+    held through ``metadata_target``), the lock every metadata writer of that file takes whatever its name, suffix or
+    content (``update_metadata_parquet`` and the other choke-point writers, metadata product publications):
+    - ``lock`` given (an intent record that binds the lock its writer held): exactly that lock. If it is not the lock
+      the metadata writers of ``path`` take now (the path no longer resolves to the file the writer locked), nothing
+      is done.
+    - ``lock`` None (an older record, a publication made without a metadata lock (FIX8-G2), a run-start copy check):
+      the canonical lock of ``path`` all the same. The metadata APIs accept any path (any suffix or none, any symlink),
+      so no path is known to be outside their reach; taking a lock nobody else holds costs one lock file.
+    ``target`` is the resolved physical file; nothing is done if the path no longer resolves to it under the lock (a
+    symlink swapped in after the unlocked look). A locked writer can no longer commit between the check and the act:
+    its edit is either seen by ``decide`` or made after the act, on top of it. A restore of a write made under a
+    metadata lock goes through ``_copy_file_locked`` (as the writer's own replace); any other through
+    ``_restore_copy``. Both verify the installed bytes first."""
     path=Path(path)
-    if path.suffix=='.parquet':
-        from ..parquet_schema import _copy_file_locked, metadata_target, resolve_metadata_target
-        with metadata_target(path) as physical:
-            if resolve_metadata_target(path)!=physical:
-                return None
-            action=decide(physical)
-            if action is not None and action[0]=='restore':
+    from ..parquet_schema import _copy_file_locked, metadata_lock_path, metadata_target, resolve_metadata_target
+    canonical=metadata_lock_path(path)
+    if lock is not None and Path(lock)!=canonical:
+        return None
+    with metadata_target(path) as physical:
+        if resolve_metadata_target(path)!=physical or metadata_lock_path(path)!=canonical:
+            return None
+        action=decide(physical)
+        if action is None:
+            return None
+        if action[0]=='restore':
+            if lock is not None:
                 _copy_file_locked(action[1],physical,expected_sha256=action[2])
-            elif action is not None:
-                os.unlink(action[1])
-            return action
-    action=decide(path)
-    if action is not None and action[0]=='restore':
-        _restore_copy(action[1],path,action[2])
-    elif action is not None:
-        os.unlink(action[1])
-    return action
+            else:
+                _restore_copy(action[1],physical,action[2])
+        elif len(action)>2 and not _same_single_file(action[1],action[2]):
+            return None
+        else:
+            os.unlink(action[1])
+        return action
+
+
+def _same_single_file(path, identity):
+    """``path`` still names the single-link regular file ``identity`` (``(st_dev, st_ino)``), checked by ``lstat``."""
+    import stat as _stat
+    try:
+        info=os.lstat(path)
+    except FileNotFoundError:
+        return False
+    return _stat.S_ISREG(info.st_mode) and info.st_nlink==1 and (info.st_dev,info.st_ino)==tuple(identity)
 
 
 def _restore_copy(source, path, expected_sha256):
@@ -223,31 +245,100 @@ def _restore_copy(source, path, expected_sha256):
         if os.path.lexists(temporary):os.unlink(temporary)
 
 
-def _abandoned_temporary(temporary, details):
-    """True only for a verified abandoned temporary of a recorded uncommitted write (fix 8, N3): the exact path the
-    record binds, a regular file with one name, and its bytes are the recorded ones (``sha256``) or, for a publication
-    temporary whose copy was cut short, a strict prefix of its recorded ``source`` whose bytes are the recorded ones.
-    Never decided by the name. The caller establishes that no writer owns it any more (see
-    ``roll_back_uncommitted_writes``) and runs this inside ``_recover_locked``."""
+# Block size of the single pass in ``_verified_temporary`` (a module value so a test can make the pass take several
+# reads and act between them).
+_TEMPORARY_BLOCK=1<<20
+
+
+def _read_block(descriptor, size):
+    """One read of the verification pass (the seam a test uses to change a file between two reads)."""
+    return os.read(descriptor,size)
+
+
+def _read_exactly(descriptor, size):
+    data=b''
+    while len(data)<size:
+        block=_read_block(descriptor,size-len(data))
+        if not block:break
+        data+=block
+    return data
+
+
+def _verified_temporary(temporary, details):
+    """The ``(st_dev, st_ino)`` of a verified abandoned temporary of a recorded uncommitted write, else ``None`` (fix 8,
+    N3; fix 9, F2). Verified means: the exact path the record binds, a regular file with one name (checked on the name
+    and on the opened descriptor, which must be the same file), and its bytes either the recorded ones (``bytes`` and
+    ``sha256``) or, for a publication temporary whose copy was cut short, a strict prefix of its recorded ``source``.
+
+    The prefix proof reads the source ONCE, through one descriptor: the same bytes are compared with the temporary and
+    hashed, and the temporary is a prefix only if those bytes hash to the recorded ``sha256`` (and have the recorded
+    length). Fix 8 hashed the source, then reopened it and compared a prefix of whatever it held by then: a source
+    changed in between was compared as a different generation and a modified temporary was deleted. A source changed
+    during the pass (in place) hashes to something else, and the temporary is kept; one replaced by a new file leaves
+    the opened descriptor on the recorded bytes. Never decided by the name. The caller establishes that no writer owns
+    the temporary any more (see ``roll_back_uncommitted_writes``), runs this inside ``_recover_locked`` and removes the
+    name only if it still names the identity returned here."""
     import stat as _stat
+    nofollow=os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)
     try:
         info=os.lstat(temporary)
     except FileNotFoundError:
-        return False
+        return None
     if not _stat.S_ISREG(info.st_mode) or info.st_nlink!=1:
-        return False
-    if info.st_size==details.get('bytes') and file_hash(temporary)==details['sha256']:
-        return True
-    source=details.get('source')
-    if not source or not os.path.isfile(source) or os.path.islink(source):
-        return False
-    if info.st_size>=os.path.getsize(source) or file_hash(source)!=details['sha256']:
-        return False
-    with open(temporary,'rb') as partial, open(source,'rb') as full:
-        while True:
-            block=partial.read(1<<20)
-            if not block:return True
-            if full.read(len(block))!=block:return False
+        return None
+    try:
+        descriptor=os.open(temporary,nofollow)
+    except OSError:
+        return None
+    try:
+        opened=os.fstat(descriptor)
+        identity=(opened.st_dev,opened.st_ino)
+        if identity!=(info.st_dev,info.st_ino) or not _stat.S_ISREG(opened.st_mode) or opened.st_nlink!=1:
+            return None
+        size=opened.st_size
+        if size==details.get('bytes'):
+            digest=hashlib.sha256();read=0
+            while True:
+                block=_read_block(descriptor,_TEMPORARY_BLOCK)
+                if not block:break
+                digest.update(block);read+=len(block)
+            if read==size and digest.hexdigest()==details['sha256']:
+                return identity
+        source=details.get('source')
+        if not source:
+            return None
+        try:
+            full=os.open(source,nofollow)
+        except OSError:
+            return None
+        try:
+            if not _stat.S_ISREG(os.fstat(full).st_mode):
+                return None
+            os.lseek(descriptor,0,os.SEEK_SET)
+            digest=hashlib.sha256();total=0;compared=0;prefix=True
+            while True:
+                block=_read_block(full,_TEMPORARY_BLOCK)
+                if not block:break
+                digest.update(block)
+                if prefix and compared<size:
+                    piece=_read_exactly(descriptor,min(len(block),size-compared))
+                    prefix=bool(piece) and piece==block[:len(piece)]
+                    compared+=len(piece)
+                total+=len(block)
+        finally:
+            os.close(full)
+        if not prefix or compared!=size or _read_block(descriptor,1):
+            return None  # not a prefix of the bytes read, or the temporary holds more than it did at the open
+        if size>=total or digest.hexdigest()!=details['sha256'] or details.get('bytes') not in (None,total):
+            return None  # not a strict prefix, or the source bytes read are not the recorded generation
+        return identity
+    finally:
+        os.close(descriptor)
+
+
+def _abandoned_temporary(temporary, details):
+    """True only for a verified abandoned temporary of a recorded uncommitted write (``_verified_temporary``)."""
+    return _verified_temporary(temporary, details) is not None
 
 
 def _map_bounded(function,items):
@@ -758,11 +849,14 @@ class LedgerWriter:
         return set()
 
     def record_uncommitted_write(self, run_id: str, path: Path, sha256: str, size: int, *, wrapper_stage: str,
-                                 existed: bool | None = None, temporary: Any = None) -> None:
+                                 existed: bool | None = None, temporary: Any = None, lock: Any = None) -> None:
         """Bind, durably and BEFORE the replacement, the bytes a wrapper is about to put in place at a corpus path whose
         new content it has not committed yet (fix 7, R1: the "record the intent first" design). One entry of
-        ``record_uncommitted_writes``; ``temporary``: the file holding those bytes until the replace (fix 8, N3)."""
+        ``record_uncommitted_writes``; ``temporary``: the file holding those bytes until the replace (fix 8, N3);
+        ``lock``: the canonical metadata lock the writer holds for the path (fix 9, F1)."""
         extra = {'temporary': str(Path(temporary).absolute())} if temporary is not None else {}
+        if lock is not None:
+            extra['lock'] = str(lock)
         self.record_uncommitted_writes(run_id, [(path, sha256, size, existed, extra)], wrapper_stage=wrapper_stage)
 
     def record_uncommitted_writes(self, run_id: str, entries: Any, *, wrapper_stage: str) -> None:
@@ -781,7 +875,10 @@ class LedgerWriter:
         removes a file only if the failed attempt created it). ``extra`` (fix 8, N3): ``temporary``, the exact file the
         bytes sit in until the atomic replace, and for a publication copy its ``source`` (the immutable generation), so a
         process death between this record and the replace leaves a temporary the repeated barrier can verify and remove
-        (``roll_back_uncommitted_writes``); nothing is ever removed for its name alone."""
+        (``roll_back_uncommitted_writes``); nothing is ever removed for its name alone. ``extra['lock']`` (fix 9, F1):
+        the canonical metadata lock (``parquet_schema.metadata_lock_path``) the writer holds while it makes this write,
+        given by the writer that holds it (``held_metadata_lock``), never inferred from the name; recovery, rollback
+        and temporary cleanup take exactly that lock (``_recover_locked``)."""
         from ..parquet_schema import resolve_metadata_target
         self._owner(transaction=False)
         if self.connection.in_transaction:
@@ -797,7 +894,7 @@ class LedgerWriter:
                     details = {'path': path, 'sha256': sha256, 'bytes': size, 'stage': wrapper_stage}
                     if existed is not None:
                         details['existed'] = bool(existed)
-                    for key in ('temporary', 'source'):
+                    for key in ('temporary', 'source', 'lock'):
                         if extra.get(key):
                             details[key] = str(extra[key])
                     self.event(run_id, event_kind='run', reason_code='uncommitted_projection_write',
@@ -828,6 +925,14 @@ class LedgerWriter:
         current = file_hash(path)
         return next((event_id for event_id, details in candidates if details.get('sha256') == current), None)
 
+    def _recorded_lock(self, event_id: int | None) -> str | None:
+        """The metadata lock an uncommitted-write record binds (fix 9, F1), or ``None`` (no record, or none bound)."""
+        if event_id is None:
+            return None
+        found = self.connection.execute(f"SELECT details_json FROM {self.connection.event_table} WHERE event_id=?",
+                                        (event_id,)).fetchone()
+        return json.loads(found[0]).get('lock') if found is not None else None
+
     def roll_back_uncommitted_writes(self, run_ids: Any, output_dir: Any, *, observation_run: str) -> list[str]:
         """Undo the uncommitted writes of failed publication attempts (fix 7, R1), before the publication is repeated.
 
@@ -856,6 +961,12 @@ class LedgerWriter:
         recording process has released the ledger (it died or its run ended) or is this thread, outside any write; a
         metadata temporary exists only while its writer holds the metadata lock, which is held here. The removed
         temporaries are listed in ``self.removed_temporaries``.
+        Fix 9 (F1, F2): every step takes exactly the lock the records bind (``lock``: the canonical metadata lock their
+        writer held), or the canonical metadata lock of the path when they bind none; it is never inferred from the
+        file name, so a metadata file whose physical name is ``physical.bin``, ``physical.PARQUET`` or extensionless is
+        recovered under the lock its writers take. A path whose records bind two different locks is not acted on. A
+        temporary is verified in one pass over the source bytes (``_verified_temporary``) and removed only if its name
+        still names the verified file.
         Returns the paths restored or removed."""
         from urllib.parse import unquote, urlsplit
         from .encoding import file_hash
@@ -867,6 +978,7 @@ class LedgerWriter:
         recorded: dict[str, set[str]] = {}
         created: dict[str, bool] = {}  # path -> the failed attempts' first write found no file there
         temporaries: list[dict[str, Any]] = []  # records binding a temporary (fix 8, N3)
+        locks: dict[str, set[str]] = {}  # path -> the metadata locks its records bind (fix 9, F1)
         self.removed_temporaries: list[str] = []
         rows_found = []
         for offset in range(0, len(run_ids), 500):
@@ -879,6 +991,9 @@ class LedgerWriter:
             if details['path'] not in recorded:
                 created[details['path']] = details.get('existed') is False
             recorded.setdefault(details['path'], set()).add(details['sha256'])
+            locks.setdefault(details['path'], set())
+            if details.get('lock'):
+                locks[details['path']].add(details['lock'])
             if details.get('temporary'):
                 temporaries.append(details)
         if not recorded:
@@ -916,10 +1031,18 @@ class LedgerWriter:
                 and not (committed is not None and committed[0]['sha256'] == current) \
                 and (committed is not None or created[physical])
 
+        def lock_of(physical):
+            # The lock the records of this path bind (fix 9, F1): one lock, or none (an older record, or a publication
+            # made without a metadata lock: the canonical lock is taken all the same, ``_recover_locked``). Records that
+            # bind two different locks for one physical file cannot both be right: such a path is not acted on.
+            bound = locks.get(physical) or set()
+            return (next(iter(bound)) if len(bound) == 1 else None), len(bound) > 1
+
         for physical, digests in recorded.items():
             path = Path(physical)
             if path.is_symlink():
                 continue
+            lock, conflicting = lock_of(physical)
             current = file_hash(path) if path.is_file() else None
             spellings = {path.as_uri()}
             if path.is_relative_to(resolved_root):
@@ -927,7 +1050,7 @@ class LedgerWriter:
             rows = [catalog[file_id] for uri in spellings for file_id in index.get(uri, [])]
             committed = committed_of(rows)
             after = current
-            if ours(current, committed, physical):
+            if ours(current, committed, physical) and not conflicting:
                 # The look above holds no lock: a locked writer may commit between it and the act. Check and act are one
                 # critical section of the canonical metadata lock (fix 8, N1): symlink, bytes and committed generation
                 # are verified again under it, and only then is the file restored or removed.
@@ -949,7 +1072,7 @@ class LedgerWriter:
                     row, source = seen['committed']
                     assert source is not None
                     return ('restore', local(source), row['sha256'])
-                action = _recover_locked(path, decide)
+                action = _recover_locked(path, decide, lock=lock)
                 if 'current' in seen:
                     current, committed = seen['current'], seen['committed']
                 after = current
@@ -977,9 +1100,17 @@ class LedgerWriter:
             temporary = Path(details['temporary'])
             if not os.path.lexists(temporary):
                 continue
-            # Under the lock of the path it was written for: a metadata temporary exists only while its writer holds it.
-            if _recover_locked(Path(details['path']), lambda target, temporary=temporary, details=details:
-                               ('remove', temporary) if _abandoned_temporary(temporary, details) else None):
+            lock, conflicting = lock_of(details['path'])
+            if details.get('lock') and details['lock'] != lock or conflicting:
+                continue  # this record's lock is not the one lock the path's records agree on: kept (fix 9, F1)
+
+            def verify_temporary(target, temporary=temporary, details=details):
+                identity = _verified_temporary(temporary, details)
+                return None if identity is None else ('remove', temporary, identity)
+            # Under the lock its writer held (fix 9, F1: the recorded lock; the canonical lock of the path for a record
+            # without one): a metadata temporary exists only while its writer holds that lock. The bytes are verified
+            # in one pass (fix 9, F2) and the name is removed only if it still names the verified file.
+            if _recover_locked(Path(details['path']), verify_temporary, lock=lock):
                 self.removed_temporaries.append(str(temporary))
         if events:
             with self.transaction():
@@ -1117,15 +1248,19 @@ class LedgerWriter:
                 # The classification above holds no lock: a locked writer may commit between it and the restore. The
                 # copy is classified again and restored inside one critical section of the canonical metadata lock
                 # (fix 8, N1); an edit committed meanwhile is then a user's edit, kept and refused below.
-                from ..parquet_schema import MetadataStaleGenerationError
+                from ..parquet_schema import MetadataAliasError, MetadataStaleGenerationError
                 locked: dict[str, Any] = {'verdict':('skip',)}
                 def decide(target,row=row,path=path,before=before,locked=locked):
                     locked['verdict']=self._excluded_copy_verdict(row,path,before,catalog,local)
                     return ('restore',local(locked['verdict'][2]),row['sha256']) if locked['verdict'][0]=='restore' else None
                 try:
-                    action=_recover_locked(path,decide)
+                    # The lock the copy's own uncommitted write recorded, if any; otherwise the canonical metadata lock of
+                    # the path (fix 9, F1: never inferred from the name).
+                    action=_recover_locked(path,decide,lock=self._recorded_lock(verdict[1]))
                 except (LedgerError,MetadataStaleGenerationError):
                     continue  # the source no longer holds the registered bytes: nothing replaced, left for verification
+                except MetadataAliasError:
+                    continue  # a hard-linked copy: the metadata lock refuses it; nothing replaced, left for verification
                 verdict=locked['verdict']
                 if action is not None:
                     _,own,source=verdict

@@ -203,7 +203,7 @@ def test_ledger_cannot_change_during_a_locked_recovery(tmp_path, monkeypatch):
     seen = {}
     real = W._recover_locked
 
-    def probe(target_path, decide):
+    def probe(target_path, decide, **kwargs):  # fix 9: _recover_locked also takes the recorded lock
         def inside(target):
             with ThreadPoolExecutor(max_workers=1) as pool:
                 seen['thread'] = repr(pool.submit(lambda: writer.record_uncommitted_write(
@@ -214,7 +214,7 @@ def test_ledger_cannot_change_during_a_locked_recovery(tmp_path, monkeypatch):
             except Exception as error:  # noqa: BLE001 - the refusal itself is the observation
                 seen['second'] = repr(error)
             return decide(target)
-        return real(target_path, inside)
+        return real(target_path, inside, **kwargs)
     with LedgerWriter(output / 'corpus.sqlite3') as writer:
         runs = _clean_wrapper_runs(writer, run)
         monkeypatch.setattr(W, '_recover_locked', probe)
@@ -434,7 +434,7 @@ def test_temporary_of_a_live_locked_writer_is_not_removed(tmp_path, monkeypatch,
     writer, run, path = _seed_record(tmp_path, existed=True, temporary=temporary)
     shutil.copyfile(path, temporary)
     if protection == 'off':
-        def unlocked(target, decide):
+        def unlocked(target, decide, **kwargs):  # fix 9: _recover_locked also takes the recorded lock
             action = decide(Path(target))
             if action is not None and action[0] == 'remove':
                 os.unlink(action[1])

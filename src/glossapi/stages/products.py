@@ -259,7 +259,11 @@ def _publish_products_locked(corpus,result,workspace,products,journal,retire,wri
         # record, nothing is replaced. The copies below stay one temporary file at a time, as before. Each record also
         # binds its temporary file's exact path and the immutable source it is copied from (fix 8, N3): a process death
         # between this record and a replace leaves a temporary that the repeated barrier verifies (recorded bytes, or a
-        # prefix of the recorded source) and removes; nothing is removed for its name alone.
+        # prefix of the recorded source) and removes; nothing is removed for its name alone. A metadata product is
+        # published under its canonical metadata lock (held above, or by the caller for ``physical``): its record also
+        # binds that lock (fix 9, F1), so recovery takes exactly the lock this publication held; a product published
+        # without one (export, markdown: FIX8-G2) records none, and recovery then takes the canonical lock of its path.
+        from ..parquet_schema import held_metadata_lock
         intents=[]
         for relative,destination in products.items():
             source=checked_path(workspace,relative)
@@ -268,7 +272,11 @@ def _publish_products_locked(corpus,result,workspace,products,journal,retire,wri
             digest,size=(registered['sha256'],registered['bytes']) if registered else (sha256_file(source),source.stat().st_size)
             target=Path(written_paths.get(relative,Path(destination).absolute()))
             temporaries[relative]=_publication_temporary(target)
-            intents.append((target,digest,size,os.path.lexists(target),{'temporary':temporaries[relative],'source':source.absolute()}))
+            extra={'temporary':temporaries[relative],'source':source.absolute()}
+            lock=held_metadata_lock(target)
+            if lock is not None:
+                extra['lock']=lock
+            intents.append((target,digest,size,os.path.lexists(target),extra))
         journal.writer.record_uncommitted_writes(journal.run_id,intents,wrapper_stage=journal.stage)
     for relative,destination in products.items():
         source=checked_path(workspace,relative); destination=Path(destination).absolute()

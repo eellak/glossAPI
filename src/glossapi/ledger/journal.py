@@ -156,7 +156,7 @@ def observe_store(path, *, kind="legacy_store"):
     if journal is not None and journal.owner_pid == os.getpid(): journal.store(Path(path), kind=kind)
 
 
-def record_uncommitted_write(temporary, target):
+def record_uncommitted_write(temporary, target, *, lock=None):
     """The metadata choke point, between its temporary file and the atomic replace of ``target`` (fix 7, R1).
 
     Inside a cutover wrapper (the profile that commits metadata as registered projections) or a caller-kernel wrapper
@@ -168,7 +168,9 @@ def record_uncommitted_write(temporary, target):
 
     Not recorded (no ledger to record in, as for ``observe_store``): outside such a wrapper, in a child process,
     or on a thread other than the ledger owner's. The wrapper is found through ``_uncommitted_write_journal``, which
-    a caller kernel's observation collector does not replace (the OCR publication's legacy callback writes there)."""
+    a caller kernel's observation collector does not replace (the OCR publication's legacy callback writes there).
+    ``lock`` (fix 9, F1): the canonical metadata lock the caller holds for ``target`` (``held_metadata_lock``), bound
+    in the record so recovery, rollback and temporary cleanup take exactly that lock."""
     journal = _uncommitted_write_journal.get()
     if not isinstance(journal, ResultJournal) or not (journal.cutover or journal.caller_override) or journal.owner_pid != os.getpid():
         return
@@ -187,7 +189,8 @@ def record_uncommitted_write(temporary, target):
     # The temporary's path is bound too (fix 8, N3): a process death after this record and before the replace leaves
     # it in the public directory, and only a file at exactly this path with exactly these bytes is removed at recovery.
     writer.record_uncommitted_write(journal.run_id, target, digest.hexdigest(), os.path.getsize(temporary),
-                                    wrapper_stage=journal.stage, existed=os.path.lexists(target), temporary=temporary)
+                                    wrapper_stage=journal.stage, existed=os.path.lexists(target), temporary=temporary,
+                                    lock=lock)
 
 
 def observe_source_rows(frame, path, *, url_column="url"):

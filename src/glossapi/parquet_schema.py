@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover - not POSIX
 import hashlib
 import json
 import os
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -339,6 +340,53 @@ def same_metadata_file(first: Union[str, Path], second: Union[str, Path]) -> boo
             and os.path.samefile(resolved_first, resolved_second))
 
 
+def _lock_file_of(resolved: Path) -> Path:
+    """The lock file of an already resolved metadata target: beside it, its full name plus ``.lock``."""
+    return resolved.with_suffix(resolved.suffix + ".lock")
+
+
+def metadata_lock_path(path: Union[str, Path]) -> Path:
+    """The canonical metadata lock of ``path`` (fix 9, F1): the lock file ``metadata_target`` holds for every metadata
+    writer of the file ``path`` names, beside its resolved physical file (``resolve_metadata_target``). It depends on
+    the resolved path only, never on the name's suffix or on the file's content: an extensionless file, a ``.bin`` or
+    ``.PARQUET`` file behind a symlink, and a torn or missing file each have one. This is the lock identity an intent
+    record binds (``held_metadata_lock``) and the lock recovery takes (``ledger.writer._recover_locked``)."""
+    return _lock_file_of(resolve_metadata_target(path))
+
+
+# Canonical metadata locks held by the current thread (lock path -> depth), maintained by ``_parquet_lock``: a writer
+# about to make an in-place write records the lock it actually holds (fix 9, F1), it is never inferred from a name.
+_held_metadata_locks = threading.local()
+
+
+def _held_locks() -> Dict[str, int]:
+    held = getattr(_held_metadata_locks, "paths", None)
+    if held is None:
+        held = _held_metadata_locks.paths = {}
+    return held
+
+
+def held_metadata_lock(path: Union[str, Path]) -> Optional[Path]:
+    """The canonical metadata lock of ``path`` (``metadata_lock_path``) when the current thread holds it now (inside
+    ``metadata_target`` for that file), else ``None``. Used by the writers that record an uncommitted in-place write
+    (``_replace_in_place``, the product publication) to bind the lock they hold in the intent record (fix 9, F1)."""
+    lock = metadata_lock_path(path)
+    return lock if _held_locks().get(os.fspath(lock)) else None
+
+
+@contextmanager
+def _holding(lock_path: Path) -> Iterator[None]:
+    held, key = _held_locks(), os.fspath(lock_path)
+    held[key] = held.get(key, 0) + 1
+    try:
+        yield
+    finally:
+        if held[key] <= 1:
+            del held[key]
+        else:
+            held[key] -= 1
+
+
 @contextmanager
 def metadata_target(path: Union[str, Path]) -> Iterator[Path]:
     """THE choke point for every metadata parquet writer (K2F round 3): yields the resolved physical target while
@@ -361,12 +409,13 @@ def _parquet_lock(path: Path) -> Iterator[None]:
 
     path = resolve_metadata_target(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path = _lock_file_of(path)
     if FileLock is not None:
         lock = FileLock(str(lock_path))
         with lock:
             try:
-                yield
+                with _holding(lock_path):
+                    yield
             finally:
                 # Remove the lock file while still holding it. A waiter that opened the removed inode
                 # sees st_nlink == 0 after its flock and retries on the path (filelock >= 4.2.4).
@@ -386,7 +435,8 @@ def _parquet_lock(path: Path) -> Iterator[None]:
                 acquired = True
             except FileExistsError:
                 time.sleep(0.05)
-        yield
+        with _holding(lock_path):
+            yield
     finally:
         if handle is not None:
             try:
@@ -402,8 +452,10 @@ def _parquet_lock(path: Path) -> Iterator[None]:
 def _replace_in_place(tmp_path: Path, target: Path) -> None:
     """The one in-place replacement of a metadata target (fix 7, R1): inside a cutover wrapper the bytes are first
     bound in the ledger as that wrapper's uncommitted write (``record_uncommitted_write``; durable before the
-    replace, and if the ledger cannot take the record the target is left untouched), then replaced atomically."""
-    record_uncommitted_write(tmp_path, target)
+    replace, and if the ledger cannot take the record the target is left untouched), then replaced atomically.
+    Fix 9 (F1): the record also binds the canonical metadata lock this thread holds for ``target`` (every caller is
+    inside ``metadata_target``), so recovery takes exactly that lock instead of inferring one from the file name."""
+    record_uncommitted_write(tmp_path, target, lock=held_metadata_lock(target))
     os.replace(tmp_path, target)
 
 
