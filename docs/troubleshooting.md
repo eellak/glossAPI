@@ -40,9 +40,10 @@ managed source. The CLI reports the typed code `post_close_edit` (exit 3) with t
 ## A run refuses to start with `unresolved_recovery`
 
 A run start (or a repeated publication) found a corpus file it must repair: a copy the previous run left unflushed, or
-bytes a failed attempt put in place. Recovery accepts a file only on positive evidence (its committed bytes verified
-and flushed, a later registration or release in the ledger, or a caller-seeded file the ledger never registered);
-anything else is kept as it is and nothing runs. The CLI reports the typed code `unresolved_recovery` (exit 3);
+bytes a failed attempt put in place. Recovery reconciles each such path to the state the ledger says it must be in:
+the bytes of its newest committed registration (restored only from that registration's own source, then verified and
+flushed), nothing after a policy deletion of the path, or no change for a caller-seeded file the ledger never
+registered. A path it cannot bring to that state is kept as it is and nothing runs. The CLI reports the typed code `unresolved_recovery` (exit 3);
 `details.conditions` names each path and its reason:
 
 - `hard_linked`: remove the extra hard link.
@@ -50,7 +51,11 @@ anything else is kept as it is and nothing runs. The CLI reports the typed code 
 - `path_replaced`: the file was replaced by a symlink; remove the symlink.
 - `source_changed` or `no_intact_source`: the managed source under `.glossapi/artifacts` changed or is missing;
   restore it or use another corpus.
-- `missing_at_flush`, `missing`, `changed_after_flush`, `changed_after_restore`, `flush_failed`, `recovery_error`:
+- `contradictory_registrations`: the ledger still lists another generation of the file as present; it needs a
+  maintainer (report it).
+- `present_after_deletion`: the ledger deleted this file by policy but a file is there again; move it away.
+- `missing_at_flush`, `missing`, `changed_after_flush`, `changed_after_restore`, `changed_during_check`, `flush_failed`,
+  `recovery_error`:
   the file vanished, changed or could not be read or flushed while recovery checked it (the condition names the
   error). Check the disk and anything else writing to the corpus, then resume; the check is repeated from the start.
 

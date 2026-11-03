@@ -183,9 +183,14 @@ class WarmWorkerPool:
 
     def _discard(self, slot):
         self.slots.remove(slot)
-        _stop_process(slot['process'])
-        slot['pipe'].close()
-        slot['process'].close()
+        try:
+            _stop_process(slot['process'])
+        finally:
+            # Per-slot cleanup even if stopping failed (fix 12, R5): the pipe is closed; the process object is closed
+            # only once it has exited (``close`` refuses a live process).
+            slot['pipe'].close()
+            if slot['process'].exitcode is not None:
+                slot['process'].close()
 
     def close(self):
         self.closed = True

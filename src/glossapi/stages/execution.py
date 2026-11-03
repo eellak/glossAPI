@@ -379,20 +379,39 @@ def run_fenced(stage, request, *, reporter):
         process.close()
 
 
-def _stop_process(process):
-    # A browser/exporter can detach into another process group, or ignore TERM.
-    # Capture Linux descendants before their parent exits and they are adopted.
-    family = {process.pid}
-    groups = {process.pid} if hasattr(os, "killpg") else set()
-    if Path("/proc/self/stat").exists():
-        parents, process_groups = {}, {}
-        for entry in Path("/proc").glob("[0-9]*/stat"):
+def _proc_table(attempts=3):
+    """(parents, process groups) of the Linux processes in ``/proc``. A process that exits while the directory is
+    being enumerated can make advancing the glob itself raise (ESRCH/ENOENT from a vanished entry; fix 12, R5): the
+    enumeration is retried, and after ``attempts`` failures the entries read so far are returned. Per-entry reads that
+    fail are skipped, as before."""
+    parents, process_groups = {}, {}
+    for _ in range(attempts):
+        entries = iter(Path("/proc").glob("[0-9]*/stat"))
+        while True:
+            try:
+                entry = next(entries)
+            except StopIteration:
+                return parents, process_groups
+            except OSError:
+                break  # the enumeration was cut short by a vanished entry: start it again
             try:
                 fields = entry.read_text().rsplit(")", 1)[1].split()
                 identifier = int(entry.parent.name)
                 parents[identifier], process_groups[identifier] = int(fields[1]), int(fields[2])
             except (OSError, ValueError, IndexError):
                 continue
+    return parents, process_groups
+
+
+def _stop_process(process):
+    # A browser/exporter can detach into another process group, or ignore TERM.
+    # Capture Linux descendants before their parent exits and they are adopted.
+    # Fix 12 (R5): enumerating /proc can fail while another process exits; the known family (at least the worker
+    # itself) is still signalled, joined and fenced.
+    family = {process.pid}
+    groups = {process.pid} if hasattr(os, "killpg") else set()
+    if Path("/proc/self/stat").exists():
+        parents, process_groups = _proc_table()
         while True:
             descendants = {identifier for identifier, parent in parents.items() if parent in family}
             if descendants <= family:
@@ -424,8 +443,8 @@ def _stop_process(process):
                 state = Path(f"/proc/{identifier}/stat").read_text().rsplit(")", 1)[1].split()[0]
                 if state != "Z":
                     live.append(identifier)
-            except FileNotFoundError:
-                pass
+            except (FileNotFoundError, ProcessLookupError):
+                pass  # gone (ESRCH: the process exited while its stat was read)
         if not live:
             break
         if time.monotonic() >= deadline:
