@@ -1,0 +1,9 @@
+{
+  "restored": [],
+  "kept": true,
+  "last_lock": "stale",
+  "locks": [
+    "/private/tmp/claude-501/-Users-foivoskarounos-zamparloukos/f57fd351-b06f-49b9-83b5-5717c946890a/scratchpad/coord-f10/pt/test_startup_conflicting_lock_3/export.jsonl.lock",
+    "/private/tmp/claude-501/-Users-foivoskarounos-zamparloukos/f57fd351-b06f-49b9-83b5-5717c946890a/scratchpad/coord-f10/pt/test_startup_conflicting_lock_3/wrong.lock"
+  ]
+}

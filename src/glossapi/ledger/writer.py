@@ -103,6 +103,57 @@ class PostCloseEditError(LedgerError):
                          '. Move or delete these files (they are republished from the managed source) or use another corpus')
 
 
+class UnresolvedRecoveryError(LedgerError):
+    """Recovery recognised a file it must repair but could not repair it safely (fix 10, N1/N3: recovery is fail-closed).
+
+    The file is a copy the last run close left unflushed (run start, ``verify_excluded_copies``) or bytes a failed
+    publication attempt put in place (the repeated barrier, ``roll_back_uncommitted_writes``), and the repair was
+    refused: the target is hard-linked, its intent records bind contradictory locks or a lock its writers no longer
+    take, the path was replaced (a symlink), the managed source changed or is missing, or the file changed right after
+    its restore. The file is kept as it is. Nothing runs or publishes while a condition stands, and the run never
+    reports ``completed``. Every start (and every repeated barrier) re-derives the conditions from the ledger, so
+    removing the cause (for example the extra hard link) lets the next resume repair the file and complete.
+
+    ``conditions``: one dict per target, ``path`` and ``reason`` (``hard_linked``, ``conflicting_locks``,
+    ``lock_mismatch``, ``path_replaced``, ``source_changed``, ``no_intact_source``, ``changed_after_restore``).
+    Typed for the CLI (``code``): exit 3, a conflict the user resolves, as ``post_close_edit``."""
+    code = 'unresolved_recovery'
+    EXIT_CODE = 3
+    MEANING = ('Recovery found a corpus file it must repair (a copy the last run left unflushed, or bytes a failed attempt '
+               'put in place) but could not repair it safely (hard-linked, contradictory lock records, path replaced, '
+               'managed source changed or missing); the file is kept and nothing ran. Remove the cause (e.g. the extra '
+               'hard link) and resume: the file is then repaired.')
+
+    def __init__(self, conditions: list[dict[str, Any]]) -> None:
+        self.conditions: list[dict[str, Any]] = [dict(entry) for entry in conditions]
+        self.details: dict[str, Any] = {'paths': sorted({str(entry['path']) for entry in self.conditions}),
+                                        'conditions': [{key: (str(value) if key == 'path' else value) for key, value in entry.items()}
+                                                       for entry in self.conditions]}
+        shown = '; '.join(f"{entry['path']} ({entry['reason']})" for entry in self.conditions[:5])
+        super().__init__('unresolved_recovery: recovery could not safely repair, kept as is: ' + shown +
+                         '. Remove the cause (e.g. an extra hard link) and resume; nothing ran')
+
+
+def _unique_conditions(conditions):
+    """Conditions without repeats of the same (path, reason)."""
+    seen, unique = set(), []
+    for entry in conditions:
+        key = (str(entry['path']), entry['reason'])
+        if key not in seen:
+            seen.add(key)
+            unique.append(entry)
+    return unique
+
+
+def _agreed_lock(locks):
+    """The one metadata lock a path's intent records bind (fix 9, F1; fix 10, N3: shared by the repeated-barrier rollback,
+    its temporary cleanup and the run-start recovery): ``(lock, conflicting)``. Records binding no lock are not counted
+    (the canonical lock is taken for them, ``_recover_locked``); two different bound locks for one physical file cannot
+    both be right: ``conflicting`` is True and the path must not be acted on (an unresolved recovery)."""
+    bound = {str(lock) for lock in locks if lock}
+    return (next(iter(bound)) if len(bound) == 1 else None), len(bound) > 1
+
+
 def _load_syncfs():
     """Linux syncfs(2); it reports writeback errors only from kernel 5.8 on."""
     import sys
@@ -195,15 +246,20 @@ def _recover_locked(path, decide, lock=None):
     symlink swapped in after the unlocked look). A locked writer can no longer commit between the check and the act:
     its edit is either seen by ``decide`` or made after the act, on top of it. A restore of a write made under a
     metadata lock goes through ``_copy_file_locked`` (as the writer's own replace); any other through
-    ``_restore_copy``. Both verify the installed bytes first."""
+    ``_restore_copy``. Both verify the installed bytes first.
+    Fix 10 (N1): a refusal raises ``UnresolvedRecoveryError`` (``lock_mismatch``: the recorded lock is not the lock
+    the path's writers take now; ``path_replaced``: the path no longer resolves to the file the lock was taken for); a
+    hard-linked target raises ``MetadataAliasError`` from ``metadata_target``. ``None`` means only that ``decide``
+    found nothing of the recovery's own to act on."""
     path=Path(path)
     from ..parquet_schema import _copy_file_locked, metadata_lock_path, metadata_target, resolve_metadata_target
     canonical=metadata_lock_path(path)
     if lock is not None and Path(lock)!=canonical:
-        return None
+        # Fix 10 (N1): a refusal is never a silent "nothing to do"; the caller records it as an unresolved recovery.
+        raise UnresolvedRecoveryError([{'path':str(path),'reason':'lock_mismatch','recorded_lock':str(lock),'canonical_lock':str(canonical)}])
     with metadata_target(path) as physical:
         if resolve_metadata_target(path)!=physical or metadata_lock_path(path)!=canonical:
-            return None
+            raise UnresolvedRecoveryError([{'path':str(path),'reason':'path_replaced'}])
         action=decide(physical)
         if action is None:
             return None
@@ -913,25 +969,22 @@ class LedgerWriter:
             physical = str(resolve_metadata_target(path))
         except Exception:
             return None
+        candidates = self._uncommitted_records(row, physical)
+        if not candidates or not path.is_file():
+            return None
+        current = file_hash(path)
+        return next((event_id for event_id, details in candidates if details.get('sha256') == current), None)
+
+    def _uncommitted_records(self, row: dict[str, Any], physical: str) -> list[tuple[int, dict[str, Any]]]:
+        """Every recorded uncommitted write of ``physical`` after the copy's current registration, newest first: the
+        records that apply to the copy (its own uncommitted bytes, and the locks their writers held)."""
         table = self.connection.event_table
         after = row.get('event_id')
         query = (f"SELECT event_id,details_json FROM {table} WHERE reason_code='uncommitted_projection_write'"
                  + (" AND event_id>?" if after is not None else "") + " ORDER BY event_id DESC")
         candidates = [(event_id, json.loads(encoded)) for event_id, encoded in
                       self.connection.execute(query, (after,) if after is not None else ())]
-        candidates = [(event_id, details) for event_id, details in candidates if details.get('path') == physical]
-        if not candidates or not path.is_file():
-            return None
-        current = file_hash(path)
-        return next((event_id for event_id, details in candidates if details.get('sha256') == current), None)
-
-    def _recorded_lock(self, event_id: int | None) -> str | None:
-        """The metadata lock an uncommitted-write record binds (fix 9, F1), or ``None`` (no record, or none bound)."""
-        if event_id is None:
-            return None
-        found = self.connection.execute(f"SELECT details_json FROM {self.connection.event_table} WHERE event_id=?",
-                                        (event_id,)).fetchone()
-        return json.loads(found[0]).get('lock') if found is not None else None
+        return [(event_id, details) for event_id, details in candidates if details.get('path') == physical]
 
     def roll_back_uncommitted_writes(self, run_ids: Any, output_dir: Any, *, observation_run: str) -> list[str]:
         """Undo the uncommitted writes of failed publication attempts (fix 7, R1), before the publication is repeated.
@@ -970,6 +1023,7 @@ class LedgerWriter:
         Returns the paths restored or removed."""
         from urllib.parse import unquote, urlsplit
         from .encoding import file_hash
+        self.rollback_unresolved: list[dict[str, Any]] = []  # fix 10: fresh for every call, early returns included
         run_ids = [value for value in dict.fromkeys(run_ids) if value]
         if not run_ids:
             return []
@@ -978,8 +1032,11 @@ class LedgerWriter:
         recorded: dict[str, set[str]] = {}
         created: dict[str, bool] = {}  # path -> the failed attempts' first write found no file there
         temporaries: list[dict[str, Any]] = []  # records binding a temporary (fix 8, N3)
-        locks: dict[str, set[str]] = {}  # path -> the metadata locks its records bind (fix 9, F1)
+        locks: dict[str, list[tuple[str, Any]]] = {}  # path -> (sha256, metadata lock) of each record (fix 9, F1)
         self.removed_temporaries: list[str] = []
+        # Fix 10 (N1, N3): every target recognised here but not resolved (conflicting or stale locks, a replaced path) is
+        # listed, never skipped silently; the repeated barrier refuses the run on it (``stages.run.publish_barrier``).
+        unresolved: list[dict[str, Any]] = self.rollback_unresolved
         rows_found = []
         for offset in range(0, len(run_ids), 500):
             chunk = run_ids[offset:offset+500]
@@ -991,9 +1048,7 @@ class LedgerWriter:
             if details['path'] not in recorded:
                 created[details['path']] = details.get('existed') is False
             recorded.setdefault(details['path'], set()).add(details['sha256'])
-            locks.setdefault(details['path'], set())
-            if details.get('lock'):
-                locks[details['path']].add(details['lock'])
+            locks.setdefault(details['path'], []).append((details['sha256'], details.get('lock')))
             if details.get('temporary'):
                 temporaries.append(details)
         if not recorded:
@@ -1031,26 +1086,34 @@ class LedgerWriter:
                 and not (committed is not None and committed[0]['sha256'] == current) \
                 and (committed is not None or created[physical])
 
-        def lock_of(physical):
-            # The lock the records of this path bind (fix 9, F1): one lock, or none (an older record, or a publication
-            # made without a metadata lock: the canonical lock is taken all the same, ``_recover_locked``). Records that
-            # bind two different locks for one physical file cannot both be right: such a path is not acted on.
-            bound = locks.get(physical) or set()
-            return (next(iter(bound)) if len(bound) == 1 else None), len(bound) > 1
+        def lock_of(physical: str, current: Any = False) -> tuple[str | None, bool]:
+            # The lock the records of this path bind (``_agreed_lock``, shared with the run-start recovery). ``current``
+            # given: only the records that apply to the bytes now at the path (fix 10, N3), so moving or deleting a file
+            # whose records contradict each other removes the condition.
+            return _agreed_lock(lock for digest, lock in locks.get(physical) or () if current is False or digest == current)
 
         for physical, digests in recorded.items():
             path = Path(physical)
             if path.is_symlink():
+                # The recorded physical file was replaced by a symlink after its record (records are resolved when
+                # written): whatever it names is not the recorded file, and following it is never safe (fix 10, N1).
+                unresolved.append({'path': physical, 'reason': 'path_replaced'})
                 continue
-            lock, conflicting = lock_of(physical)
             current = file_hash(path) if path.is_file() else None
+            lock, conflicting = lock_of(physical, current)
+            if conflicting:
+                # The bytes at the path are recorded under contradictory locks: neither the file nor its temporaries are
+                # touched, and the run is refused (fix 10, N3: unresolved). Moving or deleting the file removes it.
+                unresolved.append({'path': physical, 'reason': 'conflicting_locks',
+                                   'locks': sorted({str(lock) for digest, lock in locks[physical] if lock and digest == current})})
+                continue
             spellings = {path.as_uri()}
             if path.is_relative_to(resolved_root):
                 spellings.add((root.absolute() / path.relative_to(resolved_root)).as_uri())
             rows = [catalog[file_id] for uri in spellings for file_id in index.get(uri, [])]
             committed = committed_of(rows)
             after = current
-            if ours(current, committed, physical) and not conflicting:
+            if ours(current, committed, physical):
                 # The look above holds no lock: a locked writer may commit between it and the act. Check and act are one
                 # critical section of the canonical metadata lock (fix 8, N1): symlink, bytes and committed generation
                 # are verified again under it, and only then is the file restored or removed.
@@ -1058,7 +1121,8 @@ class LedgerWriter:
 
                 def decide(target, path=path, rows=rows, physical=physical, seen=seen):
                     if Path(target) != path or path.is_symlink():
-                        return None  # the path no longer names the recorded physical file: act on nothing
+                        # The path no longer names the recorded physical file: act on nothing, and say so (fix 10).
+                        raise UnresolvedRecoveryError([{'path': physical, 'reason': 'path_replaced'}])
                     seen['current'] = file_hash(path) if path.is_file() else None
                     seen['committed'] = committed_of(rows)
                     if not ours(seen['current'], seen['committed'], physical):
@@ -1072,7 +1136,11 @@ class LedgerWriter:
                     row, source = seen['committed']
                     assert source is not None
                     return ('restore', local(source), row['sha256'])
-                action = _recover_locked(path, decide, lock=lock)
+                try:
+                    action = _recover_locked(path, decide, lock=lock)
+                except UnresolvedRecoveryError as refusal:
+                    unresolved.extend(refusal.conditions)
+                    continue  # nothing changed at this path; no ledger observation either
                 if 'current' in seen:
                     current, committed = seen['current'], seen['committed']
                 after = current
@@ -1102,7 +1170,9 @@ class LedgerWriter:
                 continue
             lock, conflicting = lock_of(details['path'])
             if details.get('lock') and details['lock'] != lock or conflicting:
-                continue  # this record's lock is not the one lock the path's records agree on: kept (fix 9, F1)
+                # The path's records bind contradictory locks: the temporary is kept (never read as a product; FIX8-G1
+                # residue). If the bytes at the path are among them, the loop above already refused the run.
+                continue
 
             def verify_temporary(target, temporary=temporary, details=details):
                 identity = _verified_temporary(temporary, details)
@@ -1110,8 +1180,12 @@ class LedgerWriter:
             # Under the lock its writer held (fix 9, F1: the recorded lock; the canonical lock of the path for a record
             # without one): a metadata temporary exists only while its writer holds that lock. The bytes are verified
             # in one pass (fix 9, F2) and the name is removed only if it still names the verified file.
-            if _recover_locked(Path(details['path']), verify_temporary, lock=lock):
-                self.removed_temporaries.append(str(temporary))
+            try:
+                if _recover_locked(Path(details['path']), verify_temporary, lock=lock):
+                    self.removed_temporaries.append(str(temporary))
+            except UnresolvedRecoveryError as refusal:
+                unresolved.extend(refusal.conditions)  # the temporary is kept (fix 10)
+        unresolved[:] = _unique_conditions(unresolved)
         if events:
             with self.transaction():
                 for row, presence, details in events:
@@ -1123,6 +1197,8 @@ class LedgerWriter:
         """Run start, after ``verify_excluded_copies``: an unresolved post-close edit stops the run before any plan
         executes or publishes (CP-K4ac2 R2). The barrier record still names the copy, so every later start refuses
         again until the caller resolves it; a refused start never re-records the copy as durable."""
+        if getattr(self, 'unresolved_recoveries', None):
+            raise UnresolvedRecoveryError(self.unresolved_recoveries)  # fix 10 (N1): recovery is fail-closed
         if getattr(self, 'ambiguous_copies', None):
             raise PostCloseEditError(self.ambiguous_copies)
 
@@ -1220,9 +1296,16 @@ class LedgerWriter:
         these classifications (fix 7, R1). Fix 8 (N1): a copy to be restored is classified again inside
         ``_recover_locked`` (for metadata, the canonical metadata lock) and restored in the same critical section, with
         the installed bytes verified first; a locked edit committed after the first look is a user's edit there.
+        Fix 10 (N1, N3): recovery is fail-closed. A copy recognised here that cannot be resolved (a hard-linked copy,
+        records of its uncommitted bytes binding contradictory locks (``_agreed_lock``, shared with the rollback) or a
+        lock its writers no longer take, a replaced path, a managed source that changed during the restore or is not
+        intact, a copy changed right after its restore) is kept, not made durable, and listed in
+        ``self.unresolved_recoveries``; ``refuse_ambiguous_copies`` then refuses the run (``UnresolvedRecoveryError``)
+        before any plan executes. "Left for verification" is no longer an outcome.
         Returns the file_ids republished.
         """
         self._owner(transaction=False)
+        self.unresolved_recoveries: list[dict[str, Any]] = []
         table=self.connection.event_table
         latest=self.connection.execute(f"SELECT run_id,details_json,recorded_at FROM {table} WHERE reason_code='durability_barrier' AND event_kind='retention' "
             "AND (message='barrier_summary' OR message='barrier') ORDER BY event_id DESC LIMIT 1").fetchone()
@@ -1244,6 +1327,7 @@ class LedgerWriter:
             path=local(row)
             before=identity_of.get(file_id)
             verdict=self._excluded_copy_verdict(row,path,before,catalog,local)
+            unresolved=lambda reason,**extra:self.unresolved_recoveries.append(dict(file_id=file_id,path=str(path),reason=reason,**extra))
             if verdict[0]=='restore':
                 # The classification above holds no lock: a locked writer may commit between it and the restore. The
                 # copy is classified again and restored inside one critical section of the canonical metadata lock
@@ -1253,18 +1337,30 @@ class LedgerWriter:
                 def decide(target,row=row,path=path,before=before,locked=locked):
                     locked['verdict']=self._excluded_copy_verdict(row,path,before,catalog,local)
                     return ('restore',local(locked['verdict'][2]),row['sha256']) if locked['verdict'][0]=='restore' else None
+                # The lock the records of the copy's uncommitted bytes agree on (fix 9, F1; fix 10, N3: every record after
+                # the copy's registration that binds the bytes now at the path, as the rollback's ``_agreed_lock``); none
+                # bound: the canonical metadata lock of the path. Contradictory records: kept, unresolved (moving or
+                # deleting the copy removes the condition: it is then republished from its source).
+                from ..parquet_schema import resolve_metadata_target
+                current=file_hash(path) if path.is_file() and not path.is_symlink() else None
+                lock,conflicting=_agreed_lock(details.get('lock') for _,details in self._uncommitted_records(row,str(resolve_metadata_target(path)))
+                                              if details.get('sha256')==current)
+                if conflicting:
+                    unresolved('conflicting_locks');continue
                 try:
-                    # The lock the copy's own uncommitted write recorded, if any; otherwise the canonical metadata lock of
-                    # the path (fix 9, F1: never inferred from the name).
-                    action=_recover_locked(path,decide,lock=self._recorded_lock(verdict[1]))
-                except (LedgerError,MetadataStaleGenerationError):
-                    continue  # the source no longer holds the registered bytes: nothing replaced, left for verification
+                    action=_recover_locked(path,decide,lock=lock)
+                except UnresolvedRecoveryError as refusal:
+                    for entry in refusal.conditions:unresolved(entry['reason'])
+                    continue
                 except MetadataAliasError:
-                    continue  # a hard-linked copy: the metadata lock refuses it; nothing replaced, left for verification
+                    unresolved('hard_linked');continue  # the metadata lock refuses a hard-linked copy: kept (fix 10, N1)
+                except (LedgerError,MetadataStaleGenerationError):
+                    unresolved('source_changed');continue  # the installed bytes would not be the registered ones: kept
                 verdict=locked['verdict']
                 if action is not None:
                     _,own,source=verdict
-                    if file_hash(path)!=row['sha256']:continue
+                    if file_hash(path)!=row['sha256']:
+                        unresolved('changed_after_restore');continue
                     restored.append((row,source,own))
                     checked.append(path);durable.append(file_id)
                     continue
@@ -1272,6 +1368,8 @@ class LedgerWriter:
                 checked.append(path);durable.append(file_id)
             elif verdict[0]=='ambiguous':
                 self.ambiguous_copies.append(dict(file_id=file_id,path=str(path),**verdict[1]))
+            elif verdict[0]=='skip':
+                unresolved('no_intact_source')  # torn/missing copy, no intact managed source to republish (fix 10)
         _map_bounded(_fsync_path,checked)
         for directory in sorted({path.parent for path in checked},key=lambda path:len(path.parts),reverse=True):
             descriptor=os.open(directory,os.O_RDONLY)

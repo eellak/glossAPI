@@ -86,8 +86,10 @@ def _cli_errors() -> dict[str, dict[str, Any]]:
     rows.update(plan_preview.error_contracts())
     from .stages import disk_budget
     rows.update(disk_budget.error_contracts())
-    from .ledger.writer import PostCloseEditError
+    from .ledger.writer import PostCloseEditError, UnresolvedRecoveryError
     rows[PostCloseEditError.code] = dict(command='run', exit_code=PostCloseEditError.EXIT_CODE, meaning=PostCloseEditError.MEANING)
+    rows[UnresolvedRecoveryError.code] = dict(command='run', exit_code=UnresolvedRecoveryError.EXIT_CODE,
+                                              meaning=UnresolvedRecoveryError.MEANING)
     from .ledger import urls
     rows[urls.CODE] = dict(command='plan, run', exit_code=2, meaning=urls.MEANING)
     rows.update(input_manifest.error_contracts())
@@ -185,7 +187,7 @@ def guide_view() -> dict[str, Any]:
         schemas=[dict(name=name, file=f'glossapi/schemas/v{SCHEMA_VERSION}/{name}.json', id=load_schema(name)['$id']) for name in NAMES],
         sources=dict(stages='glossapi.capabilities', retry_limit='glossapi.stages.scheduler.StreamingScheduler (retry_limit default)', packages='glossapi.package_catalog (data/package_catalog/measured.json)',
                      settings='glossapi.settings_contract', manifest='glossapi.input_manifest', costs='glossapi/data/measured_costs.json',
-                     errors='glossapi.install_plan.ERRORS, glossapi.plan_preview.ERRORS, glossapi.stages.disk_budget.ERRORS, glossapi.ledger.writer.PostCloseEditError, glossapi.input_manifest.ERRORS'))
+                     errors='glossapi.install_plan.ERRORS, glossapi.plan_preview.ERRORS, glossapi.stages.disk_budget.ERRORS, glossapi.ledger.writer.PostCloseEditError, glossapi.ledger.writer.UnresolvedRecoveryError, glossapi.input_manifest.ERRORS'))
 
 
 def _value(value: Any) -> str:

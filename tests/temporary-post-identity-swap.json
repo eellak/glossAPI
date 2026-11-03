@@ -1,0 +1,10 @@
+{
+  "check": true,
+  "old_inode": 107106254,
+  "new_inode": 107106259,
+  "after_swap_inode": 107106259,
+  "removed": [
+    "/private/tmp/claude-501/-Users-foivoskarounos-zamparloukos/f57fd351-b06f-49b9-83b5-5717c946890a/scratchpad/coord-f10/pt/test_temporary_swapped_after_s0/.physical.tmp"
+  ],
+  "exists": false
+}
