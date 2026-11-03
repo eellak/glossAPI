@@ -68,6 +68,16 @@ from .ocr_render import (
 from .text_surface_metrics import sanitized_char_count
 from glossapi.parquet_schema import MetadataPolicyError
 
+
+def _disk_full(error: BaseException) -> bool:
+    """The shared storage-exhaustion classifier (ENOSPC/EDQUOT, SQLite disk-full, also as a cause): best-effort
+    handlers on the clean path let it propagate (fix 6, F3)."""
+    from ..stages.execution import disk_full
+    return disk_full(error)
+
+
+_DISK_FULL_MARKER = "GLOSSAPI_CLEANER_DISK_FULL"
+_DISK_FULL_EXIT = 74
 PAGE_SPLIT_MARKER = "<--- Page Split --->"
 WORD_REPEAT_HASH_MASK = (1 << 64) - 1
 WORD_REPEAT_HASH_BASE = 1469598103934665603
@@ -3397,15 +3407,26 @@ class CleanPhaseMixin:
             metric_surface = marker_free_scoring_copy(input_dir, Path(self.output_dir) / ".glossapi" / "staging")
             if metric_surface is not None:
                 scoring_input_dir = metric_surface
+        # The legacy subprocess reports an exhausted filesystem (native API 2 raises OSError with its errno) on one
+        # marker line and its own exit code, so the parent raises it typed instead of carrying on with existing
+        # metrics after a non-zero exit (fix 6, F3 audit).
         cmd = (
+            "import errno, sys\n"
             "import glossapi_rs_cleaner\n"
-            f"glossapi_rs_cleaner.run_complete_pipeline({repr(str(scoring_input_dir))}, "
+            "try:\n"
+            f"    glossapi_rs_cleaner.run_complete_pipeline({repr(str(scoring_input_dir))}, "
             f"{repr(str(self.cleaned_markdown_dir))}, {repr(str(report_parquet_path))}, "
             f"{repr(scripts_to_keep)}, {int(num_threads or os.cpu_count() or 4)}, "
             f"{'True' if write_cleaned_files else 'False'})\n"
+            "except OSError as error:\n"
+            "    if error.errno not in (errno.ENOSPC, errno.EDQUOT):\n"
+            "        raise\n"
+            f"    print({_DISK_FULL_MARKER!r}, error.errno, str(error).replace(chr(10), ' '), flush=True)\n"
+            f"    sys.exit({_DISK_FULL_EXIT})\n"
         )
 
         adapter_scores = None
+        disk_full_line = None
         if adapter_profile:
             from ..stages.compatibility import clean_compatibility_kernel
             adapter_scores = clean_compatibility_kernel(self, sorted(input_dir.rglob("*.md")), report_parquet_path, input_root=input_dir, num_threads=num_threads or 1, write_cleaned_files=write_cleaned_files)
@@ -3423,6 +3444,9 @@ class CleanPhaseMixin:
             try:
                 assert process.stdout is not None
                 for line in process.stdout:
+                    if line.startswith(_DISK_FULL_MARKER):
+                        disk_full_line = line
+                        continue
                     progress.handle_line(line)
                 return_code = process.wait()
             except Exception:
@@ -3433,6 +3457,9 @@ class CleanPhaseMixin:
                     process.stdout.close()
                 progress.finalize()
 
+        if return_code == _DISK_FULL_EXIT and disk_full_line is not None:
+            parts = disk_full_line.split(maxsplit=2)
+            raise OSError(int(parts[1]), "native cleaner subprocess: " + (parts[2].strip() if len(parts) > 2 else "filesystem full"))
         if return_code != 0:
             # Do not abort the entire cleaning pass – proceed to evaluate gates
             # using existing metrics on disk. If the Rust report is available,
@@ -3472,6 +3499,8 @@ class CleanPhaseMixin:
                     observe("delete_completed", path=report_parquet_path, deletion="legacy_temporary_report_cleanup")
                 self.logger.debug("Deleted temporary cleaning report %s", report_parquet_path)
         except Exception as e:
+            if _disk_full(e):
+                raise  # registering the temporary report writes the ledger: never a "delete_failed" (fix 6, F3 audit)
             observe("delete_failed", path=report_parquet_path, error=e)
             self.logger.warning("Could not delete cleaning report %s: %s", report_parquet_path, e)
 
@@ -3601,6 +3630,10 @@ class CleanPhaseMixin:
         except MetadataPolicyError:
             raise  # policy refusals are never swallowed (CP-K2e F5)
         except Exception as e:
+            if _disk_full(e):
+                # An exhausted filesystem under the noise scorer's surface or the metric merge is not a skipped
+                # metric (fix 6, F3): it propagates unchanged, so clean fails typed disk_full and the resume repeats it.
+                raise
             observe("clean_noise_scoring_failed", error=e, status="failed", continuation="existing_metrics")
             self.logger.warning("Noise-metrics scoring failed: %s", e)
         finally:

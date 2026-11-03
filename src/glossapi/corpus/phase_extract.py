@@ -4,10 +4,11 @@ from __future__ import annotations
 from ..stages.profile import adapters_enabled
 
 from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows, accept_worker_observations
-from ..stages.execution import preserving_thread_caps
+from ..stages.execution import preserving_thread_caps, disk_full
 
 from glossapi.optional_dependencies import optional_dependencies
 
+import errno
 import json
 import logging
 import math
@@ -688,7 +689,8 @@ class ExtractPhaseMixin:
                     return
 
                 # Dynamic work queue across GPUs
-                from .corpus_orchestrator import gpu_extract_worker_queue
+                from .corpus_orchestrator import gpu_extract_worker_queue, WORKER_DISK_FULL_EXIT
+                disk_full_error: Optional[OSError] = None
                 from multiprocessing import get_context
                 ctx = get_context("spawn")
                 manager = ctx.Manager()
@@ -734,6 +736,8 @@ class ExtractPhaseMixin:
                         default_worker_log_dir.mkdir(parents=True, exist_ok=True)
                         worker_log_dir_to_use = str(default_worker_log_dir)
                     except Exception as exc:
+                        if disk_full(exc):
+                            raise  # a full disk is not "no worker log directory" (fix 6, F3 audit)
                         self.logger.warning(
                             "Unable to prepare worker log directory %s: %s",
                             default_worker_log_dir,
@@ -746,6 +750,8 @@ class ExtractPhaseMixin:
                 try:
                     marker_base.mkdir(parents=True, exist_ok=True)
                 except Exception as exc:
+                    if disk_full(exc):
+                        raise  # workers would then fail writing their markers (fix 6, F3 audit)
                     self.logger.debug("Unable to prepare marker directory %s: %s", marker_base, exc)
                 worker_specs: List[Dict[str, Any]] = []
                 for dev_id in devs:
@@ -815,6 +821,15 @@ class ExtractPhaseMixin:
                             heartbeat[pid] = time.time()
                             worker_spec = proc_specs.pop(pid, None)
                             worker_key = worker_spec["worker_key"] if worker_spec else None
+                            if p.exitcode == WORKER_DISK_FULL_EXIT:
+                                # Stopped by a full disk after reporting it (fix 6): its batch is neither problematic
+                                # nor skip-listed, and it is not respawned.
+                                any_fail = True
+                                if disk_full_error is None:
+                                    disk_full_error = OSError(errno.ENOSPC, f"extract worker pid={p.pid}: filesystem full")
+                                if worker_key is not None:
+                                    status_map.pop(worker_key, None)
+                                continue
                             if p.exitcode not in (0, None):
                                 any_fail = True
                                 observe("worker_process_crashed", status="failed", worker_pid=p.pid, exitcode=p.exitcode, assigned_items=list(status_map.get(worker_key, []) or []))
@@ -930,6 +945,14 @@ class ExtractPhaseMixin:
                                 worker_pid = result.get("pid")
                                 if worker_pid is not None:
                                     heartbeat[worker_pid] = time.time()
+                            elif event_type == "disk_full":
+                                observe("legacy_observed", store="worker_result_queue", receipt=result)
+                                if disk_full_error is None:
+                                    disk_full_error = OSError(int(result.get("errno") or errno.ENOSPC),
+                                                              f"{result.get('worker')}: {result.get('error')}")
+                                worker_pid = result.get("pid")
+                                if worker_pid is not None:
+                                    heartbeat[worker_pid] = time.time()
                             elif event_type == "exit":
                                 if result.get("exitcode", 0) not in (0, None):
                                     any_fail = True
@@ -987,6 +1010,8 @@ class ExtractPhaseMixin:
                     else:
                         os.environ.pop("GLOSSAPI_WORKER_LOG_DIR", None)
 
+                if disk_full_error is not None:
+                    raise disk_full_error  # typed, after every worker stopped; the resume extracts these again (fix 6)
                 remaining_after_failure: List[str] = []
                 try:
                     while True:
@@ -1171,5 +1196,7 @@ class ExtractPhaseMixin:
         except MetadataPolicyError:
             raise  # policy refusals are never swallowed (CP-K2e F5)
         except Exception as exc:
+            if disk_full(exc):
+                raise  # the font-repair metadata merge writes the metadata parquet (fix 6, F3 audit)
             self.logger.warning("Failed to merge font repair metadata: %s", exc)
         self.logger.info("Font repair summary: %s", " ".join(f"{key}={value}" for key, value in counts.items()))

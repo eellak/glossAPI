@@ -1205,8 +1205,15 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
             callback()
         except Exception as error:
             if disk_full(error):
-                raise  # an exhausted filesystem stops the run with its typed cause; resume repeats this barrier (W18 M10)
+                # An exhausted filesystem stops the run with its typed cause; resume repeats this barrier (W18 M10). The
+                # failed wrapper may already have rewritten the compatibility metadata in place (a state save, a metric
+                # merge before the failing write): those bytes were never committed, so they are rolled back to the
+                # committed projection now, as the next wrapper start would (fix 6, F3). Otherwise the run close would
+                # name them as an unflushed copy and the resume would refuse them as a post-close edit.
+                _roll_back_uncommitted_projections(writer,corpus)
+                raise
             import traceback
+            _roll_back_uncommitted_projections(writer,corpus)  # the same uncommitted bytes after any failure (fix 6)
             with writer.transaction():
                 writer.finish(run,task['task_id'],attempt,status='failed',reason_code=stage+'_exception',
                     error_type=type(error).__name__,message=str(error),traceback=''.join(traceback.format_exception(error)))
@@ -1249,6 +1256,18 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
         from .retention import retire_downloaded_sources
         retire_downloaded_sources(writer,corpus.output_dir,run,getattr(cast(Any,corpus),'_retention_settings',{}))
     return status=='ok'
+
+
+def _roll_back_uncommitted_projections(writer,corpus):
+    """Best effort: restore every compatibility metadata copy whose current registration is its committed projection
+    (``restore_metadata_projections``). On a disk too full even for the copy, the original disk_full error still
+    propagates; the next start then reports the copy (post_close_edit), which the user resolves by removing it."""
+    from types import SimpleNamespace
+    from .metadata import restore_metadata_projections
+    try:
+        restore_metadata_projections(SimpleNamespace(writer=writer,corpus=corpus))
+    except Exception:
+        pass
 
 
 class DiskFullError(OSError):
@@ -1337,8 +1356,11 @@ def _locked_run_corpus(corpus,*args,**options):
         finally:
             try:
                 writer.close()  # idempotent; after a failed close it has already released the connection and lock
-            except Exception:
-                pass
+            except Exception as close_error:
+                # Reached only while another error propagates (that error stays the run's outcome). A full disk met by
+                # this close is still named in the record allocated at run start (fix 6, F3 audit).
+                if disk_full(close_error):
+                    _record_disk_full(writer,corpus,close_error)
             corpus._scheduler_writer=None
             corpus._streaming_download_replays=None
             corpus._streaming_ocr_replays=None

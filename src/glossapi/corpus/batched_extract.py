@@ -31,6 +31,27 @@ from typing import Any
 from types import MappingProxyType
 
 
+def _disk_full(error: BaseException) -> bool:
+    """The shared classifier (stages.execution.disk_full). The export child can load this module without its package
+    (a relative import fails there), so the import is absolute."""
+    from glossapi.stages.execution import disk_full
+    return disk_full(error)
+
+
+def _disk_errno(error: BaseException):
+    """The errno to re-raise for an exhausted filesystem (ENOSPC/EDQUOT; ENOSPC for SQLite's disk-full), else None."""
+    import errno
+    if not _disk_full(error):
+        return None
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error, OSError) and error.errno in (errno.ENOSPC, errno.EDQUOT):
+            return error.errno
+        error = error.__cause__ or error.__context__
+    return errno.ENOSPC
+
+
 @dataclass(frozen=True)
 class StabilityEvent:
     kind: str
@@ -330,8 +351,10 @@ def _export_worker(channel, epoch):
                 task()
                 receipt = (epoch, sequence, time.monotonic(), None)
             except BaseException as exc:
+                # The errno of an exhausted filesystem crosses the process boundary (fix 6, F3 audit): the owner
+                # re-raises it as OSError, so the attempt is typed disk_full instead of a RuntimeError text.
                 receipt = (epoch, sequence, time.monotonic(),
-                           (type(exc).__name__, str(exc)))
+                           (type(exc).__name__, str(exc), _disk_errno(exc)))
             del task
             jobs.put(pickle.dumps(receipt), max(0, deadline - time.monotonic()))
     except (EOFError, OSError, TimeoutError):
@@ -416,7 +439,9 @@ class _ExportSession:
             if completed > deadline:
                 raise TimeoutError("timeout")
             if error:
-                name, message = error
+                name, message = error[0], error[1]
+                if len(error) > 2 and error[2] is not None:
+                    raise OSError(error[2], f"{name}: {message}")
                 # Preserve the useful public serialization error contract.
                 error_type = {"ValueError": ValueError, "TimeoutError": TimeoutError}.get(name, RuntimeError)
                 raise error_type(f"{name}: {message}")
@@ -591,6 +616,8 @@ class BatchedExtractor:
                     path.unlink(missing_ok=True)
                 self.adapter.failure(doc.path, output_dir, doc.error)
             except Exception as exc:
+                if _disk_full(exc):
+                    raise  # a full disk is the run's typed stop, not a per-document note (fix 6, F3 audit)
                 # A document-specific artifact path can itself be unwritable.
                 # Preserve the error in the returned problem list and continue.
                 doc.error = f"{doc.error}; failure recording: {type(exc).__name__}: {exc}"
@@ -668,6 +695,8 @@ class BatchedExtractor:
                             try:
                                 ok = future.result()
                             except Exception as exc:
+                                if _disk_full(exc):
+                                    raise  # fix 6, F3 audit: not an ordinary problematic document
                                 fail(doc, f"export: {type(exc).__name__}: {exc}")
                                 record_failure(doc)
                                 ok = False
@@ -773,6 +802,8 @@ class BatchedExtractor:
                             # don't add its elapsed time back to the deadline.
                             active[did] = _Document(path, started, time.monotonic() + budget)
                         except Exception as exc:
+                            if _disk_full(exc):
+                                raise  # font repair's output write on a full disk (fix 6, F3 audit)
                             active[did] = _Document(path, started, started,
                                 error=f"admission: {type(exc).__name__}: {exc}")
                             _record(self._stability, "event", "documents_evicted", path.name, detail=active[did].error)
