@@ -1375,9 +1375,16 @@ def _locked_run_corpus(corpus,*args,**options):
             writer.verify_excluded_copies()
             writer.refuse_ambiguous_copies()
             result=_run_corpus(corpus,*args,**options)
+            # A run that would report completion passes the completion gate first (fix 13, decision B): inside the
+            # close, after its final flush, under the workspace lock; a refusal raises UnresolvedRecoveryError.
+            if result.get('run_id') and result.get('state') in ('completed','completed_with_failures'):
+                writer.completion_gate_run=result['run_id']
             # The run-close durability barrier and VACUUM are part of the run (CP-K4a F5): an exhausted disk there is
             # recorded like any other, and the record is cleared only after the close succeeded.
             writer.close()
+            gate_record=getattr(writer,'completion_gate_record',None)
+            if gate_record:
+                result['completion_gate']={key:value for key,value in gate_record.items() if key!='failures'}
             result['total_wall_seconds']=time.monotonic()-began
             if result.get('state') in ('completed','completed_with_failures'):
                 from .interruption import clear

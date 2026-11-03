@@ -25,13 +25,17 @@ class CallerKernelStage:
         from ..ledger.journal import inventory,wrapper_return_receipt
         request.work_directory.mkdir(parents=True,exist_ok=True)
         before=inventory(self.corpus.output_dir)
+        stale=_not_committed(before)
         token=_caller_kernel_scope.set(True)
         try:
             with capture_backend_observations() as observations:
                 self.returned=self.callback()
             outputs=[]
             for name,receipt in inventory(self.corpus.output_dir).items():
-                if before.get(name)==receipt:continue
+                # Unchanged by the callback, and its bytes are the committed generation: nothing to publish. Bytes the
+                # ledger does not commit (a failed attempt's, left in place) are published even when the callback wrote
+                # the same bytes again, so the path gets its committed generation (fix 13).
+                if before.get(name)==receipt and name not in stale:continue
                 relative='products/'+str(Path(name).relative_to(self.corpus.output_dir.absolute()))
                 destination=request.work_directory/relative;destination.parent.mkdir(parents=True,exist_ok=True)
                 shutil.copyfile(name,destination);outputs.append((relative,'caller_kernel_product'))
@@ -44,6 +48,20 @@ class CallerKernelStage:
             return failed_result(request,'legacy_observed',error)
         finally:
             _caller_kernel_scope.reset(token)
+
+
+def _not_committed(before):
+    """Files in ``before`` that ``ledger.writer.expected_products`` manages but whose bytes are not the path's committed
+    generation (a different digest, a refusal, an expected absence). Files it does not manage are left out."""
+    from ..ledger.writer import ExpectedSha, expected_products
+    from .products import active_journal
+    journal=active_journal()
+    if journal is None or not before:
+        return set()
+    uris={Path(name).absolute().as_uri():name for name in before}
+    expected=expected_products(journal.writer.connection,uris=set(uris))
+    return {uris[uri] for uri,verdict in expected.items() if uri in uris
+            and not (isinstance(verdict,ExpectedSha) and verdict.sha256==before[uris[uri]]['sha256'])}
 
 
 def execute_caller_kernel(corpus,stage,operation,callback):

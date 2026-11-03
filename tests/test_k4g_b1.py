@@ -34,6 +34,7 @@ def _published(writer, root, *, before_barrier=None, earlier=None, hook=None):
             copy.write_bytes(earlier)
             writer.artifact(run, 'export', 'document_jsonl', copy.as_uri(), producer_attempt_id=old_attempt,
                             sha256=sha256_file(copy), bytes=len(earlier), retention_class='final')
+            writer.finish(run, old_task, old_attempt, status='ok', reason_code='export_completed')  # fix 13: committed
         attempt = writer.attempt(task, worker_id='w', device_id='cpu', fingerprint={}, inputs={}, settings={}, tools={})
         copy.write_bytes(SOURCE)
         digest, size = sha256_file(source), source.stat().st_size
@@ -41,6 +42,8 @@ def _published(writer, root, *, before_barrier=None, earlier=None, hook=None):
                         bytes=size, retention_class='final')
         copy_id = writer.artifact(run, 'export', 'document_jsonl', copy.as_uri(), producer_attempt_id=attempt, sha256=digest,
                                   bytes=size, retention_class='final')
+        # Fix 13: the publication's producer attempt ends ``ok`` (``expected_products`` counts committed generations).
+        writer.finish(run, task, attempt, status='ok', reason_code='export_completed')
     if before_barrier:
         before_barrier(copy)
     writer.barrier_context = {'run_id': run, 'debug': 'off'}

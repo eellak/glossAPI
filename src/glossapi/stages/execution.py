@@ -380,10 +380,11 @@ def run_fenced(stage, request, *, reporter):
 
 
 def _proc_table(attempts=3):
-    """(parents, process groups) of the Linux processes in ``/proc``. A process that exits while the directory is
-    being enumerated can make advancing the glob itself raise (ESRCH/ENOENT from a vanished entry; fix 12, R5): the
-    enumeration is retried, and after ``attempts`` failures the entries read so far are returned. Per-entry reads that
-    fail are skipped, as before."""
+    """(parents, process groups, complete) of the Linux processes in ``/proc``. A process that exits while the
+    directory is being enumerated can make advancing the glob itself raise (ESRCH/ENOENT from a vanished entry; fix 12,
+    R5): the enumeration is retried. ``complete`` is True only for an enumeration that ran to its end (fix 13, H4);
+    after ``attempts`` cut-short enumerations the entries read so far are returned with ``complete=False``. Per-entry
+    reads that fail are skipped (the process exited), as before."""
     parents, process_groups = {}, {}
     for _ in range(attempts):
         entries = iter(Path("/proc").glob("[0-9]*/stat"))
@@ -391,7 +392,7 @@ def _proc_table(attempts=3):
             try:
                 entry = next(entries)
             except StopIteration:
-                return parents, process_groups
+                return parents, process_groups, True
             except OSError:
                 break  # the enumeration was cut short by a vanished entry: start it again
             try:
@@ -400,7 +401,7 @@ def _proc_table(attempts=3):
                 parents[identifier], process_groups[identifier] = int(fields[1]), int(fields[2])
             except (OSError, ValueError, IndexError):
                 continue
-    return parents, process_groups
+    return parents, process_groups, False
 
 
 def _stop_process(process):
@@ -410,8 +411,9 @@ def _stop_process(process):
     # itself) is still signalled, joined and fenced.
     family = {process.pid}
     groups = {process.pid} if hasattr(os, "killpg") else set()
+    complete = True
     if Path("/proc/self/stat").exists():
-        parents, process_groups = _proc_table()
+        parents, process_groups, complete = _proc_table()
         while True:
             descendants = {identifier for identifier, parent in parents.items() if parent in family}
             if descendants <= family:
@@ -450,6 +452,11 @@ def _stop_process(process):
         if time.monotonic() >= deadline:
             raise RuntimeError("Worker descendants could not be fenced; workspace remains untrusted")
         time.sleep(.02)
+    if not complete:
+        # Fix 13 (H4): the known family was signalled, joined and fenced, but an incomplete /proc enumeration cannot
+        # prove that no descendant (one in its own process group) was missed: never certified as fenced.
+        raise RuntimeError("Worker descendants could not be fenced; workspace remains untrusted "
+                           "(process enumeration was incomplete)")
 
 
 def freeze_inputs(request):
