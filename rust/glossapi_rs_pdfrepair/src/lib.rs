@@ -1,6 +1,8 @@
 mod cmap;
 mod font;
 pub mod layout;
+#[cfg(all(feature = "python", not(test)))]
+mod layout_reader_py;
 mod pdf;
 mod text;
 use anyhow::{anyhow, bail, Result};
@@ -908,38 +910,6 @@ mod python {
         }
         (res.rotation, warnings, lines, blocks, md).into_pyobject(py)
     }
-    /// `layout_v2_read_textpage(functions, textpage, page_w, page_h, rotation, page_no, source_sha256) -> bytes`: the
-    /// page's `.k5chars` table read natively from PDFium (the K5c reader's fields, byte for byte). `functions` = the
-    /// addresses of the 11 `FPDFText_*` functions in `layout_v2_pdfium_functions()` order, taken from the PDFium that
-    /// pypdfium2 loaded; `textpage` = the raw `FPDF_TEXTPAGE` address. Internal API: wrong addresses crash the
-    /// process. The GIL stays held (PDFium is not thread-safe).
-    #[pyfunction]
-    #[allow(clippy::too_many_arguments)]
-    fn layout_v2_read_textpage<'py>(
-        py: Python<'py>,
-        functions: Vec<usize>,
-        textpage: usize,
-        page_w: f64,
-        page_h: f64,
-        rotation: u16,
-        page_no: u32,
-        source_sha256: &[u8],
-    ) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
-        let sha: [u8; 32] = source_sha256
-            .try_into()
-            .map_err(|_| PyValueError::new_err("source_sha256 must be 32 bytes"))?;
-        // SAFETY: the caller hands over pypdfium2's own function addresses and a live text page (documented above).
-        let t = unsafe {
-            let f = layout::reader::PdfiumText::from_addresses(&functions).map_err(layout_err)?;
-            f.read(textpage as *mut std::ffi::c_void, page_w, page_h, rotation, page_no).map_err(layout_err)?
-        };
-        Ok(pyo3::types::PyBytes::new(py, &layout::k5chars::dump(&t, &sha)))
-    }
-    /// The PDFium function names `layout_v2_read_textpage` expects, in order.
-    #[pyfunction]
-    fn layout_v2_pdfium_functions() -> Vec<&'static str> {
-        layout::reader::PDFIUM_FUNCTIONS.to_vec()
-    }
     /// Test hook for the differential tests: Python-semantics primitives of the port. kind = a pattern name (the
     /// boolean the reference computes), "norm_sig", "nfc", "casefold" (strings), or "isspace", "isalpha", "isdecimal",
     /// "isdigit", "isnumeric", "isalnum", "isupper", "re_lower" (one entry per char).
@@ -985,8 +955,7 @@ mod python {
         m.add_class::<LayoutV2Context>()?;
         m.add_function(wrap_pyfunction!(layout_v2_context, m)?)?;
         m.add_function(wrap_pyfunction!(layout_v2_label_page, m)?)?;
-        m.add_function(wrap_pyfunction!(layout_v2_read_textpage, m)?)?;
-        m.add_function(wrap_pyfunction!(layout_v2_pdfium_functions, m)?)?;
+        crate::layout_reader_py::register(m)?;
         m.add_function(wrap_pyfunction!(_layout_v2_probe, m)?)?;
         m.add_function(wrap_pyfunction!(_layout_v2_round2, m)?)?;
         Ok(())
