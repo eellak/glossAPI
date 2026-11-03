@@ -194,6 +194,11 @@ def observed_original_hash(stage: str, path: Path, cached: 'list[tuple[Path, str
                 cached.append((path, recorded[1]))
             return recorded[1]
     digest = file_hash(path)
+    if cached is not None:
+        # Fix 6 (F2, CP-K4c3 R4): a freshly hashed original is bound by this phase exactly like a cached one, so it is
+        # verified at every destructive frontier and before the outcome too. A recently written original never enters
+        # the process cache (racy rule below); listing only cache hits left exactly those originals unchecked.
+        cached.append((path, digest))
     if stage in ORIGINAL_READING_STAGES:
         if max(key[3], key[4]) < observed_at - RACY_MARGIN_NS:
             _original_hashes[str(path)] = (key, digest)
@@ -259,6 +264,8 @@ class ResultJournal:
                 writer.event(publication['run_id'],event_kind='run',reason_code='legacy_observed',message='wrapper:'+stage,
                     details={'wrapper_run_id':self.run_id,'publication_task_id':publication['task_id']})
             observed_inputs = []
+            # Every original this phase binds from an observation (cached or freshly hashed; fix 6, F2), checked at each
+            # destructive frontier and before the outcome. (Name kept: callers and tests address it.)
             self.cached_originals: list[tuple[Path, str]] = []
             candidates = parameters.get("file_paths")
             if not candidates:
@@ -307,7 +314,8 @@ class ResultJournal:
                     self.document_tasks[str(path)] = (document_task, version_id)
                     writer.event(self.run_id, event_kind="lifecycle", reason_code="stage_planned", status="planned", task_id=document_task, version_id=version_id)
             if self.cached_originals:
-                # Every destructive boundary of this writer verifies these bindings first (CP-K4bc2 R2).
+                # Every destructive boundary of this writer verifies these bindings first (CP-K4bc2 R2; fresh ones too,
+                # fix 6 F2).
                 guards: list[Any] = cast(Any, writer).__dict__.setdefault('original_guards', [])
                 guards.append(self)
             source_inventory_hash = writer.snapshot("inputs", {"kind": "inputs", "files": observed_inputs})
@@ -536,8 +544,8 @@ class ResultJournal:
                 self.writer.source_record(document_id, self.run_id, uri, values, source_kind=kind, manifest_sha256=manifest, source_row=str(ordinal))
 
     def verify_cached_originals(self, rows: Any = None) -> None:
-        """Byte-verify the originals whose hash this phase took from the process cache and that a pending deletion
-        relies on (CP-K4b F3, CP-K4bc2 R2). ``rows``: the file rows about to be deleted; a row of a document version
+        """Byte-verify the originals this phase bound -- a hash taken from the process cache or freshly computed
+        (fix 6, F2) -- that a pending deletion relies on (CP-K4b F3, CP-K4bc2 R2). ``rows``: the file rows about to be deleted; a row of a document version
         relies on that version's original, a corpus-level row (no version) on every cached original; None means all.
         A verification is valid only for the stat identity it hashed and only within one destructive frontier
         (CP-K4c3 R4): every call is one frontier, and it re-stats every relied-on original. The first verification of
@@ -595,6 +603,12 @@ class ResultJournal:
                         details={"observation": "absent_after_wrapper", "policy_deletion": "unknown_not_recorded"})
             status = "failed" if error is not None or self.failures else "skipped" if self.skips and not self.successes else "ok"
             reason = self.stage + "_exception" if error is not None else self.failures[0] if self.failures else self.skips[0] if status == "skipped" else self.stage + "_completed"
+            if error is not None:
+                from ..stages.execution import disk_full
+                if disk_full(error):
+                    # An exhausted filesystem under the legacy wrapper (a metadata write, a state save) keeps its typed
+                    # cause on the wrapper attempt (fix 6, F3), as a stage worker's failed_result does.
+                    reason = "disk_full"
             if self.cutover and error is None:
                 section_aggregate_published = False
                 for adapter_attempt in self.adapter_attempts:

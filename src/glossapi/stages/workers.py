@@ -87,8 +87,8 @@ def _serve(connection, parent_pid):
                 data = encoded.encode('utf-8')
                 connection.send((request.task_id, request.attempt_id, request.lease_token, 'receipt', hashlib.sha256(data).hexdigest(), len(data)))
             except OSError as error:
-                import errno
-                if error.errno!=errno.ENOSPC:raise
+                from .execution import disk_full
+                if not disk_full(error):raise  # EDQUOT and a wrapped ENOSPC too (fix 6, F3 audit)
                 # The result channel still has a reserved bounded slot when a
                 # full scratch filesystem cannot hold its JSON receipt.
                 connection.send((request.task_id,request.attempt_id,request.lease_token,'disk_budget_exceeded'))

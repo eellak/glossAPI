@@ -31,6 +31,30 @@ def _cell_text(value) -> str:
     return str(value)
 
 
+def _disk_full(error: BaseException) -> bool:
+    from ..stages.execution import disk_full
+    return disk_full(error)
+
+
+def _append_rows_exactly(current: pd.DataFrame, added: pd.DataFrame) -> pd.DataFrame:
+    """``current`` followed by ``added`` (same columns) without rounding an exact value (fix 6, F1; K2E-F3).
+
+    ``added`` rows leave every foreign column missing. A plain ``pd.concat`` turns an ``int64`` column into float64
+    as soon as one row is missing, which rounds every value above 2**53. As in the other metadata mergers, only the
+    integer columns a float64 cannot hold exactly become nullable (``exact_integer_columns``); an all-missing
+    ``added`` column then takes the current column's nullable dtype, and the union is checked value by value
+    (``lossless_concat``, ``MetadataSchemaError`` before anything is replaced). Every other column keeps the dtype
+    the legacy concatenation produced."""
+    from ..parquet_schema import _missing_like, exact_integer_columns, lossless_concat
+    before = current.dtypes
+    current, added = exact_integer_columns(current, added)
+    added = added.copy()
+    for column in current.columns:
+        if current[column].dtype != before[column] and added[column].isna().all():
+            added[column] = _missing_like(current[column], added.index)
+    return lossless_concat([current, added], what="processing-state rows")
+
+
 class _ProcessingStateManager:
     """
     Maintain resume checkpoints using the canonical pipeline metadata parquet.
@@ -77,6 +101,8 @@ class _ProcessingStateManager:
         except MetadataPolicyError:
             raise  # policy refusals are never swallowed (CP-K2e F5)
         except Exception as exc:
+            if _disk_full(exc):
+                raise  # ensuring the table writes it: a full disk is never "no metadata table" (fix 6, F3)
             self.logger.warning("Failed to ensure metadata parquet under %s: %s", self.base_dir, exc)
             return None
 
@@ -169,8 +195,9 @@ class _ProcessingStateManager:
             return
 
         # One locked read-modify-write (K2 native): read, update and replace inside the metadata lock, so a concurrent
-        # writer's rows cannot be lost. Failure handling is unchanged: a read failure (including a missing file) logs
-        # and returns, a write failure is observed and logged, and update errors propagate.
+        # writer's rows cannot be lost. Failure handling: an exhausted filesystem always propagates (fix 6, F3); any
+        # other read failure (including a missing file) logs and returns, a write failure is observed and logged, and
+        # update errors propagate.
         phase = {"value": "read"}
 
         def _update(current):
@@ -218,7 +245,7 @@ class _ProcessingStateManager:
                         row["processing_stage"] = self._mark_stage("", "extract")
                         row["__stem__"] = stem
                         rows.append(row)
-                    df = pd.concat([df, pd.DataFrame(rows)], ignore_index=True)
+                    df = _append_rows_exactly(df, pd.DataFrame(rows, columns=df.columns))
                     mask = df["__stem__"].isin(target_stems)
 
                 df.loc[mask, "extract_status"] = status
@@ -249,6 +276,11 @@ class _ProcessingStateManager:
         except MetadataPolicyError:
             raise  # policy refusals are never swallowed (CP-K2e F5)
         except Exception as exc:
+            if _disk_full(exc):
+                # An exhausted filesystem (ENOSPC/EDQUOT, SQLite disk-full, also as a cause) in any phase -- the lock
+                # file, the temporary parquet, the replacement -- is never a best-effort state miss (fix 6, F3): it
+                # propagates unchanged, so the publication fails typed disk_full and the resume repeats it.
+                raise
             if phase["value"] == "read":
                 self.logger.warning("Unable to read metadata parquet %s: %s", parquet_path, exc)
                 return

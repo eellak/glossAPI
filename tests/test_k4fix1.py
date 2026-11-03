@@ -567,7 +567,9 @@ def test_k4b_f3_original_rewrite_preserving_mtime_is_caught(tmp_path):
     os.utime(original, ns=(before.st_atime_ns, before.st_mtime_ns))
     cached = []
     assert J.observed_original_hash('clean', original, cached) == hashlib.sha256(b'BBBB').hexdigest()
-    assert cached == []  # ctime differs: no cache hit
+    # ctime differs: no cache hit. Fix 6 (ASTRA-FIXES2 F2): the freshly hashed binding is listed for the destructive
+    # frontiers too (was: only cache hits were listed, so this list stayed empty and the fresh original went unchecked).
+    assert cached == [(original, hashlib.sha256(b'BBBB').hexdigest())]
 
 
 def test_k4b_f3_cached_original_is_byte_verified_before_destruction(tmp_path, monkeypatch):

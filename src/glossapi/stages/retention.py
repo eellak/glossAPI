@@ -81,6 +81,38 @@ def run_family(connection, run_id):
     return family
 
 
+def superseded_wrapper_runs(connection):
+    """Compatibility wrapper runs whose publication barrier was attempted again later (fix 6).
+
+    A publication barrier that fails (a full disk, any wrapper exception) is repeated by the resume, which creates a
+    new wrapper run for the same publication task. The earlier wrapper run's failed tasks never run again: their reader
+    edges and their outputs belong to an abandoned attempt. Returns {wrapper_run_id} for every wrapper run that is not
+    the latest one of its publication task."""
+    table=getattr(connection,'event_table','events')
+    latest: dict[Any, Any]={}
+    earlier: set[Any]=set()
+    for encoded, in connection.execute(f"SELECT details_json FROM {table} WHERE event_kind='run' AND reason_code='legacy_observed' "
+                                       "AND message LIKE 'wrapper:%' ORDER BY event_id"):
+        details=json.loads(encoded)
+        task,child=details.get('publication_task_id'),details.get('wrapper_run_id')
+        if not task or not child:continue
+        if task in latest and latest[task]!=child:earlier.add(latest[task])
+        latest[task]=child
+    return earlier-set(latest.values())
+
+
+def superseded_wrapper_tasks(writer):
+    """The failed tasks of superseded wrapper runs (``superseded_wrapper_runs``): a failed attempt the repeated barrier
+    replaced. Their reads are not outstanding consumers, and their outputs are released with the replacement's."""
+    runs=superseded_wrapper_runs(writer.connection)
+    if not runs:return frozenset()
+    found=set()
+    for run in runs:
+        for task in writer.task_states(run):
+            if task['status']=='failed':found.add(task['task_id'])
+    return frozenset(found)
+
+
 def registering_run(connection, file_id):
     """The run whose first artifact fact registered this file (its producer's run)."""
     table=getattr(connection,'event_table','events')
@@ -381,6 +413,9 @@ class RetentionController:
             details['observed_free_bytes_change'] = free_after-free_before
             return self._complete(row,details,'delete_completed',intent)
         except (OSError, ValueError) as error:
+            from .execution import disk_full
+            if disk_full(error):
+                raise  # the barrier's fsync or the ledger met a full disk: the run's typed stop, not delete_failed (fix 6)
             with self.writer.transaction():
                 self.writer.event(self.run_id,event_kind='retention',reason_code='delete_failed',file_id=file_id,
                     version_id=row['version_id'],message=str(error),details={**details,'intent_event_id':intent,
@@ -665,7 +700,28 @@ def _retention_candidates(writer: Any, root: Any, run_id: str, settings: dict[st
                 partial_coverage[row['producer_attempt_id']]=partial
             if partial:continue
         candidates.append(row)
-    return candidates
+    return candidates+_failed_attempt_aliases(writer,candidates)
+
+
+def _failed_attempt_aliases(writer: Any, candidates: list[Any]) -> list[Any]:
+    """Registrations of a candidate's path with the candidate's exact bytes by a FAILED attempt (fix 6).
+
+    A failed attempt (a wrapper that met a full disk or any exception after writing a temporary or intermediate file)
+    registers what it wrote; the repeated attempt writes the same path with the same bytes and registers it again.
+    The failed registration is never released on its own (its producer is not ok), and as an undeclared alias it pinned
+    the successful one, so a retried run kept files an uninterrupted run releases. Such an alias is collected with the
+    candidate: it names the same file and the same bytes. An alias with other bytes stays as before (kept)."""
+    if not candidates:return []
+    chosen={row['file_id'] for row in candidates}
+    found=[]
+    for row in candidates:
+        for alias in writer.connection.execute("SELECT * FROM current_file_state WHERE uri=? AND presence='present' AND file_id!=?",
+                                               (row['uri'],row['file_id'])).fetchall():
+            if alias['file_id'] in chosen or alias['sha256']!=row['sha256'] or alias['ownership']!='managed':continue
+            producer=writer.control()['attempts'].get(alias['producer_attempt_id'])
+            if not producer or writer.task_state(producer['task_id'])['status']!='failed':continue
+            chosen.add(alias['file_id']);found.append(dict(alias))
+    return found
 
 
 def _collect_candidates(writer: Any, root: Any, controller: Any, candidates: list[Any], observer: Any) -> Any:
@@ -681,6 +737,7 @@ def _collect_candidates(writer: Any, root: Any, controller: Any, candidates: lis
         released = {row['file_id'] for row in private_candidates}
         candidates = [row for row in candidates if row['file_id'] not in released]
     by_stage=defaultdict(list)
+    superseded=superseded_wrapper_tasks(writer)
     for row in candidates:
         if not retention_facts(writer.connection,row['file_id'])['declaration']:by_stage[row['stage']].append(row)
     for stage,files in by_stage.items():
@@ -688,7 +745,9 @@ def _collect_candidates(writer: Any, root: Any, controller: Any, candidates: lis
         for offset in range(0,len(files),128):
             with writer.batch():
                 for row in files[offset:offset+128]:
-                    consumers=[item[0] for item in writer.connection.execute('SELECT DISTINCT a.task_id FROM attempt_inputs i JOIN attempts a USING(attempt_id) WHERE i.file_id=?',(row['file_id'],))]
+                    # A failed task of a superseded wrapper run never reads again: not a planned consumer (fix 6).
+                    consumers=[item[0] for item in writer.connection.execute('SELECT DISTINCT a.task_id FROM attempt_inputs i JOIN attempts a USING(attempt_id) WHERE i.file_id=?',(row['file_id'],))
+                               if item[0] not in superseded]
                     # Raw is a final product when no real text reader selected it.
                     final=row['kind'] in ('clean_markdown','ocr_markdown','math_markdown') or (row['kind']=='raw_markdown' and len(consumers)==1)
                     controller.declare(row['file_id'],consumers,final=final,source=row['kind']=='download_payload')

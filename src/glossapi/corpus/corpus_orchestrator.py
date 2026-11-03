@@ -20,6 +20,16 @@ import numpy as np
 import pandas as pd
 
 from .._naming import canonical_stem
+
+# A multi-GPU extract worker that met an exhausted filesystem stops with this code after reporting a "disk_full" event
+# (fix 6, F3 audit). The controller then neither marks its batch problematic nor skip-lists it nor respawns the worker;
+# it raises the typed error once every worker has stopped, so the resume extracts those documents again.
+WORKER_DISK_FULL_EXIT = 74
+
+
+def _disk_full(error: BaseException) -> bool:
+    from ..stages.execution import disk_full
+    return disk_full(error)
 from ..gloss_section import GlossSection
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
@@ -438,8 +448,9 @@ def gpu_extract_worker_queue(
         if _marker_path is not None:
             try:
                 _marker_path.write_text("\n".join(batch_items) + "\n", encoding="utf-8")
-            except Exception:
-                pass
+            except Exception as error:
+                if _disk_full(error):
+                    raise  # inside _run_batch: reported as the batch's disk_full (fix 6, F3 audit)
 
     def _clear_current() -> None:
         if _status_proxy is not None:
@@ -618,9 +629,10 @@ def gpu_extract_worker_queue(
     last_progress = _time.time()
     processed = 0
     exit_code = 0
+    disk_full_stop = False
 
     def _run_batch(batch_items: List[str]) -> None:
-        nonlocal processed, exit_code
+        nonlocal processed, exit_code, disk_full_stop
         if not batch_items:
             return
         try:
@@ -647,6 +659,29 @@ def gpu_extract_worker_queue(
             processed += len(batch_items)
             _clear_current()
         except Exception as _e:
+            if _disk_full(_e):
+                # Not a problematic batch: the filesystem is full. Report it typed and stop this worker (fix 6).
+                import errno as _errno
+                exit_code = WORKER_DISK_FULL_EXIT
+                disk_full_stop = True
+                print(f"[GPU{device_id}] Batch stopped by a full disk ({len(batch_items)}): {_e}")
+                if result_q is not None:
+                    try:
+                        result_q.put({
+                            "ledger_observations": drain_worker_observations(),
+                            "event": "disk_full",
+                            "worker": _worker_label,
+                            "device_id": device_id,
+                            "worker_slot": worker_slot,
+                            "items": list(batch_items),
+                            "errno": getattr(_e, "errno", None) if getattr(_e, "errno", None) in (_errno.ENOSPC, _errno.EDQUOT) else _errno.ENOSPC,
+                            "pid": _os.getpid(),
+                            "error": str(_e),
+                        })
+                    except Exception:
+                        pass
+                _clear_current()
+                return
             exit_code = 1
             print(f"[GPU{device_id}] Batch failed ({len(batch_items)}): {_e}")
             if result_q is not None:
@@ -682,6 +717,8 @@ def gpu_extract_worker_queue(
             if not normalized:
                 continue
             _run_batch(normalized)
+            if disk_full_stop:
+                break
             # Occasional heartbeat
             if _time.time() - last_progress > 30:
                 try:
