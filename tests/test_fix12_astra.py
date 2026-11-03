@@ -62,8 +62,9 @@ def _conditions(error_or_list):
     return [(Path(entry['path']).name, entry['reason']) for entry in entries]
 
 
-def _register_generation(writer, run, path, data, source):
-    """A newer committed generation of ``path`` (its own task/attempt, its immutable source, the copy)."""
+def _register_generation(writer, run, path, data, source, finish='ok'):
+    """A newer committed generation of ``path`` (its own task/attempt, its immutable source, the copy). ``finish``: the
+    producer attempt's terminal status (fix 13: only ``ok`` makes the registration committed), ``None`` = unfinished."""
     path.write_bytes(data)
     with writer.transaction():
         manifest = writer.snapshot('inputs', {'kind': 'inputs', 'files': [_sha(data)]})
@@ -77,6 +78,11 @@ def _register_generation(writer, run, path, data, source):
                                         sha256=_sha(data), bytes=len(data), retention_class='final')
         copy_id = writer.artifact(run, 'export', 'document_jsonl', path.as_uri(), producer_attempt_id=attempt,
                                   sha256=_sha(data), bytes=len(data), retention_class='final')
+        writer.snapshot('product_projection', {'kind': 'product_projection', 'product_uri': path.as_uri(),
+                                               'immutable_uri': source.as_uri() if source is not None else None,
+                                               'sha256': _sha(data), 'producer_attempt_id': attempt})
+        if finish:
+            writer.finish(run, task, attempt, status=finish, reason_code='export_completed' if finish == 'ok' else 'export_exception')
     return source_id, copy_id
 
 
@@ -94,8 +100,8 @@ def test_authoritative_target_is_the_newest_registration_by_event_order(tmp_path
         target = writer.authoritative_target(path)
         assert isinstance(target, W.TargetBytes) and target.registration['file_id'] == newer_id
         assert target.sha256 == _sha(NEWER) and target.source['file_id'] == newer_source_id
-        with writer.transaction():
-            writer.event(run, event_kind='artifact', reason_code='deleted', file_id=newer_id, details={'policy_deletion': True})
+        with writer.transaction():  # fix 13: a committed policy deletion (retention), never a presence observation
+            writer.event(run, event_kind='retention', reason_code='delete_completed', file_id=newer_id, details={'policy_deletion': True})
         assert isinstance(writer.authoritative_target(path), W.TargetAbsent)
         assert isinstance(writer.authoritative_target(tmp_path / 'never-registered.jsonl'), W.NoTarget)
 
@@ -216,7 +222,8 @@ def test_rollback_observation_does_not_discharge_the_named_copy(tmp_path):
         with writer.transaction():
             failed = writer.run({}, {}, {}, code_revision='fix12-failed')
         writer.record_uncommitted_write(failed, path, _sha(CONTENT), len(CONTENT), wrapper_stage='export', existed=True)
-        failed_source_id, failed_id = _register_generation(writer, failed, path, CONTENT, tmp_path / '.glossapi/artifacts/failed/export.jsonl')
+        failed_source_id, failed_id = _register_generation(writer, failed, path, CONTENT, tmp_path / '.glossapi/artifacts/failed/export.jsonl',
+                                                           finish=None)
         writer.barrier_context = {'run_id': failed, 'debug': 'off'}
         writer.durable_barrier()
     path.unlink()
@@ -312,14 +319,18 @@ class _FakeProc:
         return P(value)
 
 
-def _stop_with(monkeypatch, table, fail):
+def _stop_with(monkeypatch, table, fail, expect_untrusted=False):
     from glossapi.stages import execution as E
     proc, sent = _FakeProc(table, fail), []
     monkeypatch.setattr(E, 'Path', proc.path)
     monkeypatch.setattr(E, 'os', SimpleNamespace(kill=lambda *a: sent.append(('kill',) + a),
                                                  killpg=lambda *a: sent.append(('killpg',) + a)))
     process = SimpleNamespace(pid=100, join=lambda *a: (sent.append(('join',) + a), table.update({100: (1, 100, 'Z'), 101: (100, 101, 'Z')})))
-    E._stop_process(process)
+    if expect_untrusted:  # fix 13 (H4): an incomplete enumeration is never certified as fenced
+        with pytest.raises(RuntimeError, match='untrusted'):
+            E._stop_process(process)
+    else:
+        E._stop_process(process)
     return proc, sent
 
 
@@ -332,8 +343,9 @@ def test_stop_process_survives_esrch_while_the_proc_glob_advances(monkeypatch):
 
 
 def test_stop_process_still_stops_the_worker_when_enumeration_keeps_failing(monkeypatch):
-    """Every enumeration attempt fails: the known family (the worker itself) is still signalled and joined."""
-    proc, sent = _stop_with(monkeypatch, {1: (0, 1, 'S'), 100: (1, 100, 'S')}, fail=99)
+    """Every enumeration attempt fails: the known family (the worker itself) is still signalled and joined; then, since
+    the enumeration never completed, the workspace is reported untrusted (fix 13, H4) instead of certified fenced."""
+    proc, sent = _stop_with(monkeypatch, {1: (0, 1, 'S'), 100: (1, 100, 'S')}, fail=99, expect_untrusted=True)
     assert proc.attempts == 3
     assert ('kill', 100, signal.SIGTERM) in sent and ('kill', 100, signal.SIGKILL) in sent and ('join',) in sent
 
@@ -588,7 +600,8 @@ def _outcome(function, output, inventory):
         return {'state': 'refused', 'code': code, 'reasons': sorted({entry['reason'] for entry in getattr(error, 'conditions', [])})}
     visible = _visible(output)
     differs = sorted(set(visible) ^ set(inventory) | {key for key in visible if key in inventory and visible[key] != inventory[key]})
-    return {'state': result['state'], 'differs': differs, 'contradictions': _contradictions(output)}
+    return {'state': result['state'], 'differs': differs, 'contradictions': _contradictions(output),
+            'gate': (result.get('completion_gate') or {}).get('verdict')}
 
 
 def _record(row):
@@ -615,6 +628,7 @@ def test_fault_sweep(tmp_path_factory, monkeypatch, operation, fault, scenario, 
     _record(row)
     if first['state'] == 'completed':
         assert not first['differs'] and not first['contradictions'], row
+        assert first['gate'] == 'pass', row  # fix 13: no completion without a passing completion gate
     assert first['state'] != 'refused' or first['code'] in ('unresolved_recovery', 'post_close_edit', 'disk_full'), row
     assert (retry['state'] == 'completed' and not retry['differs'] and not retry['contradictions']) or \
         (retry['state'] == 'refused' and retry['code'] in ('unresolved_recovery', 'post_close_edit')), row
@@ -666,7 +680,8 @@ def test_rollback_fault_matrix(tmp_path, monkeypatch, operation, fault, scenario
                 code = 'disk_full' if disk_full(error) else getattr(error, 'code', None) or type(error).__name__
                 return {'state': 'raised', 'code': code, 'current': current}
             listed = sorted(entry['reason'] for entry in writer.rollback_unresolved)
-            return {'state': 'listed' if listed else 'clean', 'reasons': listed, 'current': current}
+            acted = bool(changed) and str(ps.resolve_metadata_target(path)) in changed
+            return {'state': 'listed' if listed else 'clean', 'reasons': listed, 'current': current, 'acted': acted}
         first = attempt()
         monkeypatch.undo()
         retry = attempt()
@@ -680,9 +695,14 @@ def test_rollback_fault_matrix(tmp_path, monkeypatch, operation, fault, scenario
     for outcome in (first, retry):
         if outcome['state'] == 'clean':
             assert outcome['current'] != recorded or recorded == target, row  # the failed bytes never stay after a clean return
-            assert outcome['current'] in (target, None) or outcome['current'] not in (recorded,), row
+            if outcome['acted']:
+                # Fix 13 (M1): a clean reconciliation that acted leaves exactly the target (or the intended absence).
+                assert outcome['current'] == target, row
+            else:
+                # Foreign bytes are tolerated only for a verified no-action outcome (bytes nobody recorded, left alone).
+                assert outcome['current'] in (target, None) or outcome['current'] != recorded, row
         if outcome['state'] == 'raised':
             assert outcome['code'] in ('unresolved_recovery', 'disk_full'), row
     assert retry['state'] in ('clean', 'listed') or retry['code'] in ('unresolved_recovery',), row
     if retry['state'] == 'clean' and scenario != 'temporary':
-        assert retry['current'] == target or (retry['current'] not in (recorded,) and fault == 'mismatch'), row
+        assert retry['current'] == target or (not retry['acted'] and retry['current'] != recorded and fault == 'mismatch'), row

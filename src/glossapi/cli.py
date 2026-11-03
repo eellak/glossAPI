@@ -317,6 +317,11 @@ def main(argv=None):
             elif args.command == "status":
                 data = status_view(connection, run=run, stage=args.stage, selector=args.file)
                 exit_code = 1 if data["counts"]["failed"] else 0
+                if data.get("state") == "unresolved_recovery":
+                    # The run's completion gate refused (fix 13): exit 3, typed, as the refused run did.
+                    exit_code = 3
+                    envelope["errors"].append(dict(code="unresolved_recovery", message="the run's completion gate refused its products",
+                        document_id=None, stage=None, details={"conditions": (data.get("completion_gate") or {}).get("failures", [])}))
                 if exit_code and run is not None:
                     # Exit 1 names its failures as typed errors, as run does (INTEG-G2), never an empty list.
                     from .ledger.reader import status_failure_errors

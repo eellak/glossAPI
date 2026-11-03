@@ -194,11 +194,22 @@ class WarmWorkerPool:
 
     def close(self):
         self.closed = True
+        failure = None
         for slot in list(self.slots):
-            if slot['request'] is None and slot['process'].is_alive():
-                slot['pipe'].send(None)
-                slot['process'].join(1)
-            self._discard(slot)
+            # Every known worker is stopped and cleaned up even if another one could not be fenced (fix 13, H4); the
+            # first failure is raised afterwards.
+            try:
+                if slot['request'] is None and slot['process'].is_alive():
+                    slot['pipe'].send(None)
+                    slot['process'].join(1)
+            except Exception as error:  # noqa: BLE001 - the worker is still discarded below
+                failure = failure or error
+            try:
+                self._discard(slot)
+            except Exception as error:  # noqa: BLE001 - raised after the other workers are discarded
+                failure = failure or error
+        if failure is not None:
+            raise failure
 
     def __enter__(self):
         return self

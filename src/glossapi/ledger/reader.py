@@ -508,6 +508,29 @@ def interruption_explanation(connection: Any, run: Any) -> Any:
     return dict(found, action="free space (or enlarge the filesystem), then: glossapi run --resume " + str(run["run_id"]))
 
 
+def completion_gate_verdict(connection, run_id) -> dict[str, Any] | None:
+    """The persisted completion-gate verdict of a run (fix 13, decision B): the latest ``completion_gate`` event of the
+    run (``pass``/``refused`` with counts, bytes read, elapsed, failures), or ``None`` when the gate never ran for it."""
+    found = connection.execute("SELECT event_id,message,details_json FROM events WHERE run_id=? AND reason_code='completion_gate' "
+                               "ORDER BY event_id DESC LIMIT 1", (run_id,)).fetchone()
+    if found is None:
+        return None
+    details = json.loads(found[2]) if found[2] else {}
+    return dict(event_id=found[0], verdict=details.get('verdict', found[1]), products=details.get('products'),
+                bytes_read=details.get('bytes_read'), elapsed_ns=details.get('elapsed_ns'),
+                failure_count=details.get('failure_count'), failures=(details.get('failures') or [])[:20])
+
+
+def _gated_state(state, verdict):
+    """A run whose tasks say ``completed``/``completed_with_failures`` is reported so only with a passing completion
+    gate verdict (fix 13): ``unresolved_recovery`` when the gate refused, ``unverified`` when it never ran."""
+    if state not in ("completed", "completed_with_failures"):
+        return state
+    if verdict is None:
+        return "unverified"
+    return state if verdict["verdict"] == "pass" else "unresolved_recovery"
+
+
 def status_view(connection, *, run=None, stage=None, selector=None):
     document = resolve_document(connection, selector) if selector else None
     rows = _rows(connection, "SELECT s.*,v.document_id FROM current_task_state s LEFT JOIN document_versions v ON v.version_id=s.version_id WHERE s.run_id=? ORDER BY s.ordinal,s.task_id", (run["run_id"],)) if run else []
@@ -528,9 +551,11 @@ def status_view(connection, *, run=None, stage=None, selector=None):
             device_id=attempt.get("device_id"), started_at=event.get("started_at"), elapsed_ns=event.get("duration_ns"), last_heartbeat_at=heartbeat,
             heartbeat_age_ns=None, stale_reason="no_streaming_leases_recorded_for_run"))
     state = "completed_with_failures" if counts["failed"] else "running" if counts["running"] else "waiting" if counts["planned"] else "completed"
+    verdict = completion_gate_verdict(connection, run["run_id"]) if run else None
+    state = _gated_state(state, verdict) if run else state
     last_event = connection.execute("SELECT MAX(event_id) FROM events WHERE run_id=?", (run["run_id"],)).fetchone()[0] if run else None
     present = connection.execute("SELECT SUM(bytes) FROM current_file_state WHERE presence='present'").fetchone()[0]
-    result: dict[str, Any] = dict(state=state, counts=counts, documents=documents, queues=[], barriers=[], resources=dict(
+    result: dict[str, Any] = dict(state=state, completion_gate=verdict, counts=counts, documents=documents, queues=[], barriers=[], resources=dict(
         disk_budget_bytes=None, present_bytes=present or 0, reserved_bytes=None, free_bytes=None), last_event_id=last_event,
         unknowns=["runtime_queues_resources_not_recorded_for_non_streaming_run"])
     if document:
@@ -617,7 +642,7 @@ def status_failure_errors(connection, run: dict[str, Any], status: dict[str, Any
                            document_id=None, stage=None, details=dict(state=status["state"], counts=status["counts"]))]
 
 
-def report_view(connection, *, run=None, stage=None):
+def report_view(connection, *, run=None, stage=None) -> dict[str, Any]:
     status = status_view(connection, run=run, stage=stage)
     conflicts = [dict(event_id=e["event_id"], **evidence(connection, e)) for e in _history(connection, run) if e["reason_code"] == "legacy_conflict"]
     rows = status["documents"]
@@ -646,7 +671,7 @@ def report_view(connection, *, run=None, stage=None):
         rows.append(dict(document_id=document[0], source_key=document[1], version_id=version, stage=observed_stage,
                          operation="legacy.import", status=None, reason_code="legacy_unknown", reasons=reasons, scope="document"))
     document_ids = list(dict.fromkeys(row["document_id"] for row in rows if row["document_id"]))
-    return dict(rows=rows, retention=retention_summary(connection,run),
+    return dict(rows=rows, retention=retention_summary(connection,run), state=status["state"], completion_gate=status["completion_gate"],
                 resources=status["resources"], counts=status["counts"], conflicts=conflicts,
                 sources=source_metadata(connection, document_ids, run))
 

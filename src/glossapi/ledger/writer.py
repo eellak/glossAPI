@@ -190,15 +190,27 @@ class TargetBytes:
 
 
 class TargetAbsent:
-    """``authoritative_target``: the newest registration of the path was deleted by policy (presence ``deleted``):
-    the path must hold nothing."""
-    __slots__ = ('registration',)
+    """``authoritative_target``: the path must hold nothing (``basis``: ``policy_deletion`` of its newest committed
+    registration, or ``every_registration_invalidated``: only failed attempts ever registered it)."""
+    __slots__ = ('registration', 'basis')
 
-    def __init__(self, registration: dict[str, Any]):
-        self.registration = registration
+    def __init__(self, registration: dict[str, Any], basis: str = 'policy_deletion'):
+        self.registration, self.basis = registration, basis
 
     def __repr__(self) -> str:
         return f"Absent({self.registration['file_id']})"
+
+
+class TargetRefused:
+    """``authoritative_target`` (fix 13): ``expected_products`` refuses the path (failed-only, a pending republication,
+    no digest): recovery acts on nothing and the path is unresolved."""
+    __slots__ = ('reason', 'registrations')
+
+    def __init__(self, reason: str, registrations: list[str]):
+        self.reason, self.registrations = reason, list(registrations)
+
+    def __repr__(self) -> str:
+        return f'Refused({self.reason})'
 
 
 class NoTarget:
@@ -210,7 +222,209 @@ class NoTarget:
         return 'NoTarget()'
 
 
-Target = TargetBytes | TargetAbsent | NoTarget
+Target = TargetBytes | TargetAbsent | TargetRefused | NoTarget
+
+
+class ExpectedSha:
+    """``expected_products``: the path must hold ``sha256``, the bytes of registration ``registration``."""
+    __slots__ = ('sha256', 'registration')
+
+    def __init__(self, sha256: str, registration: str):
+        self.sha256, self.registration = sha256, registration
+
+    def __repr__(self) -> str:
+        return f'Sha({self.sha256[:12]})'
+
+
+class ExpectedAbsent:
+    """``expected_products``: the path must hold nothing (a committed policy deletion of its newest registration, or
+    every registration of it invalidated by a rollback)."""
+    __slots__ = ('registration', 'basis')
+
+    def __init__(self, registration: str | None, basis: str):
+        self.registration, self.basis = registration, basis
+
+    def __repr__(self) -> str:
+        return f'Absent({self.basis})'
+
+
+class ExpectedRefuse:
+    """``expected_products``: no committed generation can be named for the path (``reason``)."""
+    __slots__ = ('reason', 'registrations')
+
+    def __init__(self, reason: str, registrations: list[str]):
+        self.reason, self.registrations = reason, list(registrations)
+
+    def __repr__(self) -> str:
+        return f'Refuse({self.reason})'
+
+
+Expected = ExpectedSha | ExpectedAbsent | ExpectedRefuse
+INVALIDATION_REASONS = ('registration_invalidated', 'pending_republication')
+
+
+def _public_uri(uri: str) -> bool:
+    return '/.glossapi/' not in uri
+
+
+def _registration_classes(connection: Any, rows: list[Any], excluded_attempts: Any = ()) -> dict[str, str]:
+    """``file_id -> class`` for registration rows ``(file_id, uri, sha256, producer_attempt_id, rowid)`` (fix 13), from
+    the ledger alone (no presence observation, no file):
+    - ``committed``: the producer attempt's terminal status is ``ok`` and the registration is a generation of it:
+      bound by a publication record (the ``product_projection`` snapshot of ``products.publish_products``), or made by
+      a generation producer (a stage worker, a publication), never by a legacy compatibility wrapper on its own;
+    - ``observation``: registered by a legacy compatibility wrapper (the journal's ``orchestrator:<pid>`` /
+      ``observed_by_orchestrator`` attempts) without a publication record: that wrapper's observation of a file the
+      legacy code wrote (and may change or remove; its output manifest lists observed files, not generations), never a
+      committed generation, whatever the wrapper's outcome (a failed download step still observed its logs);
+    - ``failed`` (terminal ``failed``/``skipped``), ``unfinished`` (no terminal status), ``excluded`` (a failed attempt a
+      rollback is undoing), ``invalidated`` / ``pending_republication`` (a rollback's persistent invalidation row)."""
+    table = connection.event_table
+    attempts = sorted({row[3] for row in rows if row[3]})
+    wrappers: set[str] = set()
+    for offset in range(0, len(attempts), 500):
+        chunk = attempts[offset:offset+500]
+        wrappers |= {attempt for attempt, worker in connection.execute('SELECT attempt_id,worker_id FROM attempts WHERE attempt_id IN ('
+                                                                       + ','.join('?'*len(chunk)) + ')', chunk)
+                     if worker.startswith('orchestrator:') or worker == 'observed_by_orchestrator'}
+    terminal: dict[str, tuple[str, str | None]] = {}
+    for offset in range(0, len(attempts), 500):
+        chunk = attempts[offset:offset+500]
+        for attempt, value, manifest in connection.execute(f"SELECT attempt_id,status,output_manifest_sha256 FROM {table} WHERE event_kind='lifecycle' "
+                                                           'AND status IS NOT NULL AND attempt_id IN (' + ','.join('?'*len(chunk)) + ') ORDER BY event_id', chunk):
+            terminal[attempt] = (value, manifest)
+    publications = set()
+    if rows:
+        for encoded, in connection.execute("SELECT json FROM snapshots WHERE kind='product_projection'"):
+            record = json.loads(encoded)
+            publications.add((record.get('product_uri'), record.get('sha256'), record.get('producer_attempt_id')))
+    file_ids = [row[0] for row in rows]
+    invalidated: dict[str, str] = {}
+    for offset in range(0, len(file_ids), 500):
+        chunk = file_ids[offset:offset+500]
+        for file_id, reason in connection.execute(f"SELECT file_id,reason_code FROM {table} WHERE event_kind='invalidation' AND reason_code IN "
+                                                  "('registration_invalidated','pending_republication') AND file_id IN (" + ','.join('?'*len(chunk)) + ')', chunk):
+            if invalidated.get(file_id) != 'pending_republication':
+                invalidated[file_id] = reason
+    excluded = set(excluded_attempts)
+    classes: dict[str, str] = {}
+    for file_id, uri, digest, producer, _ in rows:
+        if file_id in invalidated:
+            classes[file_id] = invalidated[file_id]
+        elif not producer or producer in excluded:
+            classes[file_id] = 'excluded'
+        elif producer in wrappers and (uri, digest, producer) not in publications:
+            classes[file_id] = 'observation'  # a legacy wrapper's observation, whatever that wrapper's outcome
+        elif producer not in terminal:
+            classes[file_id] = 'unfinished'
+        elif terminal[producer][0] != 'ok':
+            classes[file_id] = 'failed'
+        else:
+            classes[file_id] = 'committed'  # a publication record, or a generation producer's registration
+    return classes
+
+
+def committed_registrations(connection: Any, file_ids: Any) -> set[str]:
+    """The registrations among ``file_ids`` that ``expected_products`` counts as committed generations (fix 13). Used by
+    the consistency check: a present registration that is not committed is bookkeeping to correct; a committed one
+    that disagrees with the bytes is a contradiction."""
+    file_ids = sorted(set(file_ids))
+    rows: list[Any] = []
+    for offset in range(0, len(file_ids), 500):
+        chunk = file_ids[offset:offset+500]
+        rows += connection.execute('SELECT file_id,uri,sha256,producer_attempt_id,rowid FROM files WHERE file_id IN ('
+                                   + ','.join('?'*len(chunk)) + ')', chunk).fetchall()
+    return {file_id for file_id, value in _registration_classes(connection, rows).items() if value == 'committed'}
+
+
+def expected_products(connection: Any, *, uris: Any = None, excluded_attempts: Any = ()) -> dict[str, Expected]:
+    """THE authority on what every managed public product must hold (fix 13, decision B): ``{uri: Sha | Absent |
+    Refuse}``. Pure over the ledger: it reads no file, hashes nothing, and never reads presence observations
+    (``missing``/``corrupt``/``present`` artifact events). Its only inputs:
+    - the managed registrations of each public path (outside ``.glossapi``), in registration order (``files`` rowid);
+    - each registration's producer attempt, its terminal status (only ``ok`` counts) and whether the registration is a
+      generation of it (its terminal output manifest, or a ``product_projection`` publication record) rather than a
+      wrapper's observation of a file (``_registration_classes``); ``excluded_attempts`` (the failed attempts a rollback
+      is undoing) never count;
+    - the persistent invalidation rows a rollback writes (``registration_invalidated``, ``pending_republication``:
+      ``invalidation`` events bound to a registration; no later observation undoes them);
+    - committed explicit deletions (``completed_deletions``, retention ``delete_completed``/``delete_recovered``, and
+      a ``deleted`` record that names its deletion: a legacy wrapper's observed cleanup, a policy deletion, a private
+      release).
+    Per path, newest registration first: observations and failed producers are passed over; an unfinished newest
+    producer makes the path ambiguous (``Refuse('producer_unfinished')``). The newest committed generation decides:
+    ``Sha(its sha256)``, or ``Absent`` if it, or any newer registration of the path (a wrapper's temporary
+    registration the retention controller deletes), was explicitly deleted. A ``pending_republication`` newer than every committed
+    generation -> ``Refuse('pending_republication')``. No committed generation: ``Absent`` if every registration of the
+    path was invalidated (or is being rolled back), ``Refuse('no_committed_registration')`` if failed producers wrote
+    it; a path only ever observed (never a generation) is not a managed product and is not in the map."""
+    table = connection.event_table
+    selected = sorted(set(uris)) if uris else None
+    query = "SELECT file_id,uri,sha256,producer_attempt_id,rowid FROM files WHERE ownership='managed'"
+    rows: list[Any] = []
+    if selected is None:
+        rows = connection.execute(query + ' ORDER BY rowid').fetchall()
+    else:
+        for offset in range(0, len(selected), 500):
+            chunk = selected[offset:offset+500]
+            rows += connection.execute(query + ' AND uri IN (' + ','.join('?'*len(chunk)) + ')', chunk).fetchall()
+        rows.sort(key=lambda row: row[4])
+    rows = [tuple(row) for row in rows if _public_uri(row[1])]
+    if not rows:
+        return {}
+    classes = _registration_classes(connection, rows, excluded_attempts)
+    file_ids = [row[0] for row in rows]
+    deleted: set[str] = set()
+    for offset in range(0, len(file_ids), 500):
+        chunk = file_ids[offset:offset+500]
+        marks = ','.join('?'*len(chunk))
+        deleted |= {file_id for file_id, in connection.execute(f"SELECT file_id FROM {table} WHERE event_kind='retention' "
+                                                               f"AND reason_code IN ('delete_completed','delete_recovered') AND file_id IN ({marks})", chunk)}
+        if getattr(connection, 'compact', False):
+            deleted |= {file_id for file_id, in connection.execute("SELECT file_id FROM retention_events WHERE reason_code IN "
+                                                                   f"('delete_completed','delete_recovered') AND file_id IN ({marks})", chunk)}
+        if getattr(connection, 'storage_version', 0) >= 3:
+            deleted |= {file_id for file_id, in connection.execute(f'SELECT file_id FROM completed_deletions WHERE file_id IN ({marks})', chunk)}
+        # The deleter's own record of an explicit deletion (a legacy wrapper's observed cleanup, a policy deletion, a
+        # private release): a ``deleted`` record that names its deletion. Other presence events are never read.
+        for file_id, encoded in connection.execute(f"SELECT file_id,details_json FROM {table} WHERE event_kind='artifact' "
+                                                   f"AND reason_code='deleted' AND file_id IN ({marks})", chunk):
+            details = json.loads(encoded) if encoded else {}
+            if details.get('deletion') or details.get('policy_deletion') or details.get('private_release_intent'):
+                deleted.add(file_id)
+    by_uri: dict[str, list[Any]] = {}
+    for row in rows:
+        by_uri.setdefault(row[1], []).append(row)
+    expected: dict[str, Expected] = {}
+    for uri, registrations in by_uri.items():
+        kinds = [classes[row[0]] for row in registrations]
+        if all(kind == 'observation' for kind in kinds):
+            continue  # only ever a wrapper's observation: not a managed product
+        live = [row for row in registrations if classes[row[0]] in ('committed', 'unfinished')]
+        if live and classes[live[-1][0]] == 'unfinished':
+            expected[uri] = ExpectedRefuse('producer_unfinished', [live[-1][0]])
+            continue
+        committed = [row for row in registrations if classes[row[0]] == 'committed']
+        pending = [row for row in registrations if classes[row[0]] == 'pending_republication']
+        newest = committed[-1] if committed else None
+        # The newest committed explicit deletion of the path, whichever registration of it the deleter named: the
+        # retention controller deletes a legacy wrapper's temporary registration (``temporary_cleaning_report``) of a
+        # path an earlier publication also committed; after that deletion the path is gone by policy.
+        removed = [row for row in registrations if row[0] in deleted]
+        if pending and (newest is None or newest[4] < pending[-1][4]):
+            expected[uri] = ExpectedRefuse('pending_republication', [row[0] for row in pending])
+        elif newest is None:
+            if all(kind in ('invalidated', 'registration_invalidated', 'excluded', 'observation') for kind in kinds):
+                expected[uri] = ExpectedAbsent(None, 'every_registration_invalidated')
+            else:
+                expected[uri] = ExpectedRefuse('no_committed_registration', [row[0] for row in registrations])
+        elif newest[0] in deleted or (removed and removed[-1][4] > newest[4]):
+            expected[uri] = ExpectedAbsent(newest[0] if newest[0] in deleted else removed[-1][0], 'policy_deletion')
+        elif not newest[2]:
+            expected[uri] = ExpectedRefuse('no_digest', [newest[0]])
+        else:
+            expected[uri] = ExpectedSha(newest[2], newest[0])
+    return expected
 Resolved, Unresolved = _ResolvedOutcome, _UnresolvedOutcome
 
 
@@ -349,6 +563,49 @@ def _fsync_path_if_present(path):
     except FileNotFoundError:return
     try:os.fsync(descriptor)
     finally:os.close(descriptor)
+
+
+def _durability_phase(expected: dict[Path, str | None]) -> dict[Path, _UnresolvedOutcome]:
+    """THE durability phase shared by the run-start recovery and the rollback (fix 12 R1, fix 13 H3), run after every
+    restore or removal of the batch: each file that must hold bytes is flushed, then each affected directory once
+    (after the last replacement in it), then each file is hashed again against the bytes it must hold (``None``: the
+    path must be absent). Returns the paths that failed, with their Unresolved reason; the others are durable."""
+    from .encoding import file_hash
+    failed: dict[Path, _UnresolvedOutcome] = {}
+    for path, digest in expected.items():
+        if digest is None:
+            continue
+        try:
+            _fsync_path(path)
+        except BaseException as error:
+            if _must_propagate(error):raise
+            failed[path] = (_UnresolvedOutcome(path, 'missing_at_flush', {'error': str(error)}) if isinstance(error, FileNotFoundError)
+                            else _unresolved_from_error(path, error))
+    directories: dict[Path, list[Path]] = {}
+    for path in expected:
+        if path not in failed:
+            directories.setdefault(path.parent, []).append(path)
+    for directory, paths in sorted(directories.items(), key=lambda item: len(item[0].parts), reverse=True):
+        try:
+            descriptor = os.open(directory, os.O_RDONLY)
+            try:os.fsync(descriptor)
+            finally:os.close(descriptor)
+        except BaseException as error:
+            if _must_propagate(error):raise
+            for path in paths:
+                failed[path] = _UnresolvedOutcome(path, 'flush_failed', {'error': f'{type(error).__name__}: {error}'})
+    for path, digest in expected.items():
+        if path in failed:
+            continue
+        try:
+            current = file_hash(path) if os.path.lexists(path) else None
+        except BaseException as error:
+            if _must_propagate(error):raise
+            failed[path] = _unresolved_from_error(path, error)
+            continue
+        if current != digest:
+            failed[path] = _UnresolvedOutcome(path, 'changed_after_flush', {'sha256': current})
+    return failed
 
 
 def _recover_locked(path, decide, lock=None):
@@ -677,6 +934,8 @@ class LedgerWriter:
         self.barrier_context: dict[str, Any] | None = None
         # debug=on keeps intermediates: their copies may rely on the retained private source.
         self.retained_intermediates = False
+        self.completion_gate_run: str | None = None  # set by the run that is completing (fix 13): close runs the gate
+        self.completion_gate_record: dict[str, Any] | None = None
         self.barrier_totals: dict[str, Any] = dict(barrier_count=0,file_count=0,byte_count=0,directory_count=0,unlink_count=0,flush_ns=0,by_reason={})
         self.lock = os.open(self.path.parent, os.O_RDONLY)
         try:
@@ -844,6 +1103,11 @@ class LedgerWriter:
                     self.connection.rollback()
                     self._file_catalog = None
                 if hasattr(self,'_durable_files'):self.durable_barrier()
+                gate_run = getattr(self,'completion_gate_run',None)
+                if gate_run:
+                    # The completion gate (fix 13, decision B): after the final flush, under the workspace lock; it
+                    # records its verdict and raises UnresolvedRecoveryError if the products are not the expected ones.
+                    self.completion_gate(gate_run)
                 if self.barrier_context:self._vacuum_at_run_close()
                 if getattr(self, '_validated', False):
                     # The close fence (CP-K4c3 R2). Fold our own WAL into the file completely; then observe the
@@ -1216,6 +1480,9 @@ class LedgerWriter:
                                                               + ','.join('?'*len(chunk)) + ')', chunk)}
         changed: list[str] = []
         events: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
+        invalidations: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
+        acted: dict[Path, str | None] = {}  # path -> the bytes it must now hold (None: removed)
+        acted_rows: list[dict[str, Any]] = []
         def lock_of(physical: str, current: Any = False) -> tuple[str | None, bool]:
             # The lock the records of this path bind (``_agreed_lock``, shared with the run-start recovery). ``current``
             # given: only the records that apply to the bytes now at the path (fix 10, N3), so moving or deleting a file
@@ -1228,7 +1495,14 @@ class LedgerWriter:
             # ('remove', meaning) | ('restore', target) | ('release', target).
             if current is None or current not in recorded[physical]:
                 return ('resolved', 'no_recorded_bytes_at_path', {'sha256': current})
-            if isinstance(target, NoTarget):
+            if isinstance(target, TargetRefused):
+                if target.reason == 'pending_republication':
+                    # Already recorded by an earlier rollback: the failed bytes stay for the repeating publication; the
+                    # obligation stands (the completion gate refuses until a newer committed generation exists).
+                    return ('resolved', 'pending_republication_recorded', {'registrations': target.registrations})
+                return ('unresolved', target.reason, {'registrations': target.registrations})
+            if isinstance(target, NoTarget) or isinstance(target, TargetAbsent) and target.basis == 'every_registration_invalidated':
+                # No committed generation of the path: only the failed attempts registered it.
                 if created[physical]:
                     return ('remove', 'own_created_file_removed')
                 return ('resolved', 'no_target_caller_seeded', {'sha256': current})
@@ -1289,8 +1563,8 @@ class LedgerWriter:
                     after = file_hash(path) if path.is_file() else None
                     if after != action[2]:
                         return _UnresolvedOutcome(physical, 'changed_after_restore', {'sha256': after})
-                    _fsync_path(path)
-                    return _ResolvedOutcome('target_bytes_restored_and_flushed', {'sha256': after}, changed=True,
+                    # Flushed with the rest of the batch (``_durability_phase``, fix 13 H3).
+                    return _ResolvedOutcome('target_bytes_restored', {'sha256': after}, changed=True,
                                             restored=(rows, target, after))
             if decision[0] == 'release':
                 # The target registration's only source was released by policy and the failed attempt overwrote the
@@ -1327,16 +1601,35 @@ class LedgerWriter:
                     if other['presence'] == 'present' and other['producer_attempt_id'] in failed_attempts \
                             and other['sha256'] in digests and other['sha256'] != after:
                         path_events.append((other, 'missing', {'observation': 'uncommitted_write_rolled_back', 'failed_wrapper_runs': run_ids}))
+                # Persistent invalidation (fix 13, H2): every registration the failed attempts made at this path is
+                # invalid for good (``expected_products`` never counts it again, whatever is observed later).
+                for other in rows:
+                    if other['producer_attempt_id'] in failed_attempts and other['ownership'] == 'managed':
+                        invalidations.append((other, 'registration_invalidated', {'failed_wrapper_runs': run_ids}))
+                if outcome.evidence == 'target_source_released':
+                    # Fix 13 (H1): the target's bytes are gone; a persistent obligation stays until a newer committed
+                    # generation of the path exists (``expected_products``: Refuse('pending_republication')).
+                    invalidations.append((target.registration, 'pending_republication',
+                                          {'failed_wrapper_runs': run_ids, 'release_event_id': (target.released or {}).get('event_id')}))
                 # Consistency (fix 12, rule 4): once reconciled, every registration of the path that stays present
                 # agrees with the bytes there; anything else is contradictory, never accepted.
                 marked = {row['file_id']: presence for row, presence, _ in path_events}
-                contradicting = sorted(row['file_id'] for row in rows if row['ownership'] == 'managed'
-                                       and marked.get(row['file_id'], row['presence']) == 'present' and row['sha256'] != after)
+                stale = [row for row in rows if row['ownership'] == 'managed' and marked.get(row['file_id'], row['presence']) == 'present'
+                         and row['sha256'] != after]
+                committed = committed_registrations(self.connection, [row['file_id'] for row in stale]) if stale else set()
+                # A present registration that is not committed (fix 13) is bookkeeping, corrected; a committed one that
+                # disagrees with the bytes is a contradiction.
+                for row in stale:
+                    if row['file_id'] not in committed and row['file_id'] not in marked:
+                        path_events.append((row, 'missing', {'observation': 'not_a_committed_registration', 'failed_wrapper_runs': run_ids}))
+                contradicting = sorted(row['file_id'] for row in stale if row['file_id'] in committed)
                 if contradicting and outcome.evidence != 'no_recorded_bytes_at_path':
                     outcome = _UnresolvedOutcome(physical, 'contradictory_registrations', {'registrations': contradicting})
                 else:
                     if outcome.changed:
                         changed.append(physical)
+                        acted[Path(physical)] = after
+                        acted_rows.extend(rows)
                     events.extend(path_events)
                     continue
             from ..parquet_schema import MetadataAliasError
@@ -1370,12 +1663,88 @@ class LedgerWriter:
                     raise
                 # retained as residue (a refused or stale lock, a hard-linked target, an unreadable file)
         unresolved[:] = _unique_conditions(unresolved)
-        if events:
+        if events or invalidations:
             with self.transaction():
                 for row, presence, details in events:
                     self.event(observation_run, event_kind='artifact', reason_code=presence, file_id=row['file_id'],
                         version_id=row['version_id'], details=details)
+                seen_marks: set[tuple[str, str]] = set()
+                for row, reason, details in invalidations:
+                    if (row['file_id'], reason) not in seen_marks:
+                        seen_marks.add((row['file_id'], reason))
+                        self.event(observation_run, event_kind='invalidation', reason_code=reason, file_id=row['file_id'],
+                                   version_id=row['version_id'], details=details)
+        if acted:
+            # Fix 13 (H3): a replacement or removal voids any earlier durability of the path's registrations; the batch
+            # then goes through the shared durability phase; a failure keeps the obligation (raised, typed).
+            for row in acted_rows:
+                self._durable_files.discard(row['file_id'])
+            failed = _durability_phase(acted)
+            # Listed, like every other unresolved target of the rollback: the repeated barrier refuses on them, and the
+            # path's durability stays void, so the next close names it again.
+            unresolved.extend(outcome.condition() for outcome in failed.values())
+            unresolved[:] = _unique_conditions(unresolved)
         return changed
+
+    def completion_gate(self, run_id: str) -> dict[str, Any]:
+        """THE completion gate (fix 13, decision B), run once per run completion after the run-close flush and under the
+        workspace lock (``close``, when ``completion_gate_run`` is set). Independent of every recovery branch: every
+        managed public product is compared with ``expected_products``. ``Sha`` -> the file exists and its bytes (read in
+        full, no cached hash) are those; ``Absent`` -> nothing is at the path; ``Refuse`` -> refused. The verdict is
+        persisted (``completion_gate`` run event: ``pass``/``refused``, counts, bytes read, elapsed, failures) and
+        governs the status and report surfaces (``ledger.reader``). Any failure raises ``UnresolvedRecoveryError``
+        naming the paths: the run does not report ``completed``."""
+        import time as _time
+        from urllib.parse import unquote, urlsplit
+        self._owner(transaction=False)
+        started = _time.monotonic_ns()
+        expected = expected_products(self.connection)
+        failures: list[dict[str, Any]] = []
+        read = checked = 0
+        for uri, verdict in expected.items():
+            path = Path(unquote(urlsplit(uri).path))
+            checked += 1
+            if isinstance(verdict, ExpectedRefuse):
+                failures.append({'path': str(path), 'reason': 'completion_gate_refused', 'expected': verdict.reason,
+                                 'registrations': verdict.registrations[:10]})
+                continue
+            if isinstance(verdict, ExpectedAbsent):
+                if os.path.lexists(path):
+                    failures.append({'path': str(path), 'reason': 'completion_gate_extra', 'expected': 'absent', 'basis': verdict.basis})
+                continue
+            digest = hashlib.sha256()
+            try:
+                with open(path, 'rb') as stream:
+                    for block in iter(lambda: stream.read(1 << 20), b''):
+                        digest.update(block)
+                        read += len(block)
+            except FileNotFoundError:
+                failures.append({'path': str(path), 'reason': 'completion_gate_missing', 'expected': verdict.sha256,
+                                 'registration': verdict.registration})
+                continue
+            except OSError as error:
+                failures.append({'path': str(path), 'reason': 'completion_gate_unreadable', 'error': f'{type(error).__name__}: {error}'})
+                continue
+            if digest.hexdigest() != verdict.sha256:
+                failures.append({'path': str(path), 'reason': 'completion_gate_mismatch', 'expected': verdict.sha256,
+                                 'actual': digest.hexdigest(), 'registration': verdict.registration})
+        record = {'verdict': 'pass' if not failures else 'refused', 'products': checked, 'bytes_read': read, 'passes': 1,
+                  'elapsed_ns': _time.monotonic_ns() - started, 'failures': failures[:100], 'failure_count': len(failures)}
+        with self.transaction():
+            record['event_id'] = self.event(run_id, event_kind='run', reason_code='completion_gate', message=record['verdict'],
+                                            details={key: value for key, value in record.items() if key != 'event_id'})
+        self.completion_gate_record = record
+        if os.environ.get('GLOSSAPI_COMPLETION_GATE_LOG'):
+            # Cost measurement (fix 13): one line per gate, appended; never affects the verdict.
+            try:
+                with open(os.environ['GLOSSAPI_COMPLETION_GATE_LOG'], 'a') as log:
+                    log.write(json.dumps({'ledger': str(self.path), 'run_id': run_id, 'pid': os.getpid(), 'recorded_at': utc_now(),
+                                          **{key: value for key, value in record.items() if key != 'failures'}}) + '\n')
+            except OSError:
+                pass
+        if failures:
+            raise UnresolvedRecoveryError(failures)
+        return record
 
     def refuse_ambiguous_copies(self) -> None:
         """Run start, after ``verify_excluded_copies``: an unresolved post-close edit stops the run before any plan
@@ -1460,39 +1829,35 @@ class LedgerWriter:
             return ('skip',)
         return ('restore',own,source)
 
-    def _rolled_back_failed(self, row: dict[str, Any]) -> bool:
-        """A registration the rollback took off the path as a failed attempt's own bytes (its latest artifact event is
-        ``missing`` with ``observation: uncommitted_write_rolled_back``): never an authoritative target."""
-        if row['presence'] != 'missing' or row['event_id'] is None:
-            return False
-        found = self.connection.execute(f"SELECT details_json FROM {self.connection.event_table} WHERE event_id=?",
-                                        (row['event_id'],)).fetchone()
-        return bool(found and found[0] and json.loads(found[0]).get('observation') == 'uncommitted_write_rolled_back')
-
     def authoritative_target(self, path: Any, *, uris: Any = None, excluded_attempts: Any = frozenset()) -> Target:
-        """THE state a managed path must be in, from the ledger alone (fix 12), shared by the run-start recovery and the
-        rollback. Among the path's managed registrations (``uris``: its spellings; ``excluded_attempts``: the failed
-        attempts being rolled back; registrations the rollback already took off as failed bytes never count), the
-        newest by registration event (never by presence-observation order) decides:
-        - none: ``NoTarget`` (ledger-proven caller-seeded or failed-only: leave the file alone);
-        - its presence is ``deleted`` (a committed policy deletion/release of the path, newer than every registration):
-          ``TargetAbsent``;
-        - otherwise ``TargetBytes`` (its sha256), with that registration's own intact immutable source, or its policy
-          release. Never an older generation, whatever its source."""
+        """THE state a managed path must be in, shared by the run-start recovery and the rollback. Since fix 13 its
+        eligibility comes from ``expected_products`` (the same authority the completion gate uses): no inference of its
+        own over presence or history. ``uris``: the path's spellings; ``excluded_attempts``: the failed attempts a
+        rollback is undoing.
+        - not a managed public path: ``NoTarget`` (caller-seeded: leave the file alone);
+        - ``Refuse``: ``TargetRefused`` (recovery acts on nothing; the path is unresolved);
+        - ``Absent``: ``TargetAbsent``;
+        - ``Sha``: ``TargetBytes`` of that registration, with its own intact immutable source (hashed here, for the
+          restore only) or its policy release. Never an older generation, whatever its source."""
         from urllib.parse import unquote, urlsplit
         from .encoding import file_hash
         local = lambda row: Path(unquote(urlsplit(row['uri']).path))
         catalog = self.file_catalog()
-        index = self._uri_index()
         spellings = set(uris) if uris else {Path(path).absolute().as_uri()}
-        candidates = [catalog[file_id] for uri in spellings for file_id in index.get(uri, [])]
-        candidates = [row for row in candidates if row['ownership'] == 'managed' and row['producer_attempt_id']
-                      and row['producer_attempt_id'] not in excluded_attempts and not self._rolled_back_failed(row)]
-        if not candidates:
+        expected = expected_products(self.connection, uris=spellings, excluded_attempts=excluded_attempts)
+        if not expected:
             return NoTarget()
-        newest = max(candidates, key=lambda row: (self._registration_event_id(row['file_id']) or 0, row.get('rowid') or 0))
-        if newest['presence'] == 'deleted':
-            return TargetAbsent(newest)
+        if len(expected) > 1:
+            decided = {repr(value) for value in expected.values()}
+            if len(decided) > 1:
+                return TargetRefused('contradictory_spellings', [])
+        verdict = next(iter(expected.values()))
+        if isinstance(verdict, ExpectedRefuse):
+            return TargetRefused(verdict.reason, verdict.registrations)
+        if isinstance(verdict, ExpectedAbsent):
+            return TargetAbsent(catalog[verdict.registration] if verdict.registration else {'file_id': None, 'sha256': None},
+                                verdict.basis)
+        newest = catalog[verdict.registration]
         siblings = [catalog.get(file_id) for file_id in self._files_of_attempts([newest['producer_attempt_id']])]
         sources = [other for other in siblings if other is not None and other['file_id'] != newest['file_id']
                    and other['ownership'] == 'managed' and other['sha256'] == newest['sha256'] and '/.glossapi/artifacts/' in other['uri']]
@@ -1512,6 +1877,8 @@ class LedgerWriter:
         """Run start, phase 1 (fix 12): make the bytes at ``path`` its target's, or say why not. No flush here (phase 2,
         after every restore). ``Resolved`` carries the target registration whose bytes are now at the path."""
         from .encoding import file_hash
+        if isinstance(target, TargetRefused):
+            return _UnresolvedOutcome(path, target.reason, {'registrations': target.registrations})
         if isinstance(target, NoTarget):
             return _ResolvedOutcome('no_target_caller_seeded')
         if isinstance(target, TargetAbsent):
@@ -1632,40 +1999,27 @@ class LedgerWriter:
                 reconciled[path]=(file_ids,target,outcome)
             else:
                 deny(path,file_ids,outcome)
-        # Phase 2: flush every reconciled file, then every affected directory once, after the last replacement in it.
+        # Phase 2: the shared durability phase (``_durability_phase``): every reconciled file, then each affected
+        # directory once after the last replacement in it, then a hash after the flush.
         def fail(path,outcome):
             file_ids,_,_=reconciled.pop(path)
             deny(path,file_ids,outcome)
-        for path,(file_ids,target,outcome) in list(reconciled.items()):
-            if not isinstance(target,TargetBytes):continue
-            try:
-                _fsync_path(path)
-            except BaseException as error:
-                if _must_propagate(error):raise
-                fail(path,_UnresolvedOutcome(path,'missing_at_flush',{'error':str(error)}) if isinstance(error,FileNotFoundError)
-                     else _unresolved_from_error(path,error))
-        directories: dict[Path, list[Path]] = {}
-        for path,(file_ids,target,outcome) in reconciled.items():
-            if isinstance(target,TargetBytes):directories.setdefault(path.parent,[]).append(path)
-        for directory,paths in sorted(directories.items(),key=lambda item:len(item[0].parts),reverse=True):
-            try:
-                descriptor=os.open(directory,os.O_RDONLY)
-                try:os.fsync(descriptor)
-                finally:os.close(descriptor)
-            except BaseException as error:
-                if _must_propagate(error):raise
-                for path in paths:
-                    fail(path,_UnresolvedOutcome(path,'flush_failed',{'error':f'{type(error).__name__}: {error}'}))
+        for path,outcome in _durability_phase({path:target.sha256 for path,(file_ids,target,_) in reconciled.items()
+                                               if isinstance(target,TargetBytes)}).items():
+            fail(path,outcome)
+        corrections: list[dict[str, Any]] = []
         # Phase 3: the bytes are verified again after the flush, and every registration of the path still present
         # agrees with them (rule 4); only then are the IDs durable.
         for path,(file_ids,target,outcome) in list(reconciled.items()):
             try:
                 if isinstance(target,TargetBytes):
-                    if file_hash(path)!=target.sha256:
-                        fail(path,_UnresolvedOutcome(path,'changed_after_flush'));continue
-                    contradicting=sorted(other['file_id'] for uri in {catalog[file_id]['uri'] for file_id in file_ids}
-                                         for other in (catalog[item] for item in self._uri_index().get(uri,[]))
-                                         if other['ownership']=='managed' and other['presence']=='present' and other['sha256']!=target.sha256)
+                    stale=[other for uri in {catalog[file_id]['uri'] for file_id in file_ids}
+                           for other in (catalog[item] for item in self._uri_index().get(uri,[]))
+                           if other['ownership']=='managed' and other['presence']=='present' and other['sha256']!=target.sha256]
+                    committed=committed_registrations(self.connection,[other['file_id'] for other in stale]) if stale else set()
+                    contradicting=sorted(other['file_id'] for other in stale if other['file_id'] in committed)
+                    # Present registrations that are not committed (fix 13) are bookkeeping, corrected below.
+                    corrections.extend(other for other in stale if other['file_id'] not in committed)
                     if contradicting:
                         fail(path,_UnresolvedOutcome(path,'contradictory_registrations',{'registrations':contradicting}));continue
                     durable.append(target.registration['file_id'])
@@ -1676,6 +2030,11 @@ class LedgerWriter:
                 fail(path,_unresolved_from_error(path,error))
         # Durable now: this writer's own run-close barrier need not name them again for the next start.
         self._durable_files.update(durable)
+        if corrections:
+            with self.transaction():
+                for other in {row['file_id']: row for row in corrections}.values():
+                    self.event(barrier_run,event_kind='artifact',reason_code='missing',file_id=other['file_id'],version_id=other['version_id'],
+                               details={'observation':'not_a_committed_registration'})
         if restored:
             with self.transaction():
                 for row,source,own in restored:

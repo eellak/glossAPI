@@ -117,6 +117,7 @@ def test_superseded_copy_is_resolved_by_the_later_registration(tmp_path):
             attempt = writer.attempt(task, worker_id='w', device_id='cpu', fingerprint={}, inputs={}, settings={}, tools={})
             writer.artifact(run, 'export', 'document_jsonl', path.as_uri(), producer_attempt_id=attempt,
                             sha256=hashlib.sha256(newer).hexdigest(), bytes=len(newer), retention_class='final')
+            writer.finish(run, task, attempt, status='ok', reason_code='export_completed')  # fix 13: a committed generation
         assert writer.file_catalog()[copy_id]['presence'] in ('missing', 'corrupt')
         assert writer.verify_excluded_copies() == []
         assert _refusal(writer.refuse_ambiguous_copies)[1] is None

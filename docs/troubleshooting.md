@@ -37,13 +37,28 @@ A corpus copy that the previous run left unflushed (for example `export.jsonl`) 
 glossAPI keeps your edit and refuses every start until you move or delete the file; it is then republished from the
 managed source. The CLI reports the typed code `post_close_edit` (exit 3) with the edited paths in `details.paths`. See [Resumability, recovery and retention](architecture/resumability_recovery_and_retention.md).
 
-## A run refuses to start with `unresolved_recovery`
+## A run refuses with `unresolved_recovery`
 
-A run start (or a repeated publication) found a corpus file it must repair: a copy the previous run left unflushed, or
-bytes a failed attempt put in place. Recovery reconciles each such path to the state the ledger says it must be in:
-the bytes of its newest committed registration (restored only from that registration's own source, then verified and
-flushed), nothing after a policy deletion of the path, or no change for a caller-seeded file the ledger never
-registered. A path it cannot bring to that state is kept as it is and nothing runs. The CLI reports the typed code `unresolved_recovery` (exit 3);
+Every product glossAPI manages has one expected state, decided from the ledger alone: the bytes of its newest committed
+registration (one whose producing attempt ended `ok` and that no rollback invalidated), nothing after an explicit
+deletion of it or of a newer registration of the same path, or a refusal when no committed generation can be named. A
+file the legacy compatibility steps only observed (a log, a temporary report) is not a managed product, whatever the
+outcome of the step that observed it. A rollback that undoes a failed attempt records
+a permanent invalidation of that attempt's registrations; if it cannot restore a product (its only source was released),
+it records a pending republication instead, which only a newer committed generation of that product discharges.
+
+The refusal comes from one of three places, each with the typed code `unresolved_recovery` (exit 3):
+
+- **a run start or a repeated publication** found a corpus file it must repair (a copy the previous run left unflushed,
+  or bytes a failed attempt put in place) and could not bring it to its expected state: the file is kept as it is and
+  nothing more runs;
+- **the completion gate**: once per run, after the run's final flush and under the corpus lock, every managed product
+  is hashed against its expected state. The run's work has been done, but the run does not report `completed`: a
+  product that differs (`completion_gate_mismatch`), is missing (`completion_gate_missing`), is present where it must be
+  absent (`completion_gate_extra`), or has no committed generation (`completion_gate_refused`, for example a pending
+  republication) is named. `glossapi status` and `glossapi report` then show the run as `unresolved_recovery` (status
+  exits 3); a run whose gate never ran shows `unverified`, never `completed`.
+
 `details.conditions` names each path and its reason:
 
 - `hard_linked`: remove the extra hard link.
@@ -59,7 +74,9 @@ registered. A path it cannot bring to that state is kept as it is and nothing ru
   the file vanished, changed or could not be read or flushed while recovery checked it (the condition names the
   error). Check the disk and anything else writing to the corpus, then resume; the check is repeated from the start.
 
-After the cause is removed, resume: the file is repaired and the run goes on.
+After the cause is removed, resume: the file is repaired and the run goes on. For a gate refusal, resume after removing
+the cause (or rerun the publication that must replace a product with a pending republication); the gate runs again at
+the end of that run.
 
 A leftover hidden temporary beside a product (`.<name>.<id>.tmp`) whose bytes recovery cannot prove to be its own
 abandoned copy is never deleted and never blocks a run, once the product itself is resolved. It is residue: delete it

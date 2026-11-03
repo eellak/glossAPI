@@ -132,6 +132,11 @@ def published_copy(writer, root, *, torn=False):
                                     bytes=size, retention_class='final')
         copy_id = writer.artifact(run, 'export', 'document_jsonl', copy.as_uri(), producer_attempt_id=attempt, sha256=digest,
                                   bytes=size, retention_class='final')
+        # The publication record of the copy and its producer attempt ending ``ok`` (fix 13: ``expected_products``
+        # counts only committed generations: an ``ok`` producer and a publication record or output manifest entry).
+        writer.snapshot('product_projection', {'kind': 'product_projection', 'product_uri': copy.as_uri(),
+                                               'immutable_uri': source.as_uri(), 'sha256': digest, 'producer_attempt_id': attempt})
+        writer.finish(run, task, attempt, status='ok', reason_code='export_completed')
     if torn:
         with copy.open('r+b') as stream: stream.truncate(100)
     writer.barrier_context = {'run_id': run, 'debug': 'off'}
