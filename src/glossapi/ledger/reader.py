@@ -566,6 +566,12 @@ def certification(connection) -> dict[str, Any]:
                 return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="later_product_record", stale_event_id=event_id)
     from .writer import latest_validation_generation
     started_generation = latest_validation_generation(connection)
+    if "generation" not in details:
+        # A pass written before fix 16 (no ``generation`` key at all, unlike the explicit ``generation: null`` of a
+        # fix-16 first run on a corpus without a run): never current. The corpus reads not completed until a fix-16+
+        # run physically revalidates and commits a new pass (fix 17, H1). No old side file is read or trusted.
+        return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="legacy_pass_without_generation", stale_event_id=None,
+                    pass_generation=None, started_generation=started_generation)
     if details.get("generation") != started_generation:
         # A later run start committed a new validation generation and no pass for it exists (fix 16): pending.
         return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="validation_pending", stale_event_id=None,

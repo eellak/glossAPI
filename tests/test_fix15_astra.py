@@ -254,3 +254,4 @@ def test_a_start_that_cannot_write_the_pending_mark_stops_before_any_repair(tmp_
         assert getattr(error, 'code', None) == 'unresolved_recovery' and error.boundary == 'start'
         assert [entry['reason'] for entry in error.conditions] == ['validation_start_unrecorded']
     assert repairs == [] and _sha(path) == _sha(CONTENT)  # nothing validated, nothing repaired
+    assert 'completed' not in _states(_surfaces(output, run_id, capfd))  # the refusal itself was recorded (fix 17: restored)

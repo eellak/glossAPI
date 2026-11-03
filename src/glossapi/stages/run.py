@@ -1367,6 +1367,7 @@ def _locked_run_corpus(corpus,*args,**options):
     writer=LedgerWriter(Path(corpus.output_dir)/'corpus.sqlite3')
     if True:
         corpus._scheduler_writer=writer
+        committed_generation=None  # set only once this start's validation generation is committed (fix 17, L1)
         try:
             # The disk_full record exists before any write can exhaust the disk (K4BI-G2).
             from .interruption import allocate
@@ -1376,7 +1377,7 @@ def _locked_run_corpus(corpus,*args,**options):
             # generation makes the corpus completed again. If even that commit fails, nothing is validated or repaired:
             # the start stops here, typed (disk_full on a full disk or ledger), saying nothing ran.
             try:
-                writer.begin_validation(options.get('resume'))
+                committed_generation=writer.begin_validation(options.get('resume'))
             except Exception as unrecorded:
                 from ..ledger.writer import UnresolvedRecoveryError
                 raise UnresolvedRecoveryError([{'path': str(Path(corpus.output_dir)/'corpus.sqlite3'), 'reason': 'validation_start_unrecorded',
@@ -1413,14 +1414,20 @@ def _locked_run_corpus(corpus,*args,**options):
                         getattr(error,'boundary','start'))
                     error.details['refusal_recorded'] = True
                 except Exception as unrecorded:
-                    # Fix 15/16 (H3): explicit, never swallowed. The refusal stays the outcome; the ledger could not take its
-                    # verdict (e.g. a full ledger), but the validation generation this start committed first makes every
-                    # earlier pass stale, so every read surface still says the corpus is not completed.
+                    # Fix 15-17 (H3): explicit, never swallowed. The refusal stays the outcome; the ledger could not take its
+                    # verdict (e.g. a full ledger). If this start committed its validation generation, every earlier pass
+                    # is stale; if that commit itself failed, nothing was validated or repaired.
                     error.details['refusal_recorded'] = False
                     error.details['refusal_record_error'] = f'{type(unrecorded).__name__}: {unrecorded}'
-                    error.add_note('the refusal could not be recorded in the ledger (' + error.details['refusal_record_error']
-                                   + '); this start already committed a new validation generation, so no earlier pass is '
-                                   'current: the corpus reads not completed until a pass for this generation')
+                    if committed_generation is not None:
+                        error.add_note('the refusal could not be recorded in the ledger (' + error.details['refusal_record_error']
+                                       + f'); this start already committed validation generation {committed_generation}, so no '
+                                       'earlier pass is current: the corpus reads not completed until a pass for this generation')
+                    else:
+                        # Fix 17 (L1): only claim a generation when its commit happened.
+                        error.add_note('the refusal could not be recorded in the ledger (' + error.details['refusal_record_error']
+                                       + '); validation never started and no new freshness record was committed by this start '
+                                       '(nothing was validated or repaired)')
             raise
         finally:
             try:
