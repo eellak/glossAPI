@@ -42,8 +42,9 @@ managed source. The CLI reports the typed code `post_close_edit` (exit 3) with t
 Every product glossAPI manages has one expected state, decided from the ledger alone: the bytes of its newest committed
 generation, nothing after a committed deletion of that generation itself, or a refusal when no committed generation can
 be named. A registration is a committed generation only when its producing attempt ended `ok` and a positive record
-binds it to that attempt: a publication record of this path and these bytes, or the attempt's own record of producing
-these bytes (its output manifest). A deletion of any other registration of the path (a step's temporary file at the
+binds it to that attempt at that path: a publication record of exactly this path, these bytes and this attempt, or the
+registration itself listed in the attempt's output manifest. Bytes an attempt produced at one path never make it the
+producer of another path; a second named copy needs its own publication record. A deletion of any other registration of the path (a step's temporary file at the
 same name, another run's) never removes a product's obligation. A file the legacy compatibility steps only observed is
 not a managed product only for the allowlisted diagnostic roles (logs, the temporary cleaning report); any other file
 only a compatibility step registered is refused (`unlisted_observation_role`). A rollback that undoes a failed attempt
@@ -63,12 +64,20 @@ The refusal comes from one of three places, each with the typed code `unresolved
   where it must be absent (`completion_gate_extra`), or has no committed generation (`completion_gate_refused`, for
   example a pending republication) is named.
 
-Every refusal is recorded as a verdict. `glossapi status` and `glossapi report` (and a streaming run's status) show a run
-`completed` only when its own completion gate passed AND that pass is still current: the ledger's latest verdict is a
-pass and no product was written, deleted, rolled back or invalidated after it. After a refusal they show
-`unresolved_recovery` (status exits 3); when the gate never ran, or later writes have not been verified yet, `unverified`.
-A later run whose gate passes makes the corpus current again. The gate's cost (products, bytes read, passes, elapsed)
-is part of its verdict event.
+Every run start first marks the corpus *validation pending* in `.glossapi/validation.json`, a fixed-size file
+overwritten in place (it works on a full disk), before it validates or repairs anything; only a passing completion
+gate clears it. If even that mark cannot be written, the start stops before any repair and says so
+(`validation_mark_unwritable`; typed `disk_full` when the disk is full). A refusal is recorded as a verdict when the
+ledger can take it; when it cannot (a full ledger), the error says the refusal was not recorded
+(`details.refusal_recorded: false`), and the pending mark still keeps the corpus from reading `completed`.
+
+`glossapi status` and `glossapi report` (and a streaming run's status) show a run `completed` only when its own
+completion gate passed AND that pass is still current: it is the ledger's latest verdict, no product was written,
+deleted, rolled back or invalidated after it, the corpus is not marked validation pending, and the ledger's expected
+state of every product is still the one the gate verified (the verdict carries a fingerprint of that whole expected
+state, recomputed on every read). After a refusal they show `unresolved_recovery` (status exits 3); when the gate never
+ran, validation is pending, or later changes have not been verified yet, `unverified`. A later run whose gate passes
+makes the corpus current again. The gate's cost (products, bytes read, passes, elapsed) is part of its verdict event.
 
 `details.conditions` names each path and its reason:
 

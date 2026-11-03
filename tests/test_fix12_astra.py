@@ -117,6 +117,9 @@ def _two_named_copies(tmp_path):
         with writer.transaction():
             second_id = writer.artifact(run, 'export', 'document_jsonl', second.as_uri(), producer_attempt_id=row['producer_attempt_id'],
                                         sha256=row['sha256'], bytes=row['bytes'], retention_class='final')
+            # Fix 15 (ASTRA-FIXES2c10 H1): a second named copy is committed only by its own publication record.
+            writer.snapshot('publication_binding', {'kind': 'publication_binding', 'product_uri': second.as_uri(), 'sha256': row['sha256'],
+                                                    'producer_attempt_id': row['producer_attempt_id'], 'file_id': second_id})
         writer.durable_barrier()
     with LedgerWriter(tmp_path / 'corpus.sqlite3') as writer:
         for path in (first, second):
@@ -473,9 +476,12 @@ def _build(scenario, root):
             producer_run = writer.connection.execute('SELECT t.run_id FROM attempts a JOIN tasks t USING(task_id) WHERE a.attempt_id=?',
                                                      (row['producer_attempt_id'],)).fetchone()[0]
             with writer.transaction():
-                writer.artifact(producer_run, row['stage'], row['kind'], second.as_uri(), version_id=row['version_id'],
-                                producer_attempt_id=row['producer_attempt_id'], sha256=row['sha256'], bytes=row['bytes'],
-                                retention_class=row['retention_class'])
+                second_id = writer.artifact(producer_run, row['stage'], row['kind'], second.as_uri(), version_id=row['version_id'],
+                                            producer_attempt_id=row['producer_attempt_id'], sha256=row['sha256'], bytes=row['bytes'],
+                                            retention_class=row['retention_class'])
+                # Fix 15 (ASTRA-FIXES2c10 H1): the second named copy is committed only by its own publication record.
+                writer.snapshot('publication_binding', {'kind': 'publication_binding', 'product_uri': second.as_uri(), 'sha256': row['sha256'],
+                                                        'producer_attempt_id': row['producer_attempt_id'], 'file_id': second_id})
             writer.barrier_context = {'run_id': run, 'debug': 'off'}
             writer.durable_barrier()
     inventory = _visible(output)

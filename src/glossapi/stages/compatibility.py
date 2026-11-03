@@ -157,9 +157,23 @@ def register_publication(writer, run_id, stage, kind, uri, *, version_id, produc
     def bound(file_id):
         # The positive publication record of this generation (fix 14, R5): this path, these bytes, this producer
         # attempt. ``ledger.writer.expected_products`` counts a registration as a committed generation only with such a
-        # binding (or a ``product_projection`` record, or the producer's own output manifest).
-        writer.snapshot('publication_binding', {'kind': 'publication_binding', 'product_uri': uri, 'sha256': sha256,
-                                                'producer_attempt_id': producer_attempt_id, 'file_id': file_id})
+        # binding (or a ``product_projection`` record, or the producer's own output manifest listing the registration).
+        # A new binding changes the authority; it is traced by a ``publication_bound`` event in the same transaction
+        # (fix 15, H2; the completion certificate itself is bound to the authority's fingerprint, not to events).
+        record = {'kind': 'publication_binding', 'product_uri': uri, 'sha256': sha256,
+                  'producer_attempt_id': producer_attempt_id, 'file_id': file_id}
+        from ..ledger.encoding import canonical_json, evidence
+        import hashlib
+        known = writer.connection.execute('SELECT 1 FROM snapshots WHERE sha256=?',
+            (hashlib.sha256(canonical_json(evidence(record)).encode()).hexdigest(),)).fetchone()
+        digest = writer.snapshot('publication_binding', record)
+        if known is None:
+            # Bound to no document, task or attempt (the file id is in the details): ``report --why`` lists a document's
+            # and an attempt's decisions, readers of a run's latest ``run`` event expect its result; this is ledger
+            # bookkeeping of the authority, not a stage outcome.
+            writer.event(run_id, event_kind='decision', reason_code='publication_bound', message='publication binding recorded',
+                details={'product_uri': uri, 'sha256': sha256, 'producer_attempt_id': producer_attempt_id, 'file_id': file_id,
+                         'binding_sha256': digest})
         return file_id
     for row in rows:
         if (row['producer_attempt_id'], row['kind'], row['ownership'], row['sha256'], row['bytes'], row['retention_class'], row['version_id']) == (

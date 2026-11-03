@@ -1371,6 +1371,16 @@ def _locked_run_corpus(corpus,*args,**options):
             # The disk_full record exists before any write can exhaust the disk (K4BI-G2).
             from .interruption import allocate
             allocate(corpus.output_dir)
+            # Before start-up validation or any repair, the corpus is durably marked validation pending (fix 15, H3); only
+            # a passing completion gate clears it, and every read surface treats it as not completed. If even the mark
+            # cannot be written, nothing is validated or repaired: the start stops here, saying so.
+            from ..ledger.validation_mark import NAME as VALIDATION_MARK, mark_pending
+            try:
+                mark_pending(corpus.output_dir, options.get('resume'))
+            except OSError as unwritable:
+                from ..ledger.writer import UnresolvedRecoveryError
+                raise UnresolvedRecoveryError([{'path': str(Path(corpus.output_dir)/VALIDATION_MARK), 'reason': 'validation_mark_unwritable',
+                    'error': f'{type(unwritable).__name__}: {unwritable}'}], boundary='start') from unwritable
             # Copies the previous run close left unflushed are verified (and republished if torn) first (K4C-M2).
             writer.verify_excluded_copies()
             writer.refuse_ambiguous_copies()
@@ -1401,8 +1411,15 @@ def _locked_run_corpus(corpus,*args,**options):
                 try:
                     writer.record_refusal(getattr(corpus,'_active_run_id',None) or options.get('resume'),error,
                         getattr(error,'boundary','start'))
-                except Exception:
-                    pass  # e.g. a full ledger: the refusal is still raised; status keeps reading the refusal's cause
+                    error.details['refusal_recorded'] = True
+                except Exception as unrecorded:
+                    # Fix 15 (H3): explicit, never swallowed. The refusal stays the outcome; the ledger could not take its
+                    # verdict (e.g. a full ledger), but the validation mark set before any validation stays pending, so
+                    # every read surface still says the corpus is not completed.
+                    error.details['refusal_recorded'] = False
+                    error.details['refusal_record_error'] = f'{type(unrecorded).__name__}: {unrecorded}'
+                    error.add_note('the refusal could not be recorded in the ledger (' + error.details['refusal_record_error']
+                                   + '); the corpus stays marked validation pending (.glossapi/validation.json), not completed')
             raise
         finally:
             try:

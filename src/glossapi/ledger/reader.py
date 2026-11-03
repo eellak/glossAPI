@@ -537,8 +537,12 @@ def certification(connection) -> dict[str, Any]:
     boundary: ``refused`` (a completion gate, a refused start, a refused repeated publication) -> not certified; ``pass``
     -> certified only while no later recorded mutation of a managed public product exists: a registration, presence
     change or deletion of one (``artifact`` events), a recorded uncommitted write (``uncommitted_projection_write``), a
-    rollback's invalidation (``invalidation``). Returns ``{'certified', 'epoch', 'verdict', 'stale_reason',
-    'stale_event_id'}``."""
+    rollback's invalidation (``invalidation``); AND (fix 15) while the corpus validation mark is not ``pending``
+    (``ledger.validation_mark``: set before every run start's validation, cleared only by a passing gate, so a refusal the
+    ledger could not record still revokes the pass) AND while the fingerprint of the full ``expected_products`` map,
+    recomputed here from the ledger, equals the one the pass verified (H2: any change to any input of the authority
+    makes the pass stale, without enumerating change kinds). Returns ``{'certified', 'epoch', 'verdict',
+    'stale_reason', 'stale_event_id', 'authority_check_ns'}``."""
     latest = connection.execute("SELECT event_id,message,details_json FROM events WHERE reason_code='completion_gate' "
                                 "ORDER BY event_id DESC LIMIT 1").fetchone()
     if latest is None:
@@ -559,7 +563,21 @@ def certification(connection) -> dict[str, Any]:
         for event_id, file_id in touched:
             if file_id in managed:
                 return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="later_product_record", stale_event_id=event_id)
-    return dict(certified=True, epoch=latest[0], verdict=verdict, stale_reason=None, stale_event_id=None)
+    root = _ledger_root(connection)
+    if root is not None:
+        from .validation_mark import read as read_validation_mark
+        mark = read_validation_mark(root)
+        if mark is not None and mark.get("state") != "validated":
+            return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="validation_" + str(mark.get("state")), stale_event_id=None)
+    import time
+    from .writer import authority_fingerprint, expected_products
+    started = time.monotonic_ns()
+    current = authority_fingerprint(expected_products(connection))
+    elapsed = time.monotonic_ns() - started
+    if details.get("authority_fingerprint") != current:
+        return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="authority_changed" if details.get("authority_fingerprint")
+                    else "no_authority_fingerprint", stale_event_id=None, authority_check_ns=elapsed)
+    return dict(certified=True, epoch=latest[0], verdict=verdict, stale_reason=None, stale_event_id=None, authority_check_ns=elapsed)
 
 
 def completion_state(connection, run_id, state):
@@ -575,7 +593,8 @@ def completion_state(connection, run_id, state):
         current = certification(connection) if verdict["verdict"] == "pass" else None
         verdict = dict(verdict, current=bool(current and current["certified"]),
                        stale_reason=None if current is None else current["stale_reason"],
-                       stale_event_id=None if current is None else current["stale_event_id"])
+                       stale_event_id=None if current is None else current["stale_event_id"],
+                       authority_check_ns=None if current is None else current.get("authority_check_ns"))
     if state not in ("completed", "completed_with_failures"):
         return state, verdict
     if verdict is None:

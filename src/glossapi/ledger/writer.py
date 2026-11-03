@@ -276,6 +276,25 @@ Expected = ExpectedSha | ExpectedAbsent | ExpectedRefuse
 INVALIDATION_REASONS = ('registration_invalidated', 'pending_republication')
 
 
+def authority_fingerprint(expected: dict[str, Expected]) -> str:
+    """sha256 of the whole ``expected_products`` map (fix 15, H2): every path, sorted, with its kind and full value
+    (``Sha``: digest and registration; ``Absent``: registration and basis; ``Refuse``: reason and registrations). The
+    completion gate records the fingerprint of the map it verified; every read surface recomputes it from the ledger
+    (``ledger.reader.certification``), so a change to ANY input of the authority after a pass (a registration, a
+    publication record, an invalidation, a deletion, an attempt's status) makes that pass stale by construction,
+    without enumerating change kinds."""
+    entries = []
+    for uri in sorted(expected):
+        value = expected[uri]
+        if isinstance(value, ExpectedSha):
+            entries.append([uri, 'sha', value.sha256, value.registration])
+        elif isinstance(value, ExpectedAbsent):
+            entries.append([uri, 'absent', value.basis, value.registration])
+        else:
+            entries.append([uri, 'refuse', value.reason, sorted(value.registrations)])
+    return hashlib.sha256(json.dumps(entries, separators=(',', ':'), sort_keys=True).encode()).hexdigest()
+
+
 def _public_uri(uri: str) -> bool:
     return '/.glossapi/' not in uri
 
@@ -302,9 +321,9 @@ def _registration_classes(connection: Any, rows: list[Any], excluded_attempts: A
       as that attempt's generation (fix 14, R5): a publication record (the ``product_projection`` snapshot of
       ``products.publish_products``, or the ``publication_binding`` snapshot of ``compatibility.register_publication``:
       this uri, these bytes, this attempt), or, for a generation producer (not a legacy
-      compatibility wrapper), a positive record of that attempt producing exactly these bytes: a file of its terminal
-      output manifest, or a publication record of it, with this sha256 (a second named copy of the same committed
-      generation is bound; bytes the attempt never recorded producing are not);
+      compatibility wrapper), this registration itself listed in the attempt's terminal output manifest (fix 15, H1:
+      destination-specific; a named copy needs its own publication record, a digest the attempt produced elsewhere
+      binds nothing);
     - ``unbound``: a successful non-wrapper attempt's registration that neither binding names (a late registration
       attributed to a reader, e.g. the evidence sealer, whose manifest is empty): never authoritative;
     - ``observation``: registered by a legacy compatibility wrapper (the journal's ``orchestrator:<pid>`` /
@@ -327,26 +346,21 @@ def _registration_classes(connection: Any, rows: list[Any], excluded_attempts: A
         for attempt, value, manifest in connection.execute(f"SELECT attempt_id,status,output_manifest_sha256 FROM {table} WHERE event_kind='lifecycle' "
                                                            'AND status IS NOT NULL AND attempt_id IN (' + ','.join('?'*len(chunk)) + ') ORDER BY event_id', chunk):
             terminal[attempt] = (value, manifest)
-    # The bytes each attempt positively recorded producing: its terminal output manifest's registered files (generation
-    # producers only; a legacy wrapper's manifest lists files it observed), and every publication record naming it.
-    produced: dict[str, set[str]] = {}
+    # Destination-specific membership (fix 15, H1): the registrations each generation producer's terminal output
+    # manifest lists by file id (never a legacy wrapper's manifest: it lists files it observed), and the publication
+    # records naming exactly (path, bytes, attempt). No digest-only fallback: bytes an attempt produced at one path
+    # never bind another path.
+    listed: dict[str, set[str]] = {}
     for attempt, (value, manifest) in terminal.items():
         if value == 'ok' and manifest and attempt not in wrappers:
             found = connection.execute('SELECT json FROM snapshots WHERE sha256=?', (manifest,)).fetchone()
-            listed = json.loads(found[0]).get('files', []) if found else []
-            ids = sorted({str(entry['file_id']) for entry in listed if isinstance(entry, dict) and entry.get('file_id')})
-            for offset in range(0, len(ids), 500):
-                chunk = ids[offset:offset+500]
-                produced.setdefault(attempt, set()).update(
-                    digest for digest, in connection.execute('SELECT sha256 FROM files WHERE file_id IN (' + ','.join('?'*len(chunk)) + ')', chunk)
-                    if digest)
+            entries = json.loads(found[0]).get('files', []) if found else []
+            listed[attempt] = {str(entry['file_id']) for entry in entries if isinstance(entry, dict) and entry.get('file_id')}
     publications = set()
     if rows:
         for encoded, in connection.execute("SELECT json FROM snapshots WHERE kind IN ('product_projection','publication_binding')"):
             record = json.loads(encoded)
             publications.add((record.get('product_uri'), record.get('sha256'), record.get('producer_attempt_id')))
-            if record.get('sha256') and record.get('producer_attempt_id'):
-                produced.setdefault(str(record['producer_attempt_id']), set()).add(record['sha256'])
     file_ids = [row[0] for row in rows]
     invalidated: dict[str, str] = {}
     for offset in range(0, len(file_ids), 500):
@@ -368,8 +382,8 @@ def _registration_classes(connection: Any, rows: list[Any], excluded_attempts: A
             classes[file_id] = 'unfinished'
         elif terminal[producer][0] != 'ok':
             classes[file_id] = 'failed'
-        elif (uri, digest, producer) in publications or (producer not in wrappers and digest in produced.get(producer, ())):
-            classes[file_id] = 'committed'  # a positive binding: this attempt recorded producing exactly these bytes
+        elif (uri, digest, producer) in publications or (producer not in wrappers and str(file_id) in listed.get(producer, ())):
+            classes[file_id] = 'committed'  # this registration itself in the attempt's manifest, or (path, bytes, attempt) bound
         else:
             classes[file_id] = 'unbound'
     return classes
@@ -1793,12 +1807,17 @@ class LedgerWriter:
                                  'actual': digest.hexdigest(), 'registration': verdict.registration})
         record = {'verdict': 'pass' if not failures else 'refused', 'boundary': 'completion', 'products': checked,
                   'bytes_read': read, 'passes': 1, 'elapsed_ns': _time.monotonic_ns() - started, 'failures': failures[:100],
-                  'failure_count': len(failures)}
+                  'failure_count': len(failures), 'authority_fingerprint': authority_fingerprint(expected)}
         with self.transaction():
             record['event_id'] = self.event(run_id, event_kind='run', reason_code='completion_gate', message=record['verdict'],
                                             details={key: value for key, value in record.items() if key != 'event_id'})
-        # The verdict is the last act of the gate (fix 14, R4): nothing writes any product path after it. Its cost (products,
-        # bytes read, passes, elapsed) is in the persisted verdict event itself, where measurements read it.
+        if record['verdict'] == 'pass':
+            # Only a passing gate clears the corpus validation mark set at the run start (fix 15, H3). It lives under
+            # ``.glossapi``, never a product path; a failure to clear it leaves the corpus pending (refuse direction).
+            from .validation_mark import mark_validated
+            record['validation_mark_cleared'] = mark_validated(self.path.parent, run_id, record['event_id'], record['authority_fingerprint'])
+        # The verdict is the last act of the gate on products (fix 14, R4): nothing writes any product path after it. Its
+        # cost (products, bytes read, passes, elapsed) is in the persisted verdict event itself, where measurements read it.
         self.completion_gate_record = record
         return {**record, 'all_failures': failures}
 
