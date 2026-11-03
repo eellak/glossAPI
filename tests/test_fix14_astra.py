@@ -146,7 +146,7 @@ def test_a_report_declared_temporary_is_never_published_as_a_metadata_projection
 def test_a_successful_reader_with_no_output_binding_is_never_authoritative(tmp_path):
     """Astra's R5 shape: a successful attempt with an empty output manifest and no publication record registers bytes at
     a product path. Unbound: passed over (the committed generation stands); alone, the path is refused. A second named
-    copy of bytes the attempt did record producing is bound."""
+    copy of bytes the attempt did record producing is bound only by its own publication record (fix 15, H1)."""
     with LedgerWriter(tmp_path / 'corpus.sqlite3') as writer:
         run, source, path, source_id, copy_id = published_copy(writer, tmp_path)
         uri = path.as_uri()
@@ -170,6 +170,12 @@ def test_a_successful_reader_with_no_output_binding_is_never_authoritative(tmp_p
         with writer.transaction():
             named = writer.artifact(run, 'export', 'document_jsonl', second.as_uri(), producer_attempt_id=producer,
                                     sha256=_sha(source), bytes=len(source.read_bytes()), retention_class='final')
+        # Fix 15 (ASTRA-FIXES2c10 H1): a second named copy is committed only with its own positive binding; the same
+        # digest produced at another path binds nothing.
+        assert repr(W.expected_products(writer.connection)[second.as_uri()]) == 'Refuse(no_committed_registration)'
+        with writer.transaction():
+            writer.snapshot('publication_binding', {'kind': 'publication_binding', 'product_uri': second.as_uri(), 'sha256': _sha(source),
+                                                    'producer_attempt_id': producer, 'file_id': named})
         assert W.expected_products(writer.connection)[second.as_uri()].registration == named
 
 
