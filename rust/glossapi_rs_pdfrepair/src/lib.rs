@@ -1,5 +1,6 @@
 mod cmap;
 mod font;
+pub mod layout;
 mod pdf;
 mod text;
 use anyhow::{anyhow, bail, Result};
@@ -815,6 +816,161 @@ mod python {
         let s = text::native_sample(&mut pdf).map_err(py_err)?;
         serde_json::to_string(&s).map_err(|e| PyValueError::new_err(e.to_string()))
     }
+    // ---- layout v2 (K5-A1): labels on the plain PDFium order; not used by the package yet --------------------------
+    /// Document context of layout v2 (body size, heading sizes, repeated furniture), from `layout_v2_context`.
+    #[pyclass(module = "glossapi_rs_pdfrepair", frozen)]
+    struct LayoutV2Context(layout::DocContext);
+    #[pymethods]
+    impl LayoutV2Context {
+        #[getter]
+        fn body(&self) -> f64 {
+            self.0.body
+        }
+        #[getter]
+        fn heading_sizes(&self) -> Vec<f64> {
+            self.0.heading_sizes.clone()
+        }
+        #[getter]
+        fn pages(&self) -> usize {
+            self.0.pages
+        }
+        /// `[{band, signature, y, pages}]` as the reference's `DocContext.furniture`.
+        #[getter]
+        fn furniture<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+            let out = pyo3::types::PyList::empty(py);
+            for f in &self.0.furniture {
+                let d = pyo3::types::PyDict::new(py);
+                d.set_item("band", f.band.name())?;
+                d.set_item("signature", &f.signature)?;
+                d.set_item("y", f.y)?;
+                d.set_item("pages", f.pages)?;
+                out.append(d)?;
+            }
+            Ok(out)
+        }
+    }
+    fn layout_err(e: anyhow::Error) -> PyErr {
+        PyValueError::new_err(format!("layout v2: {e}"))
+    }
+    /// `layout_v2_context([(page_no, k5chars bytes), ...])`: the reference's document pass (each page's own fixture
+    /// text, pages in the given order; the reference's arm sorts them by page number). The GIL is released.
+    #[pyfunction]
+    fn layout_v2_context(py: Python<'_>, tables: Vec<(i64, Bound<'_, pyo3::types::PyBytes>)>) -> PyResult<LayoutV2Context> {
+        let raw: Vec<(i64, &[u8])> = tables.iter().map(|(p, b)| (*p, b.as_bytes())).collect();
+        let ctx = py
+            .detach(|| -> anyhow::Result<layout::DocContext> {
+                let mut geos = Vec::with_capacity(raw.len());
+                for (p, data) in &raw {
+                    let t = layout::k5chars::parse(data)?;
+                    geos.push((*p, layout::page_geo(&layout::fixture_text(&t), &t)?));
+                }
+                layout::document_context(&geos)
+            })
+            .map_err(layout_err)?;
+        Ok(LayoutV2Context(ctx))
+    }
+    /// `layout_v2_label_page(plain, k5chars bytes, ctx, page_no) -> (rotation, warnings, lines, blocks, markdown)`.
+    /// lines: `[(start, end)]` code-point offsets of the line pieces; blocks: `[(start, end, label, level, rotated,
+    /// why, cut, first, last, bbox)]` with code-point offsets into `plain` (bbox `None` or `(x0, top, x1, bottom)`);
+    /// warnings: `[{"kind": ..., <key>: <value>}]` as the reference. Labels only: the text is the caller's `plain`.
+    /// The GIL is released while labelling.
+    #[pyfunction]
+    #[allow(clippy::type_complexity)]
+    fn layout_v2_label_page<'py>(
+        py: Python<'py>,
+        plain: &str,
+        table: Bound<'py, pyo3::types::PyBytes>,
+        ctx: Bound<'py, LayoutV2Context>,
+        page_no: i64,
+    ) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
+        let data = table.as_bytes();
+        let c = &ctx.get().0;
+        let (res, md) = py
+            .detach(|| -> anyhow::Result<(layout::PageLabels, String)> {
+                let t = layout::k5chars::parse(data)?;
+                let res = layout::label_page(plain, &t, c, page_no)?;
+                let md = layout::page_markdown(plain, &res.blocks);
+                Ok((res, md))
+            })
+            .map_err(layout_err)?;
+        let warnings = pyo3::types::PyList::empty(py);
+        for w in &res.warnings {
+            let d = pyo3::types::PyDict::new(py);
+            d.set_item("kind", w.kind)?;
+            d.set_item(w.key, w.value)?;
+            warnings.append(d)?;
+        }
+        let lines = pyo3::types::PyList::new(py, res.lines.iter().map(|&(a, b)| (a, b)))?;
+        let blocks = pyo3::types::PyList::empty(py);
+        for b in &res.blocks {
+            let bbox = b.bbox.map(|v| (v[0], v[1], v[2], v[3]));
+            blocks.append((b.start, b.end, b.label, b.level, b.rotated, b.why, b.cut, b.first, b.last, bbox))?;
+        }
+        (res.rotation, warnings, lines, blocks, md).into_pyobject(py)
+    }
+    /// `layout_v2_read_textpage(functions, textpage, page_w, page_h, rotation, page_no, source_sha256) -> bytes`: the
+    /// page's `.k5chars` table read natively from PDFium (the K5c reader's fields, byte for byte). `functions` = the
+    /// addresses of the 11 `FPDFText_*` functions in `layout_v2_pdfium_functions()` order, taken from the PDFium that
+    /// pypdfium2 loaded; `textpage` = the raw `FPDF_TEXTPAGE` address. Internal API: wrong addresses crash the
+    /// process. The GIL stays held (PDFium is not thread-safe).
+    #[pyfunction]
+    #[allow(clippy::too_many_arguments)]
+    fn layout_v2_read_textpage<'py>(
+        py: Python<'py>,
+        functions: Vec<usize>,
+        textpage: usize,
+        page_w: f64,
+        page_h: f64,
+        rotation: u16,
+        page_no: u32,
+        source_sha256: &[u8],
+    ) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
+        let sha: [u8; 32] = source_sha256
+            .try_into()
+            .map_err(|_| PyValueError::new_err("source_sha256 must be 32 bytes"))?;
+        // SAFETY: the caller hands over pypdfium2's own function addresses and a live text page (documented above).
+        let t = unsafe {
+            let f = layout::reader::PdfiumText::from_addresses(&functions).map_err(layout_err)?;
+            f.read(textpage as *mut std::ffi::c_void, page_w, page_h, rotation, page_no).map_err(layout_err)?
+        };
+        Ok(pyo3::types::PyBytes::new(py, &layout::k5chars::dump(&t, &sha)))
+    }
+    /// The PDFium function names `layout_v2_read_textpage` expects, in order.
+    #[pyfunction]
+    fn layout_v2_pdfium_functions() -> Vec<&'static str> {
+        layout::reader::PDFIUM_FUNCTIONS.to_vec()
+    }
+    /// Test hook for the differential tests: Python-semantics primitives of the port. kind = a pattern name (the
+    /// boolean the reference computes), "norm_sig", "nfc", "casefold" (strings), or "isspace", "isalpha", "isdecimal",
+    /// "isdigit", "isnumeric", "isalnum", "isupper", "re_lower" (one entry per char).
+    #[pyfunction]
+    fn _layout_v2_probe(py: Python<'_>, kind: &str, text: &str) -> PyResult<Py<PyAny>> {
+        use layout::pyuni as u;
+        let chars: Vec<char> = text.chars().collect();
+        let s = |v: Vec<char>| -> PyResult<Py<PyAny>> { Ok(v.into_iter().collect::<String>().into_pyobject(py)?.into_any().unbind()) };
+        let per = |f: fn(char) -> bool| -> PyResult<Py<PyAny>> {
+            Ok(chars.iter().map(|&c| f(c)).collect::<Vec<bool>>().into_pyobject(py)?.into_any().unbind())
+        };
+        match kind {
+            "norm_sig" => s(layout::norm_sig(&chars)),
+            "nfc" => s(u::nfc(&chars)),
+            "casefold" => s(u::casefold(&chars)),
+            "isspace" => per(u::is_space),
+            "isalpha" => per(u::is_alpha),
+            "isdecimal" => per(u::is_decimal),
+            "isdigit" => per(u::is_digit),
+            "isnumeric" => per(u::is_numeric),
+            "isalnum" => per(u::is_alnum),
+            "isupper" => per(u::is_upper),
+            "re_lower" => Ok(chars.iter().map(|&c| u::re_lower(c as u32)).collect::<Vec<u32>>().into_pyobject(py)?.into_any().unbind()),
+            name => Ok(pyo3::types::PyBool::new(py, layout::pattern_probe(name, text).map_err(layout_err)?).to_owned().into_any().unbind()),
+        }
+    }
+    /// Test hook: Python `round(x, 2)` as the port computes it.
+    #[pyfunction]
+    fn _layout_v2_round2(x: f64) -> f64 {
+        layout::pyuni::round2(x)
+    }
     // gil_used = true keeps the 0.19 contract (the module requires the GIL); PyO3 0.28+ would otherwise declare
     // free-threaded support, which has not been audited (abi3 builds cannot load on free-threaded Python anyway).
     #[pymodule(gil_used = true)]
@@ -826,6 +982,13 @@ mod python {
         m.add_function(wrap_pyfunction!(_native_sample_json, m)?)?;
         m.add_function(wrap_pyfunction!(_native_page_flags_json, m)?)?;
         m.add_class::<PdfAnalysis>()?;
+        m.add_class::<LayoutV2Context>()?;
+        m.add_function(wrap_pyfunction!(layout_v2_context, m)?)?;
+        m.add_function(wrap_pyfunction!(layout_v2_label_page, m)?)?;
+        m.add_function(wrap_pyfunction!(layout_v2_read_textpage, m)?)?;
+        m.add_function(wrap_pyfunction!(layout_v2_pdfium_functions, m)?)?;
+        m.add_function(wrap_pyfunction!(_layout_v2_probe, m)?)?;
+        m.add_function(wrap_pyfunction!(_layout_v2_round2, m)?)?;
         Ok(())
     }
 }
