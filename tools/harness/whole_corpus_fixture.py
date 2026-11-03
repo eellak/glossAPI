@@ -1,7 +1,9 @@
 """Frozen small whole-corpus compatibility gate: selection, IDs and shards.
 
-The prescribed filesystem enumeration is an INPUT to this fixture. This is
-not a new sorting rule for production. Products come from public wrappers.
+The prescribed filesystem enumeration is an INPUT to this fixture. Since K4g
+fix 5 the section ids follow the sorted file names whatever that enumeration
+is (the expected rows were re-captured once: same rows, ids and row groups in
+sorted-name order; shards unchanged). Products come from public wrappers.
 """
 from __future__ import annotations
 

@@ -79,6 +79,44 @@ def score_ocr_profile_directory(noise, directory, threads, min_repeat_run, *, sc
     return result
 
 
+def marker_free_scoring_copy(input_dir, staging_root):
+    """A copy of ``input_dir``'s markdown tree with the OCR supplement's composition lines removed, for the native
+    scorers of the legacy score-only clean (FG-G02, K4g fix 5); None (score ``input_dir`` itself, as before) when no
+    file has a marker. Unmarked files are copied byte for byte, so their report rows are the ones the original gives.
+    The caller removes the copy after scoring."""
+    import uuid
+    from ..ocr.page_artifacts import strip_supplement_markers
+    input_dir = Path(input_dir)
+    files = sorted(path for path in input_dir.rglob('*.md') if path.is_file())
+    if not any(_has_supplement_marker(path) for path in files):
+        return None
+    target = Path(staging_root)/f'clean-metric-surface-{uuid.uuid4().hex}'
+    for path in files:
+        copy = target/path.relative_to(input_dir)
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        data = path.read_bytes()
+        if _has_supplement_marker(path):
+            data = strip_supplement_markers(data.decode('utf-8', 'surrogateescape')).encode('utf-8', 'surrogateescape')
+        copy.write_bytes(data)
+    return target
+
+
+def metric_surface_without_markers(recorder, name, directory):
+    """Write ``recorder``'s text without the OCR supplement's composition lines to ``directory/name`` (a directory
+    holding only that file, as the native scorers read whole directories) and record each removed line as a producer
+    edit on the recorder, so the native edits that follow replay on the same surface. Returns the written path."""
+    from ..ocr.page_artifacts import SUPPLEMENT_MARKER_RE
+    removed = 0
+    for match in list(SUPPLEMENT_MARKER_RE.finditer(recorder.text)):
+        recorder.edit('ocr_supplement_marker_excluded_from_metrics', match.start()-removed, match.end()-removed, '',
+            reason='FG-G02: text metrics do not count the OCR supplement composition lines')
+        removed += match.end()-match.start()
+    directory.mkdir(parents=True)
+    surface = directory/name
+    surface.write_bytes(recorder.text.encode('utf-8'))
+    return surface
+
+
 class CleanStage:
     name = 'clean'
     contract_version = 1
@@ -153,8 +191,15 @@ class CleanStage:
             if operation in ('clean.initial', 'clean.score_after_ocr'):
                 import glossapi_rs_cleaner as cleaner
                 report = root/'cleaning_report.parquet'
+                surface = source.path
+                if operation == 'clean.score_after_ocr' and _has_supplement_marker(source.path):
+                    # The score-only pass after OCR produces the exported text metrics (latin_percentage,
+                    # percentage_greek, ...). The OCR supplement's composition lines are structure, not document text,
+                    # so the metrics are measured without them (FG-G02, as the OCR profile already is), on an attempt-
+                    # private copy; the producer edits record their removal (K4g fix 5).
+                    surface = metric_surface_without_markers(recorder, source.path.name, root/'native_evidence'/'metric_surface')
                 with capture_backend_observations() as observations:
-                    cleaner.run_complete_pipeline(str(source.path.parent), str(output_dir), str(report),
+                    cleaner.run_complete_pipeline(str(surface.parent), str(output_dir), str(report),
                         ['greek', 'latin'], int(request.settings.get('num_threads') or 1), True,
                         evidence_directory=str(evidence_dir))
                 import pandas as pd
@@ -189,13 +234,14 @@ class CleanStage:
                 with table_report.open(newline='') as stream:
                     table_decisions = [{key:value for key,value in row.items() if key != 'file_path'} for row in csv.DictReader(stream)]
                 import glossapi_rs_noise as noise
-                score_directory = source.path.parent if operation == 'clean.score_after_ocr' else output_dir
+                score_directory = surface.parent if operation == 'clean.score_after_ocr' else output_dir
                 scores = list(noise.score_markdown_directory_detailed(str(score_directory), 1))
                 if len(scores) != 1:
                     raise ValueError('Fresh required noise metrics missing')
                 scores[0] = list(scores[0]); scores[0][0] = source.path.name
+                noise_surface = (source.sha256 if surface == source.path else sha256_file(surface)) if operation == 'clean.score_after_ocr' else output_digest
                 metrics = {'native_report': metric, 'noise_score': scores[0], 'native_table_decisions':table_decisions,
-                    'native_report_surface_sha256':output_digest,'noise_surface_sha256':source.sha256 if operation=='clean.score_after_ocr' else output_digest}
+                    'native_report_surface_sha256':output_digest,'noise_surface_sha256':noise_surface}
             elif operation in ('clean.ocr_artifacts', 'clean.content_debug'):
                 recorder.transform('python_universal_newlines',raw.replace('\r\n','\n').replace('\r','\n'))
                 from ..corpus.phase_clean import _process_combined_ocr_document, DEFAULT_OCR_WORD_REPEAT_WINDOW

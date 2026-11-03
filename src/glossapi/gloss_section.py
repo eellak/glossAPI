@@ -547,11 +547,13 @@ class GlossSection:
         print(f"Output directory: {output_dir}")
         print(f"Good files list (length {len(filenames_to_process)}): {filenames_to_process}")
         print(f"Available files in directory:")
-        md_files = [f for f in os.listdir(input_dir) if f.endswith(".md")]
+        # The canonical document order (sorted file names), as the staged section publication uses: the global ids follow
+        # it, not the directory's listing order (K4g fix 5).
+        md_files = sorted(f for f in os.listdir(input_dir) if f.endswith(".md"))
         for i, md_file in enumerate(md_files):
             print(f"  {i+1}. {md_file} (basename: {os.path.splitext(md_file)[0]})")
         
-        for filename in os.listdir(input_dir):
+        for filename in md_files:
             if filename.endswith(".md"):
                 # Get the base name without extension for filtering
                 base_name = os.path.splitext(filename)[0]
