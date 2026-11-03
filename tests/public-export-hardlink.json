@@ -1,0 +1,20 @@
+{
+  "mode": "hardlink",
+  "error": {
+    "type": "UnresolvedRecoveryError",
+    "message": "unresolved_recovery: recovery could not safely repair, kept as is: /private/tmp/claude-501/-Users-foivoskarounos-zamparloukos/f57fd351-b06f-49b9-83b5-5717c946890a/scratchpad/coord-f10/pt/test_public_nonmetadata_hardli0/out/export.jsonl (hard_linked). Remove the cause (e.g. an extra hard link) and resume; nothing ran"
+  },
+  "returned_state": null,
+  "original": "21ccf60aea42d394694ee99299e98babc3117fa2390bec6abae896ca1812f8ff",
+  "after_start": "0b86b7dc47fdab98f94e5f940ccc97a9474af11f2f0fe3ed3290fa7fdb3d2024",
+  "nlink": 2,
+  "ledger_mismatches": {
+    "export.jsonl": [
+      "21ccf60aea42d394694ee99299e98babc3117fa2390bec6abae896ca1812f8ff"
+    ]
+  },
+  "alias_sha256": "0b86b7dc47fdab98f94e5f940ccc97a9474af11f2f0fe3ed3290fa7fdb3d2024",
+  "retry_state": "completed",
+  "after_retry": "21ccf60aea42d394694ee99299e98babc3117fa2390bec6abae896ca1812f8ff",
+  "retry_mismatches": {}
+}

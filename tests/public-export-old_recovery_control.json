@@ -1,0 +1,13 @@
+{
+  "mode": "old_recovery_control",
+  "error": null,
+  "returned_state": "completed",
+  "original": "21ccf60aea42d394694ee99299e98babc3117fa2390bec6abae896ca1812f8ff",
+  "after_start": "21ccf60aea42d394694ee99299e98babc3117fa2390bec6abae896ca1812f8ff",
+  "nlink": 1,
+  "ledger_mismatches": {},
+  "alias_sha256": "0b86b7dc47fdab98f94e5f940ccc97a9474af11f2f0fe3ed3290fa7fdb3d2024",
+  "retry_state": "completed",
+  "after_retry": "21ccf60aea42d394694ee99299e98babc3117fa2390bec6abae896ca1812f8ff",
+  "retry_mismatches": {}
+}

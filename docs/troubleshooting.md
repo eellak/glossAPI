@@ -37,6 +37,16 @@ A corpus copy that the previous run left unflushed (for example `export.jsonl`) 
 glossAPI keeps your edit and refuses every start until you move or delete the file; it is then republished from the
 managed source. The CLI reports the typed code `post_close_edit` (exit 3) with the edited paths in `details.paths`. See [Resumability, recovery and retention](architecture/resumability_recovery_and_retention.md).
 
+## A run refuses to start with `unresolved_recovery`
+
+A run start (or a repeated publication) found a corpus file it must repair: a copy the previous run left unflushed, or
+bytes a failed attempt put in place. It could not repair it safely, so the file is kept and nothing runs. The CLI
+reports the typed code `unresolved_recovery` (exit 3); `details.conditions` names each path and its reason:
+`hard_linked` (remove the extra hard link), `conflicting_locks` or `lock_mismatch` (move or delete the file; it is then
+republished), `path_replaced` (the file was replaced by a symlink: remove the symlink), `source_changed` or
+`no_intact_source` (the managed source under `.glossapi/artifacts` changed or is missing: restore it or use another
+corpus). After the cause is removed, resume: the file is repaired and the run goes on.
+
 ## `conversion.log` appears in the working directory
 
 Standalone scripts that construct the extractor write `conversion.log` in the working directory unless

@@ -1204,6 +1204,11 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
             # own earlier bytes as unchanged and publish nothing (the OCR publication), or the start would refuse them.
             writer.roll_back_uncommitted_writes(_publication_wrapper_runs(writer,run,stage,task['task_id']),corpus.output_dir,
                 observation_run=run)
+            if writer.rollback_unresolved:
+                # Fix 10 (N1, N3): a target the rollback recognised but could not resolve stops the run here, typed,
+                # before the publication repeats over it.
+                from ..ledger.writer import UnresolvedRecoveryError
+                raise UnresolvedRecoveryError(writer.rollback_unresolved)
         with writer.transaction():
             attempt=writer.attempt(task['task_id'],worker_id='single-publisher',device_id='cpu',
                 fingerprint={'frozen_run_id':run,'stage':stage,'reuse_eligible':False},inputs={'files':[]},settings={},tools={})

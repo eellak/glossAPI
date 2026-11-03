@@ -46,7 +46,10 @@ reports it, or one `run_completed_with_failures` summary when the task table nam
 then. `2` a typed error (`errors[0].code`); `3` a policy or disk conflict (`disk_budget_required`,
 `disk_budget_exceeded`, `policy_conflict`, `waiting_for_disk`, `disk_full`, `disk_guard_unavailable`), a run refused
 because a corpus copy the last run left unflushed was edited after it closed (`post_close_edit`, the edited paths in
-`details.paths`; move or delete them), or a run waiting for disk.
+`details.paths`; move or delete them), a run refused because recovery found a corpus file it must repair but could not
+repair safely (`unresolved_recovery`: hard-linked, contradictory lock records, path replaced, managed source changed or
+missing; `details.paths` and `details.conditions` name each path and reason, the file is kept; remove the cause and
+resume), or a run waiting for disk.
 
 ## `plan --json`: the exact preview
 
