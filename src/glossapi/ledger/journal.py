@@ -21,6 +21,7 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import threading
 import time
 import traceback as traceback_module
 from typing import Any, cast
@@ -31,6 +32,10 @@ from .writer import LedgerWriter, new_id, utc_now
 from .stores import TEXT_FIELDS, membership_snapshot, read_store, store_states
 
 _active_journal = ContextVar("glossapi_shadow_result_journal", default=None)
+# The cutover wrapper whose ledger binds in-place metadata writes (fix 7, R1). Unlike ``_active_journal`` it is not
+# replaced by the observation collector of a caller kernel (``capture_backend_observations``): the OCR publication
+# runs its legacy callback inside one and rewrites the metadata in place there.
+_uncommitted_write_journal = ContextVar("glossapi_uncommitted_write_journal", default=None)
 _loaded_tools_cache = {}
 def safe_settings(value):
     """Recordable JSON copy of settings and evidence, recorded as given (paths as text, non-finite floats typed).
@@ -149,6 +154,38 @@ def observe(reason_code, *, path=None, error=None, status=None, message="", **de
 def observe_store(path, *, kind="legacy_store"):
     journal = _active_journal.get()
     if journal is not None and journal.owner_pid == os.getpid(): journal.store(Path(path), kind=kind)
+
+
+def record_uncommitted_write(temporary, target):
+    """The metadata choke point, between its temporary file and the atomic replace of ``target`` (fix 7, R1).
+
+    Inside a cutover wrapper (the profile that commits metadata as registered projections) or a caller-kernel wrapper
+    (the OCR publication, whose captured products are published after its callback), the bytes about to be put in
+    place are not committed until the wrapper commits them. Their hash is bound in the ledger first,
+    durably (``LedgerWriter.record_uncommitted_write``); if that record cannot be written (a full ledger or disk) the
+    error propagates and the caller never replaces the file. A later start then rolls exactly these bytes back to the
+    committed projection, without needing the free space the failed barrier lacked.
+
+    Not recorded (no ledger to record in, as for ``observe_store``): outside such a wrapper, in a child process,
+    or on a thread other than the ledger owner's. The wrapper is found through ``_uncommitted_write_journal``, which
+    a caller kernel's observation collector does not replace (the OCR publication's legacy callback writes there)."""
+    journal = _uncommitted_write_journal.get()
+    if not isinstance(journal, ResultJournal) or not (journal.cutover or journal.caller_override) or journal.owner_pid != os.getpid():
+        return
+    writer = journal.writer
+    if writer.connection is None or writer.owner != (os.getpid(), threading.get_ident()):
+        return
+    target = Path(target)
+    if not target.absolute().is_relative_to(Path(journal.corpus.output_dir).absolute()):
+        # Metadata at a symlinked location outside the corpus: resolve the corpus side too.
+        if not target.resolve().is_relative_to(Path(journal.corpus.output_dir).resolve()):
+            return
+    digest = hashlib.sha256()
+    with open(temporary, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    writer.record_uncommitted_write(journal.run_id, target, digest.hexdigest(), os.path.getsize(temporary),
+                                    wrapper_stage=journal.stage, existed=os.path.lexists(target))
 
 
 def observe_source_rows(frame, path, *, url_column="url"):
@@ -701,6 +738,7 @@ def shadow_stage(stage: Any, operation: Any = None) -> Any:
                     writer.barrier_context = {'run_id': journal.run_id, 'debug': journal.retention_settings.get('debug', 'off')}
                     writer.retained_intermediates = journal.retention_settings.get('debug', 'off') == 'on'
                 token = _active_journal.set(journal)
+                recorder_token = _uncommitted_write_journal.set(journal)
                 result, error = None, None
                 try:
                     if journal.caller_override:
@@ -726,7 +764,9 @@ def shadow_stage(stage: Any, operation: Any = None) -> Any:
                             verification = error = failed
                             result = None
                     try: journal.finish(result, error)
-                    finally: _active_journal.reset(token)
+                    finally:
+                        _uncommitted_write_journal.reset(recorder_token)
+                        _active_journal.reset(token)
                     if verification is not None:
                         raise verification
                     if own_writer and journal.cutover and error is None:

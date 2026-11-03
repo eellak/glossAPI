@@ -477,9 +477,8 @@ STAGEWORK = 'copy into a stage work directory or ledger area (immutable generati
 # exact, so a second write in an allowlisted scope fails (CP-K2e F6); calls are matched after import-alias resolution.
 EXPECTED = {
     ('glossapi/parquet_schema.py', '_write_metadata_parquet_locked', '.write_table'): (1, CHOKE),
-    ('glossapi/parquet_schema.py', '_write_metadata_parquet_locked', 'os.replace'): (1, CHOKE),
-    ('glossapi/parquet_schema.py', '_write_serialized_locked', 'os.replace'): (1, CHOKE),
-    ('glossapi/parquet_schema.py', '_copy_file_locked', 'os.replace'): (1, CHOKE),
+    # Fix 7 (R1): the three choke writers' atomic replace is one helper that first records the uncommitted write.
+    ('glossapi/parquet_schema.py', '_replace_in_place', 'os.replace'): (1, CHOKE),
     ('glossapi/parquet_schema.py', '_copy_file_locked', 'shutil.copyfile'): (1, CHOKE),
     ('glossapi/parquet_schema.py', 'pandas_parquet', '.to_parquet'): (1, SERIALIZER),
     ('glossapi/parquet_schema.py', 'ParquetSchema.create_basic_metadata_parquet', '.write_table'): (1, SERIALIZER),
@@ -952,7 +951,7 @@ ALL_WRITES = {
     'glossapi/install_plan.py': (['subprocess.run'], K3),
     'glossapi/ledger/importer.py': (['shutil.copyfile', 'tempfile.TemporaryDirectory'], LEDGER),
     'glossapi/ledger/journal.py': (['subprocess.check_output'], LEDGER),
-    'glossapi/ledger/writer.py': (['os.open', 'os.replace', 'os.unlink', 'shutil.copyfile'], LEDGER),
+    'glossapi/ledger/writer.py': (['.unlink', 'os.open', 'os.replace', 'os.unlink', 'shutil.copyfile'], LEDGER),  # .unlink: fix 7 rollback removes a failed attempt's own uncommitted file
     'glossapi/ocr/defaults.py': (['.write_text'], OCR),
     'glossapi/ocr/math/enrich.py': (['.mkdir', '.write_text', 'open(a)', 'open(w)'], OCR),
     'glossapi/ocr/page_artifacts.py': (['.mkdir', '.unlink', '.write_text', 'open(xb)'], OCR),

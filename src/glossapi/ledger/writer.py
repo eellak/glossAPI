@@ -696,6 +696,180 @@ class LedgerWriter:
                 and row['event_id'] is not None and row['event_id']<through and file_id not in excluded}
         return set()
 
+    def record_uncommitted_write(self, run_id: str, path: Path, sha256: str, size: int, *, wrapper_stage: str,
+                                 existed: bool | None = None) -> None:
+        """Bind, durably and BEFORE the replacement, the bytes a wrapper is about to put in place at a corpus path whose
+        new content it has not committed yet (fix 7, R1: the "record the intent first" design). One entry of
+        ``record_uncommitted_writes``."""
+        self.record_uncommitted_writes(run_id, [(path, sha256, size, existed)], wrapper_stage=wrapper_stage)
+
+    def record_uncommitted_writes(self, run_id: str, entries: Any, *, wrapper_stage: str) -> None:
+        """Bind, durably and BEFORE the replacements, the bytes about to be put in place at corpus paths whose new
+        content is not committed yet (fix 7, R1: the "record the intent first" design).
+
+        Callers: the metadata choke point (``parquet_schema._replace_in_place``: a legacy wrapper's in-place metadata
+        write, committed only when its barrier seals the projection) and the product publication
+        (``products._publish_products_locked``: mirrors replaced before the transaction that registers them). The
+        commit is synchronous (``PRAGMA synchronous=FULL``, as the durability barrier): once it returns, the ledger names
+        these bytes as this run's own uncommitted write, so a later start can tell them from a user's edit and roll them
+        back (``verify_excluded_copies``) even if the failed barrier could not, for want of space. If the ledger cannot
+        take the record (a full ledger or disk), this raises and the caller replaces nothing.
+        ``entries``: ``(path, sha256, bytes[, existed])``; the path is recorded as its physical file
+        (``resolve_metadata_target``); ``existed`` says whether a file was at the path before this write (a rollback
+        removes a file only if the failed attempt created it)."""
+        from ..parquet_schema import resolve_metadata_target
+        self._owner(transaction=False)
+        if self.connection.in_transaction:
+            raise LedgerError('An uncommitted write must be recorded in its own committed observation')
+        entries = [(str(resolve_metadata_target(entry[0])), entry[1], entry[2], entry[3] if len(entry) > 3 else None)
+                   for entry in entries]
+        if not entries:
+            return
+        self.connection.execute('PRAGMA synchronous=FULL')
+        try:
+            with self.transaction():
+                for path, sha256, size, existed in entries:
+                    details = {'path': path, 'sha256': sha256, 'bytes': size, 'stage': wrapper_stage}
+                    if existed is not None:
+                        details['existed'] = bool(existed)
+                    self.event(run_id, event_kind='run', reason_code='uncommitted_projection_write',
+                        message='bytes put in place before their publication committed', details=details)
+        finally:
+            self.connection.execute('PRAGMA synchronous=NORMAL')
+
+    def _own_uncommitted_write(self, row: dict[str, Any], path: Path) -> int | None:
+        """The event id of a recorded uncommitted write (``record_uncommitted_write``) whose bytes are exactly the
+        bytes now at ``path``, recorded after the copy's current registration; ``None`` otherwise. Only such bytes are
+        the run's own: a user's edit (any other content) or a newer committed projection (a newer registration) never
+        matches."""
+        from ..parquet_schema import resolve_metadata_target
+        from .encoding import file_hash
+        try:
+            physical = str(resolve_metadata_target(path))
+        except Exception:
+            return None
+        table = self.connection.event_table
+        after = row.get('event_id')
+        query = (f"SELECT event_id,details_json FROM {table} WHERE reason_code='uncommitted_projection_write'"
+                 + (" AND event_id>?" if after is not None else "") + " ORDER BY event_id DESC")
+        candidates = [(event_id, json.loads(encoded)) for event_id, encoded in
+                      self.connection.execute(query, (after,) if after is not None else ())]
+        candidates = [(event_id, details) for event_id, details in candidates if details.get('path') == physical]
+        if not candidates or not path.is_file():
+            return None
+        current = file_hash(path)
+        return next((event_id for event_id, details in candidates if details.get('sha256') == current), None)
+
+    def roll_back_uncommitted_writes(self, run_ids: Any, output_dir: Any, *, observation_run: str) -> list[str]:
+        """Undo the uncommitted writes of failed publication attempts (fix 7, R1), before the publication is repeated.
+
+        ``run_ids``: the wrapper runs of the failed attempts. Every path they recorded with ``record_uncommitted_writes``
+        is examined; only a file whose bytes are exactly one of those records is touched (anything else, e.g. a user's
+        edit, is left as it is):
+        - if the path has a committed registration (its newest registration that is a managed copy of an intact
+          immutable generation, not made by the failed attempts) with other bytes, those bytes are restored (temporary
+          file and atomic replace: this needs the space the failed attempt lacked, so it raises if the disk is still
+          full);
+        - if it has none and the failed attempts' first write found no file there (they created it), or that
+          registration was released by policy, the file is removed (no space needed); a file that existed before the
+          failed attempts with no committed generation (a caller-seeded table) is left as it is (nothing to restore).
+        A file already equal to its committed registration is left. Without this, a repeated publication that captures
+        the files its callback changes (the OCR publication's caller kernel) sees its own earlier, never-committed bytes
+        as unchanged and publishes nothing, and a later wrapper start restores the older committed copy over them.
+        The ledger follows the file (events in ``observation_run``, observation ``uncommitted_write_rolled_back``): the
+        restored registration is ``present`` again, the failed attempts' registrations of the removed bytes ``missing``.
+        Returns the paths restored or removed."""
+        from urllib.parse import unquote, urlsplit
+        from .encoding import file_hash
+        run_ids = [value for value in dict.fromkeys(run_ids) if value]
+        if not run_ids:
+            return []
+        self._owner(transaction=False)
+        table = self.connection.event_table
+        recorded: dict[str, set[str]] = {}
+        created: dict[str, bool] = {}  # path -> the failed attempts' first write found no file there
+        rows_found = []
+        for offset in range(0, len(run_ids), 500):
+            chunk = run_ids[offset:offset+500]
+            rows_found += self.connection.execute(
+                    f"SELECT event_id,details_json FROM {table} WHERE reason_code='uncommitted_projection_write' AND run_id IN ("
+                    + ','.join('?'*len(chunk)) + ')', chunk).fetchall()
+        for _, encoded in sorted(rows_found, key=lambda row: row[0]):
+            details = json.loads(encoded)
+            if details['path'] not in recorded:
+                created[details['path']] = details.get('existed') is False
+            recorded.setdefault(details['path'], set()).add(details['sha256'])
+        if not recorded:
+            return []
+        root = Path(output_dir)
+        resolved_root = Path(os.path.realpath(root))
+        catalog = self.file_catalog()
+        index = self._uri_index()
+        local = lambda row: Path(unquote(urlsplit(row['uri']).path))
+        failed_attempts = {row[0] for chunk in [run_ids[i:i+500] for i in range(0, len(run_ids), 500)]
+                           for row in self.connection.execute('SELECT a.attempt_id FROM attempts a JOIN tasks t USING(task_id) WHERE t.run_id IN ('
+                                                              + ','.join('?'*len(chunk)) + ')', chunk)}
+        changed: list[str] = []
+        events: list[tuple[dict[str, Any], str, dict[str, Any]]] = []
+        for physical, digests in recorded.items():
+            path = Path(physical)
+            if path.is_symlink():
+                continue
+            current = file_hash(path) if path.is_file() else None
+            spellings = {path.as_uri()}
+            if path.is_relative_to(resolved_root):
+                spellings.add((root.absolute() / path.relative_to(resolved_root)).as_uri())
+            rows = [catalog[file_id] for uri in spellings for file_id in index.get(uri, [])]
+            # The committed state of the path: its newest registration that is a managed copy of an intact immutable
+            # generation (a product publication or a document mirror; whatever presence the failed wrapper's own
+            # observation gave it afterwards), never a registration made by the failed attempts themselves.
+            committed = None
+            for row in sorted((row for row in rows if row['ownership'] == 'managed' and row['producer_attempt_id']
+                               and row['producer_attempt_id'] not in failed_attempts),
+                              key=lambda row: (row.get('created_at') or '', row['event_id'] or 0), reverse=True):
+                siblings = (catalog.get(file_id) for file_id in self._files_of_attempts([row['producer_attempt_id']]))
+                source = next((other for other in siblings if other is not None and other['file_id'] != row['file_id']
+                               and other['presence'] == 'present' and other['ownership'] == 'managed'
+                               and other['sha256'] == row['sha256'] and '/.glossapi/artifacts/' in other['uri']
+                               and local(other).is_file() and file_hash(local(other)) == other['sha256']), None)
+                if source is not None or row['presence'] == 'deleted':
+                    committed = (row, source)
+                    break
+            after = current
+            if current is not None and current in digests and not (committed is not None and committed[0]['sha256'] == current) \
+                    and (committed is not None or created[physical]):
+                if committed is None or committed[0]['presence'] == 'deleted':
+                    # Created by the failed attempt (no file before its first write), or released by policy: removing
+                    # it needs no space. A file that existed before with no committed generation to restore (e.g. a
+                    # caller-seeded metadata table the failed attempt rewrote) is left as it is, as before fix 7.
+                    path.unlink()
+                    after = None
+                else:
+                    row, source = committed
+                    assert source is not None
+                    _restore_copy(local(source), path)
+                    after = file_hash(path)
+                    if after != row['sha256']:
+                        raise LedgerError('Rollback of an uncommitted write did not restore the committed bytes: ' + str(path))
+                changed.append(str(path))
+            # The ledger follows the file: the committed registration is present again when the file holds it (here, or
+            # already at the start, ``verify_excluded_copies``), and the failed attempts' own registrations of bytes the
+            # file no longer holds are missing.
+            if committed is not None and committed[1] is not None and committed[0]['presence'] not in ('present', 'deleted') \
+                    and after == committed[0]['sha256']:
+                events.append((committed[0], 'present', {'observation': 'uncommitted_write_rolled_back',
+                                                          'source_file_id': committed[1]['file_id'], 'failed_wrapper_runs': run_ids}))
+            for other in rows:
+                if other['presence'] == 'present' and other['producer_attempt_id'] in failed_attempts \
+                        and other['sha256'] in digests and other['sha256'] != after:
+                    events.append((other, 'missing', {'observation': 'uncommitted_write_rolled_back', 'failed_wrapper_runs': run_ids}))
+        if events:
+            with self.transaction():
+                for row, presence, details in events:
+                    self.event(observation_run, event_kind='artifact', reason_code=presence, file_id=row['file_id'],
+                        version_id=row['version_id'], details=details)
+        return changed
+
     def refuse_ambiguous_copies(self) -> None:
         """Run start, after ``verify_excluded_copies``: an unresolved post-close edit stops the run before any plan
         executes or publishes (CP-K4ac2 R2). The barrier record still names the copy, so every later start refuses
@@ -750,8 +924,11 @@ class LedgerWriter:
         refused by ``refuse_ambiguous_copies``); every checked
         copy is then made durable, so the window closes at the next run start.
         A copy without an intact source is left for verification to report
-        ("Committed publication is missing or corrupt"). Returns the file_ids
-        republished.
+        ("Committed publication is missing or corrupt"). A copy whose bytes are
+        exactly a recorded uncommitted write of a failed wrapper
+        (``record_uncommitted_writes``, recorded after the copy's registration)
+        is the run's own and is rolled back to the managed source before any of
+        these classifications (fix 7, R1). Returns the file_ids republished.
         """
         self._owner(transaction=False)
         table=self.connection.event_table
@@ -788,13 +965,19 @@ class LedgerWriter:
             try:info: os.stat_result | None=path.lstat()
             except FileNotFoundError:info=None
             reason=None
-            if info is not None and (not before or info.st_mtime_ns>before[0] or info.st_ctime_ns>before[1]):
+            # Bytes a failed wrapper put in place before its barrier committed, recorded as its own before the write
+            # (``record_uncommitted_write``; fix 7, R1). They are rolled back to the committed source here, before any
+            # post-close-edit classification: the failed barrier's own rollback needs free space and may have failed
+            # on the disk that stopped the run. Only an exact match of such a record qualifies; anything else keeps
+            # the rules below (a user's edit is kept and refused).
+            own=self._own_uncommitted_write(row,path) if info is not None else None
+            if own is None and info is not None and (not before or info.st_mtime_ns>before[0] or info.st_ctime_ns>before[1]):
                 reason='changed_after_close'
             source=None if reason else next((other for other in catalog.values() if other['file_id']!=file_id and other['presence']=='present'
                 and other['ownership']=='managed' and other['producer_attempt_id']==row['producer_attempt_id']
                 and other['sha256']==row['sha256'] and '/.glossapi/artifacts/' in other['uri']
                 and local(other).is_file() and file_hash(local(other))==other['sha256']),None)
-            if source is not None and info is not None and not self._left_by_power_loss(path,local(source),row):
+            if own is None and source is not None and info is not None and not self._left_by_power_loss(path,local(source),row):
                 reason='complete_different_content'
             if reason:
                 assert info is not None
@@ -804,7 +987,7 @@ class LedgerWriter:
             if source is None:continue
             _restore_copy(local(source),path)
             if file_hash(path)!=row['sha256']:continue
-            restored.append((row,source))
+            restored.append((row,source,own))
             checked.append(path);durable.append(file_id)
         _map_bounded(_fsync_path,checked)
         for directory in sorted({path.parent for path in checked},key=lambda path:len(path.parts),reverse=True):
@@ -815,10 +998,14 @@ class LedgerWriter:
         self._durable_files.update(durable)
         if restored:
             with self.transaction():
-                for row,source in restored:
+                for row,source,own in restored:
+                    details={'observation':'unflushed_copy_republished_from_source','source_file_id':source['file_id']}
+                    if own is not None:
+                        details={'observation':'uncommitted_write_rolled_back','source_file_id':source['file_id'],
+                            'uncommitted_write_event_id':own}
                     self.event(barrier_run,event_kind='artifact',reason_code='present',file_id=row['file_id'],version_id=row['version_id'],
-                        details={'observation':'unflushed_copy_republished_from_source','source_file_id':source['file_id']})
-        return [row['file_id'] for row,_ in restored]
+                        details=details)
+        return [row['file_id'] for row,_,_ in restored]
 
     def _barrier_totals(self,record: dict[str, Any]) -> dict[str, Any]:
         totals=self.barrier_totals

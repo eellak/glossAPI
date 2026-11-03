@@ -489,6 +489,10 @@ def gpu_extract_worker_queue(
             _sys.stdout = _worker_log_handle
             _sys.stderr = _worker_log_handle
     except Exception:
+        # Diagnostic-only, best-effort exception to the full-disk rule (fix 7, A1; FIX6-G2): any failure to open the
+        # optional worker log, ENOSPC/EDQUOT included, leaves output on the inherited stdout/stderr and the worker
+        # continues. No later failure is implied: GLOSSAPI_WORKER_LOG_DIR may be on another filesystem or quota, and
+        # the batch can succeed with no disk_full recorded anywhere. Only product writes are typed disk_full.
         _worker_log_handle = None
     # Bind this worker to a single GPU id
     _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
