@@ -276,6 +276,21 @@ Expected = ExpectedSha | ExpectedAbsent | ExpectedRefuse
 INVALIDATION_REASONS = ('registration_invalidated', 'pending_republication')
 
 
+def latest_validation_start(connection: Any) -> tuple[bool, Any]:
+    """``(exists, raw generation)`` of the ledger's latest ``validation_started`` record, the value exactly as stored
+    (fix 18, M1: the reader checks its type; a malformed record is never trusted)."""
+    table = getattr(connection, 'event_table', 'events')
+    found = connection.execute(f"SELECT details_json FROM {table} WHERE reason_code='validation_started' ORDER BY event_id DESC LIMIT 1").fetchone()
+    if found is None:
+        return False, None
+    return True, (json.loads(found[0]) if found[0] else {}).get('generation')
+
+
+def exact_generation(value: Any) -> bool:
+    """A well-formed generation (fix 18, M1): a plain ``int`` (never ``bool``, ``float`` or a string)."""
+    return type(value) is int
+
+
 def latest_validation_generation(connection: Any) -> int | None:
     """The newest validation generation a ``Corpus.run`` start committed (fix 16): the ``generation`` of the ledger's
     latest ``validation_started`` run event, or None when no start ever committed one (a corpus with no run yet). A pass
@@ -285,7 +300,7 @@ def latest_validation_generation(connection: Any) -> int | None:
     if found is None:
         return None
     value = (json.loads(found[0]) if found[0] else {}).get('generation')
-    return int(value) if isinstance(value, int) else None
+    return value if exact_generation(value) else None
 
 
 def authority_fingerprint(expected: dict[str, Expected]) -> str:
