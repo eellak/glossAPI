@@ -13,6 +13,7 @@ try:
     import fcntl
 except ImportError:  # pragma: no cover - not POSIX
     fcntl = None  # type: ignore[assignment]
+import hashlib
 import json
 import os
 import time
@@ -431,13 +432,24 @@ def _write_metadata_parquet(df: pd.DataFrame, parquet_path: Path) -> None:
         _write_metadata_parquet_locked(df, target, observed=parquet_path)
 
 
-def _copy_file_locked(source: Path, target: Path) -> None:
-    """Copy a file's bytes over the resolved target yielded by ``metadata_target`` (temporary + atomic replace)."""
+def _copy_file_locked(source: Path, target: Path, *, expected_sha256: Optional[str] = None) -> None:
+    """Copy a file's bytes over the resolved target yielded by ``metadata_target`` (temporary + atomic replace).
+
+    ``expected_sha256`` (a recovery restoring registered bytes; fix 8): the temporary copy must hold exactly these
+    bytes, else nothing is replaced. The check is on the bytes about to be installed, not on the source before the
+    copy, so a source that changes after its own verification is never published."""
     import shutil
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target.with_name('.' + target.name + f'.{uuid.uuid4().hex}.tmp')
     try:
         shutil.copyfile(source, tmp_path)
+        if expected_sha256 is not None:
+            digest = hashlib.sha256()
+            with open(tmp_path, 'rb') as handle:
+                for block in iter(lambda: handle.read(1 << 20), b''):
+                    digest.update(block)
+            if digest.hexdigest() != expected_sha256:
+                raise MetadataStaleGenerationError(f'{source} no longer holds the registered bytes; {target} was not replaced')
         _replace_in_place(tmp_path, target)
     finally:
         try:

@@ -951,7 +951,7 @@ ALL_WRITES = {
     'glossapi/install_plan.py': (['subprocess.run'], K3),
     'glossapi/ledger/importer.py': (['shutil.copyfile', 'tempfile.TemporaryDirectory'], LEDGER),
     'glossapi/ledger/journal.py': (['subprocess.check_output'], LEDGER),
-    'glossapi/ledger/writer.py': (['.unlink', 'os.open', 'os.replace', 'os.unlink', 'shutil.copyfile'], LEDGER),  # .unlink: fix 7 rollback removes a failed attempt's own uncommitted file
+    'glossapi/ledger/writer.py': (['os.open', 'os.replace', 'os.unlink', 'shutil.copyfile'], LEDGER),  # os.unlink: the fix 7 rollback removes a failed attempt's own uncommitted file, fix 8 a verified abandoned temporary (_recover_locked)
     'glossapi/ocr/defaults.py': (['.write_text'], OCR),
     'glossapi/ocr/math/enrich.py': (['.mkdir', '.write_text', 'open(a)', 'open(w)'], OCR),
     'glossapi/ocr/page_artifacts.py': (['.mkdir', '.unlink', '.write_text', 'open(xb)'], OCR),
@@ -999,7 +999,7 @@ ALL_WRITES = {
     'glossapi/stages/math.py': (['.mkdir', '.write_bytes', '.write_text'], STAGES),
     'glossapi/stages/metadata.py': (['.mkdir', 'shutil.copyfile'], STAGES),
     'glossapi/stages/ocr.py': (['.mkdir', '.write_bytes', '.write_text', 'shutil.copy2'], STAGES),
-    'glossapi/stages/products.py': (['.mkdir', '.unlink', 'os.replace', 'shutil.rmtree', 'tempfile.NamedTemporaryFile', 'tempfile.mkdtemp'], STAGES),
+    'glossapi/stages/products.py': (['.mkdir', '.unlink', 'os.open', 'os.replace', 'shutil.rmtree', 'tempfile.mkdtemp'], STAGES),  # os.open: fix 8 publication temporary, named before its intent record binds it (O_EXCL, 0600)
     'glossapi/stages/retention.py': (['os.open', 'os.unlink'], STAGES),
     'glossapi/stages/run.py': (['.mkdir', '.to_parquet'], STAGES),
     'glossapi/stages/scheduler.py': (['.mkdir', 'os.rename'], STAGES),

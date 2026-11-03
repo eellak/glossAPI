@@ -184,8 +184,10 @@ def record_uncommitted_write(temporary, target):
     with open(temporary, "rb") as handle:
         for block in iter(lambda: handle.read(1 << 20), b""):
             digest.update(block)
+    # The temporary's path is bound too (fix 8, N3): a process death after this record and before the replace leaves
+    # it in the public directory, and only a file at exactly this path with exactly these bytes is removed at recovery.
     writer.record_uncommitted_write(journal.run_id, target, digest.hexdigest(), os.path.getsize(temporary),
-                                    wrapper_stage=journal.stage, existed=os.path.lexists(target))
+                                    wrapper_stage=journal.stage, existed=os.path.lexists(target), temporary=temporary)
 
 
 def observe_source_rows(frame, path, *, url_column="url"):

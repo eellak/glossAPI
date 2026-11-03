@@ -242,14 +242,24 @@ def publish_products(corpus,result,workspace,products,*,retire=(),physical=None,
         _publish_products_locked(corpus,result,workspace,products,journal,retire,written_paths)
 
 
+def _publication_temporary(written):
+    """A fresh temporary name beside ``written`` (hidden, same directory, so the replace is atomic), chosen before the
+    intent record binds it (fix 8, N3); created exclusively and private (0600, as ``NamedTemporaryFile`` made it)."""
+    return written.parent/('.'+written.name+'.'+uuid.uuid4().hex+'.tmp')
+
+
 def _publish_products_locked(corpus,result,workspace,products,journal,retire,written_paths):
     selected=[]
+    temporaries={}
     if journal:
         # The mirrors are replaced before the transaction below registers them. Their bytes (the registered immutable
         # generation's) are bound to their paths first, durably, in one record, as this run's own uncommitted writes
         # (fix 7, R1): if that registration then fails on a full ledger, the repeated publication rolls them back
         # instead of capturing them as unchanged or refusing them as a user's edit; if the ledger cannot take even this
-        # record, nothing is replaced. The copies below stay one temporary file at a time, as before.
+        # record, nothing is replaced. The copies below stay one temporary file at a time, as before. Each record also
+        # binds its temporary file's exact path and the immutable source it is copied from (fix 8, N3): a process death
+        # between this record and a replace leaves a temporary that the repeated barrier verifies (recorded bytes, or a
+        # prefix of the recorded source) and removes; nothing is removed for its name alone.
         intents=[]
         for relative,destination in products.items():
             source=checked_path(workspace,relative)
@@ -257,15 +267,16 @@ def _publish_products_locked(corpus,result,workspace,products,journal,retire,wri
             from .execution import sha256_file
             digest,size=(registered['sha256'],registered['bytes']) if registered else (sha256_file(source),source.stat().st_size)
             target=Path(written_paths.get(relative,Path(destination).absolute()))
-            intents.append((target,digest,size,os.path.lexists(target)))
+            temporaries[relative]=_publication_temporary(target)
+            intents.append((target,digest,size,os.path.lexists(target),{'temporary':temporaries[relative],'source':source.absolute()}))
         journal.writer.record_uncommitted_writes(journal.run_id,intents,wrapper_stage=journal.stage)
     for relative,destination in products.items():
         source=checked_path(workspace,relative); destination=Path(destination).absolute()
         written=Path(written_paths.get(relative,destination))
         written.parent.mkdir(parents=True,exist_ok=True)
         registered=journal.writer.connection.execute('SELECT sha256,bytes FROM files WHERE producer_attempt_id=? AND uri=?',(result.attempt_id,source.as_uri())).fetchone() if journal else None
-        with tempfile.NamedTemporaryFile(dir=written.parent,prefix='.'+written.name+'.',delete=False) as stream:
-            temporary=Path(stream.name)
+        temporary=temporaries.get(relative) or _publication_temporary(written)
+        with os.fdopen(os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'wb') as stream:
             try:
                 import hashlib
                 digest = hashlib.sha256(); size = 0
