@@ -521,14 +521,70 @@ def completion_gate_verdict(connection, run_id) -> dict[str, Any] | None:
                 failure_count=details.get('failure_count'), failures=(details.get('failures') or [])[:20])
 
 
-def _gated_state(state, verdict):
-    """A run whose tasks say ``completed``/``completed_with_failures`` is reported so only with a passing completion
-    gate verdict (fix 13): ``unresolved_recovery`` when the gate refused, ``unverified`` when it never ran."""
+def _managed_public(connection, file_ids) -> set:
+    file_ids = sorted({value for value in file_ids if value})
+    found = set()
+    for offset in range(0, len(file_ids), 500):
+        chunk = file_ids[offset:offset+500]
+        found |= {file_id for file_id, uri in connection.execute("SELECT file_id,uri FROM files WHERE ownership='managed' AND file_id IN ("
+                                                                 + ",".join("?"*len(chunk)) + ")", chunk) if "/.glossapi/" not in str(uri)}
+    return found
+
+
+def certification(connection) -> dict[str, Any]:
+    """Is the corpus's current product state certified (fix 14, R3: a pass is bound to its validation epoch)? The epoch
+    of a verdict is its event id. The certificate is the ledger's LATEST ``completion_gate`` verdict, of any run or
+    boundary: ``refused`` (a completion gate, a refused start, a refused repeated publication) -> not certified; ``pass``
+    -> certified only while no later recorded mutation of a managed public product exists: a registration, presence
+    change or deletion of one (``artifact`` events), a recorded uncommitted write (``uncommitted_projection_write``), a
+    rollback's invalidation (``invalidation``). Returns ``{'certified', 'epoch', 'verdict', 'stale_reason',
+    'stale_event_id'}``."""
+    latest = connection.execute("SELECT event_id,message,details_json FROM events WHERE reason_code='completion_gate' "
+                                "ORDER BY event_id DESC LIMIT 1").fetchone()
+    if latest is None:
+        return dict(certified=False, epoch=None, verdict=None, stale_reason="no_verdict", stale_event_id=None)
+    details = json.loads(latest[2]) if latest[2] else {}
+    verdict = details.get("verdict", latest[1])
+    if verdict != "pass":
+        return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="later_refusal:" + str(details.get("boundary") or "completion"),
+                    stale_event_id=latest[0])
+    for event_id, kind, reason in connection.execute("SELECT event_id,event_kind,reason_code FROM events WHERE event_id>? AND "
+                                                     "(event_kind='invalidation' OR reason_code='uncommitted_projection_write') "
+                                                     "ORDER BY event_id LIMIT 1", (latest[0],)):
+        return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="later_" + str(reason), stale_event_id=event_id)
+    touched = connection.execute("SELECT event_id,file_id FROM events WHERE event_id>? AND event_kind='artifact' AND file_id IS NOT NULL "
+                                 "ORDER BY event_id", (latest[0],)).fetchall()
+    if touched:
+        managed = _managed_public(connection, [row[1] for row in touched])
+        for event_id, file_id in touched:
+            if file_id in managed:
+                return dict(certified=False, epoch=latest[0], verdict=verdict, stale_reason="later_product_record", stale_event_id=event_id)
+    return dict(certified=True, epoch=latest[0], verdict=verdict, stale_reason=None, stale_event_id=None)
+
+
+def completion_state(connection, run_id, state):
+    """THE completion predicate (fix 14, R2/R3), applied by every read surface (``status_view`` and so ``report_view``,
+    both CLI commands, streaming runs) after every state merge, last: a run whose tasks or streaming events say
+    ``completed``/``completed_with_failures`` is reported so only with a passing completion-gate verdict of its own AND
+    a current certificate (``certification``). Otherwise: ``unresolved_recovery`` when the run's own verdict or a later
+    verdict refused; ``unverified`` when the gate never ran for it, or its pass is stale (a later recorded mutation of a
+    managed product, not yet verified). Returns ``(state, verdict)``; ``verdict`` carries ``current`` and the stale
+    reason."""
+    verdict = completion_gate_verdict(connection, run_id)
+    if verdict is not None:
+        current = certification(connection) if verdict["verdict"] == "pass" else None
+        verdict = dict(verdict, current=bool(current and current["certified"]),
+                       stale_reason=None if current is None else current["stale_reason"],
+                       stale_event_id=None if current is None else current["stale_event_id"])
     if state not in ("completed", "completed_with_failures"):
-        return state
+        return state, verdict
     if verdict is None:
-        return "unverified"
-    return state if verdict["verdict"] == "pass" else "unresolved_recovery"
+        return "unverified", verdict
+    if verdict["verdict"] != "pass":
+        return "unresolved_recovery", verdict
+    if verdict["current"]:
+        return state, verdict
+    return ("unresolved_recovery" if str(verdict["stale_reason"]).startswith("later_refusal") else "unverified"), verdict
 
 
 def status_view(connection, *, run=None, stage=None, selector=None):
@@ -551,8 +607,7 @@ def status_view(connection, *, run=None, stage=None, selector=None):
             device_id=attempt.get("device_id"), started_at=event.get("started_at"), elapsed_ns=event.get("duration_ns"), last_heartbeat_at=heartbeat,
             heartbeat_age_ns=None, stale_reason="no_streaming_leases_recorded_for_run"))
     state = "completed_with_failures" if counts["failed"] else "running" if counts["running"] else "waiting" if counts["planned"] else "completed"
-    verdict = completion_gate_verdict(connection, run["run_id"]) if run else None
-    state = _gated_state(state, verdict) if run else state
+    verdict = None
     last_event = connection.execute("SELECT MAX(event_id) FROM events WHERE run_id=?", (run["run_id"],)).fetchone()[0] if run else None
     present = connection.execute("SELECT SUM(bytes) FROM current_file_state WHERE presence='present'").fetchone()[0]
     result: dict[str, Any] = dict(state=state, completion_gate=verdict, counts=counts, documents=documents, queues=[], barriers=[], resources=dict(
@@ -586,6 +641,9 @@ def status_view(connection, *, run=None, stage=None, selector=None):
         latest=connection.execute("SELECT details_json FROM events WHERE run_id=? AND event_kind='run' ORDER BY event_id DESC LIMIT 1",(run['run_id'],)).fetchone()
         if latest:result['state']=json.loads(latest[0]).get('state',state)
     _mark_interruption(connection, run, counts, result)
+    if run:
+        # The completion predicate, after every state merge (tasks, streaming run events, interruption): last (fix 14).
+        result['state'], result['completion_gate'] = completion_state(connection, run['run_id'], result['state'])
     return result
 
 

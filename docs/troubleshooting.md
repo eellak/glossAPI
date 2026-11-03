@@ -40,24 +40,35 @@ managed source. The CLI reports the typed code `post_close_edit` (exit 3) with t
 ## A run refuses with `unresolved_recovery`
 
 Every product glossAPI manages has one expected state, decided from the ledger alone: the bytes of its newest committed
-registration (one whose producing attempt ended `ok` and that no rollback invalidated), nothing after an explicit
-deletion of it or of a newer registration of the same path, or a refusal when no committed generation can be named. A
-file the legacy compatibility steps only observed (a log, a temporary report) is not a managed product, whatever the
-outcome of the step that observed it. A rollback that undoes a failed attempt records
-a permanent invalidation of that attempt's registrations; if it cannot restore a product (its only source was released),
-it records a pending republication instead, which only a newer committed generation of that product discharges.
+generation, nothing after a committed deletion of that generation itself, or a refusal when no committed generation can
+be named. A registration is a committed generation only when its producing attempt ended `ok` and a positive record
+binds it to that attempt: a publication record of this path and these bytes, or the attempt's own record of producing
+these bytes (its output manifest). A deletion of any other registration of the path (a step's temporary file at the
+same name, another run's) never removes a product's obligation. A file the legacy compatibility steps only observed is
+not a managed product only for the allowlisted diagnostic roles (logs, the temporary cleaning report); any other file
+only a compatibility step registered is refused (`unlisted_observation_role`). A rollback that undoes a failed attempt
+records a permanent invalidation of that attempt's registrations; if it cannot restore a product (its only source was
+released), it records a pending republication instead, which only a newer committed generation of that product
+discharges.
 
-The refusal comes from one of three places, each with the typed code `unresolved_recovery` (exit 3):
+The refusal comes from one of three places, each with the typed code `unresolved_recovery` (exit 3) and its
+`details.boundary`:
 
-- **a run start or a repeated publication** found a corpus file it must repair (a copy the previous run left unflushed,
-  or bytes a failed attempt put in place) and could not bring it to its expected state: the file is kept as it is and
-  nothing more runs;
-- **the completion gate**: once per run, after the run's final flush and under the corpus lock, every managed product
-  is hashed against its expected state. The run's work has been done, but the run does not report `completed`: a
-  product that differs (`completion_gate_mismatch`), is missing (`completion_gate_missing`), is present where it must be
-  absent (`completion_gate_extra`), or has no committed generation (`completion_gate_refused`, for example a pending
-  republication) is named. `glossapi status` and `glossapi report` then show the run as `unresolved_recovery` (status
-  exits 3); a run whose gate never ran shows `unverified`, never `completed`.
+- **a run start** (`start`) or **a repeated publication** (`publication`) found a corpus file it must repair (a copy the
+  previous run left unflushed, or bytes a failed attempt put in place) and could not bring it to its expected state: the
+  file is kept as it is and the run stops there;
+- **the completion gate** (`completion`): once per run, after the run's final flush and under the corpus lock, every
+  managed product is hashed against its expected state. The run's work has been done, but the run does not report
+  `completed`: a product that differs (`completion_gate_mismatch`), is missing (`completion_gate_missing`), is present
+  where it must be absent (`completion_gate_extra`), or has no committed generation (`completion_gate_refused`, for
+  example a pending republication) is named.
+
+Every refusal is recorded as a verdict. `glossapi status` and `glossapi report` (and a streaming run's status) show a run
+`completed` only when its own completion gate passed AND that pass is still current: the ledger's latest verdict is a
+pass and no product was written, deleted, rolled back or invalidated after it. After a refusal they show
+`unresolved_recovery` (status exits 3); when the gate never ran, or later writes have not been verified yet, `unverified`.
+A later run whose gate passes makes the corpus current again. The gate's cost (products, bytes read, passes, elapsed)
+is part of its verdict event.
 
 `details.conditions` names each path and its reason:
 

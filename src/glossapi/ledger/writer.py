@@ -122,19 +122,32 @@ class UnresolvedRecoveryError(LedgerError):
     Typed for the CLI (``code``): exit 3, a conflict the user resolves, as ``post_close_edit``."""
     code = 'unresolved_recovery'
     EXIT_CODE = 3
-    MEANING = ('Recovery found a corpus file it must repair (a copy the last run left unflushed, or bytes a failed attempt '
-               'put in place) but could not repair it safely (hard-linked, contradictory lock records, path replaced, '
-               'managed source changed or missing); the file is kept and nothing ran. Remove the cause (e.g. the extra '
-               'hard link) and resume: the file is then repaired.')
+    MEANING = ('A corpus product is not in the state the ledger expects and could not be made so safely. At a run start or '
+               'a repeated publication: recovery found a file it must repair (a copy the last run left unflushed, or bytes '
+               'a failed attempt put in place) but could not (hard-linked, contradictory lock records, path replaced, '
+               'managed source changed or missing); the file is kept and the run stops there. At the completion gate: the '
+               "run's work was done, but a product differs from its expected state; the run is not completed. Remove the "
+               'cause (e.g. the extra hard link) and resume.')
+    # Fix 14 (L1): what the refusal says ran depends on the boundary that refused.
+    BOUNDARY_TEXT = {'start': 'nothing ran', 'publication': 'the repeated publication did not run',
+                     'completion': "the run's work was done but it is not completed"}
 
-    def __init__(self, conditions: list[dict[str, Any]]) -> None:
+    def __init__(self, conditions: list[dict[str, Any]], *, boundary: str | None = None) -> None:
         self.conditions: list[dict[str, Any]] = [dict(entry) for entry in conditions]
-        self.details: dict[str, Any] = {'paths': sorted({str(entry['path']) for entry in self.conditions}),
+        if boundary is None:
+            boundary = 'completion' if self.conditions and all(str(entry.get('reason', '')).startswith('completion_gate_')
+                                                               for entry in self.conditions) else 'start'
+        self.boundary: str = boundary
+        self.details: dict[str, Any] = {'boundary': self.boundary, 'paths': sorted({str(entry['path']) for entry in self.conditions}),
                                         'conditions': [{key: (str(value) if key == 'path' else value) for key, value in entry.items()}
                                                        for entry in self.conditions]}
         shown = '; '.join(f"{entry['path']} ({entry['reason']})" for entry in self.conditions[:5])
-        super().__init__('unresolved_recovery: recovery could not safely repair, kept as is: ' + shown +
-                         '. Remove the cause (e.g. an extra hard link) and resume; nothing ran')
+        if self.boundary == 'completion':
+            super().__init__('unresolved_recovery: the completion gate refused, products not in their expected state: ' + shown +
+                             ". Remove the cause and resume; " + self.BOUNDARY_TEXT['completion'])
+        else:
+            super().__init__('unresolved_recovery: recovery could not safely repair, kept as is: ' + shown +
+                             '. Remove the cause (e.g. an extra hard link) and resume; ' + self.BOUNDARY_TEXT.get(self.boundary, 'nothing ran'))
 
 
 class _ResolvedOutcome:
@@ -267,12 +280,33 @@ def _public_uri(uri: str) -> bool:
     return '/.glossapi/' not in uri
 
 
+# FIX13-G1 (deferred to K6): the diagnostic roles a legacy compatibility wrapper may register at a public path as an
+# observation only (no publication record) without the path becoming a gated product. The registration ``kind`` is the
+# role: the cleaning step's deferred temporary report, and the journal's inventory of the files it saw change, whose
+# kind is the corpus-relative path (logs, the download step's progress/request logs). Anything else a wrapper alone
+# registered is refused by the completion gate (``unlisted_observation_role``) rather than silently left out.
+DIAGNOSTIC_OBSERVATION_ROLES = ('temporary_cleaning_report', 'clean_report', 'cleaning_report.parquet')
+DIAGNOSTIC_OBSERVATION_PREFIXES = ('logs/',)
+
+
+def diagnostic_observation_role(kind: Any) -> bool:
+    """Is ``kind`` an allowlisted diagnostic role (``DIAGNOSTIC_OBSERVATION_ROLES``, FIX13-G1)?"""
+    kind = str(kind or '')
+    return kind in DIAGNOSTIC_OBSERVATION_ROLES or kind.startswith(DIAGNOSTIC_OBSERVATION_PREFIXES)
+
+
 def _registration_classes(connection: Any, rows: list[Any], excluded_attempts: Any = ()) -> dict[str, str]:
     """``file_id -> class`` for registration rows ``(file_id, uri, sha256, producer_attempt_id, rowid)`` (fix 13), from
     the ledger alone (no presence observation, no file):
-    - ``committed``: the producer attempt's terminal status is ``ok`` and the registration is a generation of it:
-      bound by a publication record (the ``product_projection`` snapshot of ``products.publish_products``), or made by
-      a generation producer (a stage worker, a publication), never by a legacy compatibility wrapper on its own;
+    - ``committed``: the producer attempt's terminal status is ``ok`` and a POSITIVE binding names this registration
+      as that attempt's generation (fix 14, R5): a publication record (the ``product_projection`` snapshot of
+      ``products.publish_products``, or the ``publication_binding`` snapshot of ``compatibility.register_publication``:
+      this uri, these bytes, this attempt), or, for a generation producer (not a legacy
+      compatibility wrapper), a positive record of that attempt producing exactly these bytes: a file of its terminal
+      output manifest, or a publication record of it, with this sha256 (a second named copy of the same committed
+      generation is bound; bytes the attempt never recorded producing are not);
+    - ``unbound``: a successful non-wrapper attempt's registration that neither binding names (a late registration
+      attributed to a reader, e.g. the evidence sealer, whose manifest is empty): never authoritative;
     - ``observation``: registered by a legacy compatibility wrapper (the journal's ``orchestrator:<pid>`` /
       ``observed_by_orchestrator`` attempts) without a publication record: that wrapper's observation of a file the
       legacy code wrote (and may change or remove; its output manifest lists observed files, not generations), never a
@@ -293,11 +327,26 @@ def _registration_classes(connection: Any, rows: list[Any], excluded_attempts: A
         for attempt, value, manifest in connection.execute(f"SELECT attempt_id,status,output_manifest_sha256 FROM {table} WHERE event_kind='lifecycle' "
                                                            'AND status IS NOT NULL AND attempt_id IN (' + ','.join('?'*len(chunk)) + ') ORDER BY event_id', chunk):
             terminal[attempt] = (value, manifest)
+    # The bytes each attempt positively recorded producing: its terminal output manifest's registered files (generation
+    # producers only; a legacy wrapper's manifest lists files it observed), and every publication record naming it.
+    produced: dict[str, set[str]] = {}
+    for attempt, (value, manifest) in terminal.items():
+        if value == 'ok' and manifest and attempt not in wrappers:
+            found = connection.execute('SELECT json FROM snapshots WHERE sha256=?', (manifest,)).fetchone()
+            listed = json.loads(found[0]).get('files', []) if found else []
+            ids = sorted({str(entry['file_id']) for entry in listed if isinstance(entry, dict) and entry.get('file_id')})
+            for offset in range(0, len(ids), 500):
+                chunk = ids[offset:offset+500]
+                produced.setdefault(attempt, set()).update(
+                    digest for digest, in connection.execute('SELECT sha256 FROM files WHERE file_id IN (' + ','.join('?'*len(chunk)) + ')', chunk)
+                    if digest)
     publications = set()
     if rows:
-        for encoded, in connection.execute("SELECT json FROM snapshots WHERE kind='product_projection'"):
+        for encoded, in connection.execute("SELECT json FROM snapshots WHERE kind IN ('product_projection','publication_binding')"):
             record = json.loads(encoded)
             publications.add((record.get('product_uri'), record.get('sha256'), record.get('producer_attempt_id')))
+            if record.get('sha256') and record.get('producer_attempt_id'):
+                produced.setdefault(str(record['producer_attempt_id']), set()).add(record['sha256'])
     file_ids = [row[0] for row in rows]
     invalidated: dict[str, str] = {}
     for offset in range(0, len(file_ids), 500):
@@ -319,8 +368,10 @@ def _registration_classes(connection: Any, rows: list[Any], excluded_attempts: A
             classes[file_id] = 'unfinished'
         elif terminal[producer][0] != 'ok':
             classes[file_id] = 'failed'
+        elif (uri, digest, producer) in publications or (producer not in wrappers and digest in produced.get(producer, ())):
+            classes[file_id] = 'committed'  # a positive binding: this attempt recorded producing exactly these bytes
         else:
-            classes[file_id] = 'committed'  # a publication record, or a generation producer's registration
+            classes[file_id] = 'unbound'
     return classes
 
 
@@ -351,13 +402,17 @@ def expected_products(connection: Any, *, uris: Any = None, excluded_attempts: A
     - committed explicit deletions (``completed_deletions``, retention ``delete_completed``/``delete_recovered``, and
       a ``deleted`` record that names its deletion: a legacy wrapper's observed cleanup, a policy deletion, a private
       release).
-    Per path, newest registration first: observations and failed producers are passed over; an unfinished newest
-    producer makes the path ambiguous (``Refuse('producer_unfinished')``). The newest committed generation decides:
-    ``Sha(its sha256)``, or ``Absent`` if it, or any newer registration of the path (a wrapper's temporary
-    registration the retention controller deletes), was explicitly deleted. A ``pending_republication`` newer than every committed
-    generation -> ``Refuse('pending_republication')``. No committed generation: ``Absent`` if every registration of the
-    path was invalidated (or is being rolled back), ``Refuse('no_committed_registration')`` if failed producers wrote
-    it; a path only ever observed (never a generation) is not a managed product and is not in the map."""
+    Per path, newest registration first: observations, unbound registrations and failed producers are passed over; an
+    unfinished newest producer makes the path ambiguous (``Refuse('producer_unfinished')``). The newest committed
+    generation decides: ``Sha(its sha256)``, or ``Absent('policy_deletion')`` only if a committed deletion names THAT
+    registration (fix 14, R1: a deletion of any other registration of the path, a wrapper's temporary or an unrelated
+    run's, never discharges the committed product). A ``pending_republication`` newer than every committed generation
+    -> ``Refuse('pending_republication')``. No committed generation: ``Absent`` if every registration of the path was
+    invalidated (or is being rolled back), ``Refuse('no_committed_registration')`` otherwise.
+    A path only ever registered by legacy wrappers as observations is not a managed product, and is left out of the map
+    only when every one of its registrations has an allowlisted diagnostic role (``DIAGNOSTIC_OBSERVATION_ROLES``,
+    FIX13-G1, deferred to K6); a wrapper-only path of any other role is ``Refuse('unlisted_observation_role')``, so the
+    omission is explicit, never silent."""
     table = connection.event_table
     selected = sorted(set(uris)) if uris else None
     query = "SELECT file_id,uri,sha256,producer_attempt_id,rowid FROM files WHERE ownership='managed'"
@@ -396,10 +451,19 @@ def expected_products(connection: Any, *, uris: Any = None, excluded_attempts: A
     for row in rows:
         by_uri.setdefault(row[1], []).append(row)
     expected: dict[str, Expected] = {}
+    observed_only = [row[0] for registrations in by_uri.values() if all(classes[row[0]] == 'observation' for row in registrations)
+                     for row in registrations]
+    roles: dict[str, str] = {}
+    for offset in range(0, len(observed_only), 500):
+        chunk = observed_only[offset:offset+500]
+        roles.update(connection.execute('SELECT file_id,kind FROM files WHERE file_id IN (' + ','.join('?'*len(chunk)) + ')', chunk).fetchall())
     for uri, registrations in by_uri.items():
         kinds = [classes[row[0]] for row in registrations]
         if all(kind == 'observation' for kind in kinds):
-            continue  # only ever a wrapper's observation: not a managed product
+            unlisted = [row[0] for row in registrations if not diagnostic_observation_role(roles.get(row[0]))]
+            if unlisted:
+                expected[uri] = ExpectedRefuse('unlisted_observation_role', unlisted)
+            continue  # only ever a wrapper's observation of a diagnostic file: not a managed product (FIX13-G1)
         live = [row for row in registrations if classes[row[0]] in ('committed', 'unfinished')]
         if live and classes[live[-1][0]] == 'unfinished':
             expected[uri] = ExpectedRefuse('producer_unfinished', [live[-1][0]])
@@ -407,10 +471,6 @@ def expected_products(connection: Any, *, uris: Any = None, excluded_attempts: A
         committed = [row for row in registrations if classes[row[0]] == 'committed']
         pending = [row for row in registrations if classes[row[0]] == 'pending_republication']
         newest = committed[-1] if committed else None
-        # The newest committed explicit deletion of the path, whichever registration of it the deleter named: the
-        # retention controller deletes a legacy wrapper's temporary registration (``temporary_cleaning_report``) of a
-        # path an earlier publication also committed; after that deletion the path is gone by policy.
-        removed = [row for row in registrations if row[0] in deleted]
         if pending and (newest is None or newest[4] < pending[-1][4]):
             expected[uri] = ExpectedRefuse('pending_republication', [row[0] for row in pending])
         elif newest is None:
@@ -418,8 +478,8 @@ def expected_products(connection: Any, *, uris: Any = None, excluded_attempts: A
                 expected[uri] = ExpectedAbsent(None, 'every_registration_invalidated')
             else:
                 expected[uri] = ExpectedRefuse('no_committed_registration', [row[0] for row in registrations])
-        elif newest[0] in deleted or (removed and removed[-1][4] > newest[4]):
-            expected[uri] = ExpectedAbsent(newest[0] if newest[0] in deleted else removed[-1][0], 'policy_deletion')
+        elif newest[0] in deleted:
+            expected[uri] = ExpectedAbsent(newest[0], 'policy_deletion')
         elif not newest[2]:
             expected[uri] = ExpectedRefuse('no_digest', [newest[0]])
         else:
@@ -1106,8 +1166,10 @@ class LedgerWriter:
                 gate_run = getattr(self,'completion_gate_run',None)
                 if gate_run:
                     # The completion gate (fix 13, decision B): after the final flush, under the workspace lock; it
-                    # records its verdict and raises UnresolvedRecoveryError if the products are not the expected ones.
-                    self.completion_gate(gate_run)
+                    # records its verdict; a refusal raises UnresolvedRecoveryError here (the run is not completed).
+                    gated = self.completion_gate(gate_run)
+                    if gated['verdict'] != 'pass':
+                        raise UnresolvedRecoveryError(gated['all_failures'], boundary='completion')
                 if self.barrier_context:self._vacuum_at_run_close()
                 if getattr(self, '_validated', False):
                     # The close fence (CP-K4c3 R2). Fold our own WAL into the file completely; then observe the
@@ -1691,9 +1753,10 @@ class LedgerWriter:
         workspace lock (``close``, when ``completion_gate_run`` is set). Independent of every recovery branch: every
         managed public product is compared with ``expected_products``. ``Sha`` -> the file exists and its bytes (read in
         full, no cached hash) are those; ``Absent`` -> nothing is at the path; ``Refuse`` -> refused. The verdict is
-        persisted (``completion_gate`` run event: ``pass``/``refused``, counts, bytes read, elapsed, failures) and
-        governs the status and report surfaces (``ledger.reader``). Any failure raises ``UnresolvedRecoveryError``
-        naming the paths: the run does not report ``completed``."""
+        persisted (``completion_gate`` run event: ``pass``/``refused``, its cost: products, bytes read, passes, elapsed;
+        failures) and governs every status and report surface (``ledger.reader.completion_state``); the verdict's event
+        id is its validation epoch. Returns the record (fix 14: a direct call reports, it does not raise); the run close
+        raises ``UnresolvedRecoveryError`` on ``refused``, so the run does not report ``completed``."""
         import time as _time
         from urllib.parse import unquote, urlsplit
         self._owner(transaction=False)
@@ -1728,23 +1791,37 @@ class LedgerWriter:
             if digest.hexdigest() != verdict.sha256:
                 failures.append({'path': str(path), 'reason': 'completion_gate_mismatch', 'expected': verdict.sha256,
                                  'actual': digest.hexdigest(), 'registration': verdict.registration})
-        record = {'verdict': 'pass' if not failures else 'refused', 'products': checked, 'bytes_read': read, 'passes': 1,
-                  'elapsed_ns': _time.monotonic_ns() - started, 'failures': failures[:100], 'failure_count': len(failures)}
+        record = {'verdict': 'pass' if not failures else 'refused', 'boundary': 'completion', 'products': checked,
+                  'bytes_read': read, 'passes': 1, 'elapsed_ns': _time.monotonic_ns() - started, 'failures': failures[:100],
+                  'failure_count': len(failures)}
         with self.transaction():
             record['event_id'] = self.event(run_id, event_kind='run', reason_code='completion_gate', message=record['verdict'],
                                             details={key: value for key, value in record.items() if key != 'event_id'})
+        # The verdict is the last act of the gate (fix 14, R4): nothing writes any product path after it. Its cost (products,
+        # bytes read, passes, elapsed) is in the persisted verdict event itself, where measurements read it.
         self.completion_gate_record = record
-        if os.environ.get('GLOSSAPI_COMPLETION_GATE_LOG'):
-            # Cost measurement (fix 13): one line per gate, appended; never affects the verdict.
-            try:
-                with open(os.environ['GLOSSAPI_COMPLETION_GATE_LOG'], 'a') as log:
-                    log.write(json.dumps({'ledger': str(self.path), 'run_id': run_id, 'pid': os.getpid(), 'recorded_at': utc_now(),
-                                          **{key: value for key, value in record.items() if key != 'failures'}}) + '\n')
-            except OSError:
-                pass
-        if failures:
-            raise UnresolvedRecoveryError(failures)
-        return record
+        return {**record, 'all_failures': failures}
+
+    def record_refusal(self, run_id: str | None, error: BaseException, boundary: str) -> int | None:
+        """Persist a refusal outside the completion gate (fix 14, R3) as a ``completion_gate`` verdict ``refused`` with
+        its ``boundary`` (``start``: the run start's recovery or post-close-edit check; ``publication``: a repeated
+        publication's rollback). Every surface then reports the run ``unresolved_recovery``, and every earlier pass in
+        this ledger is stale (``ledger.reader.completion_state``): a refused start never leaves an old certificate
+        standing over bytes it just found wrong. ``run_id`` None: the ledger's newest run (a fresh run refused at its
+        start, before its own run row exists). Returns the event id, or None when the ledger has no run."""
+        self._owner(transaction=False)
+        if run_id is None:
+            found = self.connection.execute('SELECT run_id FROM runs ORDER BY rowid DESC LIMIT 1').fetchone()
+            if found is None:
+                return None
+            run_id = found[0]
+        conditions = list(getattr(error, 'conditions', None) or getattr(error, 'copies', None) or [])
+        failures = [{key: (str(value) if key == 'path' else value) for key, value in entry.items()} for entry in conditions[:100]]
+        record = {'verdict': 'refused', 'boundary': boundary, 'code': getattr(error, 'code', type(error).__name__),
+                  'products': None, 'bytes_read': 0, 'passes': 0, 'elapsed_ns': 0, 'failures': failures,
+                  'failure_count': len(conditions)}
+        with self.transaction():
+            return self.event(run_id, event_kind='run', reason_code='completion_gate', message='refused', details=record)
 
     def refuse_ambiguous_copies(self) -> None:
         """Run start, after ``verify_excluded_copies``: an unresolved post-close edit stops the run before any plan

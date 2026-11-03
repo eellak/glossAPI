@@ -1208,7 +1208,7 @@ def publish_barrier(corpus,run,stage,callback,*,retry_failed=False,empty_export=
                 # Fix 10 (N1, N3): a target the rollback recognised but could not resolve stops the run here, typed,
                 # before the publication repeats over it.
                 from ..ledger.writer import UnresolvedRecoveryError
-                raise UnresolvedRecoveryError(writer.rollback_unresolved)
+                raise UnresolvedRecoveryError(writer.rollback_unresolved, boundary='publication')
         with writer.transaction():
             attempt=writer.attempt(task['task_id'],worker_id='single-publisher',device_id='cpu',
                 fingerprint={'frozen_run_id':run,'stage':stage,'reuse_eligible':False},inputs={'files':[]},settings={},tools={})
@@ -1393,6 +1393,16 @@ def _locked_run_corpus(corpus,*args,**options):
         except Exception as error:
             if disk_full(error):
                 _record_disk_full(writer,corpus,error)
+            from ..ledger.writer import PostCloseEditError, UnresolvedRecoveryError
+            if isinstance(error,(PostCloseEditError,UnresolvedRecoveryError)) and getattr(error,'boundary','start')!='completion' \
+                    and writer.connection is not None:
+                # Fix 14 (R3): a refused start (or repeated publication) is a durable verdict, so no earlier pass of
+                # this corpus keeps certifying bytes the refusal just found wrong. The refusal stays the outcome.
+                try:
+                    writer.record_refusal(getattr(corpus,'_active_run_id',None) or options.get('resume'),error,
+                        getattr(error,'boundary','start'))
+                except Exception:
+                    pass  # e.g. a full ledger: the refusal is still raised; status keeps reading the refusal's cause
             raise
         finally:
             try:

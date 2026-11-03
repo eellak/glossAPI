@@ -154,12 +154,19 @@ def register_publication(writer, run_id, stage, kind, uri, *, version_id, produc
     rows = writer.connection.execute(
         "SELECT file_id,version_id,producer_attempt_id,kind,sha256,bytes,ownership,retention_class FROM current_file_state WHERE uri=? AND presence='present'",
         (uri,)).fetchall()
+    def bound(file_id):
+        # The positive publication record of this generation (fix 14, R5): this path, these bytes, this producer
+        # attempt. ``ledger.writer.expected_products`` counts a registration as a committed generation only with such a
+        # binding (or a ``product_projection`` record, or the producer's own output manifest).
+        writer.snapshot('publication_binding', {'kind': 'publication_binding', 'product_uri': uri, 'sha256': sha256,
+                                                'producer_attempt_id': producer_attempt_id, 'file_id': file_id})
+        return file_id
     for row in rows:
         if (row['producer_attempt_id'], row['kind'], row['ownership'], row['sha256'], row['bytes'], row['retention_class'], row['version_id']) == (
                 producer_attempt_id, kind, 'managed', sha256, bytes, retention_class, version_id):
-            return row['file_id']
-    file_id = writer.artifact(run_id, stage, kind, uri, version_id=version_id, producer_attempt_id=producer_attempt_id,
-        sha256=sha256, bytes=bytes, ownership='managed', retention_class=retention_class)
+            return bound(row['file_id'])
+    file_id = bound(writer.artifact(run_id, stage, kind, uri, version_id=version_id, producer_attempt_id=producer_attempt_id,
+        sha256=sha256, bytes=bytes, ownership='managed', retention_class=retention_class))
     for row in rows:
         if row['ownership'] == 'legacy_external' and row['producer_attempt_id'] is None and (row['sha256'], row['bytes']) == (sha256, bytes):
             writer.event(run_id, event_kind='artifact', reason_code='missing', file_id=row['file_id'], version_id=row['version_id'],
