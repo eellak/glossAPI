@@ -84,10 +84,15 @@ input (clean contract 2 in the default mode, 1 in plain mode).
 The sidecar also carries `decode_status` for the safe backend (K5 quality policy P4b, both Markdown modes): one entry
 per page, from the native content-stream check of the file PDFium read (`glossapi_rs_pdfrepair.page_decode_status_json`;
 PDFium's own error state is not a signal). `partial`: a content stream of the page, or of a Form XObject it draws,
-failed to decode or ended before its end marker; the page keeps the readable text PDFium extracts. `unknown`: the
-check could not run or decide (stale or missing native module, a document the native parser cannot open such as an
-encrypted one, a page count that differs from PDFium's, an unreadable stream object, a filter the check does not
-implement); `reason` or `reasons` say why. `complete`: the check ran and found no decode failure. The same list is in
+or the ToUnicode CMap of a font the page selects (`Tf`, in its own streams or a drawn form), failed to decode or ended
+before its end marker; the page keeps the readable text PDFium extracts. FlateDecode, LZWDecode, RunLengthDecode,
+ASCIIHex and ASCII85 are decoded. An RC4-encrypted document whose user password is empty (an owner-password
+document, which PDFium opens) is decrypted for this check only (analysis and font repair still refuse encrypted
+documents). Annotation appearance streams are not checked: PDFium's text page does not read them. Font programs are not
+checked. `unknown`: the check could not run or decide (stale or missing native module, a
+document the native parser cannot open, such as one encrypted with AES or with a user password, or one whose
+cross-reference table PDFium has to rebuild, a page count that differs from PDFium's, an unavailable page, an unreadable stream object, a filter the check
+does not implement); `reason` or `reasons` say why. `complete`: the check ran and found no decode failure. The same list is in
 the ledger's page coverage (`page_coverage.decode_status`). The status never routes a page by itself.
 
 Reading: each page is loaded once. `layout_v2_read_document` opens the document with Rust-owned PDFium handles and

@@ -91,6 +91,16 @@ class PageRasterCache:
         self.cache: dict[Tuple[int, int], Any] = {}
         self.max_cached = int(max_cached_pages)
 
+    def close(self) -> None:
+        """Close the PDF under the process-wide PDFium lock (idempotent); the cached images are dropped (K5-D,
+        K5A2A-G5: not left to the garbage collector, which runs on any thread outside ``pdfium_guard``)."""
+        from ...pdfium_guard import pdfium_guard
+        doc, self.doc = getattr(self, "doc", None), None
+        self.cache = {}
+        if doc is not None:
+            with pdfium_guard():
+                doc.close()
+
     def get_pil(self, page_no_1b: int, dpi: int):
         key = (int(page_no_1b), int(dpi))
         if key in self.cache:
@@ -107,6 +117,13 @@ class PageRasterCache:
             # pop arbitrary oldest key
             self.cache.pop(next(iter(self.cache)))
         return im
+
+
+def _close_raster(raster: Any) -> None:
+    """Close a raster cache that has ``close`` (K5-D); test doubles without one are left alone."""
+    close = getattr(raster, "close", None)
+    if callable(close):
+        close()
 
 
 def _dpi_for_bbox(px_h: float, *, base: int = 220, lo: int = 180, hi: int = 320) -> int:
@@ -188,6 +205,7 @@ def enrich_from_docling_json(
         rois.append(RoiEntry(page_no=page_no, bbox=bbox, label=lab, per_page_ix=cur_ix))
 
     if not rois:
+        _close_raster(rc)
         observe("math_no_regions", path=pdf_path, status="ok", inference_performed=False)
         # Nothing to enrich; still emit the base markdown (and fall back to raw text if empty)
         out_md_path.parent.mkdir(parents=True, exist_ok=True)
@@ -400,6 +418,7 @@ def enrich_from_docling_json(
 
         return {"items": len(rois), "accepted": accepted, "time_sec": time.time() - t0, "backend": backend}
     finally:
+        _close_raster(rc)
         try:
             if model is not None:
                 try:
