@@ -1184,6 +1184,7 @@ class GlossExtract:
         out_md_path = output_dir / f"{stem}.md"
         labels = layout_mode == "layout_v2"
         native, native_problem = markdown_layout.native_module() if labels else (None, None)
+        page_count = 0
 
         with pdfium_guard():
             try:
@@ -1193,13 +1194,11 @@ class GlossExtract:
                 self._log.error("PyPDFium failed to open %s: %s", Path(file_path).name, exc)
                 self._update_extraction_metadata(output_dir, file_path, "failure", "pypdfium")
                 return False
-            labeller = (markdown_layout.DocumentLabeller(native) if native is not None and source.reader is not None
-                        else None)
-
-            texts: List[str] = []
-            attempted_pages, succeeded_pages, blank_pages, failed_pages = [], [], [], []
-            page_count = 0
             try:
+                labeller = (markdown_layout.DocumentLabeller(native) if native is not None and source.reader is not None
+                            else None)
+                texts: List[str] = []
+                attempted_pages, succeeded_pages, blank_pages, failed_pages = [], [], [], []
                 page_count = source.page_count
                 timeout_budget = self._calculate_text_timeout(
                     file_path=file_path,
