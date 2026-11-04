@@ -74,6 +74,8 @@ def test_installed_required_natives_carry_the_required_level():
     ({'glossapi_rs_cleaner': b'GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:1;',
       'glossapi_rs_noise': b'GLOSSAPI_NATIVE_API:glossapi_rs_noise:1;'}, False),  # a cleaner from before K4g fix 4
     ({'glossapi_rs_cleaner': b'GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:2;',
+      'glossapi_rs_noise': b'GLOSSAPI_NATIVE_API:glossapi_rs_noise:1;'}, False),  # a cleaner from before K5-A2b
+    ({'glossapi_rs_cleaner': b'GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:3;',
       'glossapi_rs_noise': b'GLOSSAPI_NATIVE_API:glossapi_rs_noise:1;'}, True),
 ])
 def test_stale_native_makes_clean_unavailable_in_capabilities_plan_and_doctor(tmp_path, payloads, available):

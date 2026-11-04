@@ -174,8 +174,9 @@ ocr(
     cleaner flagged and in documents it did not
   - `"flagged"`: OCR only the documents the cleaner flagged (`needs_ocr`), the default before K4g
   - `mode="math_only"` performs no OCR and by default still skips only cleaner-flagged documents
-  - one difference from `glossapi run` remains: a cleaner-flagged document with no routed page is OCRed whole by
-    `Corpus.ocr`, while `glossapi run` keeps its extracted text
+  - a cleaner-flagged document whose page quality routed no page is not OCRed, in both settings, as `glossapi run`
+    keeps its extracted text (K5 quality policy P4d); a document without a page-quality report keeps document-level
+    routing and the OCR stage's own page quality picks its pages
 - Important parameters:
   - `mode`, `fix_bad`, `page_routing`, `math_enhance`
   - `backend` must be `"docling"`; `ocr_options` selects a configured external plugin, otherwise the pinned Greek

@@ -1238,7 +1238,11 @@ class GlossExtract:
                     table = source.chars(index)      # always taken, so a plain-mode read keeps no tables
                     if labeller is not None:
                         labeller.add(index + 1, text, table)
-                observe("legacy_observed", path=file_path, page_coverage={"attempted": attempted_pages, "succeeded": succeeded_pages, "blank": blank_pages, "failed": failed_pages}, complete=not failed_pages)
+                # P4b: per-page decode status from the native content-stream check of the file PDFium read (pure Rust;
+                # PDFium's error state is not a signal). Recorded, never a routing input by itself.
+                from .pdf_repair.decode_status import page_decode_status
+                decode_status = page_decode_status(Path(file_path), page_count)
+                observe("legacy_observed", path=file_path, page_coverage={"attempted": attempted_pages, "succeeded": succeeded_pages, "blank": blank_pages, "failed": failed_pages, "decode_status": decode_status["pages"]}, complete=not failed_pages)
                 layout_metadata = None
                 if labeller is not None:
                     labelled = labeller.finish(lambda page: source.reread_chars(page - 1))
@@ -1251,7 +1255,7 @@ class GlossExtract:
                     markdown = "\n\n".join(texts)
                     if labels:
                         problem = native_problem or source.reason or "no char reader"
-                        layout_metadata = markdown_layout.unavailable_metadata(problem)
+                        layout_metadata = markdown_layout.unavailable_metadata(problem, markdown)
                         observe("layout_unavailable", path=file_path, problem=problem)
                 if not markdown:
                     observe("safe_empty_text", path=file_path, blank_pages=blank_pages)
@@ -1263,6 +1267,7 @@ class GlossExtract:
                     extraction_mode="pypdfium",
                     page_count=page_count,
                     markdown_layout=layout_metadata,
+                    decode_status=decode_status,
                 )
                 return True
             except TimeoutError as exc:
@@ -1329,11 +1334,14 @@ class GlossExtract:
         *,
         no_partial_output: bool = False,
         markdown_layout: Optional[dict] = None,
+        decode_status: Optional[dict] = None,
     ) -> None:
         """Write extraction metadata to sidecar (eliminate in-worker parquet writes).
 
         ``markdown_layout``: the safe extractor's layout v2 metadata (``glossapi.markdown_layout.render``), stored
-        under that key; absent (and removed) otherwise, so a plain-mode or Docling sidecar is unchanged."""
+        under that key; absent (and removed) otherwise, so a plain-mode or Docling sidecar is unchanged.
+        ``decode_status``: the safe extractor's per-page content-stream decode status (K5-A2b, policy P4b,
+        ``glossapi.pdf_repair.decode_status``); absent (and removed) for the Docling route and failed extractions."""
         reason_code = ("extract_completed" if status in ("ok", "success") else "extract_timeout" if status == "timeout" else "extract_exception" if extraction_mode == "pypdfium" else "chunk_assembly_failed" if extraction_mode == "chunked" else "docling_partial" if status == "partial" else "docling_failed")
         observe(reason_code, path=self._original_extract_file(Path(src_file)), status="ok" if status in ("ok", "success") else "failed", backend_status=status, extraction_mode=extraction_mode, page_count=page_count, no_partial_output=no_partial_output)
         try:
@@ -1381,6 +1389,9 @@ class GlossExtract:
             data.pop("markdown_layout", None)
             if markdown_layout is not None:
                 data["markdown_layout"] = markdown_layout
+            data.pop("decode_status", None)
+            if decode_status is not None:
+                data["decode_status"] = decode_status
             import json as _json
             p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception as e:

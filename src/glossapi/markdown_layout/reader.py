@@ -45,7 +45,7 @@ GENERATED, SOFT_HYPHEN, MAP_ERROR, ITALIC, SYMBOLIC, INVISIBLE = 1, 2, 4, 8, 16,
 _HEAD = struct.Struct("<8sHHIII dd 32s")
 _MAGIC = b"K5CHARS\0"
 _REQUIRED = ("layout_v2_read_document", "LayoutV2ContextBuilder", "layout_v2_input_problem", "layout_v2_label_page",
-             "LayoutV2ReaderUnavailable", "LayoutV2DocumentError")
+             "LayoutV2ReaderUnavailable", "LayoutV2DocumentError", "page_decode_status_json")
 _native_state: Optional[tuple[Any, Optional[str]]] = None
 
 

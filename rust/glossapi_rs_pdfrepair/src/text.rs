@@ -14,6 +14,15 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 /// Content-stream decode as PDFium does it: a damaged FlateDecode stream yields the bytes inflated before the
 /// damage instead of nothing. Other filter chains use the strict decoder.
 fn decode_content(o: &Obj) -> Result<Vec<u8>> {
+    decode_content_checked(o).map(|(data, _)| data)
+}
+
+/// [`decode_content`] plus what the decoder observed (K5 quality policy P4b): `Complete` when every filter
+/// decoded to its end, `Partial` when a FlateDecode stream failed or ended before its end marker (the returned bytes
+/// are the prefix PDFium also keeps), `Unknown` for a filter chain the strict decoder does not implement (its error
+/// says nothing about the stream). A strict-decoder failure of an implemented chain is an error (`Partial` for the
+/// caller).
+fn decode_content_checked(o: &Obj) -> Result<(Vec<u8>, Decoded)> {
     let f = o.get("Filter");
     let flate = match &f {
         Obj::Name(_) => matches!(f.name().as_str(), "FlateDecode" | "Fl"),
@@ -40,15 +49,38 @@ fn decode_content(o: &Obj) -> Result<Vec<u8>> {
                 let r = z.decompress_vec(&b[pos..end], &mut out, flate2::FlushDecompress::None);
                 pos += (z.total_in() - i) as usize;
                 match r {
-                    Ok(flate2::Status::StreamEnd) | Err(_) => break,
+                    Ok(flate2::Status::StreamEnd) => return Ok((out, Decoded::Complete)),
+                    Err(_) => break,
                     Ok(_) if z.total_in() == i && z.total_out() == o => break,
                     Ok(_) => {}
                 }
             }
-            Ok(out)
+            Ok((out, Decoded::Partial))
         }
-        _ => decode(o),
+        _ => {
+            let filters = match &f {
+                Obj::Array(a) => a.iter().map(|x| x.name()).collect::<Vec<_>>(),
+                Obj::Null => vec![],
+                other => vec![other.name()],
+            };
+            let implemented = filters
+                .iter()
+                .all(|n| matches!(n.as_str(), "FlateDecode" | "Fl" | "ASCIIHexDecode" | "AHx" | "ASCII85Decode" | "A85"));
+            match decode(o) {
+                Ok(data) => Ok((data, Decoded::Complete)),
+                Err(_) if !implemented => Ok((vec![], Decoded::Unknown)),
+                Err(e) => Err(e),
+            }
+        }
     }
+}
+
+/// What a content-stream decode observed; see [`decode_content_checked`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Decoded {
+    Complete,
+    Partial,
+    Unknown,
 }
 
 const MAX_FORM_DEPTH: usize = 32;
@@ -520,6 +552,201 @@ pub fn page_flags(pdf: &mut Pdf) -> Result<Vec<Option<bool>>> {
         .collect())
 }
 
+/// Per-page decode status of the content streams (K5 quality policy P4b, K5-A2b), in PDFium page order:
+/// `("complete" | "partial" | "unknown", reason)`. A page is `partial` when one of its content streams, or of the Form
+/// XObjects it draws (`Do`, followed as the text sample does), failed to decode or ended before its end marker (the
+/// readable prefix is what PDFium extracts); `unknown` when the check cannot decide (an unavailable page, an
+/// unreadable stream object, a filter this decoder does not implement); `complete` otherwise. A document this parser
+/// cannot open (encrypted, damaged beyond its xref recovery) is an error here, and every page `unknown` for the caller.
+/// PDFium's own error state is not consulted (it reports nothing for such pages).
+#[cfg_attr(not(feature = "python"), allow(dead_code))]
+pub fn page_decode_status(pdf: &mut Pdf) -> Result<Vec<(&'static str, Option<String>)>> {
+    let root = pdf.get(&pdf.trailer.clone(), "Root")?;
+    let pages_ref = root.get("Pages");
+    let pages = pdf.resolve(&pages_ref)?;
+    if !matches!(pages, Obj::Dict(_)) {
+        bail!("Decode check failed: the document has no page tree")
+    }
+    let (count, leaves) = if !pages.has("Kids") {
+        let res = pages.get("Resources");
+        (1, vec![Leaf::Page(pages.clone(), res)])
+    } else {
+        let mut visited: HashSet<u32> = pages_ref.id().into_iter().collect();
+        let count = Pages { pdf }.count(&pages, &mut visited)?;
+        let mut out = vec![];
+        let mut path: HashSet<u32> = pages_ref.id().into_iter().collect();
+        Pages { pdf }.leaves(
+            &pages,
+            pages_ref.id(),
+            pages.get("Resources"),
+            &mut out,
+            &mut path,
+            count,
+        )?;
+        (count, out)
+    };
+    let mut checker = DecodeCheck { pdf, forms: vec![], checked: HashMap::new() };
+    Ok((0..count)
+        .map(|i| match leaves.get(i) {
+            Some(Leaf::Page(p, r)) => checker.page(&p.get("Contents"), r),
+            _ => ("unknown", Some("page unavailable".into())),
+        })
+        .collect())
+}
+
+struct DecodeCheck<'a> {
+    pdf: &'a mut Pdf,
+    forms: Vec<u32>,
+    /// Status per XObject id, so an image or form drawn on many pages is read once (a document whose 169 pages draw
+    /// the same images took 14 s without it).
+    checked: HashMap<u32, (&'static str, Option<String>)>,
+}
+
+/// The worse of two statuses: partial > unknown > complete; the first reason of the worst status is kept.
+fn worse(a: (&'static str, Option<String>), b: (&'static str, Option<String>)) -> (&'static str, Option<String>) {
+    let rank = |s: &str| match s {
+        "partial" => 2,
+        "unknown" => 1,
+        _ => 0,
+    };
+    if rank(b.0) > rank(a.0) {
+        b
+    } else {
+        a
+    }
+}
+
+impl DecodeCheck<'_> {
+    fn page(&mut self, contents: &Obj, resources: &Obj) -> (&'static str, Option<String>) {
+        let c = match self.pdf.resolve(contents) {
+            Ok(c) => c,
+            Err(e) => return ("unknown", Some(format!("content object unreadable: {e}"))),
+        };
+        let streams = match c {
+            Obj::Null => return ("complete", None),
+            Obj::Array(a) => a,
+            _ => vec![contents.clone()],
+        };
+        let mut status = ("complete", None);
+        for s in streams {
+            status = worse(status, self.stream(&s, resources, "content stream"));
+            if status.0 == "partial" {
+                break;
+            }
+        }
+        status
+    }
+    fn stream(&mut self, s: &Obj, resources: &Obj, what: &str) -> (&'static str, Option<String>) {
+        let o = match self.pdf.resolve(s) {
+            Ok(o @ Obj::Stream(..)) => o,
+            Ok(Obj::Null) => return ("complete", None),
+            Ok(_) => return ("unknown", Some(format!("{what} is not a stream"))),
+            Err(e) => return ("unknown", Some(format!("{what} unreadable: {e}"))),
+        };
+        let data = match decode_content_checked(&o) {
+            Ok((_, Decoded::Partial)) => return ("partial", Some(format!("{what}: FlateDecode failed or ended early"))),
+            Ok((_, Decoded::Unknown)) => return ("unknown", Some(format!("{what}: filter not implemented by the check"))),
+            Ok((d, Decoded::Complete)) => d,
+            Err(e) => return ("partial", Some(format!("{what}: decode failed: {e}"))),
+        };
+        let mut names = drawn_xobjects(&data);
+        if names.is_empty() {
+            return ("complete", None);
+        }
+        names.sort_unstable();
+        names.dedup();
+        let resources = self.pdf.resolve(resources).unwrap_or(Obj::Null);
+        // One name -> entry map per stream (a shared XObject dictionary can hold thousands of entries).
+        let xs: HashMap<Vec<u8>, Obj> = self.pdf.get(&resources, "XObject").unwrap_or(Obj::Null).dict().into_iter().collect();
+        let mut status = ("complete", None);
+        for name in names {
+            if let Some(r) = xs.get(&name) {
+                status = worse(status, self.form(&resources, r));
+                if status.0 == "partial" {
+                    break;
+                }
+            }
+        }
+        status
+    }
+    fn form(&mut self, resources: &Obj, r: &Obj) -> (&'static str, Option<String>) {
+        let r = r.clone();
+        let Some(id) = r.id() else {
+            return ("complete", None);
+        };
+        if self.forms.contains(&id) || self.forms.len() >= MAX_FORM_DEPTH {
+            return ("complete", None);
+        }
+        if let Some(status) = self.checked.get(&id) {
+            return status.clone();
+        }
+        let x = match self.pdf.resolve(&r) {
+            Ok(o @ Obj::Stream(..)) => o,
+            _ => return ("complete", None),
+        };
+        if x.get("Subtype").name() != "Form" {
+            self.checked.insert(id, ("complete", None));
+            return ("complete", None);
+        }
+        // A form without resources draws with its parent's: its status is cached only when it has its own.
+        let own = x.has("Resources");
+        let res = if own { x.get("Resources") } else { resources.clone() };
+        self.forms.push(id);
+        let status = self.stream(&r, &res, "form XObject");
+        self.forms.pop();
+        if own {
+            self.checked.insert(id, status.clone());
+        }
+        status
+    }
+}
+
+/// Names drawn with `Do` in a content stream (inline images skipped), in order.
+fn drawn_xobjects(data: &[u8]) -> Vec<Vec<u8>> {
+    let mut p = Parser::new(data, 0);
+    let mut operands: Vec<Obj> = vec![];
+    let mut out = vec![];
+    loop {
+        p.skip();
+        let Some(&c) = data.get(p.p) else {
+            return out;
+        };
+        if matches!(c, b'/' | b'(' | b'<' | b'[') {
+            match p.obj() {
+                Ok(o) => operands.push(o),
+                Err(_) => return out,
+            }
+            continue;
+        }
+        if matches!(c, b']' | b'>' | b')' | b'{' | b'}') {
+            p.p += 1;
+            continue;
+        }
+        let Ok(word) = p.word() else {
+            p.p += 1;
+            continue;
+        };
+        if is_number_start(c) {
+            operands.push(Obj::Num(word));
+            continue;
+        }
+        match word.as_str() {
+            "true" | "false" | "null" => {
+                operands.push(Obj::Null);
+                continue;
+            }
+            "Do" => {
+                if let Some(Obj::Name(n)) = operands.last() {
+                    out.push(n.clone())
+                }
+            }
+            "BI" if !skip_inline_image(&mut p) => return out,
+            _ => {}
+        }
+        operands.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,6 +830,77 @@ mod tests {
     }
     fn has_text(objects: &[Vec<u8>], name: &str) -> bool {
         sample_of(objects, name).has_text
+    }
+
+    fn decode_status_of(objects: &[Vec<u8>], name: &str) -> Vec<(&'static str, Option<String>)> {
+        let dir = std::env::temp_dir().join(format!("k5a2b-decode-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.pdf");
+        std::fs::write(&path, build(objects)).unwrap();
+        let out = page_decode_status(&mut Pdf::open(path.to_str().unwrap()).unwrap()).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+        out
+    }
+    /// One page whose content stream (object 4) has the dictionary entries `dict` and the bytes `data`.
+    fn page_with_stream(dict: &str, data: &[u8], xobjects: &str, extra: Option<Vec<u8>>) -> Vec<Vec<u8>> {
+        let mut objs = one_page(b"", xobjects, extra);
+        objs[3] = stream(dict, data);
+        objs
+    }
+    /// The K5P-093 derivation (`k5_prep/pageset/make_derived.py`): the middle third of a FlateDecode stream zeroed.
+    fn zero_middle_third(data: &[u8]) -> Vec<u8> {
+        let mut out = data.to_vec();
+        let (a, b) = (data.len() / 3, 2 * data.len() / 3);
+        out[a..b].iter_mut().for_each(|x| *x = 0);
+        out
+    }
+
+    #[test]
+    fn decode_status_complete_partial_and_unknown() {
+        let text = b"BT /F1 12 Tf 10 10 Td (Hello, a page with enough text to compress) Tj ET\n".repeat(20);
+        let good = flate(&text);
+        assert_eq!(decode_status_of(&page_with_stream("/Filter /FlateDecode", &good, "", None), "good"), vec![("complete", None)]);
+        assert_eq!(decode_status_of(&one_page(b"BT /F1 12 Tf (x) Tj ET", "", None), "raw")[0].0, "complete");
+        let corrupt = zero_middle_third(&good);
+        let status = decode_status_of(&page_with_stream("/Filter /FlateDecode", &corrupt, "", None), "corrupt");
+        assert_eq!(status[0].0, "partial", "{status:?}");
+        let truncated = good[..good.len() / 2].to_vec();
+        assert_eq!(decode_status_of(&page_with_stream("/Filter /FlateDecode", &truncated, "", None), "truncated")[0].0, "partial");
+        // A filter the check does not implement cannot be decided.
+        assert_eq!(decode_status_of(&page_with_stream("/Filter /LZWDecode", b"\x80\x0b", "", None), "lzw")[0].0, "unknown");
+        // A strict-decoder failure of an implemented chain is partial (Flate with a predictor goes through it).
+        let strict = page_with_stream("/Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 4 >>", &corrupt, "", None);
+        assert_eq!(decode_status_of(&strict, "strict")[0].0, "partial");
+        // A page without /Contents has nothing to decode.
+        let mut empty = one_page(b"", "", None);
+        empty[2] = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>".to_vec();
+        assert_eq!(decode_status_of(&empty, "empty"), vec![("complete", None)]);
+        // A dangling content reference is not an observed decode failure, and the check cannot decide: unknown.
+        let mut dangling = one_page(b"", "", None);
+        dangling[2] = b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 9 0 R >>".to_vec();
+        assert_eq!(decode_status_of(&dangling, "dangling")[0].0, "unknown");
+    }
+
+    #[test]
+    fn decode_status_follows_drawn_forms_and_cannot_open_encryption() {
+        let form_text = flate(&b"BT /F1 12 Tf 10 10 Td (Inside a form with text) Tj ET\n".repeat(20));
+        let form = stream("/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Filter /FlateDecode", &zero_middle_third(&form_text));
+        let drawn = one_page(b"q /X0 Do Q", "/XObject << /X0 6 0 R >>", Some(form.clone()));
+        assert_eq!(decode_status_of(&drawn, "form")[0].0, "partial");
+        // The same broken form, never drawn, is not part of the page's content.
+        let undrawn = one_page(b"BT /F1 12 Tf (x) Tj ET", "/XObject << /X0 6 0 R >>", Some(form));
+        assert_eq!(decode_status_of(&undrawn, "undrawn")[0].0, "complete");
+        // An encrypted document is undecidable: the parser refuses it (the Python caller reports every page unknown).
+        let mut bytes = build(&one_page(b"BT /F1 12 Tf (x) Tj ET", "", None));
+        let at = bytes.windows(9).position(|w| w == b"/Root 1 0").unwrap();
+        bytes.splice(at..at, b"/Encrypt << /Filter /Standard >> ".iter().copied());
+        let dir = std::env::temp_dir().join(format!("k5a2b-decode-{}-enc", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.pdf");
+        std::fs::write(&path, &bytes).unwrap();
+        let opened = Pdf::open(path.to_str().unwrap()).map(|_| ());
+        std::fs::remove_dir_all(dir).unwrap();
+        assert!(opened.unwrap_err().to_string().contains("Encrypted"));
     }
 
     #[test]

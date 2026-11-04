@@ -255,24 +255,17 @@ def test_clean_supports_score_only_mode(tmp_path: Path) -> None:
     assert (row.get("filter") or "") == "ok"
 
 
-# CP0-debt (K4g B3): the owner's cleaner behaviour is authoritative, so this test is held as a strict xfail rather
-# than rewritten. It passed up to a0e35c8; the owner's cleaner rewrite 2940cea (2026-05-02, "Pilot B", Rule B
-# GLYPH<...> line-drop) now removes the GLYPH lines before the stage-4 report scores the cleaned text, so this input
-# gets mojibake_badness_score 0.0, filter "ok" and needs_ocr False (before: 0.788, "mojibake>0.1", True). Whether a
-# document whose text was all GLYPH markers should still route to OCR is an owner decision; strict=True makes the
-# test fail loudly (XPASS) once the routing is restored, so the marker cannot outlive the decision.
-@pytest.mark.xfail(
-    strict=True,
-    reason="CP0-debt: owner decision pending. Since 2940cea, GLYPH-only text is line-dropped before scoring "
-    "(badness 0.0, needs_ocr False); this test keeps the pre-2940cea OCR-routing expectation.",
-)
+# CP0-debt (K4g B3) resolved by K5 quality policy P4a (K5-A2b): a document whose text is entirely glyph names is
+# routed to OCR. The owner's cleaner rewrite 2940cea (Pilot B, Rule B GLYPH<...> line-drop) still removes the GLYPH
+# lines before the stage-4 report scores the cleaned text, so mojibake_badness_score stays 0.0 (the cleaner is
+# authoritative and unchanged); the route comes from the raw-text measurement with the cleaner's own glyph matchers
+# (filter token glyph_only). The pre-2940cea expectation "badness >= 0.5" is replaced by that token.
 def test_clean_flags_uppercase_glyph_noise(tmp_path: Path) -> None:
     corpus = _build_corpus(tmp_path)
     row = _run_clean_and_read_row(corpus, UPPER_GLYPH_MD, stem="glyph-artefact")
-    score = float(row.get("mojibake_badness_score") or 0.0)
-    assert score >= 0.5
+    assert float(row.get("mojibake_badness_score") or 0.0) == 0.0   # measured after the cleaner's line-drop
     filter_value = row.get("filter") or ""
-    assert "mojibake>0.1" in filter_value or "non_greek_text" in filter_value
+    assert "glyph_only" in filter_value.split(";")
     assert bool(row.get("needs_ocr", False))
 
 

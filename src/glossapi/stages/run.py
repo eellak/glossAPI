@@ -544,6 +544,7 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
             remote_bases=[source_rows[entry['ordinal']].get('filename_base') for entry in unique if entry['remote'] and source_rows[entry['ordinal']].get('filename_base')]
             publication=_publication_names(cast(list[dict[str, Any]],[entry for entry in unique if 'failure' not in entry]),cast(list[Any],remote_bases),_ledger_compatibility_names(writer))
             version_of={}
+            from ..markdown_layout import mode as layout_mode
             with writer.transaction():
                 for entry in unique:
                     ordinal,source,remote,uri,document,path=(entry[name] for name in ('ordinal','source','remote','uri','document','path'))
@@ -589,11 +590,16 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                                 settings=cast(Any,{**extraction_settings(settings.get('extract')),**naming})),
                             inputs=((parent,'download_payload','source_payload'),) if parent else (),skip_reason=skip))
                         parent=key
+                    # K5-A2b: in the default Markdown mode the safe extractor's sidecar (its layout strip record) is
+                    # the clean's bound layout input, so text metrics are measured on the markup-free text. Plain mode
+                    # and Docling extraction: one input, as before.
+                    layout_edges=(((f'{ordinal}:extract','extract_sidecar','layout_metadata'),) if 'extract' in stages
+                        and layout_mode()=='layout_v2' and extraction_settings(settings.get('extract')).get('phase1_backend','safe')=='safe' else ())
                     if 'clean' in stages:
                         key=f'{ordinal}:clean'
                         operations.append(ScheduledOperation(key,'clean',replace(snapshot,artifacts=()),
                             StageSpecification('clean.initial',required_output_kinds=('clean_markdown','clean_metrics'),settings={'num_threads':1}),
-                            inputs=((parent,'raw_markdown','selected_text'),),skip_reason=skip))
+                            inputs=cast(Any,((parent,'raw_markdown','selected_text'),*layout_edges)),skip_reason=skip))
                         parent=key
                     if 'ocr' in stages:
                         from ..ocr.defaults import default_values, select_device, cache_root
@@ -614,12 +620,12 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                             StageSpecification('ocr.document',('source_payload',) if not remote else (),('ocr_markdown','ocr_metrics'),device,
                                 cast(Any,{**ocr_settings,'options':values,'entry_point_name':'glossapi',
                                  'cache_root':str(cache_root(ocr_settings.get('cache_root'))),**naming})),
-                            inputs=(*edges,(f'{ordinal}:extract','raw_markdown','native_markdown'),(quality_key,'page_quality','page_quality')),
+                            inputs=(*edges,(f'{ordinal}:extract','raw_markdown','native_markdown'),(quality_key,'page_quality','page_quality'),*layout_edges),
                             after=(parent,),cpu_tokens=int(ocr_settings.get('num_threads',1)),skip_reason=skip))
                         parent=f'{ordinal}:clean_after_ocr'
                         operations.append(ScheduledOperation(parent,'clean',replace(snapshot,artifacts=()),
                             StageSpecification('clean.initial.artifact:after_ocr',required_output_kinds=('clean_markdown','clean_metrics'),settings={'num_threads':1}),
-                            inputs=((ocr_key,'ocr_markdown','selected_text'),),skip_reason=skip))
+                            inputs=((ocr_key,'ocr_markdown','selected_text'),*layout_edges),skip_reason=skip))
                     if 'sections' in stages:
                         filename=Path(published).stem if published else path.stem if path else name
                         operations.append(ScheduledOperation(f'{ordinal}:sections','sections',replace(snapshot,artifacts=()),

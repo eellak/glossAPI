@@ -107,8 +107,10 @@ class OcrMathPhaseMixin:
         ``page_routing`` (default: ``"all"`` for the OCR modes, FG-G03) uses the page policy of ``glossapi run``:
         every page that page quality routes is OCRed, in flagged and unflagged documents alike. ``"flagged"``
         restricts OCR to documents the cleaner flagged (``needs_ocr``), the API default before. ``mode="math_only"``
-        performs no OCR and by default still excludes only cleaner-flagged documents. A flagged document with no
-        routed page is OCRed whole in both modes (``run`` leaves it as extracted; FG-G03 residual).
+        performs no OCR and by default still excludes only cleaner-flagged documents. A flagged document whose page
+        quality ran and routed no page is not OCRed, in both modes, as ``run`` leaves it as extracted (K5 quality
+        policy P4d); a document without a page-quality report keeps document-level routing, and the OCR stage's own
+        page quality picks its pages.
 
         ``limit`` and ``dpi`` are accepted for compatibility and ignored: they have no effect (T2-G19). Use
         ``max_pages`` to bound pages and ``math_dpi_base`` for the math crops."""

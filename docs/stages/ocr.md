@@ -17,8 +17,15 @@ cleaner flagged and in documents it did not. `page_routing="flagged"` restricts
 OCR to the documents the cleaner flagged (`needs_ocr`), the default before K4g.
 `mode="math_only"` performs no OCR and by default still skips only
 cleaner-flagged documents. Ranges are inclusive, one-based physical pages. A
-cleaner-flagged document with no routed page is OCRed whole by `Corpus.ocr` in
-both settings, while `glossapi run` keeps its extracted text (`ocr_not_routed`). Skip-list and completed-document filtering still apply.
+cleaner-flagged document whose page quality routed no page is not OCRed by
+`Corpus.ocr` in either setting, as `glossapi run` keeps its extracted text
+(`ocr_not_routed`, cause `flagged_without_routed_pages`; K5 quality policy P4d).
+A document without a page-quality report keeps document-level routing: the OCR
+stage's own page quality picks its pages. A document whose native text layer is
+entirely glyph names (the cleaner's `glyph_only` token, K5 quality policy P4a)
+is OCRed whole, in `Corpus.ocr` and in `glossapi run` alike: page quality v4
+does not route such non-Greek symbol pages, so the OCR stage's glyph check
+selects every page (decision `route: glyph_only`). Skip-list and completed-document filtering still apply.
 Partial OCR preserves native Markdown and replaces only selected page text where
 page boundaries are known; ambiguous boundaries retain the original and append
 an OCR supplement. The latest replacement per physical page is retained on reruns.

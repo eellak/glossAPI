@@ -625,5 +625,5 @@ def test_abi3_extension_imports_on_this_interpreter():
             "print(m.__glossapi_native_api__); print(hasattr(m, 'layout_v2_label_page'))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.splitlines()
     assert any("abi3" in name for name in eval(out[0])), out[0]       # noqa: S307 - our own repr of a list
-    assert out[1] == "GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:2;"     # the level K5-A2 requires (layout v2 wired in)
+    assert out[1] == "GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:3;"     # the level K5-A2b requires (layout v2, decode status)
     assert out[2] == "True"

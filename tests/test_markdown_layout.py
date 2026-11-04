@@ -27,7 +27,7 @@ from layout_v2_ref import fuzz as FZ  # noqa: E402
 from layout_v2_ref import k5chars as kc  # noqa: E402
 
 native = mlr.native_module()[0]      # the extension module (maturin: glossapi_rs_pdfrepair.glossapi_rs_pdfrepair)
-assert native is not None, "glossapi_rs_pdfrepair at native API level 2 is required: a stale build is first"
+assert native is not None, "glossapi_rs_pdfrepair at native API level 3 is required: a stale build is first"
 REPO = Path(__file__).resolve().parents[1]
 SAMPLE = REPO / "samples/lightweight_pdf_corpus/pdfs/alpha.pdf"
 
@@ -139,7 +139,7 @@ def test_rendering_rules_per_label():
 
 def test_mode_and_contract_version(monkeypatch):
     from glossapi.stages.extract import ExtractStage
-    assert ml.mode() == "layout_v2" and ExtractStage().contract_version == 2
+    assert ml.mode() == "layout_v2" and ExtractStage().contract_version == 3   # K5-A2b: sidecar strip record
     monkeypatch.setenv(ml.ENVIRONMENT, "plain")
     assert ml.mode() == "plain" and ExtractStage().contract_version == 1
     monkeypatch.setenv(ml.ENVIRONMENT, "docling")
@@ -270,17 +270,17 @@ def test_stale_native_gives_plain_markdown_and_capabilities_report_it(tmp_path, 
     stale.layout_v2_read_document = native.layout_v2_read_document
     monkeypatch.setitem(sys.modules, "glossapi_rs_pdfrepair", stale)
     module, why = mlr.native_module()
-    assert module is None and "stale native module" in why and ":2;" in why
+    assert module is None and "stale native module" in why and ":3;" in why
     md, sidecar = _extract(pdf, tmp_path / "s", monkeypatch)
     assert md == "\n\n".join(p for p in _legacy_pages(pdf) if p)
     assert sidecar["markdown_layout"]["status"] == "unavailable" and "stale" in sidecar["markdown_layout"]["reason"]
     from glossapi.capabilities import NATIVE_API_LEVELS, _marker_level
-    assert NATIVE_API_LEVELS["glossapi_rs_pdfrepair"] == 2
+    assert NATIVE_API_LEVELS["glossapi_rs_pdfrepair"] == 3
     assert _marker_level(b"x GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:1; y", "glossapi_rs_pdfrepair") == 1
 
 
-def test_native_declares_api_level_2_and_the_layout_exports():
-    assert native.__glossapi_native_api__ == "GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:2;"
+def test_native_declares_api_level_3_and_the_layout_exports():
+    assert native.__glossapi_native_api__ == "GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:3;"  # K5-A2b: decode status
     assert mlr.native_module()[0] is native
 
 
