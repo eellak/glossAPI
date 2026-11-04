@@ -8,7 +8,7 @@ extra (Docling) is not involved.
 
 ``GLOSSAPI_MARKDOWN_LAYOUT`` selects the Markdown of the safe extractor:
   - ``layout_v2`` (default): labelled Markdown, extract stage contract 3 (K5-A2b: the sidecar strip record);
-  - ``plain``: the Markdown of extract contract 1 (the plain pages, byte for byte as before K5-A2), read through the
+  - ``plain``: the Markdown of plain extraction (unchanged page text; extract contract 2 records hash-bound page offsets), read through the
     same one-load-per-page reader.
 The value is part of the extract stage's identity (``ExtractStage.contract_version``), so a corpus never reuses the
 other mode's extraction.

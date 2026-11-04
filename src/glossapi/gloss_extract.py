@@ -1210,6 +1210,8 @@ class GlossExtract:
                 )
                 timeout_budget = self._remaining_text_timeout(file_path, timeout_budget)
                 deadline = time.monotonic() + timeout_budget
+                plain_page_spans = []
+                plain_length = 0
                 for index in range(page_count):
                     attempted_pages.append(index + 1)
                     if time.monotonic() > deadline:
@@ -1222,6 +1224,9 @@ class GlossExtract:
                         text = markdown_layout.page_text(source.text(index))
                         succeeded_pages.append(index + 1)
                         if text:
+                            start = plain_length + (2 if texts else 0)
+                            plain_page_spans.append([index + 1, start, start + len(text)])
+                            plain_length = start + len(text)
                             texts.append(text)
                         else:
                             blank_pages.append(index + 1)
@@ -1267,6 +1272,9 @@ class GlossExtract:
                     extraction_mode="pypdfium",
                     page_count=page_count,
                     markdown_layout=layout_metadata,
+                    plain_pages=({"pages": plain_page_spans, "markdown_chars": len(markdown),
+                        "markdown_sha256": __import__('hashlib').sha256(markdown.encode('utf-8')).hexdigest()}
+                        if not labels else None),
                     decode_status=decode_status,
                 )
                 return True
@@ -1334,6 +1342,7 @@ class GlossExtract:
         *,
         no_partial_output: bool = False,
         markdown_layout: Optional[dict] = None,
+        plain_pages: Optional[dict] = None,
         decode_status: Optional[dict] = None,
     ) -> None:
         """Write extraction metadata to sidecar (eliminate in-worker parquet writes).
@@ -1389,6 +1398,9 @@ class GlossExtract:
             data.pop("markdown_layout", None)
             if markdown_layout is not None:
                 data["markdown_layout"] = markdown_layout
+            data.pop("plain_pages", None)
+            if plain_pages is not None:
+                data["plain_pages"] = plain_pages
             data.pop("decode_status", None)
             if decode_status is not None:
                 data["decode_status"] = decode_status

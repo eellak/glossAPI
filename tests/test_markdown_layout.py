@@ -141,7 +141,7 @@ def test_mode_and_contract_version(monkeypatch):
     from glossapi.stages.extract import ExtractStage
     assert ml.mode() == "layout_v2" and ExtractStage().contract_version == 3   # K5-A2b: sidecar strip record
     monkeypatch.setenv(ml.ENVIRONMENT, "plain")
-    assert ml.mode() == "plain" and ExtractStage().contract_version == 1
+    assert ml.mode() == "plain" and ExtractStage().contract_version == 2
     monkeypatch.setenv(ml.ENVIRONMENT, "docling")
     with pytest.raises(ValueError, match="GLOSSAPI_MARKDOWN_LAYOUT"):
         ml.mode()
@@ -180,7 +180,7 @@ def test_extractor_writes_labelled_markdown_with_unchanged_text(tmp_path, monkey
     # plain mode: the Markdown and sidecar of extract contract 1, byte for byte
     plain_md, plain_sidecar = _extract(pdf, tmp_path / "plain", monkeypatch, "plain")
     assert plain_md == "\n\n".join(p for p in pages if p) and "markdown_layout" not in plain_sidecar
-    assert {k: v for k, v in sidecar.items() if k != "markdown_layout"} == plain_sidecar
+    assert {k: v for k, v in sidecar.items() if k != "markdown_layout"} == {k: v for k, v in plain_sidecar.items() if k != "plain_pages"}
 
 
 def test_native_page_text_is_byte_identical_to_pypdfium2(tmp_path):

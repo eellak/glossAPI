@@ -235,4 +235,4 @@ def test_reassembly_keeps_existing_page_markdown(quality_pdf, tmp_path):
                    extra_metrics={'source_start_page': 2, 'source_end_page': 3})
     runner._ensure_canonical_outputs(out_root=tmp_path, pdf_root=quality_pdf.parent,
                                      file_list=['quality.pdf'], page_ranges=['quality.pdf:2:3'])
-    assert _split_page_outputs((tmp_path / 'markdown/quality.md').read_text()) == [original[0], 'new scan', 'new text', original[3]]
+    assert (tmp_path / 'markdown/quality.md').read_text() == '\n\n'.join([original[0], 'new scan', 'new text', original[3]]) + '\n'

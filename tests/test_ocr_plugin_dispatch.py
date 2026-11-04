@@ -60,8 +60,8 @@ def test_partial_ranges_keep_native_text_and_export_each_physical_page(tmp_path,
     monkeypatch.setattr(dispatch, '_build_converter', build)
     corpus.ocr(mode='ocr_bad', ocr_options=options)
     assert calls == [(tmp_path / 'source.pdf', (2, 3))]
-    assert page_artifacts._split_page_outputs((tmp_path / 'markdown/source.md').read_text()) == [
-        '# Native heading', 'OCR page 2', 'OCR page 3', '| Native | Table |']
+    assert (tmp_path / 'markdown/source.md').read_text() == (
+        '# Native heading\n\nOCR page 2\n\nOCR page 3\n\n| Native | Table |\n')
     row = pd.read_parquet(parquet).iloc[0]
     assert row.ocr_success and not row.needs_ocr and row.extraction_mode == 'docling'
     assert row.text == (tmp_path / 'markdown/source.md').read_text()

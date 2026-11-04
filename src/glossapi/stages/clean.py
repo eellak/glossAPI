@@ -136,7 +136,19 @@ def _markup_free_metrics(cleaner, directory, name, text, threads):
     return metric, cleaned, hashlib.sha256((cleaned/name).read_bytes()).hexdigest()
 
 
-LAYOUT_INPUT_KINDS = ('layout_metadata', 'extract_sidecar')
+LAYOUT_INPUT_KINDS = ('layout_metadata', 'extract_sidecar', 'ocr_layout')
+
+
+def metric_sidecar(sidecar, source):
+    """Prefer the hash-bound partial-OCR strip for the actual text being scored."""
+    from ..markdown_layout import markup_free
+    sidecar = Path(sidecar)
+    candidate = sidecar.parent.parent/'ocr_layout'/sidecar.name
+    if candidate.is_file():
+        layout = layout_metadata_of(candidate)
+        if markup_free(Path(source).read_text(encoding='utf-8'), layout) is not None:
+            return candidate
+    return sidecar
 
 
 def layout_metadata_of(path):
@@ -171,7 +183,7 @@ def layout_free_scoring_copy(input_dir, staging_root, sidecar_dir, *, strip_mark
     files = sorted(path for path in input_dir.rglob('*.md') if path.is_file())
     surfaces = {}
     for path in files:
-        sidecar = Path(sidecar_dir)/f'{path.stem}.json'
+        sidecar = metric_sidecar(Path(sidecar_dir)/f'{path.stem}.json', path)
         layout = layout_metadata_of(sidecar) if sidecar.is_file() else None
         override = (overrides or {}).get(path.absolute())
         if override is not None:

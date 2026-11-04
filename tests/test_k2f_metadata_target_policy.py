@@ -546,7 +546,7 @@ EXPECTED = {
         (1, STAGEWORK + '; its republication onto live files goes through publish_products(captured=True)'),
     ('glossapi/stages/export.py', 'ExportStage._finalize', 'shutil.copyfile'): (1, STAGEWORK),
     ('glossapi/stages/metadata.py', 'MetadataProjectionStage.finalize', 'shutil.copyfile'): (1, STAGEWORK),
-    ('glossapi/stages/ocr.py', 'OcrStage._run_document', 'shutil.copy2'): (2, DOCUMENTS),
+    ('glossapi/stages/ocr.py', 'OcrStage._run_document', 'shutil.copy2'): (3, DOCUMENTS + '; includes the bound extraction page-offset/strip input copied into private OCR work'),
     ('glossapi/stages/scheduler.py', 'StreamingScheduler._recover', 'os.rename'): (1, STAGEWORK),
     # found by import-alias resolution (`from shutil import copy2`, `import shutil as _shutil`): source-document copies
     ('glossapi/corpus/batched_extract.py', 'DoclingAdapter.failure', 'shutil.copy2'): (1, DOCUMENTS + ' (failed PDF to problematic dir)'),

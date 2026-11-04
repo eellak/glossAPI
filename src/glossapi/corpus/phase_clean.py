@@ -2764,6 +2764,8 @@ def precompute_raw_text_metrics(path) -> None:
     path = Path(path)
     text = _decode_markdown(path.read_bytes())
     sidecar = path.parent.parent / "sidecars" / "extract" / f"{path.stem}.json"
+    from ..stages.clean import metric_sidecar
+    sidecar = metric_sidecar(sidecar, path)
     payload = None
     if sidecar.is_file():
         try:
@@ -2851,6 +2853,10 @@ def _enrich_extraction_metrics(df: pd.DataFrame, output_dir: Path, markdown_dir:
         result.at[index, "control_char_count"] = pd.NA
         result.at[index, "latin_word_shape_rate"] = pd.NA
         if has_markdown:
+            from ..stages.clean import metric_sidecar
+            scoring_sidecar = metric_sidecar(sidecar, markdown)
+            if scoring_sidecar != sidecar:
+                payload = {**payload, "markdown_layout": json.loads(scoring_sidecar.read_text())["markdown_layout"]}
             # The markup-free text of a layout-labelled Markdown (K5-A2b), else the Markdown, as before.
             override = (overrides or {}).get(markdown.absolute())
             if override is not None and not isinstance(override, dict):
@@ -2924,7 +2930,7 @@ def _attach_page_quality_routes(df: pd.DataFrame, metrics_dir: Path) -> pd.DataF
                 raise ValueError("Page-quality filename differs from metadata")
             profile = payload.get("rule_profile", "v2")
             folded = payload.get("fold_validity", False)
-            if profile not in ("v2", "v3", "v4") or not isinstance(folded, bool):
+            if profile not in ("v2", "v3", "v4", "v5") or not isinstance(folded, bool):
                 raise ValueError("Invalid page-quality rule profile or validity mode")
             result.at[index, "ocr_pages"] = ranges
             result.at[index, "ocr_pages_count"] = count

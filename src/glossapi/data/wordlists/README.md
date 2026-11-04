@@ -32,3 +32,16 @@ not proof that an existing OCR layer matches the scan. An explicit empty word
 set disables v4 validity measurement and exercises its unknown-to-OCR safety net.
 The existing scan gate for fewer than 50 characters is retained even with a
 positive word rate: a short caption cannot establish completeness of the body.
+
+## English validity (experimental routing v5)
+
+`en_US.dic.gz` is the unmodified UTF-8 SCOWL en_US 2020.12.07 Hunspell
+source (`index.dic`) from wooorm/dictionaries revision
+`8cfea406b505e4d7df52d5a19bce525df98c54ab`, compressed with gzip mtime 0.
+Uncompressed SHA256: `f0b1a234bd178bdd01875b2a392a9647f888b8fe879f79c52aae62c2759b3647`.
+Source: https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries/en/index.dic
+
+Licence: MIT AND BSD (SCOWL's component notices and permissions are reproduced
+in full in `LICENSE.en_US`). Lookup discards the count and Hunspell flags,
+normalizes NFC and casefolds. There is no affix expansion or text correction.
+The runtime verifies the source digest and entry count before using it.

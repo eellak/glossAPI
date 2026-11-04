@@ -87,7 +87,14 @@ def test_routed_cohort_matches_direct_pipeline(tmp_path):
     assert sorted(call['page'] for call in calls)==selected
     assert result.decisions[0]['plugin']['device']==device
     canonical=next(item for item in result.outputs if item.kind=='ocr_markdown')
-    actual_pages=_split_page_outputs((work/canonical.relative_path).read_text())
+    canonical_text=(work/canonical.relative_path).read_text()
+    layout=json.loads((work/'sidecars/ocr_layout'/f'{source.stem}.json').read_text())['markdown_layout']
+    if layout.get('pages'):
+        actual_pages=['']*len(_split_page_outputs(native_path.read_text()))
+        for page,start,end,_ in layout['pages']:
+            actual_pages[page-1]=canonical_text[start:end]
+    else:
+        actual_pages=_split_page_outputs(canonical_text)
     # Compare to the actual retained Markdown surface (including its newline
     # convention), rather than PDFium's pre-serialization CRLF strings.
     for page,text in enumerate(_split_page_outputs(native_path.read_text()),1):

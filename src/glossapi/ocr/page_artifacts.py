@@ -340,9 +340,19 @@ def _retained_native_markdown(*, out_root: Path, source_stem: str) -> str:
             raise FileNotFoundError(f"Partial OCR requires retained native Markdown for {source_stem}")
         payload = canonical_path.read_bytes()
         original = payload.decode("utf-8")
-        if "<!-- ocr-pages:" in original:
+        generated = (out_root / "sidecars/ocr_pages" / f"{source_stem}.json").is_file()
+        layout_path = out_root / "sidecars/ocr_layout" / f"{source_stem}.json"
+        if layout_path.is_file():
+            try:
+                from ..markdown_layout import markup_free
+                layout = json.loads(layout_path.read_text(encoding="utf-8")).get("markdown_layout", {})
+                generated = generated or (layout.get("source") == "ocr_page_replacement"
+                                           and markup_free(original, layout) is not None)
+            except (OSError, ValueError, AttributeError):
+                pass
+        if "<!-- ocr-pages:" in original or generated:
             raise FileNotFoundError(f"Partial OCR requires retained native Markdown for {source_stem}; "
-                                    "canonical Markdown already contains an OCR supplement")
+                                    "canonical Markdown is already an OCR product")
         if original.strip():
             native_path.parent.mkdir(parents=True, exist_ok=True)
             with native_path.open("xb") as handle:
@@ -435,20 +445,27 @@ def _reassemble_canonical_output_for_source(
     partial = bool(selected_ranges) and produced != set(range(1, page_count + 1))
     state_path = out_root / "sidecars" / "ocr_pages" / f"{source_stem}.json"
     previous_pages: Dict[int, Dict[str, str]] = {}
+    native_edits = [[] for _ in range(page_count)]
+    replacement_reason = None
     if partial:
         original = _retained_native_markdown(out_root=out_root, source_stem=source_stem)
         previous_pages = _previous_ocr_pages(state_path=state_path, page_count=page_count)
-        original_pages = _existing_markdown_pages(original, page_count)
+        from .page_replacement import native_pages
+        original_pages, bound_edits, replacement_reason = native_pages(out_root, source_stem, original, page_count)
         if original_pages is not None:
             merged_pages = original_pages
-            kept_markdown_source = "page_markers"
+            native_edits = bound_edits
+            kept_markdown_source = "page_offsets"
         else:
-            docling_pages = _docling_markdown_pages(
+            # Legacy explicit page markers and Docling provenance remain usable
+            # only when there was no claimed offset record to reject.
+            marker_pages = _existing_markdown_pages(original, page_count)
+            docling_pages = (marker_pages or _docling_markdown_pages(
                 out_root=out_root, source_stem=source_stem, markdown=original, page_count=page_count,
-            )
+            )) if replacement_reason == "page_offsets_missing" else None
             if docling_pages is not None:
                 merged_pages = docling_pages
-                kept_markdown_source = "docling_json_provenance"
+                kept_markdown_source = "page_markers" if marker_pages is not None else "docling_json_provenance"
             else:
                 retained_whole = original
                 kept_markdown_source = "existing_markdown_whole_plus_ocr"
@@ -505,6 +522,7 @@ def _reassemble_canonical_output_for_source(
             "reassembled_shard_count": len(shard_records),
             "reassembled_source_ranges": reassembled_ranges,
             "kept_markdown_source": kept_markdown_source,
+            **({"page_replacement_fallback_reason": replacement_reason} if partial and retained_whole is not None else {}),
             "render_sec": float(render_sec_total),
             "infer_sec_total": float(infer_sec_total),
             "wall_time_sec": float(wall_time_sec_total),
@@ -530,6 +548,11 @@ def _reassemble_canonical_output_for_source(
         merged_extra_metrics["native_markdown_path"] = str(
             Path("sidecars") / "ocr_native" / f"{source_stem}.md")
     merged_markdown = _join_page_outputs(merged_pages) if merged_pages else "[[Blank page]]"
+    replacement_metadata = None
+    if partial and retained_whole is None:
+        from .page_replacement import replacement_layout
+        merged_markdown, replacement_metadata = replacement_layout(merged_pages, native_edits, set(previous_pages))
+        merged_extra_metrics["markdown_layout_sha256"] = replacement_metadata["strip"]["markdown_sha256"]
     if retained_whole is not None:
         from glossapi.page_quality import compress_page_ranges
 
@@ -551,6 +574,10 @@ def _reassemble_canonical_output_for_source(
         page_count=int(page_count),
         extra_metrics=merged_extra_metrics,
     )
+    if replacement_metadata is not None:
+        layout_path = out_root / "sidecars/ocr_layout" / f"{source_stem}.json"
+        layout_path.parent.mkdir(parents=True, exist_ok=True)
+        layout_path.write_text(json.dumps({"markdown_layout": replacement_metadata}), encoding="utf-8")
     if partial:
         state_path.parent.mkdir(parents=True, exist_ok=True)
         temporary = state_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
@@ -590,5 +617,3 @@ def _ensure_canonical_outputs(*, out_root: Path, pdf_root: Path, file_list: List
         )
         if name in selected and not assembled:
             raise FileNotFoundError(f"No selected OCR shards produced for {name}")
-
-

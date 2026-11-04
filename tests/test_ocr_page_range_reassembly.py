@@ -153,7 +153,8 @@ def test_docling_heading_table_and_pages_2_3_survive(tmp_path, json_mode):
     assert 'FRESH PAGE 2' in actual and 'FRESH PAGE 3' in actual
     if json_mode in {'plain', 'zstd'}:
         assert metrics['kept_markdown_source'] == 'docling_json_provenance'
-        assert _split_page_outputs(actual)[1:] == ['FRESH PAGE 2', 'FRESH PAGE 3']
+        assert actual.endswith('FRESH PAGE 2\n\nFRESH PAGE 3\n')
+        assert '<!-- page:' not in actual
         assert 'Old page' not in actual
     else:
         assert metrics['kept_markdown_source'] == 'existing_markdown_whole_plus_ocr'
@@ -173,5 +174,5 @@ def test_comment_only_page_boundaries_keep_heading_and_table(tmp_path):
     runner._ensure_canonical_outputs(out_root=tmp_path, pdf_root=tmp_path, file_list=['source.pdf'],
                                      page_ranges=['source.pdf:2:2'])
     actual = (tmp_path / 'markdown/source.md').read_text()
-    assert _split_page_outputs(actual) == ['# Keep\n\n| A | B |', 'FRESH PAGE 2', 'old 3']
+    assert actual == '# Keep\n\n| A | B |\n\nFRESH PAGE 2\n\nold 3\n'
     assert json.loads((tmp_path / 'json/metrics/source.metrics.json').read_text())['kept_markdown_source'] == 'page_markers'

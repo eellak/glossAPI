@@ -620,12 +620,14 @@ def prepare_streaming(corpus,sources=(),*,workers=None,stages=('extract','clean'
                             StageSpecification('ocr.document',('source_payload',) if not remote else (),('ocr_markdown','ocr_metrics'),device,
                                 cast(Any,{**ocr_settings,'options':values,'entry_point_name':'glossapi',
                                  'cache_root':str(cache_root(ocr_settings.get('cache_root'))),**naming})),
-                            inputs=(*edges,(f'{ordinal}:extract','raw_markdown','native_markdown'),(quality_key,'page_quality','page_quality'),*layout_edges),
+                            inputs=(*edges,(f'{ordinal}:extract','raw_markdown','native_markdown'),(quality_key,'page_quality','page_quality'),
+                                (f'{ordinal}:extract','extract_sidecar','layout_metadata')),
                             after=(parent,),cpu_tokens=int(ocr_settings.get('num_threads',1)),skip_reason=skip))
                         parent=f'{ordinal}:clean_after_ocr'
                         operations.append(ScheduledOperation(parent,'clean',replace(snapshot,artifacts=()),
                             StageSpecification('clean.initial.artifact:after_ocr',required_output_kinds=('clean_markdown','clean_metrics'),settings={'num_threads':1}),
-                            inputs=((ocr_key,'ocr_markdown','selected_text'),*layout_edges),skip_reason=skip))
+                            inputs=((ocr_key,'ocr_markdown','selected_text'),
+                                *(((ocr_key,'ocr_layout','layout_metadata'),) if layout_edges else ())),skip_reason=skip))
                     if 'sections' in stages:
                         filename=Path(published).stem if published else path.stem if path else name
                         operations.append(ScheduledOperation(f'{ordinal}:sections','sections',replace(snapshot,artifacts=()),
@@ -1047,7 +1049,7 @@ def reconcile_section_census(corpus,result):
     result['section_counts']={'selected':len(planned),'included':included,'omitted':len(planned)-included}
 
 
-OCR_PUBLISHED_KINDS=('ocr_markdown','ocr_metrics','ocr_native','ocr_page_state')
+OCR_PUBLISHED_KINDS=('ocr_markdown','ocr_metrics','ocr_native','ocr_page_state','ocr_layout')
 
 
 @shadow_stage('ocr', 'ocr.wrapper')

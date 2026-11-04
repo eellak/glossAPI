@@ -114,7 +114,7 @@ def test_marked_page_reruns_rebuild_from_native_and_keep_other_ocr(tmp_path):
     (out / 'markdown/case.md').write_text('Accidentally changed canonical')
     shard(3, 3, 'CURRENT THREE')
     assert assemble([(3, 3)])
-    assert _split_page_outputs((out / 'markdown/case.md').read_text()) == ['Native one', 'CURRENT TWO', 'CURRENT THREE']
+    assert (out / 'markdown/case.md').read_text() == 'Native one\n\nCURRENT TWO\n\nCURRENT THREE\n'
     assert (out / 'sidecars/ocr_native/case.md').read_bytes() == native
 
 

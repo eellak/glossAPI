@@ -54,8 +54,8 @@ def batch(paths: list[Path], *, workers: int = 1, timeout: float = 120,
     """Yield exactly one row per input, bounding each child's total lifetime."""
     if workers < 1 or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("workers and timeout must be positive and finite")
-    if rule_profile not in ("v2", "v3", "v4"):
-        raise ValueError("rule_profile must be 'v2', 'v3' or 'v4'")
+    if rule_profile not in ("v2", "v3", "v4", "v5"):
+        raise ValueError("rule_profile must be 'v2', 'v3', 'v4' or 'v5'")
     context = mp.get_context("spawn")
     pending = iter(enumerate(paths))
     active: list[dict[str, Any]] = []
@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=120)
     parser.add_argument("--wordlist")
     parser.add_argument("--fold-validity", action="store_true", help="Fold accents, case and final sigma for validity lookup")
-    parser.add_argument("--rule-profile", choices=("v2", "v3", "v4"), default="v4")
+    parser.add_argument("--rule-profile", choices=("v2", "v3", "v4", "v5"), default="v4")
     parser.add_argument("--image-dominant-min-valid-word-rate", type=float, default=0.9)
     parser.add_argument("--image-dominant-max-junk-share", type=float, default=0.1)
     parser.add_argument("--output-dir", type=Path, help="Publish json/metrics page-quality sidecars here")
