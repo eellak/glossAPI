@@ -43,7 +43,10 @@
     "../../src/glossapi/markdown_layout/reader.py",
     "../../src/glossapi/markdown_layout/labels.py",
     "../../src/glossapi/markdown_layout/render.py",
-    "../../src/glossapi/pdf_repair/decode_status.py"
+    "../../src/glossapi/pdf_repair/decode_status.py",
+    "../../src/glossapi/ocr/page_replacement.py",
+    "../../src/glossapi/ocr/deadline.py",
+    "../../src/glossapi/page_quality.py"
   ],
   "strict": [
     "../../src/glossapi/capabilities.py",

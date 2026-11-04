@@ -84,6 +84,9 @@ class SequentialStageRunner:
             run_settings = json.loads(row[0]) if row else {}
         retention_settings = {key:run_settings[key] for key in ('debug','memory_saving','disk_budget_bytes','max_source_bytes','max_attempt_bytes') if key in run_settings}
         runtime_settings = {**resolved_settings(retention_settings), **dict(specification.settings)}
+        if stage.name == 'ocr':
+            from ..ocr.deadline import attempt_budget
+            timeout_seconds, runtime_settings['ocr_deadline'] = attempt_budget(document.artifacts, runtime_settings, timeout_seconds)
         if runtime_settings['memory_saving'] == 'extreme':
             from .disk_budget import require_disk_guard
             require_disk_guard(self.root, runtime_settings)

@@ -376,6 +376,11 @@ def execute_compatibility_stage(corpus, stage, inputs, specification, *, timeout
         path = Path(path).absolute()
         references.append(ArtifactReference(str(uuid.uuid4()), role, path, sha256_file(path), path.stat().st_size))
     workspace = Path(tempfile.mkdtemp(prefix='glossapi-adapter-', dir=corpus.output_dir))
+    if stage.name == 'ocr':
+        from ..ocr.deadline import attempt_budget
+        timeout_seconds, budget = attempt_budget(references, specification.settings, timeout_seconds)
+        specification = __import__('dataclasses').replace(specification,
+            settings={**specification.settings, 'ocr_deadline':budget})
     request = StageRequest(*(str(uuid.uuid4()) for _ in range(5)), specification.operation,
         tuple(references), dict(specification.settings), {}, specification.device_id,
         workspace/'attempt', time.monotonic_ns()+int(timeout_seconds*1e9))
@@ -440,6 +445,8 @@ def clean_compatibility_kernel(corpus, md_files, report_path, *, input_root=None
         # measured on the markup-free text. Plain mode and Docling sidecars carry no strip record: one input, as before.
         sidecar = sidecars/f'{source.stem}.json'
         # After the OCR cleaner (refresh after OCR): its strip record describes this cleaned text (K5-A2b).
+        from .clean import metric_sidecar
+        sidecar = metric_sidecar(sidecar, source)
         derived = getattr(corpus, '_clean_strips', {}).get(Path(source).absolute())
         if derived is not None and has_layout_strip(derived):
             sidecar = derived
@@ -521,6 +528,8 @@ def clean_ocr_compatibility_kernel(corpus, md_files, settings, *, write_cleaned_
     sidecars = Path(corpus.output_dir)/'sidecars'/'extract'
     for source in md_files:
         sidecar = sidecars/f'{Path(source).stem}.json'
+        from .clean import metric_sidecar
+        sidecar = metric_sidecar(sidecar, source)
         inputs = [('selected_text',source)] + ([('layout_metadata', sidecar)] if has_layout_strip(sidecar) else [])
         result, workspace = execute_compatibility_stage(corpus, CleanStage(), inputs,
             StageSpecification('clean.ocr_artifacts',('selected_text',),('clean_markdown','clean_metrics'),settings=settings))
@@ -575,7 +584,7 @@ def ocr_compatibility_documents(context, filenames, *, request, page_ranges=None
         # markup-free native text (K5-A2b). Plain mode and Docling sidecars carry none.
         from .clean import has_layout_strip
         layout_sidecar=context.output_dir/'sidecars/extract'/source.with_suffix('.json').name
-        if has_layout_strip(layout_sidecar): inputs.append(('layout_metadata',layout_sidecar))
+        if layout_sidecar.is_file(): inputs.append(('layout_metadata',layout_sidecar))
         for suffix in ('.docling.json.zst','.docling.json'):
             path=context.output_dir/'json'/f'{source.stem}{suffix}'
             if path.is_file(): inputs.append(('docling_json',path)); break

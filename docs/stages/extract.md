@@ -51,7 +51,7 @@ alias are not involved.
 
 `GLOSSAPI_MARKDOWN_LAYOUT` selects the safe backend's Markdown: `layout_v2` (default, extract stage contract 3; 2 was
 K5-A2a's sidecar without the strip record) or
-`plain` (the plain pages, byte for byte as before; contract 1). The value is part of the extract stage identity.
+`plain` (the plain pages, byte for byte as before; contract 2: hash-bound `plain_pages` physical page offsets in the sidecar). The value is part of the extract stage identity.
 
 Rendering rules (`glossapi-layout-md/1`, `markdown_layout/render.py`):
 

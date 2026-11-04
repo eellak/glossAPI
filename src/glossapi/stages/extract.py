@@ -33,10 +33,10 @@ class ExtractStage:
     def contract_version(self):
         """3: the safe backend's raw Markdown carries layout v2 labels (K5-A2, ``glossapi.markdown_layout``) and its
         sidecar the strip record the clean stage measures through (K5-A2b; 2 was K5-A2a's sidecar without it);
-        1: ``GLOSSAPI_MARKDOWN_LAYOUT=plain``, the plain pages as before. The mode is part of the stage identity, so
+        2: ``GLOSSAPI_MARKDOWN_LAYOUT=plain``, unchanged text plus hash-bound physical page offsets. The mode is part of the stage identity, so
         a corpus never reuses an extraction made in the other mode."""
         from ..markdown_layout import mode
-        return 3 if mode() == "layout_v2" else 1
+        return 3 if mode() == "layout_v2" else 2
 
     def packages(self, specification):
         requirements = [PackageRequirement("core", ("pypdfium2>=4.30,<5", "ftfy>=6.0.0", "zstandard>=0.22.0"))]

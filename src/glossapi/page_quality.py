@@ -22,7 +22,7 @@ import re
 import tempfile
 import time
 import unicodedata
-from typing import Iterable
+from typing import Any, Iterable
 
 import pypdfium2 as pdfium
 from .pdfium_guard import pdfium_guard
@@ -56,6 +56,9 @@ class PageQuality:
     image_dominant_min_valid_word_rate: float = 0.9
     image_dominant_max_junk_share: float = 0.1
     greek_image_bar_applies: bool = False
+    valid_latin_word_rate: float | None = None
+    latin_validity_applies: bool = False
+    latin_min_valid_word_rate: float = 0.4
     # Every effective routing threshold, so the page row replays its own selection.
     image_dominant_ratio: float = 0.5
     image_dominant_min_chars: int = 600
@@ -93,6 +96,9 @@ class PageQualityReport:
     min_greek_share: float = 0.5
     max_other_share: float = 0.3
 
+    latin_dictionary_identity: dict | None = None
+    latin_min_valid_word_rate: float = 0.4
+
     def to_dict(self) -> dict:
         """Return a JSON-compatible copy, retaining null unknown rates."""
         return asdict(self)
@@ -123,6 +129,36 @@ def _default_words() -> frozenset[str]:
         raise ValueError("Packaged Greek wordlist entry count mismatch")
     return frozenset(unicodedata.normalize("NFC", line.split("/", 1)[0]).casefold()
                      for line in lines[1:] if line)
+
+
+_LATIN_WORDLIST_SHA256 = "f0b1a234bd178bdd01875b2a392a9647f888b8fe879f79c52aae62c2759b3647"
+
+
+def latin_wordlist_identity() -> dict:
+    """Pinned SCOWL en_US Hunspell surface entries; the bundled licence is retained."""
+    return {"name": "SCOWL en_US 2020.12.07", "revision": _WORDLIST_REVISION,
+            "sha256": _LATIN_WORDLIST_SHA256, "license": "MIT AND BSD",
+            "source": f"https://raw.githubusercontent.com/wooorm/dictionaries/{_WORDLIST_REVISION}/dictionaries/en/index.dic",
+            "lookup": "Hunspell entries without affix expansion", "normalization": "NFC casefold",
+            "scope": "Latin-dominant layers (routing v5 only)"}
+
+
+@lru_cache(maxsize=1)
+def _latin_words() -> frozenset[str]:
+    data = gzip.decompress((_WORDLIST_DIR / "en_US.dic.gz").read_bytes())
+    if hashlib.sha256(data).hexdigest() != _LATIN_WORDLIST_SHA256:
+        raise ValueError("Packaged English wordlist SHA256 mismatch")
+    lines = data.decode("utf-8").splitlines()
+    if int(lines[0]) != len(lines) - 1:
+        raise ValueError("Packaged English wordlist entry count mismatch")
+    return frozenset(unicodedata.normalize("NFC", line.split("/", 1)[0]).casefold()
+                     for line in lines[1:] if line)
+
+
+def latin_validity(text: str, dictionary: frozenset[str]) -> float | None:
+    tokens = re.findall(r"[^\W\d_]+", unicodedata.normalize("NFC", text), flags=re.UNICODE)
+    latin = [t for t in tokens if all('LATIN' in unicodedata.name(c, '') for c in t)]
+    return sum(t.casefold() in dictionary for t in latin) / len(latin) if latin else None
 
 
 def fold_validity_word(word: str) -> str:
@@ -209,7 +245,10 @@ def page_rule_selection(decision: str, *, valid_greek_word_rate: float | None,
                         min_greek_share: float = 0.5,
                         junk_token_share: float | None = None,
                         image_dominant_min_valid_word_rate: float = 0.9,
-                        image_dominant_max_junk_share: float = 0.1) -> bool:
+                        image_dominant_max_junk_share: float = 0.1,
+                        valid_latin_word_rate: float | None = None,
+                        latin_validity_applies: bool = False,
+                        latin_min_valid_word_rate: float = 0.4) -> bool:
     """Select existing decision labels; useful for archived-sidecar replay too.
 
     v4 additionally requires image_area_ratio, and trusts image-dominant text
@@ -222,8 +261,12 @@ def page_rule_selection(decision: str, *, valid_greek_word_rate: float | None,
     Image-dominant sparse text alone is excluded. Validity uses the report's
     explicit lookup mode; choosing v3 does not implicitly enable folding.
     """
-    if rule_profile not in ("v2", "v3", "v4"):
-        raise ValueError("rule_profile must be 'v2', 'v3' or 'v4'")
+    if rule_profile not in ("v2", "v3", "v4", "v5"):
+        raise ValueError("rule_profile must be 'v2', 'v3', 'v4' or 'v5'")
+    if rule_profile == "v5":
+        if latin_validity_applies and (valid_latin_word_rate is None or not valid_latin_word_rate >= latin_min_valid_word_rate):
+            return True
+        rule_profile = "v4"
     if rule_profile == "v4":
         _validate_image_text_bar(image_dominant_min_valid_word_rate, image_dominant_max_junk_share)
         if image_area_ratio is None:
@@ -301,7 +344,10 @@ def page_ocr_decision(*, chars: int, greek_chars: int, latin_chars: int,
                       candidate_decision: str | None = None,
                       junk_token_share: float | None = None,
                       image_dominant_min_valid_word_rate: float = 0.9,
-                      image_dominant_max_junk_share: float = 0.1) -> tuple[bool, str]:
+                      image_dominant_max_junk_share: float = 0.1,
+                      valid_latin_word_rate: float | None = None,
+                      latin_validity_applies: bool = False,
+                      latin_min_valid_word_rate: float = 0.4) -> tuple[bool, str]:
     """Classify pages with v4, or unchanged selectable legacy v2/v3 routing.
 
     v4 trusts an image-dominant text layer only with known validity at least
@@ -329,8 +375,12 @@ def page_ocr_decision(*, chars: int, greek_chars: int, latin_chars: int,
     candidate_decision can supply a legacy label before validity folding; this
     keeps v3 a filter of v2 candidates without a second validity cutoff.
     """
-    if rule_profile not in ("v2", "v3", "v4"):
-        raise ValueError("rule_profile must be 'v2', 'v3' or 'v4'")
+    if rule_profile not in ("v2", "v3", "v4", "v5"):
+        raise ValueError("rule_profile must be 'v2', 'v3', 'v4' or 'v5'")
+    if rule_profile == "v5":
+        if latin_validity_applies and (valid_latin_word_rate is None or not valid_latin_word_rate >= latin_min_valid_word_rate):
+            return True, "bad_latin_text"
+        rule_profile = "v4"
     if rule_profile == "v4":
         _validate_image_text_bar(image_dominant_min_valid_word_rate, image_dominant_max_junk_share)
         if words is None:
@@ -422,6 +472,7 @@ def compress_page_ranges(pages: Iterable[int]) -> str:
     if any(page < 1 for page in ordered):
         raise ValueError("Page numbers must be positive")
     ranges: list[str] = []
+    start = end = 0
     for page in ordered:
         if ranges and page == end + 1:
             end = page
@@ -460,7 +511,7 @@ def _image_coverage(page: pdfium.PdfPage, dpi_probe: bool) -> tuple[float, float
         w, h = max(0.0, right - left), max(0.0, top - bottom)
         image_area += w * h
         if dpi_probe and w and h:
-            pixel_size = getattr(obj, 'get_px_size', None) or obj.get_size
+            pixel_size = getattr(obj, 'get_px_size', None) or getattr(obj, 'get_size')
             px, py = pixel_size()
             dpis.append(min(px * 72 / w, py * 72 / h))
     return min(1.0, image_area / area) if area > 0 else 0.0, min(dpis) if dpis else None
@@ -476,7 +527,8 @@ def page_quality(pdf_path: str | Path, *,
                  image_dominant_min_valid_word_rate: float = 0.9,
                  image_dominant_max_junk_share: float = 0.1,
                  fold_validity: bool = False,
-                 rule_profile: str = "v4") -> PageQualityReport:
+                 rule_profile: str = "v4",
+                 latin_min_valid_word_rate: float = 0.4) -> PageQualityReport:
     """Inspect every page once, closing all native handles; never render pages.
 
     A word set takes precedence over the environment; a path uses E1's cached
@@ -493,10 +545,12 @@ def page_quality(pdf_path: str | Path, *,
     folding enabled, candidate labels still use legacy validity so the old
     0.4 cutoff does not silently override v3's 0.5 filter or short-word rule.
     """
-    if rule_profile not in ("v2", "v3", "v4"):
-        raise ValueError("rule_profile must be 'v2', 'v3' or 'v4'")
-    if rule_profile == "v4":
+    if rule_profile not in ("v2", "v3", "v4", "v5"):
+        raise ValueError("rule_profile must be 'v2', 'v3', 'v4' or 'v5'")
+    if rule_profile in ("v4", "v5"):
         _validate_image_text_bar(image_dominant_min_valid_word_rate, image_dominant_max_junk_share)
+    _validate_image_text_bar(latin_min_valid_word_rate, 0.1)
+    latin_dictionary = _latin_words() if rule_profile == "v5" else None
     started = time.perf_counter()
     path = Path(pdf_path)
     identity = None
@@ -507,18 +561,18 @@ def page_quality(pdf_path: str | Path, *,
         if dictionary:
             identity = {"name": "explicit words", "sha256": hashlib.sha256(
                 "\n".join(sorted(legacy_dictionary)).encode("utf-8")).hexdigest()}
-        elif rule_profile == "v4":
+        elif rule_profile in ("v4", "v5"):
             dictionary = None
     else:
         dictionary_path = wordlist or os.environ.get("GLOSSAPI_GREEK_WORDLIST")
         loader = _load_folded_words if fold_validity else _load_words
         dictionary = loader(str(Path(dictionary_path).expanduser().resolve())) if dictionary_path else None
         legacy_dictionary = (_load_words(str(Path(dictionary_path).expanduser().resolve()))
-                             if dictionary_path and fold_validity and rule_profile in ("v3", "v4") else dictionary)
+                             if dictionary_path and fold_validity and rule_profile in ("v3", "v4", "v5") else dictionary)
         if dictionary_path:
             identity = {"name": "configured wordlist", "path": str(Path(dictionary_path).expanduser().resolve()),
                         "sha256": hashlib.sha256(Path(dictionary_path).expanduser().read_bytes()).hexdigest()}
-        elif rule_profile == "v4":
+        elif rule_profile in ("v4", "v5"):
             bundled_dictionary = True
             legacy_dictionary = _default_words()
             dictionary = (frozenset(fold_validity_word(w) for w in legacy_dictionary)
@@ -531,7 +585,7 @@ def page_quality(pdf_path: str | Path, *,
     # Fixed thresholds are page_ocr_decision's defaults; all are recorded per page and report.
     import inspect
     fixed = inspect.signature(page_ocr_decision).parameters
-    thresholds = dict(image_dominant_ratio=image_dominant_ratio, image_dominant_min_chars=image_dominant_min_chars,
+    thresholds: dict[str, Any] = dict(image_dominant_ratio=image_dominant_ratio, image_dominant_min_chars=image_dominant_min_chars,
                       min_valid_word_rate=min_valid_word_rate,
                       **{name: fixed[name].default for name in ("min_chars", "min_image_ratio",
                                                                 "min_greek_share", "max_other_share")})
@@ -549,14 +603,14 @@ def page_quality(pdf_path: str | Path, *,
                 use_dictionary = not bundled_dictionary or ratio >= image_dominant_ratio
                 stats = _page_text_stats(text, dictionary if use_dictionary else None, fold_validity)
                 other = stats["chars"] - stats["greek_chars"] - stats["latin_chars"] - sum(c.isspace() for c in text)
-                values = {key: stats[key] for key in ("chars", "greek_chars", "latin_chars", "words")}
-                values.update(**text_contamination_counts(text, all_pua=rule_profile == "v4" and ratio >= image_dominant_ratio), other_chars=other, valid_greek_word_rate=stats["dictionary_valid_rate"], image_area_ratio=ratio)
-                greek_image = (rule_profile == "v4" and ratio >= image_dominant_ratio
+                values: dict[str, Any] = {key: stats[key] for key in ("chars", "greek_chars", "latin_chars", "words")}
+                values.update(**text_contamination_counts(text, all_pua=rule_profile in ("v4", "v5") and ratio >= image_dominant_ratio), other_chars=other, valid_greek_word_rate=stats["dictionary_valid_rate"], image_area_ratio=ratio)
+                greek_image = (rule_profile in ("v4", "v5") and ratio >= image_dominant_ratio
                                and stats["greek_chars"] > stats["latin_chars"])
-                junk = junk_token_stats(text, dictionary if use_dictionary else None,
+                junk: dict[str, Any] = junk_token_stats(text, dictionary if use_dictionary else None,
                                         fold_validity) if greek_image else {}
                 candidate = None
-                if fold_validity and rule_profile in ("v3", "v4"):
+                if fold_validity and rule_profile in ("v3", "v4", "v5"):
                     legacy_rate = _text_stats(text, legacy_dictionary if use_dictionary else None)["dictionary_valid_rate"]
                     candidate = page_ocr_decision(
                         **(values | {"valid_greek_word_rate": legacy_rate}),
@@ -565,6 +619,10 @@ def page_quality(pdf_path: str | Path, *,
                         min_valid_word_rate=min_valid_word_rate,
                         rule_profile="v2",
                     )[1]
+                latin_layer = (rule_profile == "v5" and stats["latin_chars"] > stats["greek_chars"] and stats["chars"] >= thresholds["min_chars"])
+                latin_rate = latin_validity(text, latin_dictionary) if latin_layer and latin_dictionary is not None else None
+                if latin_layer:
+                    junk: dict[str, Any] = junk_token_stats(text, latin_dictionary)
                 needs, reason = page_ocr_decision(
                     **values,
                     image_dominant_ratio=image_dominant_ratio,
@@ -572,17 +630,21 @@ def page_quality(pdf_path: str | Path, *,
                     min_valid_word_rate=min_valid_word_rate,
                     rule_profile=rule_profile,
                     candidate_decision=candidate,
+                    valid_latin_word_rate=latin_rate, latin_validity_applies=latin_layer,
+                    latin_min_valid_word_rate=latin_min_valid_word_rate,
                     junk_token_share=junk.get("junk_token_share"),
                     image_dominant_min_valid_word_rate=image_dominant_min_valid_word_rate,
                     image_dominant_max_junk_share=image_dominant_max_junk_share,
                 )
-                not_applicable = rule_profile == "v4" and _validity_not_applicable(
+                not_applicable = rule_profile in ("v4", "v5") and _validity_not_applicable(
                     **{key: values[key] for key in ("chars", "greek_chars", "latin_chars",
                         "other_chars", "image_area_ratio", "pua_char_count", "control_char_count")},
                     image_dominant_ratio=image_dominant_ratio,
                     image_dominant_min_chars=image_dominant_min_chars)
                 pages.append(PageQuality(page=index + 1, **values, page_needs_ocr=needs, decision=reason,
                                          min_image_dpi=dpi, rule_profile=rule_profile,
+                                         valid_latin_word_rate=latin_rate, latin_validity_applies=latin_layer,
+                                         latin_min_valid_word_rate=latin_min_valid_word_rate,
                                          validity_not_applicable=not_applicable, **junk,
                                          greek_image_bar_applies=greek_image,
                                          image_dominant_min_valid_word_rate=image_dominant_min_valid_word_rate,
@@ -597,6 +659,8 @@ def page_quality(pdf_path: str | Path, *,
                                dictionary is not None, time.perf_counter() - started,
                                fold_validity=fold_validity, rule_profile=rule_profile,
                                dictionary_identity=identity,
+                               latin_dictionary_identity=latin_wordlist_identity() if latin_dictionary is not None else None,
+                               latin_min_valid_word_rate=latin_min_valid_word_rate,
                                image_dominant_min_valid_word_rate=image_dominant_min_valid_word_rate,
                                image_dominant_max_junk_share=image_dominant_max_junk_share,
                                **thresholds)

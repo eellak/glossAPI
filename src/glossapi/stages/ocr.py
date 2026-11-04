@@ -33,7 +33,7 @@ def _native_text_is_glyph_only(inputs):
 
 class OcrStage:
     name = 'ocr'
-    contract_version = 2
+    contract_version = 3
 
     def __init__(self, ocr_options=None):
         self.ocr_options = ocr_options
@@ -46,7 +46,7 @@ class OcrStage:
 
     def plan(self, documents, *, settings):
         return StagePlan(tuple(PlannedOperation(document.document_id, document.version_id,
-            StageSpecification('ocr.document', ('source_payload','native_markdown','ocr_page_state','docling_json','page_quality'),
+            StageSpecification('ocr.document', ('source_payload','native_markdown','ocr_page_state','docling_json','page_quality','layout_metadata'),
                 ('ocr_markdown','ocr_metrics'), str(settings.get('device_id') or settings.get('options',{}).get('device') or 'cpu'), settings)) for document in documents))
 
     def finalize(self, request, *, reporter):
@@ -126,15 +126,22 @@ class OcrStage:
                     metrics.parent.mkdir(parents=True,exist_ok=True)
                     metrics.write_text(json.dumps({'page_count':report['pages_total'],'ocr_pages':[],
                         'ocr_engine':getattr(options,'kind','glossapi') if options is not None else 'glossapi'}))
+                    _ensure_layout(root, source.path.stem, target, request.inputs)
                     return StageResult(request.task_id,request.attempt_id,request.lease_token,'ok','ocr_not_routed',
-                        tuple(replace(item,kind='ocr_markdown' if item.relative_path.startswith('markdown/') else 'ocr_metrics',required=True)
-                              for item in outputs_in(root) if item.relative_path.startswith(('markdown/','json/metrics/'))),
+                        tuple(replace(item,kind='ocr_markdown' if item.relative_path.startswith('markdown/') else
+                                      'ocr_layout' if item.relative_path.startswith('sidecars/ocr_layout/') else 'ocr_metrics',required=True)
+                              for item in outputs_in(root) if item.relative_path.startswith(('markdown/','json/metrics/','sidecars/ocr_layout/'))),
                         ({'operation':request.operation,'pages':[],'needs_ocr':False},), {'wall_ns':time.monotonic_ns()-started})
             destinations = {'native_markdown': root/'markdown'/source.path.with_suffix('.md').name,
                 'ocr_native': root/'sidecars/ocr_native'/source.path.with_suffix('.md').name,
                 'ocr_page_state': root/'sidecars/ocr_pages'/source.path.with_suffix('.json').name,
                 'docling_json': root/'json'/f'{source.path.stem}.docling.json'}
             import shutil
+            layout_input = next((item for item in request.inputs if item.kind in ('layout_metadata','extract_sidecar')), None)
+            if layout_input is not None:
+                destination = root/'sidecars/extract'/source.path.with_suffix('.json').name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(layout_input.path, destination)
             for artifact in request.inputs:
                 destination = destinations.get(artifact.kind)
                 if destination:
@@ -144,7 +151,7 @@ class OcrStage:
                     shutil.copy2(artifact.path, destination)
             native_path = root/'sidecars/ocr_native'/source.path.with_suffix('.md').name
             supplied_native = root/'markdown'/source.path.with_suffix('.md').name
-            if not native_path.exists() and supplied_native.is_file() and supplied_native.read_text().strip():
+            if prior_state is None and not native_path.exists() and supplied_native.is_file() and supplied_native.read_text().strip():
                 native_path.parent.mkdir(parents=True,exist_ok=True)
                 shutil.copy2(supplied_native,native_path)
             context = SimpleNamespace(output_dir=root, input_dir=source.path.parent,
@@ -161,6 +168,7 @@ class OcrStage:
             with capture_backend_observations() as observations:
                 dispatch.run_plugin_ocr(context,[source.path.name], request=configuration, page_ranges=ranges or None)
             canonical = root/'markdown'/source.path.with_suffix('.md').name
+            _ensure_layout(root, source.path.stem, canonical, request.inputs)
             metrics_path = root/'json/metrics'/f'{source.path.stem}.metrics.json'
             if not canonical.is_file() or not metrics_path.is_file():
                 raise ValueError('Required canonical OCR output/metrics missing')
@@ -200,12 +208,16 @@ class OcrStage:
                 'engine_receipt_hash': engine_receipt_hash if page in engine_calls else None} for page in range(1,count+1)]
             outputs = []
             for item in outputs_in(root):
+                if item.relative_path.startswith('sidecars/extract/'):
+                    continue  # bound native metadata is an input, never an OCR product
                 kind = ('ocr_markdown' if item.relative_path == str(canonical.relative_to(root)) else
                     'ocr_metrics' if item.relative_path == str(metrics_path.relative_to(root)) else
                     'ocr_native' if item.relative_path.startswith('sidecars/ocr_native/') else
                     'ocr_page_state' if item.relative_path.startswith('sidecars/ocr_pages/') else item.kind)
+                if item.relative_path.startswith('sidecars/ocr_layout/'):
+                    kind = 'ocr_layout'
                 outputs.append(replace(item, kind=kind, required=kind in ('ocr_markdown','ocr_metrics'),
-                    retention_class='recovery' if kind in ('ocr_native','ocr_page_state') else item.retention_class))
+                    retention_class='recovery' if kind in ('ocr_native','ocr_page_state','ocr_layout') else item.retention_class))
             return StageResult(request.task_id,request.attempt_id,request.lease_token,'ok','ocr_completed',tuple(outputs),
                 ({'operation':request.operation,'inputs':bindings,'pages':pages,'output_sha256':sha256_file(canonical),
                   **({'route':'glyph_only'} if glyph_route else {}),
@@ -223,3 +235,21 @@ class OcrStage:
             elif 'Incomplete selected OCR pages' in str(error): reason='ocr_shards_incomplete'
             return failed_result(request,'input_hash_changed' if str(error)=='input_hash_changed' else reason,error,
                 decisions=({'backend_observations':observations},),metrics={'wall_ns':time.monotonic_ns()-started})
+
+
+def _ensure_layout(root, stem, canonical, inputs):
+    """Always supply the downstream metric provenance, including non-routed/whole OCR."""
+    path = root/'sidecars/ocr_layout'/f'{stem}.json'
+    if path.is_file():
+        return
+    from .clean import layout_metadata_of
+    from ..markdown_layout import markup_free
+    from ..markdown_layout.render import strip_record
+    text = canonical.read_text(encoding='utf-8')
+    source = next((item for item in inputs if item.kind in ('layout_metadata','extract_sidecar')), None)
+    layout = layout_metadata_of(source.path) if source is not None else None
+    plain = markup_free(text, layout) if layout else None
+    if plain is None:
+        layout = {'source':'ocr_text','strip':strip_record(text, [], text)}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({'markdown_layout':layout}), encoding='utf-8')
