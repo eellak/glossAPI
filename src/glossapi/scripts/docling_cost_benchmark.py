@@ -1,6 +1,8 @@
 """Isolated E3 layout benchmarks; importing this module never imports Docling/Corpus."""
 from __future__ import annotations
 
+from glossapi.pdfium_guard import pdfium_guard
+
 from glossapi.optional_dependencies import optional_dependencies
 
 import argparse
@@ -469,7 +471,7 @@ def _count_pages(path: Path) -> int:
     # Lightweight readers only; do not import the Corpus-based checkpoint benchmark.
     from contextlib import closing
     import pypdfium2 as pdfium
-    with closing(pdfium.PdfDocument(str(path))) as pdf:
+    with pdfium_guard(), closing(pdfium.PdfDocument(str(path))) as pdf:
         pages = len(pdf)
     if pages < 1:
         raise ValueError(f"PDF has no pages: {path}")

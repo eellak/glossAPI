@@ -174,7 +174,11 @@ class LegacySource:
         self._tables: dict[int, Optional[bytes]] = {}
         with pdfium_guard():
             self.doc = pdfium.PdfDocument(str(self.path))
-        self.page_count = len(self.doc)
+            try:
+                self.page_count = len(self.doc)
+            except BaseException:
+                self.doc.close()
+                raise
         self.reader = "python" if chars else None
 
     def text(self, index: int) -> str:
