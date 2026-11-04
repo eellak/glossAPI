@@ -46,10 +46,11 @@ This matters because Docling is powerful, but not equally stable under all batch
 The safe backend (the default `phase1_backend='auto'`/`'safe'`) writes layout-aware Markdown without Docling: the
 PDFium plain text in plain order, cut into blocks and labelled by layout v2 (`glossapi.markdown_layout`, Rust in
 `glossapi_rs_pdfrepair`). Labels never change the text and nothing is re-ordered. It needs only the core install
-(pypdfium2 and the `glossapi_rs_pdfrepair` extension at native API level 2); the `layout` extra and its `docling`
+(pypdfium2 and the `glossapi_rs_pdfrepair` extension at native API level 3); the `layout` extra and its `docling`
 alias are not involved.
 
-`GLOSSAPI_MARKDOWN_LAYOUT` selects the safe backend's Markdown: `layout_v2` (default, extract stage contract 2) or
+`GLOSSAPI_MARKDOWN_LAYOUT` selects the safe backend's Markdown: `layout_v2` (default, extract stage contract 3; 2 was
+K5-A2a's sidecar without the strip record) or
 `plain` (the plain pages, byte for byte as before; contract 1). The value is part of the extract stage identity.
 
 Rendering rules (`glossapi-layout-md/1`, `markdown_layout/render.py`):
@@ -71,7 +72,23 @@ or font size outside the input contract (`layout_input_rejected`) or the labelle
 
 The extract sidecar (`sidecars/extract/<stem>.json`) carries `markdown_layout`: schema, rules, reader (`native` or
 `python`), status (`labelled`, `partial`, `unlabelled`, `unavailable`), per-page and per-block code-point offsets into
-the Markdown with labels and levels, label counts, labeller warnings, rejected pages and the document context.
+the Markdown with labels and levels, label counts, labeller warnings, rejected pages and the document context, and
+`strip`: the edits that undo the markup (`[start, end, original]` code-point spans: each prefix deleted, each block
+separator and each heading newline restored) with the length and sha256 of the Markdown it describes and the sha256 of
+the plain text it gives back. `markdown_layout.markup_free` applies it (checking both hashes; an appended OCR
+supplement after the native pages is kept), and the cleaner measures every text metric on that markup-free text, so
+the metrics and routing decisions of the default mode equal the plain mode's (K5-A2b, K5A2A-G2). The cleaned Markdown
+keeps the markup. In `Corpus.run` and the stage adapters the sidecar is the clean stage's bound `layout_metadata`
+input (clean contract 2 in the default mode, 1 in plain mode).
+
+The sidecar also carries `decode_status` for the safe backend (K5 quality policy P4b, both Markdown modes): one entry
+per page, from the native content-stream check of the file PDFium read (`glossapi_rs_pdfrepair.page_decode_status_json`;
+PDFium's own error state is not a signal). `partial`: a content stream of the page, or of a Form XObject it draws,
+failed to decode or ended before its end marker; the page keeps the readable text PDFium extracts. `unknown`: the
+check could not run or decide (stale or missing native module, a document the native parser cannot open such as an
+encrypted one, a page count that differs from PDFium's, an unreadable stream object, a filter the check does not
+implement); `reason` or `reasons` say why. `complete`: the check ran and found no decode failure. The same list is in
+the ledger's page coverage (`page_coverage.decode_status`). The status never routes a page by itself.
 
 Reading: each page is loaded once. `layout_v2_read_document` opens the document with Rust-owned PDFium handles and
 returns each page's text (exactly `get_text_range()`) and char table from the same text page. If the native reader is

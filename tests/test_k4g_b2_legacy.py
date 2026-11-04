@@ -502,8 +502,12 @@ def test_fgg03_flagged_mode_is_still_available_explicitly(tmp_path, monkeypatch)
     assert api == {'flagged_routed.pdf': {2, 3}, 'unflagged_routed.pdf': set(), 'unflagged_unrouted.pdf': set()}
 
 
-@pytest.mark.xfail(strict=True, reason='FG-G03 residual (reported): a cleaner-flagged document that page quality does '
-                                       'not route is OCRed whole by Corpus.ocr in both modes; run leaves it as extracted')
-def test_fgg03_flagged_unrouted_document_matches_run(tmp_path, monkeypatch):
-    documents = {'flagged_unrouted.pdf': (True, 2, set())}
-    assert _api_pages(tmp_path, monkeypatch, documents) == {'flagged_unrouted.pdf': set()}
+@pytest.mark.parametrize('page_routing', [None, 'flagged'])
+def test_fgg03_flagged_unrouted_document_matches_run(tmp_path, monkeypatch, page_routing):
+    """FG-G03 residual, resolved by K5 quality policy P4d (K5-A2b): a cleaner-flagged document whose page quality
+    routes no page is not OCRed by Corpus.ocr, in both page_routing modes, as run leaves it (paired with run's rule)."""
+    documents = {'flagged_unrouted.pdf': (True, 2, set()), 'flagged_routed.pdf': (True, 3, {2})}
+    kwargs = {'page_routing': page_routing} if page_routing else {}
+    api = _api_pages(tmp_path, monkeypatch, documents, **kwargs)
+    run = {name: _run_pages(_quality_report(name, total, routed)) for name, (_flag, total, routed) in documents.items()}
+    assert api == run == {'flagged_unrouted.pdf': set(), 'flagged_routed.pdf': {2}}

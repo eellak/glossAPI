@@ -2702,10 +2702,19 @@ def _latin_word_shape_rate(text: str) -> float | None:
 
 
 # Raw-text measurements of _enrich_extraction_metrics, computed ahead of the clean barrier by the streaming
-# scheduler while it waits for workers (K4(c) part 2). Keyed by the sha256 of the exact markdown bytes, so a
-# lookup can only return the values the same bytes would produce; the legacy path never fills it.
+# scheduler while it waits for workers (K4(c) part 2). Keyed by the sha256 of the exact measured text (the
+# markup-free text of a layout-labelled Markdown, K5-A2b), so a lookup can only return the values the same text would
+# produce; the legacy path never fills it.
 _RAW_TEXT_METRICS: dict = {}
 _RAW_TEXT_METRICS_LIMIT = 200_000
+
+# P4a (K5 quality policy, K5-A2b): a document whose text is entirely glyph names / unusable glyph codes is routed to
+# OCR. "Entirely": at least GLYPH_ONLY_MIN_MATCHES glyph-name matches (the cleaner's own line-drop count floor) that
+# cover at least GLYPH_ONLY_MIN_SHARE of the text's non-whitespace characters, measured with the cleaner's Rule A/B
+# matchers (glossapi_rs_cleaner.glyph_residue_counts). Since the cleaner rewrite 2940cea removes such lines before it
+# scores, the cleaned text of such a document looks clean; this measures the text before cleaning.
+GLYPH_ONLY_MIN_MATCHES = 10
+GLYPH_ONLY_MIN_SHARE = 0.9
 
 
 def _decode_markdown(data: bytes) -> str:
@@ -2714,21 +2723,60 @@ def _decode_markdown(data: bytes) -> str:
     return io.TextIOWrapper(io.BytesIO(data), encoding="utf-8").read()
 
 
+def _text_key(text: str) -> str:
+    import hashlib
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def glyph_only(text: str) -> bool:
+    """P4a: True when ``text`` is entirely glyph-name residue (see ``GLYPH_ONLY_MIN_SHARE``)."""
+    import glossapi_rs_cleaner
+    measure = getattr(glossapi_rs_cleaner, "glyph_residue_counts", None)
+    if measure is None:
+        from ..capabilities import NATIVE_API_LEVELS
+        raise ImportError("stale native module glossapi_rs_cleaner: it lacks glyph_residue_counts (this glossapi needs "
+                          f"native API level {NATIVE_API_LEVELS['glossapi_rs_cleaner']}); rebuild core")
+    matches, residue, total = measure(text)
+    return matches >= GLYPH_ONLY_MIN_MATCHES and total > 0 and residue >= GLYPH_ONLY_MIN_SHARE * total
+
+
 def _raw_text_metrics(text: str):
     from glossapi.page_quality import text_contamination_counts
-    return _latin_word_shape_rate(text), text_contamination_counts(text)
+    return _latin_word_shape_rate(text), text_contamination_counts(text), glyph_only(text)
+
+
+def metric_text(markdown: str, sidecar_payload: Optional[dict]) -> str:
+    """The text the cleaner's text metrics measure: the markup-free text of a layout-labelled Markdown that its extract
+    sidecar describes (``markdown_layout.markup_free``, K5-A2b), else the Markdown itself."""
+    layout = sidecar_payload.get("markdown_layout") if isinstance(sidecar_payload, dict) else None
+    if isinstance(layout, dict):
+        from ..markdown_layout import markup_free
+        stripped = markup_free(markdown, layout)
+        if stripped is not None:
+            return stripped
+    return markdown
 
 
 def precompute_raw_text_metrics(path) -> None:
-    """Measure one raw markdown file now so that the clean barrier's enrichment can reuse the values."""
-    import hashlib
-    data = Path(path).read_bytes()
-    digest = hashlib.sha256(data).hexdigest()
+    """Measure one raw markdown file now so that the clean barrier's enrichment can reuse the values. The extract
+    sidecar next to it (``../sidecars/extract/<stem>.json`` in the producing attempt) supplies the layout strip record;
+    the cache is keyed by the measured text, so a missing or foreign sidecar can only cost a recomputation."""
+    path = Path(path)
+    text = _decode_markdown(path.read_bytes())
+    sidecar = path.parent.parent / "sidecars" / "extract" / f"{path.stem}.json"
+    payload = None
+    if sidecar.is_file():
+        try:
+            payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = None
+    text = metric_text(text, payload)
+    digest = _text_key(text)
     if digest in _RAW_TEXT_METRICS:
         return
     if len(_RAW_TEXT_METRICS) >= _RAW_TEXT_METRICS_LIMIT:
         _RAW_TEXT_METRICS.clear()
-    _RAW_TEXT_METRICS[digest] = _raw_text_metrics(_decode_markdown(data))
+    _RAW_TEXT_METRICS[digest] = _raw_text_metrics(text)
 
 
 def _readable_non_greek_mask(df: pd.DataFrame) -> pd.Series:
@@ -2749,12 +2797,15 @@ def _readable_non_greek_mask(df: pd.DataFrame) -> pd.Series:
             (numeric("latin_word_shape_rate") >= .95)).fillna(False)
 
 
-def _enrich_extraction_metrics(df: pd.DataFrame, output_dir: Path, markdown_dir: Path) -> pd.DataFrame:
+def _enrich_extraction_metrics(df: pd.DataFrame, output_dir: Path, markdown_dir: Path,
+                               overrides: Optional[dict] = None) -> pd.DataFrame:
     """Read extraction provenance and raw-text contamination; never accept missing output.
 
     Legacy sidecars have no status: retain the parquet status, using failure_mode
     if present. Unknown provenance stays explicit rather than implying success.
     Missing contamination counts remain nullable, not zero.
+    ``overrides``: absolute Markdown path -> the layout record that describes it instead of the extract sidecar's (the
+    OCR cleaner's strip record of its output, K5-A2b).
     """
     from glossapi.page_quality import text_contamination_counts
 
@@ -2769,6 +2820,8 @@ def _enrich_extraction_metrics(df: pd.DataFrame, output_dir: Path, markdown_dir:
     # reading the parquet back made it float64: the values and the Arrow type are the same, but the pandas metadata
     # (numpy_type) differed, so a --retry-failed resume published other download_results bytes (K4g fix 5).
     result["latin_word_shape_rate"] = pd.Series(pd.NA, index=result.index, dtype=object)
+    # P4a (transient: _finalize turns it into the glyph_only filter token and drops it before the table is written).
+    result["_glyph_only"] = False
     for index, row in result.iterrows():
         stem = canonical_stem(str(row["filename"]))
         sidecar = output_dir / "sidecars" / "extract" / f"{stem}.json"
@@ -2798,19 +2851,20 @@ def _enrich_extraction_metrics(df: pd.DataFrame, output_dir: Path, markdown_dir:
         result.at[index, "control_char_count"] = pd.NA
         result.at[index, "latin_word_shape_rate"] = pd.NA
         if has_markdown:
-            measured = None
-            if _RAW_TEXT_METRICS:
-                import hashlib
-                data = markdown.read_bytes()
-                measured = _RAW_TEXT_METRICS.get(hashlib.sha256(data).hexdigest())
-                if measured is None:
-                    measured = _raw_text_metrics(_decode_markdown(data))
-            else:
-                text = markdown.read_text(encoding="utf-8")
-                measured = (_latin_word_shape_rate(text), text_contamination_counts(text))
+            # The markup-free text of a layout-labelled Markdown (K5-A2b), else the Markdown, as before.
+            override = (overrides or {}).get(markdown.absolute())
+            if override is not None and not isinstance(override, dict):
+                from ..stages.clean import layout_metadata_of
+                override = layout_metadata_of(override)
+            text = metric_text(markdown.read_text(encoding="utf-8"),
+                               {"markdown_layout": override} if isinstance(override, dict) else payload)
+            measured = _RAW_TEXT_METRICS.get(_text_key(text)) if _RAW_TEXT_METRICS else None
+            if measured is None:
+                measured = _raw_text_metrics(text)
             result.at[index, "latin_word_shape_rate"] = measured[0]
             for key, value in measured[1].items():
                 result.at[index, key] = value
+            result.at[index, "_glyph_only"] = bool(measured[2])
         failed = (str(status).strip().lower() in _EXTRACT_FAILURE_STATUSES
                   or bool(payload.get("no_partial_output")) or not has_markdown)
         if Path(str(row["filename"])).suffix.lower() == ".pdf" and failed:
@@ -3400,40 +3454,48 @@ class CleanPhaseMixin:
         # OCR supplement's composition lines are structure, not document text (FG-G02), so the native scorers read a
         # marker-free copy of the marked files, in the corpus staging area, removed after scoring (K4g fix 5). The
         # staged CleanStage does the same per document (clean.score_after_ocr); nothing changes for unmarked texts.
+        # Layout markup (default Markdown mode) is removed the same way, through the extract sidecar's strip record
+        # (K5-A2b): text metrics are measured on the markup-free text. A cleaning pass keeps the markup in its cleaned
+        # files and takes its metrics from a second native run on the markup-free copy.
         scoring_input_dir = input_dir
         metric_surface = None
-        if not write_cleaned_files and not adapter_profile:
-            from ..stages.clean import marker_free_scoring_copy
-            metric_surface = marker_free_scoring_copy(input_dir, Path(self.output_dir) / ".glossapi" / "staging")
-            if metric_surface is not None:
-                scoring_input_dir = metric_surface
-        # The legacy subprocess reports an exhausted filesystem (native API 2 raises OSError with its errno) on one
-        # marker line and its own exit code, so the parent raises it typed instead of carrying on with existing
-        # metrics after a non-zero exit (fix 6, F3 audit).
-        cmd = (
-            "import errno, sys\n"
-            "import glossapi_rs_cleaner\n"
-            "try:\n"
-            f"    glossapi_rs_cleaner.run_complete_pipeline({repr(str(scoring_input_dir))}, "
-            f"{repr(str(self.cleaned_markdown_dir))}, {repr(str(report_parquet_path))}, "
-            f"{repr(scripts_to_keep)}, {int(num_threads or os.cpu_count() or 4)}, "
-            f"{'True' if write_cleaned_files else 'False'})\n"
-            "except OSError as error:\n"
-            "    if error.errno not in (errno.ENOSPC, errno.EDQUOT):\n"
-            "        raise\n"
-            f"    print({_DISK_FULL_MARKER!r}, error.errno, str(error).replace(chr(10), ' '), flush=True)\n"
-            f"    sys.exit({_DISK_FULL_EXIT})\n"
-        )
+        layout_surface = None
+        if not adapter_profile:
+            from ..stages.clean import layout_free_scoring_copy
+            staging = Path(self.output_dir) / ".glossapi" / "staging"
+            sidecars = Path(self.output_dir) / "sidecars" / "extract"
+            overrides = getattr(self, "_clean_strips", None)   # the OCR cleaner's strip records (K5-A2b)
+            if not write_cleaned_files:
+                metric_surface = layout_free_scoring_copy(input_dir, staging, sidecars, strip_markers=True,
+                                                          overrides=overrides)
+                if metric_surface is not None:
+                    scoring_input_dir = metric_surface
+            else:
+                layout_surface = layout_free_scoring_copy(input_dir, staging, sidecars, overrides=overrides)
+        threads_for_native = int(num_threads or os.cpu_count() or 4)
 
-        adapter_scores = None
-        disk_full_line = None
-        if adapter_profile:
-            from ..stages.compatibility import clean_compatibility_kernel
-            adapter_scores = clean_compatibility_kernel(self, sorted(input_dir.rglob("*.md")), report_parquet_path, input_root=input_dir, num_threads=num_threads or 1, write_cleaned_files=write_cleaned_files)
-            return_code = 0
-        else:
+        def _native_command(source_dir: Path, cleaned_dir: Path, report_path: Path, write: bool) -> str:
+            # The legacy subprocess reports an exhausted filesystem (native API 2 raises OSError with its errno) on
+            # one marker line and its own exit code, so the parent raises it typed instead of carrying on with
+            # existing metrics after a non-zero exit (fix 6, F3 audit).
+            return (
+                "import errno, sys\n"
+                "import glossapi_rs_cleaner\n"
+                "try:\n"
+                f"    glossapi_rs_cleaner.run_complete_pipeline({repr(str(source_dir))}, "
+                f"{repr(str(cleaned_dir))}, {repr(str(report_path))}, "
+                f"{repr(scripts_to_keep)}, {threads_for_native}, "
+                f"{'True' if write else 'False'})\n"
+                "except OSError as error:\n"
+                "    if error.errno not in (errno.ENOSPC, errno.EDQUOT):\n"
+                "        raise\n"
+                f"    print({_DISK_FULL_MARKER!r}, error.errno, str(error).replace(chr(10), ' '), flush=True)\n"
+                f"    sys.exit({_DISK_FULL_EXIT})\n"
+            )
+
+        def _run_native(command: str, progress_sink) -> int:
             process = subprocess.Popen(
-                [sys.executable, "-c", cmd],
+                [sys.executable, "-c", command],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -3441,25 +3503,49 @@ class CleanPhaseMixin:
                 errors="replace",
                 bufsize=1,
             )
+            disk_full_line = None
             try:
                 assert process.stdout is not None
                 for line in process.stdout:
                     if line.startswith(_DISK_FULL_MARKER):
                         disk_full_line = line
                         continue
-                    progress.handle_line(line)
-                return_code = process.wait()
+                    if progress_sink is not None:
+                        progress_sink.handle_line(line)
+                code = process.wait()
             except Exception:
                 process.kill()
                 raise
             finally:
                 if process.stdout is not None:
                     process.stdout.close()
-                progress.finalize()
+                if progress_sink is not None:
+                    progress_sink.finalize()
+            if code == _DISK_FULL_EXIT and disk_full_line is not None:
+                parts = disk_full_line.split(maxsplit=2)
+                raise OSError(int(parts[1]), "native cleaner subprocess: " + (parts[2].strip() if len(parts) > 2 else "filesystem full"))
+            return code
 
-        if return_code == _DISK_FULL_EXIT and disk_full_line is not None:
-            parts = disk_full_line.split(maxsplit=2)
-            raise OSError(int(parts[1]), "native cleaner subprocess: " + (parts[2].strip() if len(parts) > 2 else "filesystem full"))
+        adapter_scores = None
+        layout_cleaned_dir = None
+        if adapter_profile:
+            from ..stages.compatibility import clean_compatibility_kernel
+            adapter_scores = clean_compatibility_kernel(self, sorted(input_dir.rglob("*.md")), report_parquet_path, input_root=input_dir, num_threads=num_threads or 1, write_cleaned_files=write_cleaned_files)
+            return_code = 0
+        elif layout_surface is None:
+            return_code = _run_native(_native_command(scoring_input_dir, self.cleaned_markdown_dir, report_parquet_path,
+                                                      write_cleaned_files), progress)
+        else:
+            # The cleaned files from the Markdown (markup kept); its report is replaced by the markup-free run's.
+            product_report = layout_surface.parent / f"{layout_surface.name}-product-report.parquet"
+            try:
+                return_code = _run_native(_native_command(input_dir, self.cleaned_markdown_dir, product_report, True), progress)
+            finally:
+                product_report.unlink(missing_ok=True)
+            if return_code == 0:
+                layout_cleaned_dir = layout_surface.parent / f"{layout_surface.name}-clean_markdown"
+                layout_cleaned_dir.mkdir()
+                return_code = _run_native(_native_command(layout_surface, layout_cleaned_dir, report_parquet_path, True), None)
         if return_code != 0:
             # Do not abort the entire cleaning pass – proceed to evaluate gates
             # using existing metrics on disk. If the Rust report is available,
@@ -3565,6 +3651,8 @@ class CleanPhaseMixin:
             noise_directory = self.cleaned_markdown_dir
             if metric_surface is not None and Path(self.cleaned_markdown_dir).resolve() == Path(input_dir).resolve():
                 noise_directory = metric_surface
+            if layout_cleaned_dir is not None:
+                noise_directory = layout_cleaned_dir   # the cleaned markup-free text (K5-A2b)
             results = adapter_scores if adapter_scores is not None else noise_mod.score_markdown_directory_detailed(
                 str(noise_directory), os.cpu_count()
             )
@@ -3639,6 +3727,10 @@ class CleanPhaseMixin:
         finally:
             if metric_surface is not None:
                 shutil.rmtree(metric_surface, ignore_errors=True)
+            if layout_surface is not None:
+                shutil.rmtree(layout_surface, ignore_errors=True)
+                if layout_cleaned_dir is not None:
+                    shutil.rmtree(layout_cleaned_dir, ignore_errors=True)
 
         # Determine good / bad list based on enriched metrics
         if parquet_path.exists():
@@ -3744,7 +3836,7 @@ class CleanPhaseMixin:
                     applicable = (mask & pdf_mask).fillna(False)
                     if not bool(applicable.any()):
                         return
-                    reason_code = {"non_greek_text": "clean_non_greek", "non_greek_readable": "clean_readable_non_greek", "is_empty": "clean_empty", "extract_failed": "clean_extract_failed", "ocr_noise": "clean_ocr_noise"}.get(reason, "clean_mojibake" if reason.startswith("mojibake") else "clean_short_document" if reason.endswith("_short") else "clean_short_text")
+                    reason_code = {"non_greek_text": "clean_non_greek", "non_greek_readable": "clean_readable_non_greek", "is_empty": "clean_empty", "extract_failed": "clean_extract_failed", "ocr_noise": "clean_ocr_noise", "glyph_only": "clean_glyph_only"}.get(reason, "clean_mojibake" if reason.startswith("mojibake") else "clean_short_document" if reason.endswith("_short") else "clean_short_text")
                     observe(reason_code, filter_token=reason, needs_ocr=requires_ocr, filenames=df_final.loc[applicable, "filename"].astype(str).tolist())
                     current = df_final.loc[applicable, "filter"].astype(str)
 
@@ -3764,7 +3856,9 @@ class CleanPhaseMixin:
                             needs_targets = needs_targets & ~success_mask
                         df_final.loc[needs_targets, "needs_ocr"] = True
 
-                df_final = _enrich_extraction_metrics(df_final, self.output_dir, input_dir)
+                df_final = _enrich_extraction_metrics(df_final, self.output_dir, input_dir,
+                                                      overrides=getattr(self, "_clean_strips", None))
+                glyph_only_mask = df_final.pop("_glyph_only").fillna(False).astype(bool)
 
                 try:
                     empty_threshold_int = int(empty_char_threshold) if empty_char_threshold is not None else 0
@@ -3788,6 +3882,8 @@ class CleanPhaseMixin:
                     # Token policy: every OCR-trigger writes a filter tag.
                     # Keep original label for compatibility with tests and downstream tools.
                     _append_reason(mojibake_series > 0.1, "mojibake>0.1", requires_ocr=True)
+                # P4a: a text that is entirely glyph-name residue has no readable characters; it goes to OCR.
+                _append_reason(glyph_only_mask, "glyph_only", requires_ocr=True)
 
                 raw_gr = df_final.get("greek_badness_score")
                 if isinstance(raw_gr, pd.Series):
@@ -4176,14 +4272,50 @@ class CleanPhaseMixin:
         )
 
         from ..stages.clean import score_ocr_profile_directory
-        results = adapter_ocr_scores if adapter_ocr_scores is not None else score_ocr_profile_directory(
-            noise_mod,
-            input_dir,
-            n_threads,
-            int(min_repeat_run),
-            # Owned corpus staging area (disk-observed), not an unaccounted temp dir.
-            scratch_root=Path(self.output_dir) / ".glossapi" / "staging",
-        )
+        ocr_score_dir = input_dir
+        layout_ocr_surface = None
+        if adapter_ocr_scores is None:
+            # K5-A2b: the OCR profile of a layout-labelled Markdown is measured on its markup-free text; the OCR
+            # cleaner's output of that text (what the plain mode would clean) is kept, as a strip record of this pass's
+            # cleaned file, for the score-only pass that follows (``self._clean_strips``).
+            from ..stages.clean import layout_free_scoring_copy
+            from ..markdown_layout.render import edits_between, strip_record
+            layout_ocr_surface = layout_free_scoring_copy(input_dir, Path(self.output_dir) / ".glossapi" / "staging",
+                                                          Path(self.output_dir) / "sidecars" / "extract")
+            self._clean_strips = {}
+            if layout_ocr_surface is not None:
+                ocr_score_dir = layout_ocr_surface
+                if write_cleaned_files:
+                    for source_path in md_files:
+                        surface = layout_ocr_surface / source_path.relative_to(input_dir)
+                        product = self.cleaned_markdown_dir / source_path.name
+                        if not product.is_file() or surface.read_bytes() == source_path.read_bytes():
+                            continue
+                        plain_clean = layout_ocr_surface.parent / f"{layout_ocr_surface.name}-clean" / source_path.name
+                        plain_clean.parent.mkdir(parents=True, exist_ok=True)
+                        _process_combined_ocr_clean_document(
+                            surface, plain_clean, noise_mod=noise_mod, min_progress_steps=int(min_progress_steps),
+                            min_repeat_steps=int(min_repeat_steps), min_same_digit_steps=int(min_same_digit_steps),
+                            word_rep_threshold=int(word_rep_threshold), word_min_period=int(word_min_period),
+                            word_window=int(word_window))
+                        product_text = product.read_bytes().decode("utf-8")
+                        plain_text = plain_clean.read_bytes().decode("utf-8")
+                        record = strip_record(product_text, edits_between(product_text, plain_text), plain_text)
+                        if record is not None:
+                            self._clean_strips[product.absolute()] = {"source": "clean_ocr", "strip": record}
+        try:
+            results = adapter_ocr_scores if adapter_ocr_scores is not None else score_ocr_profile_directory(
+                noise_mod,
+                ocr_score_dir,
+                n_threads,
+                int(min_repeat_run),
+                # Owned corpus staging area (disk-observed), not an unaccounted temp dir.
+                scratch_root=Path(self.output_dir) / ".glossapi" / "staging",
+            )
+        finally:
+            if layout_ocr_surface is not None:
+                shutil.rmtree(layout_ocr_surface, ignore_errors=True)
+                shutil.rmtree(layout_ocr_surface.parent / f"{layout_ocr_surface.name}-clean", ignore_errors=True)
         df_updates = pd.DataFrame(list(results))
         if df_updates.empty:
             self.good_files = []

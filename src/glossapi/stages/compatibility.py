@@ -431,10 +431,20 @@ def clean_compatibility_kernel(corpus, md_files, report_path, *, input_root=None
     from .clean import CleanStage
     frames, scores = [], []
     corpus._stage_clean_surfaces = []
+    from .clean import has_layout_strip
+    sidecars = Path(corpus.output_dir)/'sidecars'/'extract'
     for source in md_files:
         relative=source.relative_to(input_root) if input_root is not None else Path(source.name)
         destination=corpus.cleaned_markdown_dir/relative
-        result, workspace = execute_compatibility_stage(corpus, CleanStage(), [('selected_text', source)],
+        # The extract sidecar of a layout-labelled Markdown is the clean's bound layout input (K5-A2b): metrics are
+        # measured on the markup-free text. Plain mode and Docling sidecars carry no strip record: one input, as before.
+        sidecar = sidecars/f'{source.stem}.json'
+        # After the OCR cleaner (refresh after OCR): its strip record describes this cleaned text (K5-A2b).
+        derived = getattr(corpus, '_clean_strips', {}).get(Path(source).absolute())
+        if derived is not None and has_layout_strip(derived):
+            sidecar = derived
+        inputs = [('selected_text', source)] + ([('layout_metadata', sidecar)] if has_layout_strip(sidecar) else [])
+        result, workspace = execute_compatibility_stage(corpus, CleanStage(), inputs,
             StageSpecification('clean.initial' if write_cleaned_files else 'clean.score_after_ocr', ('selected_text',), ('clean_markdown','clean_metrics'),
                 settings={'num_threads': num_threads or 1}))
         if result.status != 'ok':
@@ -502,14 +512,29 @@ def record_clean_selection(corpus: Any, frame: Any, *, drop_bad: Any, thresholds
 
 def clean_ocr_compatibility_kernel(corpus, md_files, settings, *, write_cleaned_files, debug_dir):
     import json
-    from .clean import CleanStage
+    from .clean import CleanStage, has_layout_strip
     scores, debug_documents = [], []
     corpus._stage_clean_surfaces = []
+    # K5-A2b: the extract sidecar's strip record is the OCR clean's layout input (its OCR profile is measured on the
+    # markup-free text), and the strip record it writes for its cleaned text is the next score-only pass's input.
+    corpus._clean_strips = {}
+    sidecars = Path(corpus.output_dir)/'sidecars'/'extract'
     for source in md_files:
-        result, workspace = execute_compatibility_stage(corpus, CleanStage(), [('selected_text',source)],
+        sidecar = sidecars/f'{Path(source).stem}.json'
+        inputs = [('selected_text',source)] + ([('layout_metadata', sidecar)] if has_layout_strip(sidecar) else [])
+        result, workspace = execute_compatibility_stage(corpus, CleanStage(), inputs,
             StageSpecification('clean.ocr_artifacts',('selected_text',),('clean_markdown','clean_metrics'),settings=settings))
         if result.status != 'ok':
             raise RuntimeError(f'{result.reason_code}: {result.error.message}')
+        strip = Path(workspace)/'clean_strip'/f'{Path(source).stem}.json'
+        if strip.is_file() and write_cleaned_files:
+            if not Path(workspace).absolute().is_relative_to((Path(corpus.output_dir)/'.glossapi'/'artifacts').absolute()):
+                # a temporary attempt (no ledger) is removed after materialization: keep the record in staging
+                kept = Path(corpus.output_dir)/'.glossapi'/'staging'/'clean-strips'/uuid.uuid4().hex/strip.name
+                kept.parent.mkdir(parents=True)
+                kept.write_text(strip.read_text(encoding='utf-8'), encoding='utf-8')
+                strip = kept
+            corpus._clean_strips[(corpus.cleaned_markdown_dir/Path(source).name).absolute()] = strip
         metrics = json.loads((workspace/'clean.metrics.json').read_text())
         for row in metrics['ocr_scores']:
             row['path'] = str(source)
@@ -546,6 +571,11 @@ def ocr_compatibility_documents(context, filenames, *, request, page_ranges=None
             ('ocr_native',context.output_dir/'sidecars/ocr_native'/source.with_suffix('.md').name),
             ('ocr_page_state',context.output_dir/'sidecars/ocr_pages'/source.with_suffix('.json').name)]:
             if path.is_file(): inputs.append((kind,path))
+        # The extract sidecar's layout strip record (default Markdown mode): the stage's P4a glyph check reads the
+        # markup-free native text (K5-A2b). Plain mode and Docling sidecars carry none.
+        from .clean import has_layout_strip
+        layout_sidecar=context.output_dir/'sidecars/extract'/source.with_suffix('.json').name
+        if has_layout_strip(layout_sidecar): inputs.append(('layout_metadata',layout_sidecar))
         for suffix in ('.docling.json.zst','.docling.json'):
             path=context.output_dir/'json'/f'{source.stem}{suffix}'
             if path.is_file(): inputs.append(('docling_json',path)); break

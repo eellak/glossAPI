@@ -31,6 +31,7 @@ REASON_CODES = frozenset((
     'clean_empty',
     'clean_exception',
     'clean_extract_failed',
+    'clean_glyph_only',
     'clean_mojibake',
     'clean_noise_scoring_failed',
     'clean_non_greek',

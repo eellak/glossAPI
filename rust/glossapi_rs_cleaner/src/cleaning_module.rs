@@ -590,6 +590,62 @@ fn apply_glyph_span_strip_and_rule_b(line: &str) -> GlyphStripResult {
     }
 }
 
+/// Glyph-name residue of a text, measured with the cleaner's own matchers (K5 quality policy P4a, K5-A2b).
+///
+/// Per line, after the HTML entity decoding the cleaner applies before its artefact checks: the unprotected Rule A
+/// literal spans, Rule B regex spans and bare `GLYPH` stems, exactly the spans `apply_glyph_span_strip_and_rule_b`
+/// strips (overlaps merged). Returns `(matches, residue_non_ws_chars, non_ws_chars)`: the matches as the cleaner counts
+/// them (overlapping Rule A/B matches each count, as in `CleanStats`), the
+/// non-whitespace characters inside them, and all non-whitespace characters of the decoded text. The cleaner's
+/// behaviour is unchanged; this is a measurement for the OCR routing rule only.
+pub fn glyph_residue(text: &str) -> (u64, u64, u64) {
+    let (mut spans_total, mut residue, mut total) = (0u64, 0u64, 0u64);
+    for line in text.split('\n') {
+        let decoded = decode(line.as_bytes())
+            .to_string()
+            .unwrap_or_else(|_| line.to_string());
+        let mut spans: Vec<GlyphSpan> = Vec::new();
+        push_unprotected_glyph_spans(
+            &decoded,
+            RULE_A_LITERALS_AC.find_iter(&decoded).map(|m| (m.start(), m.end())),
+            &mut spans,
+        );
+        push_unprotected_glyph_spans(
+            &decoded,
+            PDF_GLYPH_NAME_REGEX.find_iter(&decoded).map(|m| (m.start(), m.end())),
+            &mut spans,
+        );
+        push_unprotected_glyph_spans(
+            &decoded,
+            BARE_PDF_GLYPH_STEM_REGEX
+                .find_iter(&decoded)
+                .map(|m| (m.start(), m.end())),
+            &mut spans,
+        );
+        spans_total += spans.len() as u64;
+        spans.sort_unstable_by_key(|span| (span.start, span.end));
+        let mut covered_until = 0usize;
+        for span in spans {
+            let start = span.start.max(covered_until);
+            if span.end > start {
+                residue += decoded[start..span.end]
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .count() as u64;
+                covered_until = span.end;
+            }
+        }
+        total += decoded.chars().filter(|c| !c.is_whitespace()).count() as u64;
+    }
+    (spans_total, residue, total)
+}
+
+/// Python entry point of [`glyph_residue`]: `(spans, residue_non_ws_chars, non_ws_chars)`.
+#[pyfunction]
+pub fn glyph_residue_counts(text: &str) -> (u64, u64, u64) {
+    glyph_residue(text)
+}
+
 fn is_unicode_noise_char(ch: char) -> bool {
     match ch {
         '\t' | '\n' => false,
@@ -1863,6 +1919,19 @@ pub fn list_available_scripts() -> PyResult<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn glyph_residue_counts_the_spans_the_cleaner_strips() {
+        // Entity-encoded markers decode first, as in the cleaning loop.
+        let text = "## GLYPH ARTEFACT\n\nGLYPH&lt;1&gt; GLYPH&lt;2&gt; /uni03B1 /g12\n";
+        let (spans, residue, total) = glyph_residue(text);
+        assert_eq!(spans, 7); // matches as the cleaner counts them: GLYPH<n> is a Rule B and a bare-stem match
+        // "##GLYPHARTEFACT" = 15, "GLYPH<1>GLYPH<2>/uni03B1/g12" = 28; residue = GLYPH + 8 + 8 + 8 + 4.
+        assert_eq!(total, 15 + 28);
+        assert_eq!(residue, 5 + 28);
+        assert_eq!(glyph_residue("Καλημέρα κόσμε\n"), (0, 0, 13));
+        assert_eq!(glyph_residue(""), (0, 0, 0));
+    }
+
     use super::*;
 
     fn default_allowed_chars() -> HashSet<char> {

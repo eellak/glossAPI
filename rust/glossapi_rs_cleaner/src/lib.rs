@@ -53,7 +53,7 @@ mod table_remover_module;
 
 // Export public items from modules via PyO3
 use charset_module::{analyze_charset, non_empty_line_stats};
-use cleaning_module::{clean_text, clean_text_with_stats};
+use cleaning_module::{clean_text, clean_text_with_stats, glyph_residue_counts};
 use cmark_gfm_oracle::cmark_gfm_verify_py;
 use directory_processor::{
     batch_generate_detailed_table_report_csv, batch_generate_table_summary_csv,
@@ -80,7 +80,9 @@ use pyo3::prelude::*;
 /// of failing per document. Exported to Python as `__glossapi_native_api__`, which also keeps the bytes in the binary.
 /// Level 2 (K4g fix 4): an OS-level I/O failure raises `OSError(errno, message)` (`os_error.rs`) instead of being
 /// printed or returned as `ValueError` text, so the clean step types a full disk `disk_full`.
-pub const NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:2;";
+/// Level 3 (K5-A2b): `glyph_residue_counts(text)`, the glyph-name residue measurement of the all-GLYPH OCR route
+/// (K5 quality policy P4a).
+pub const NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:3;";
 
 // Python module definition. gil_used = true keeps the 0.19 contract (the module requires the GIL): PyO3 0.28+
 // would otherwise declare free-threaded support, which has not been audited.
@@ -103,6 +105,7 @@ fn glossapi_rs_cleaner(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // `text` columns without round-tripping through markdown files.
     m.add_function(wrap_pyfunction!(clean_text, m)?)?;
     m.add_function(wrap_pyfunction!(clean_text_with_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(glyph_residue_counts, m)?)?;
     m.add_function(wrap_pyfunction!(analyze_charset, m)?)?;
     m.add_function(wrap_pyfunction!(non_empty_line_stats, m)?)?;
     m.add_function(wrap_pyfunction!(crop_latex_repetitions_py, m)?)?;

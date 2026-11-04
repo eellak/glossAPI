@@ -117,12 +117,98 @@ def metric_surface_without_markers(recorder, name, directory):
     return surface
 
 
+def _markup_free_metrics(cleaner, directory, name, text, threads):
+    """The native clean report row, the cleaned-files directory (for the noise scorer) and the cleaned text's sha256
+    of ``text`` (a markup-free metric surface), from ``run_complete_pipeline`` in ``directory`` (K5-A2b)."""
+    import hashlib
+    import pandas as pd
+    surface = Path(directory)/'surface'
+    cleaned = Path(directory)/'clean_markdown'
+    surface.mkdir(parents=True)
+    cleaned.mkdir()
+    (surface/name).write_bytes(text.encode('utf-8'))
+    report = Path(directory)/'cleaning_report.parquet'
+    cleaner.run_complete_pipeline(str(surface), str(cleaned), str(report), ['greek', 'latin'], threads, True)
+    frame = pd.read_parquet(report)
+    if len(frame) != 1 or not (cleaned/name).is_file():
+        raise ValueError('Fresh required markup-free cleaner report/text missing')
+    metric = {key: None if pd.isna(value) else value for key, value in frame.iloc[0].to_dict().items()}
+    return metric, cleaned, hashlib.sha256((cleaned/name).read_bytes()).hexdigest()
+
+
+LAYOUT_INPUT_KINDS = ('layout_metadata', 'extract_sidecar')
+
+
+def layout_metadata_of(path):
+    """The ``markdown_layout`` value of an extract sidecar (K5-A2b), or None when it has none (plain mode, Docling,
+    an unreadable file)."""
+    try:
+        payload = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    layout = payload.get('markdown_layout') if isinstance(payload, dict) else None
+    return layout if isinstance(layout, dict) else None
+
+
+def has_layout_strip(path):
+    """True when the extract sidecar at ``path`` carries a layout strip record (default Markdown mode, K5-A2b): the
+    clean stage then binds it as its ``layout_metadata`` input and measures text metrics on the markup-free text."""
+    layout = layout_metadata_of(path) if Path(path).is_file() else None
+    return bool(layout and isinstance(layout.get('strip'), dict))
+
+
+def layout_free_scoring_copy(input_dir, staging_root, sidecar_dir, *, strip_markers=False, overrides=None):
+    """A copy of ``input_dir``'s markdown tree in which every file that its extract sidecar (``sidecar_dir/<stem>.json``)
+    describes is replaced by its markup-free text (``markdown_layout.markup_free``), and, with ``strip_markers``, the OCR
+    supplement's composition lines are removed (FG-G02) - for the native scorers of the legacy clean subprocess.
+    ``overrides`` maps a file's absolute path to the layout record (a ``markdown_layout`` dict or a JSON file holding
+    one) that describes it instead (the OCR cleaner's strip record of its output, K5-A2b).
+    None (score ``input_dir`` itself, as before) when no file changes. The caller removes the copy after scoring."""
+    import uuid
+    from ..markdown_layout import markup_free
+    from ..ocr.page_artifacts import strip_supplement_markers
+    input_dir = Path(input_dir)
+    files = sorted(path for path in input_dir.rglob('*.md') if path.is_file())
+    surfaces = {}
+    for path in files:
+        sidecar = Path(sidecar_dir)/f'{path.stem}.json'
+        layout = layout_metadata_of(sidecar) if sidecar.is_file() else None
+        override = (overrides or {}).get(path.absolute())
+        if override is not None:
+            layout = override if isinstance(override, dict) else layout_metadata_of(override)
+        text = None
+        if layout is not None:
+            raw = path.read_bytes().decode('utf-8', 'surrogateescape')
+            stripped = markup_free(raw, layout)
+            if stripped is not None and stripped != raw:
+                text = stripped
+        if strip_markers and _has_supplement_marker(path):
+            text = strip_supplement_markers(text if text is not None else path.read_bytes().decode('utf-8', 'surrogateescape'))
+        if text is not None:
+            surfaces[path] = text
+    if not surfaces:
+        return None
+    target = Path(staging_root)/f'clean-metric-surface-{uuid.uuid4().hex}'
+    for path in files:
+        copy = target/path.relative_to(input_dir)
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes(surfaces[path].encode('utf-8', 'surrogateescape') if path in surfaces else path.read_bytes())
+    return target
+
+
 class CleanStage:
     name = 'clean'
-    contract_version = 1
 
     def __init__(self, selection: 'dict[str, Any] | None' = None) -> None:
         self.selection = selection
+
+    @property
+    def contract_version(self):
+        """2: with a ``layout_metadata`` input, text metrics are measured on the markup-free text (K5-A2b); 1: the
+        plain Markdown mode, where nothing changed. The mode is part of the stage identity, so a corpus never reuses a
+        clean attempt that measured layout markup."""
+        from ..markdown_layout import mode
+        return 2 if mode() == 'layout_v2' else 1
 
     def packages(self, specification):
         return (PackageRequirement('core', ('pandas>=3.0.0', 'pyarrow>=26,<27')),)
@@ -167,8 +253,8 @@ class CleanStage:
         try:
             if request.device_id != 'cpu':
                 raise ValueError('Rust clean requires CPU')
-            if len(request.inputs) != 1:
-                raise ValueError('Clean requires one explicit text surface')
+            if len(request.inputs) not in (1, 2) or (len(request.inputs) == 2 and request.inputs[1].kind not in LAYOUT_INPUT_KINDS):
+                raise ValueError('Clean requires one explicit text surface (and optionally its layout metadata)')
             operation = request.operation.split('.artifact:',1)[0]
             if operation == 'clean.selection':
                 request.work_directory.mkdir(parents=True, exist_ok=True)
@@ -188,15 +274,38 @@ class CleanStage:
             raw = source.path.read_bytes().decode('utf-8')
             recorder = EditRecorder(raw)
             observations = []
+            # K5-A2b (K5A2A-G2): the text metrics of a layout-labelled Markdown are measured on its markup-free text
+            # (the strip invariant, markdown_layout.markup_free), so layout markup moves no metric or decision. The
+            # layout metadata is a bound input; a record that does not describe this text is not applied.
+            layout_input = request.inputs[1] if len(request.inputs) == 2 else None
+            markup_free_text = None
+            metric_basis: dict[str, Any] = {'basis': 'text'}
+            if layout_input is not None:
+                from ..markdown_layout import markup_free
+                layout = layout_metadata_of(layout_input.path)
+                markup_free_text = markup_free(raw, layout) if layout is not None else None
+                metric_basis = {'basis': 'markup_free_text' if markup_free_text is not None else 'text',
+                    'layout_file_id': layout_input.file_id, 'layout_sha256': layout_input.sha256,
+                    'rules': (layout or {}).get('rules')}
+                if markup_free_text is None:
+                    metric_basis['reason'] = 'no strip record describes this text'
+                elif markup_free_text == raw:
+                    markup_free_text = None   # nothing to strip: the text is its own metric surface
+                else:
+                    metric_basis['markup_free_sha256'] = text_hash(markup_free_text)
             if operation in ('clean.initial', 'clean.score_after_ocr'):
                 import glossapi_rs_cleaner as cleaner
                 report = root/'cleaning_report.parquet'
                 surface = source.path
-                if operation == 'clean.score_after_ocr' and _has_supplement_marker(source.path):
+                if operation == 'clean.score_after_ocr' and (markup_free_text is not None or _has_supplement_marker(source.path)):
                     # The score-only pass after OCR produces the exported text metrics (latin_percentage,
                     # percentage_greek, ...). The OCR supplement's composition lines are structure, not document text,
                     # so the metrics are measured without them (FG-G02, as the OCR profile already is), on an attempt-
-                    # private copy; the producer edits record their removal (K4g fix 5).
+                    # private copy; the producer edits record their removal (K4g fix 5). Layout markup is removed first
+                    # the same way (K5-A2b).
+                    if markup_free_text is not None:
+                        recorder.transform('layout_markup_excluded_from_metrics', markup_free_text,
+                            reason='K5A2A-G2: text metrics are measured on the markup-free text')
                     surface = metric_surface_without_markers(recorder, source.path.name, root/'native_evidence'/'metric_surface')
                 with capture_backend_observations() as observations:
                     cleaner.run_complete_pipeline(str(surface.parent), str(output_dir), str(report),
@@ -235,13 +344,23 @@ class CleanStage:
                     table_decisions = [{key:value for key,value in row.items() if key != 'file_path'} for row in csv.DictReader(stream)]
                 import glossapi_rs_noise as noise
                 score_directory = surface.parent if operation == 'clean.score_after_ocr' else output_dir
+                report_surface = output_digest
+                if operation == 'clean.initial' and markup_free_text is not None:
+                    # The cleaned Markdown above keeps its markup (it is the product). The metrics come from the same
+                    # native pipeline run on the markup-free text, in an attempt-private directory removed below.
+                    metric, score_directory, report_surface = _markup_free_metrics(cleaner, root/'layout_metrics',
+                        source.path.name, markup_free_text, int(request.settings.get('num_threads') or 1))
                 scores = list(noise.score_markdown_directory_detailed(str(score_directory), 1))
                 if len(scores) != 1:
                     raise ValueError('Fresh required noise metrics missing')
                 scores[0] = list(scores[0]); scores[0][0] = source.path.name
-                noise_surface = (source.sha256 if surface == source.path else sha256_file(surface)) if operation == 'clean.score_after_ocr' else output_digest
-                metrics = {'native_report': metric, 'noise_score': scores[0], 'native_table_decisions':table_decisions,
-                    'native_report_surface_sha256':output_digest,'noise_surface_sha256':noise_surface}
+                noise_surface = (source.sha256 if surface == source.path else sha256_file(surface)) if operation == 'clean.score_after_ocr' else report_surface
+                metrics: dict[str, Any] = {'native_report': metric, 'noise_score': scores[0], 'native_table_decisions':table_decisions,
+                    'native_report_surface_sha256':report_surface,'noise_surface_sha256':noise_surface}
+                if layout_input is not None:
+                    metrics['metric_surface'] = metric_basis
+                import shutil
+                shutil.rmtree(root/'layout_metrics', ignore_errors=True)
             elif operation in ('clean.ocr_artifacts', 'clean.content_debug'):
                 recorder.transform('python_universal_newlines',raw.replace('\r\n','\n').replace('\r','\n'))
                 from ..corpus.phase_clean import _process_combined_ocr_document, DEFAULT_OCR_WORD_REPEAT_WINDOW
@@ -257,9 +376,36 @@ class CleanStage:
                 if recorder.text != output.read_bytes().decode('utf-8'):
                     raise ValueError('OCR producer edit replay does not match cleaned text')
                 write_text_hashed(root/'debug.details.json',json.dumps(details,ensure_ascii=False))
-                metrics = {'ocr_scores': score_ocr_profile_directory(noise, source.path.parent, 1,
+                score_source = source.path.parent
+                if markup_free_text is not None:
+                    # K5-A2b: the OCR profile is measured on the markup-free text, and the OCR cleaner's output of the
+                    # markup-free text (what the plain mode would clean) becomes the metric surface of the score-only
+                    # pass that follows (``clean_strip``: the edits from this product to it, checked by sha256).
+                    plain_dir = root/'layout_metrics'/'surface'
+                    plain_dir.mkdir(parents=True)
+                    (plain_dir/source.path.name).write_bytes(markup_free_text.encode('utf-8'))
+                    plain_clean = root/'layout_metrics'/'clean'/source.path.name
+                    plain_clean.parent.mkdir()
+                    _process_combined_ocr_document(plain_dir/source.path.name, clean_output_path=plain_clean,
+                        debug_output_path=None, noise_mod=noise, include_page_metrics=False, include_match_index=False,
+                        **options)
+                    from ..markdown_layout.render import edits_between, strip_record
+                    product_text = output.read_bytes().decode('utf-8')
+                    plain_text = plain_clean.read_bytes().decode('utf-8')
+                    record = strip_record(product_text, edits_between(product_text, plain_text), plain_text)
+                    if record is not None:
+                        (root/'clean_strip').mkdir()
+                        write_text_hashed(root/'clean_strip'/f'{source.path.stem}.json', json.dumps(
+                            {'markdown_layout': {'rules': metric_basis.get('rules'), 'source': 'clean.ocr_artifacts',
+                                                 'strip': record}}, ensure_ascii=False))
+                    score_source = plain_dir
+                metrics: dict[str, Any] = {'ocr_scores': score_ocr_profile_directory(noise, score_source, 1,
                     int(request.settings.get('min_repeat_run', 6)), scratch_root=root)}
                 for row in metrics['ocr_scores']: row['path'] = source.path.name
+                if layout_input is not None:
+                    metrics['metric_surface'] = metric_basis
+                import shutil
+                shutil.rmtree(root/'layout_metrics', ignore_errors=True)
                 # Do not duplicate text or path-bearing debug summary in SQLite.
                 metrics['matches'] = [{**{key: value for key, value in item.items()
                     if key not in ('source_path', 'debug_output_path', 'matched_text')},
@@ -285,8 +431,11 @@ class CleanStage:
                 'measurements': metrics, 'backend_observations': observations}
             outputs = []
             for artifact in outputs_in(root):
-                kind = 'clean_markdown' if artifact.relative_path.startswith('clean_markdown/') else 'clean_metrics' if artifact.relative_path == 'clean.metrics.json' else 'attempt_diagnostic' if artifact.relative_path.startswith('native_evidence/') else artifact.kind
-                outputs.append(replace(artifact, kind=kind, required=kind in ('clean_markdown','clean_metrics')))
+                kind = 'clean_markdown' if artifact.relative_path.startswith('clean_markdown/') else 'clean_metrics' if artifact.relative_path == 'clean.metrics.json' else 'attempt_diagnostic' if artifact.relative_path.startswith('native_evidence/') else 'clean_strip' if artifact.relative_path.startswith('clean_strip/') else artifact.kind
+                # The OCR cleaner's strip record (K5-A2b) is read by the score-only pass that follows, in another
+                # wrapper call: a recovery input, kept like the OCR stage's native snapshot.
+                outputs.append(replace(artifact, kind=kind, required=kind in ('clean_markdown','clean_metrics'),
+                    **({'retention_class': 'recovery'} if kind == 'clean_strip' else {})))
             return StageResult(request.task_id, request.attempt_id, request.lease_token, 'ok', 'clean_completed',
                 tuple(outputs), (decision,), {'wall_ns': time.monotonic_ns()-started, 'execution': 'in_process'})
         except Exception as error:

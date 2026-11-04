@@ -39,7 +39,7 @@ from test_pdf_font_repair import greek_fixture  # noqa: F401  (module fixture)
 REPO = Path(__file__).resolve().parents[1]
 PDFS = REPO / 'samples' / 'lightweight_pdf_corpus' / 'pdfs'
 SCAN = REPO / 'tests' / 'fixtures' / 'greekocr' / 'polytonic_scan.pdf'
-CLEANER_API = 'GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:2;'
+CLEANER_API = 'GLOSSAPI_NATIVE_API:glossapi_rs_cleaner:3;'  # K5-A2b: glyph_residue_counts
 
 FAULT = textwrap.dedent('''
     import os
@@ -285,9 +285,9 @@ def test_cleaner_declares_api_level_2():
     extension = getattr(cleaner, 'glossapi_rs_cleaner', cleaner)
     assert extension.__glossapi_native_api__ == CLEANER_API
     from glossapi.capabilities import NATIVE_API_LEVELS, native_module_status
-    assert NATIVE_API_LEVELS['glossapi_rs_cleaner'] == 2
+    assert NATIVE_API_LEVELS['glossapi_rs_cleaner'] == 3   # level 2 (OSError) kept; 3 since K5-A2b (glyph_residue_counts)
     row = native_module_status('glossapi_rs_cleaner', True)
-    assert row['status'] == 'present' and row['api_level'] == 2, row
+    assert row['status'] == 'present' and row['api_level'] == 3, row
 
 
 @pytest.mark.parametrize('where', ['output_parent', 'evidence_parent', 'edits_csv', 'stage3_write', 'report'])

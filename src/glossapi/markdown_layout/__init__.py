@@ -7,7 +7,7 @@ invariant). Everything needed is in core (pypdfium2 and the ``glossapi_rs_pdfrep
 extra (Docling) is not involved.
 
 ``GLOSSAPI_MARKDOWN_LAYOUT`` selects the Markdown of the safe extractor:
-  - ``layout_v2`` (default): labelled Markdown, extract stage contract 2;
+  - ``layout_v2`` (default): labelled Markdown, extract stage contract 3 (K5-A2b: the sidecar strip record);
   - ``plain``: the Markdown of extract contract 1 (the plain pages, byte for byte as before K5-A2), read through the
     same one-load-per-page reader.
 The value is part of the extract stage's identity (``ExtractStage.contract_version``), so a corpus never reuses the
@@ -25,7 +25,7 @@ from typing import Iterable, Optional
 from ..pdfium_guard import pdfium_guard
 from .labels import DocumentLabeller, LabelledDocument, context_pages
 from .reader import NO_SHA, native_module, open_page_source
-from .render import RULES, SCHEMA, DocumentMarkdown, render_page
+from .render import RULES, SCHEMA, DocumentMarkdown, markup_free, render_page_with_edits, strip_record
 
 MODES = ("layout_v2", "plain")
 ENVIRONMENT = "GLOSSAPI_MARKDOWN_LAYOUT"
@@ -69,15 +69,19 @@ def label_pdf(path: Path, *, targets: Optional[Iterable[int]] = None, sha: bytes
 
 
 def render_document(document: LabelledDocument, *, reader: Optional[str]) -> tuple[str, dict]:
-    """Markdown of a labelled document (rules D1-D2, P1-P6) and its ``markdown_layout`` metadata."""
+    """Markdown of a labelled document (rules D1-D2, P1-P6) and its ``markdown_layout`` metadata, with the ``strip``
+    record that gives the plain pages back (``render.markup_free``)."""
     out = DocumentMarkdown()
+    plain_pages: list[str] = []
     for page in document.pages:
         if page.status == "labelled":
-            md, spans = render_page(page.text, [(b[0], b[1], b[2], b[3]) for b in page.blocks])
-            out.add_page(page.page, md, "labelled", spans)
+            md, spans, edits = render_page_with_edits(page.text, [(b[0], b[1], b[2], b[3]) for b in page.blocks])
+            out.add_page(page.page, md, "labelled", spans, edits)
             out.add_warnings(page.warnings)
         elif page.text:
             out.add_page(page.page, page.text, page.status)
+        if page.text:
+            plain_pages.append(page.text)
     labelled = sum(1 for page in document.pages if page.status == "labelled")
     texted = sum(1 for page in document.pages if page.text)
     metadata = {"schema": SCHEMA, "rules": RULES, "reader": reader,
@@ -85,13 +89,23 @@ def render_document(document: LabelledDocument, *, reader: Optional[str]) -> tup
                 "pages": out.pages, "blocks": out.blocks, "label_counts": dict(sorted(out.label_counts.items())),
                 "warnings": dict(sorted(out.warnings.items())), "rejected": document.rejected,
                 "reread_pages": document.reread_pages, "context": document.context}
-    return out.markdown, metadata
+    markdown = out.markdown
+    strip = strip_record(markdown, out.edits, "\n\n".join(plain_pages))
+    if strip is not None:
+        metadata["strip"] = strip
+    return markdown, metadata
 
 
-def unavailable_metadata(reason: str) -> dict:
-    """``markdown_layout`` metadata of a document whose Markdown could not be labelled at all."""
-    return {"schema": SCHEMA, "rules": RULES, "reader": None, "status": "unavailable", "reason": reason}
+def unavailable_metadata(reason: str, markdown: Optional[str] = None) -> dict:
+    """``markdown_layout`` metadata of a document whose Markdown could not be labelled at all (its Markdown is the
+    plain pages: the strip record, when the Markdown is given, has no edits)."""
+    metadata = {"schema": SCHEMA, "rules": RULES, "reader": None, "status": "unavailable", "reason": reason}
+    if markdown is not None:
+        strip = strip_record(markdown, [], markdown)
+        if strip is not None:
+            metadata["strip"] = strip
+    return metadata
 
 
-__all__ = ["DocumentLabeller", "ENVIRONMENT", "MODES", "context_pages", "label_pdf", "mode", "native_module",
-           "open_page_source", "page_text", "render_document", "unavailable_metadata"]
+__all__ = ["DocumentLabeller", "ENVIRONMENT", "MODES", "context_pages", "label_pdf", "markup_free", "mode",
+           "native_module", "open_page_source", "page_text", "render_document", "unavailable_metadata"]

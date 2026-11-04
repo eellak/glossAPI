@@ -73,6 +73,7 @@ def build_ocr_selection(
     ocr_done_files: List[str] = []
     ocr_done_stems: Set[str] = set()
     math_done_stems: Set[str] = set()
+    glyph_documents: Set[str] = set()
 
     parquet_schema = ParquetSchema({"url_column": context.url_column})
     parquet_path = context._resolve_metadata_parquet(parquet_schema, ensure=True, search_input=True)
@@ -108,7 +109,24 @@ def build_ocr_selection(
         df = selection["df"]
         if "flagged" in selection:
             flagged, routed_counts = selection["flagged"], selection["routed_counts"]
-            selected = flagged | ((routed_counts > 0) & (page_routing == "all"))
+            # P4d (K5 quality policy, FG-G03 residual, K5-A2b): OCR follows run - a flagged document whose page
+            # quality ran and routed no page is not OCRed (run leaves it as extracted), in both page_routing modes.
+            # Page quality ran when clean attached a valid report (page_rule_profile set); a document without one
+            # keeps document-level routing, and the OCR stage's own page quality picks its pages.
+            known = (df["page_rule_profile"].notna() if "page_rule_profile" in df.columns
+                     else pd.Series(False, index=df.index))
+            # P4a: an all-GLYPH text layer goes to OCR whole; the OCR stage's own glyph check selects every page.
+            glyphs = df.get("filter", pd.Series("", index=df.index)).astype(str).str.split(";").map(
+                lambda tokens: "glyph_only" in tokens)
+            glyph_documents.update(df.loc[glyphs & flagged, "filename"].dropna().astype(str).map(canonical_stem))
+            unrouted = (flagged & known & routed_counts.eq(0) & ~glyphs
+                        & (mode in {"ocr_bad", "ocr_bad_then_math"}))
+            if bool(unrouted.any()):
+                names = df.loc[unrouted, "filename"].dropna().astype(str).tolist()
+                observe("ocr_not_routed", status="skipped", filenames=names, cause="flagged_without_routed_pages")
+                context.logger.info("OCR: %d flagged document(s) have no page that page quality routes; not OCRed "
+                                    "(as glossapi run).", len(names))
+            selected = (flagged & ~unrouted) | ((routed_counts > 0) & (page_routing == "all"))
             bad_files = df.loc[selected, "filename"].dropna().astype(str).tolist()
         if "ocr_success" in df.columns:
             ocr_done_files = df.loc[df["ocr_success"].fillna(False), "filename"].dropna().astype(str).tolist()
@@ -185,7 +203,7 @@ def build_ocr_selection(
         }
         for filename in bad_files:
             route = routes.get(canonical_stem(filename))
-            if route:
+            if route and canonical_stem(filename) not in glyph_documents:
                 page_ranges.extend(f"{filename}:{start}:{end}" for start, end in parse_page_ranges(route))
 
     return OcrSelection(

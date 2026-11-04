@@ -129,8 +129,10 @@ flagged and unflagged PDFs without promoting the document-level `needs_ocr`
 flag. `ocr_pages_unflagged_count` records selected pages inside unflagged
 documents in both routing modes. `Corpus.ocr(page_routing="flagged")` is the
 default and dispatches only flagged documents; `page_routing="all"` additionally
-dispatches the non-empty routes of unflagged documents. Flagged empty routes
-still fall back to whole-document OCR. Existing completion and skip-list gates
+dispatches the non-empty routes of unflagged documents. A flagged document
+whose valid page-quality report routes no page is not dispatched (as `glossapi
+run`, K5 quality policy P4d); a flagged document without a report keeps the
+whole-document fallback. Existing completion and skip-list gates
 continue to apply. Explicit reruns of completed, unflagged documents retain
 whole-document behavior in `flagged` mode; only `all` applies their retained
 page routes. These counts describe selection, not successful execution.
@@ -143,3 +145,33 @@ PUA/control dominance above the symbol-garbage threshold routes sparse corrupt
 text before the blank-page gate. Counts alone do not establish that every PUA
 character is erroneous, and the cleaner does not flag an entire document merely
 because it contains PUA characters.
+
+Text metrics are measured on the markup-free text (K5-A2b, K5A2A-G2): for a
+layout-labelled Markdown (the safe backend's default) the extract sidecar's
+`markdown_layout.strip` record gives the plain text back
+(`glossapi.markdown_layout.markup_free`), and the native cleaner report
+(`mojibake_badness_score`, `percentage_greek`, `latin_percentage`,
+`char_count_no_comments`, `is_empty`), the noise scores (`greek_badness_score`,
+`polytonic_ratio`) and the raw-text measurements (`latin_word_shape_rate`,
+`pua_char_count`, `control_char_count`, the glyph check below) are taken from
+it. The cleaned Markdown is still cleaned from the labelled Markdown and keeps
+its markup. A record that does not describe the file (changed text, another
+file) is not applied. Docling Markdown has no record and is measured as before.
+After OCR, `clean_ocr` measures its OCR profile on the markup-free text and
+also cleans that text; the edits from its cleaned (labelled) output to that
+cleaned plain text are kept as a strip record of the cleaned file (a recovery
+artifact of the clean attempt, or in memory on the legacy profile), and the
+score-only `clean` that follows measures the cleaned plain text through it. A
+score-only pass in a new process without that record falls back to the extract
+sidecar's record, which describes the cleaned file only when the OCR cleaner
+left it unchanged.
+
+All-GLYPH text (K5 quality policy P4a): a document whose text is entirely glyph
+names or unusable glyph codes has no readable characters and is routed to OCR
+with the filter token `glyph_only` (`needs_ocr=True`, reason code
+`clean_glyph_only`). "Entirely" means at least 10 glyph-name matches covering at
+least 90% of the text's non-whitespace characters, measured with the cleaner's
+own Rule A/B matchers on the raw (markup-free) text
+(`glossapi_rs_cleaner.glyph_residue_counts`, native API level 3). The cleaner
+itself still drops such lines before it scores, so the mojibake score of the
+cleaned text stays low.

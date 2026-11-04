@@ -727,8 +727,10 @@ pub fn repair(src: &str, dst: &str) -> RepairResult {
 /// Level 2 (K5-A2): the package's Markdown uses layout v2 (`layout_v2_read_document`, `LayoutV2ContextBuilder`,
 /// `layout_v2_input_problem`, `layout_v2_label_page`); `glossapi.markdown_layout` refuses an older build and emits
 /// unlabelled Markdown, and the repair selector uses the Python reference.
+/// Level 3 (K5-A2b): `page_decode_status_json`, the per-page content-stream decode status of the safe extractor's
+/// metadata (K5 quality policy P4b); an older build makes every page `unknown`.
 /// Exported to Python as `__glossapi_native_api__`, which also keeps the bytes in the binary.
-pub const NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:2;";
+pub const NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:3;";
 #[cfg(all(feature = "python", not(test)))]
 mod python {
     use super::*;
@@ -812,6 +814,14 @@ mod python {
     fn _native_page_flags_json(path: &str) -> PyResult<String> {
         let mut pdf = Pdf::open(path).map_err(py_err)?;
         let s = text::page_flags(&mut pdf).map_err(py_err)?;
+        serde_json::to_string(&s).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+    /// Per-page content-stream decode status (K5 quality policy P4b), PDFium page order: a JSON list of
+    /// `[status, reason]`, status `complete`, `partial` or `unknown`. Raises when the document cannot be parsed.
+    #[pyfunction]
+    fn page_decode_status_json(path: &str) -> PyResult<String> {
+        let mut pdf = Pdf::open(path).map_err(py_err)?;
+        let s = text::page_decode_status(&mut pdf).map_err(py_err)?;
         serde_json::to_string(&s).map_err(|e| PyValueError::new_err(e.to_string()))
     }
     /// Diagnostics for the equality gates: the native text sample, shaped like `_sample_json`'s JSON.
@@ -990,6 +1000,7 @@ mod python {
         m.add_function(wrap_pyfunction!(py_analyze_for_repair, m)?)?;
         m.add_function(wrap_pyfunction!(_native_sample_json, m)?)?;
         m.add_function(wrap_pyfunction!(_native_page_flags_json, m)?)?;
+        m.add_function(wrap_pyfunction!(page_decode_status_json, m)?)?;
         m.add_class::<PdfAnalysis>()?;
         m.add_class::<LayoutV2Context>()?;
         m.add_function(wrap_pyfunction!(layout_v2_context, m)?)?;
