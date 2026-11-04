@@ -145,7 +145,8 @@ def freeze_beside(source: str | Path, frozen_manifest: str | Path) -> list[Path]
     return copied
 
 
-def _word_class(text: str) -> str:
+def _word_ranges(text: str) -> list[tuple[int, int]]:
+    """The exported word table as ascending, non-overlapping inclusive ``(start, end)`` code-point ranges."""
     ranges = []
     previous = -1
     lines = text[:-1].split('\n') if text.endswith('\n') else []
@@ -160,8 +161,40 @@ def _word_class(text: str) -> str:
         ranges.append((start, end))
     if not ranges:
         raise NeutralModelError('word_ranges is empty or does not end with a newline')
+    return ranges
+
+
+def _char_class(ranges: Sequence[tuple[int, int]]) -> str:
+    if not ranges:
+        return '[^\\x00-\\U0010ffff]'  # the empty class: matches no character
     code = lambda value: '\\U%08x' % value
     return '[' + ''.join(code(a) if a == b else code(a) + '-' + code(b) for a, b in ranges) + ']'
+
+
+ASTRAL = '[\\U00010000-\\U0010ffff]'
+
+
+class TableTokenizer:
+    """Maximal runs of at least two word characters of an exported table: ``(?u)\\b\\w\\w+\\b`` with that table's ``\\w``.
+
+    Python ``re`` tests a character class by a 65,536-bit map for the code points up to U+FFFF and then, on a miss,
+    by scanning the class's ranges above U+FFFF one by one. With the whole table as one class, every non-word BMP
+    character (spaces, punctuation) paid for the ~300 astral ranges, which made 3.12+ tokenization 4-8x slower than
+    the interpreter's own ``\\w`` (K2B3-G3). The table is therefore split at U+FFFF: a text without astral characters
+    (found by one range test per character) is tokenized with the BMP class alone, which is the table on such a
+    text; any other text with an alternation that consults the astral ranges only for astral characters. Both give
+    exactly the runs of the single whole-table class."""
+
+    def __init__(self, ranges: Sequence[tuple[int, int]]):
+        self.bmp = [(start, min(end, 0xFFFF)) for start, end in ranges if start <= 0xFFFF]
+        self.astral = [(max(start, 0x10000), end) for start, end in ranges if end > 0xFFFF]
+        word = _char_class(self.bmp)
+        self._bmp_runs = re.compile(word + word + '+').findall
+        self._has_astral = re.compile(ASTRAL).search
+        self._mixed_runs = re.compile(f'(?:{word}|(?={ASTRAL}){_char_class(self.astral)}){{2,}}').findall
+
+    def __call__(self, text: str) -> list[str]:
+        return self._mixed_runs(text) if self._has_astral(text) else self._bmp_runs(text)
 
 
 def word_ranges(pattern: str = r'\w') -> str:
@@ -256,7 +289,10 @@ class NeutralSectionModel:
         word_entry = manifest['files']['word_ranges']
         if word_entry.get('unicodedata') != producer or word_entry.get('pattern') != r'\w':
             raise NeutralModelError(f'{found}: the word table must be the producer\'s Python re \\w')
-        word_class = _word_class(data['word_ranges'].decode('ascii'))
+        try:
+            word_table = _word_ranges(data['word_ranges'].decode('ascii'))
+        except UnicodeDecodeError as error:
+            raise NeutralModelError('word_ranges is not ASCII') from error
         self.classes = list(classes)
         self.classes_ = np.array(self.classes, dtype=object)
         self.vocabulary = {term: index for index, term in enumerate(vocabulary)}
@@ -272,8 +308,7 @@ class NeutralSectionModel:
             self._findall = re.compile(TOKEN_PATTERN).findall
         else:
             self.tokenizer = 'exported-word-table'
-            runs = re.compile(word_class + '+').findall
-            self._findall = lambda text: [token for token in runs(text) if len(token) > 1]
+            self._findall = TableTokenizer(word_table)
         self._idf = self.idf.tolist()
         self._columns = [self.coef[:, j].tolist() for j in range(n_text + 2)]
         self._intercept = self.intercept.tolist()
