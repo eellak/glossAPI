@@ -1,3 +1,4 @@
+mod crypt;
 mod cmap;
 mod font;
 pub mod layout;
@@ -820,7 +821,8 @@ mod python {
     /// `[status, reason]`, status `complete`, `partial` or `unknown`. Raises when the document cannot be parsed.
     #[pyfunction]
     fn page_decode_status_json(path: &str) -> PyResult<String> {
-        let mut pdf = Pdf::open(path).map_err(py_err)?;
+        // K5-D (K5A2B-G4): an RC4 document with the empty user password is decrypted for this check only.
+        let mut pdf = Pdf::open_for_check(path).map_err(py_err)?;
         let s = text::page_decode_status(&mut pdf).map_err(py_err)?;
         serde_json::to_string(&s).map_err(|e| PyValueError::new_err(e.to_string()))
     }

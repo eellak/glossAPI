@@ -295,6 +295,8 @@ pub struct Pdf {
     pub trailer: Obj,
     pub prev: usize,
     loading: HashSet<u32>,
+    /// The RC4 file key when the document was opened for the decode check (`open_for_check`); never set by `open`.
+    crypt: Option<Vec<u8>>,
 }
 impl Pdf {
     pub fn open(path: &str) -> Result<Self> {
@@ -311,6 +313,7 @@ impl Pdf {
             trailer: Obj::Null,
             prev,
             loading: HashSet::new(),
+            crypt: None,
         };
         pdf.xref(prev, &mut HashSet::new())?;
         if pdf.trailer.has("Encrypt") {
@@ -318,10 +321,65 @@ impl Pdf {
         }
         Ok(pdf)
     }
+    /// `open` for the read-only content-stream decode check (K5-D, K5A2B-G4): an encrypted document whose security
+    /// handler is the standard RC4 one (V 1/2, R 2/3) and whose user password is empty (an owner-password document,
+    /// which PDFium opens) is decrypted object by object as streams are read; any other encrypted document is still
+    /// refused, with the reason. Never used by analysis or repair.
+    #[cfg_attr(not(feature = "python"), allow(dead_code))]
+    pub fn open_for_check(path: &str) -> Result<Self> {
+        match Self::open(path) {
+            Err(e) if e.to_string() == "Encrypted PDFs are unsupported" => {}
+            other => return other,
+        }
+        let bytes = std::fs::read(path)?;
+        let s = bytes
+            .windows(9)
+            .rposition(|w| w == b"startxref")
+            .ok_or_else(|| anyhow!("Missing startxref"))?;
+        let prev = Parser::new(&bytes, s + 9).word()?.parse()?;
+        let mut pdf = Self {
+            bytes,
+            entries: BTreeMap::new(),
+            cache: BTreeMap::new(),
+            trailer: Obj::Null,
+            prev,
+            loading: HashSet::new(),
+            crypt: None,
+        };
+        pdf.xref(prev, &mut HashSet::new())?;
+        let enc = pdf.resolve(&pdf.trailer.get("Encrypt"))?;
+        pdf.cache.clear(); // nothing read before the key is known stays cached
+        let num = |o: &Obj| match o {
+            Obj::Num(s) => s.parse::<f64>().map(|v| v as i64).unwrap_or(0),
+            _ => 0,
+        };
+        let text = |o: &Obj| match o {
+            Obj::Str(b) => b.clone(),
+            _ => vec![],
+        };
+        let id0 = match pdf.trailer.get("ID") {
+            Obj::Array(a) => a.first().map(text).unwrap_or_default(),
+            _ => vec![],
+        };
+        let v = num(&enc.get("V"));
+        let length = if enc.has("Length") { num(&enc.get("Length")) } else { 40 };
+        let key = crate::crypt::empty_password_key(
+            &enc.get("Filter").name(),
+            v,
+            num(&enc.get("R")),
+            length,
+            &text(&enc.get("O")),
+            &text(&enc.get("U")),
+            num(&enc.get("P")),
+            &id0,
+        )?;
+        pdf.crypt = Some(key);
+        Ok(pdf)
+    }
     fn raw(&self, off: usize) -> Result<Obj> {
         let mut p = Parser::new(&self.bytes, off);
-        p.word()?;
-        p.word()?;
+        let number = p.word()?;
+        let generation = p.word()?;
         if p.word()? != "obj" {
             bail!("Expected obj")
         }
@@ -345,10 +403,15 @@ impl Pdf {
                         .map(|i| p.p + i)
                         .ok_or_else(|| anyhow!("Unterminated stream"))?
                 };
-                return Ok(Obj::Stream(
-                    d,
-                    std::sync::Arc::new(self.bytes[p.p..stop].to_vec()),
-                ));
+                let mut data = self.bytes[p.p..stop].to_vec();
+                if let Some(key) = &self.crypt {
+                    // Streams of an RC4 document are encrypted with their object's key; cross-reference streams are not.
+                    if o.get("Type").name() != "XRef" {
+                        let (n, g) = (number.parse::<u32>().unwrap_or(0), generation.parse::<u16>().unwrap_or(0));
+                        data = crate::crypt::rc4(&crate::crypt::object_key(key, n, g), &data);
+                    }
+                }
+                return Ok(Obj::Stream(d, std::sync::Arc::new(data)));
             }
             let _ = end;
         }
@@ -721,6 +784,21 @@ pub fn decode(o: &Obj) -> Result<Vec<u8>> {
                 }
                 data = out
             }
+            "LZWDecode" | "LZW" => {
+                let early = params.get(i).map(|p| p.get("EarlyChange")).unwrap_or(Obj::Null);
+                let (out, complete) = lzw_decode(&data, early == Obj::Null || early.int() != 0);
+                if !complete {
+                    bail!("Invalid LZW code")
+                }
+                data = out
+            }
+            "RunLengthDecode" | "RL" => {
+                let (out, complete) = run_length_decode(&data);
+                if !complete {
+                    bail!("Truncated RunLength run")
+                }
+                data = out
+            }
             other => bail!("Unsupported stream filter {other}"),
         }
         let p = params.get(i).cloned().unwrap_or(Obj::Null);
@@ -783,6 +861,106 @@ pub fn decode(o: &Obj) -> Result<Vec<u8>> {
         }
     }
     Ok(data)
+}
+/// LZWDecode (PDF 32000-1 7.4.4): 9- to 12-bit codes, Clear-Table 256, EOD 257, `early` = EarlyChange (default 1:
+/// the code width grows one code early). Returns the decoded bytes and whether the stream decoded cleanly: an
+/// invalid code (beyond the table) stops with the prefix decoded so far and `false`; the end of the input without an
+/// EOD code is a clean end (PDFium's decoder also stops there). K5-D (K5A-M2): content streams with this filter
+/// were undecodable natively, so text-presence said "no text" where PDFium reads text.
+pub(crate) fn lzw_decode(data: &[u8], early: bool) -> (Vec<u8>, bool) {
+    // Each table entry is a (start, len) range of `out`: a new entry is the previous string followed by the first
+    // byte of the current one, and the previous string always ends where the current one starts (output is
+    // append-only), so the entry is the contiguous range `previous.start .. previous.end + 1`.
+    let mut out = Vec::with_capacity(data.len() * 3);
+    let mut next = 258usize;
+    let mut table: Vec<(usize, usize)> = vec![(0, 0); 4096];
+    let (mut width, mut buffer, mut bits, mut pos) = (9u32, 0u32, 0u32, 0usize);
+    let mut previous: Option<(usize, usize)> = None;
+    loop {
+        while bits < width {
+            let Some(&b) = data.get(pos) else {
+                return (out, true);
+            };
+            buffer = (buffer << 8) | b as u32;
+            bits += 8;
+            pos += 1;
+        }
+        let code = ((buffer >> (bits - width)) & ((1 << width) - 1)) as usize;
+        bits -= width;
+        buffer &= (1u32 << bits) - 1;
+        if code == 256 {
+            next = 258;
+            width = 9;
+            previous = None;
+            continue;
+        }
+        if code == 257 {
+            return (out, true);
+        }
+        let start = out.len();
+        let len = match (code, previous) {
+            (0..=255, _) => {
+                out.push(code as u8);
+                1
+            }
+            (258.., _) if code < next => {
+                let (s, l) = table[code];
+                out.extend_from_within(s..s + l);
+                l
+            }
+            (_, Some((s, l))) if code == next => {
+                // KwKwK: the previous string plus its own first byte.
+                out.extend_from_within(s..s + l);
+                out.push(out[s]);
+                l + 1
+            }
+            _ => return (out, false),
+        };
+        if let Some((s, l)) = previous {
+            if next < 4096 {
+                table[next] = (s, l + 1);
+                next += 1;
+            }
+        }
+        previous = Some((start, len));
+        let reach = next + usize::from(early);
+        width = match reach {
+            0..=511 => 9,
+            512..=1023 => 10,
+            1024..=2047 => 11,
+            _ => 12,
+        };
+    }
+}
+
+/// RunLengthDecode (PDF 32000-1 7.4.5): length byte 0-127 copies the next n+1 bytes, 129-255 repeats the next byte
+/// 257-n times, 128 is EOD. A run cut short by the end of the input stops with the prefix and `false`.
+pub(crate) fn run_length_decode(data: &[u8]) -> (Vec<u8>, bool) {
+    let mut out = Vec::with_capacity(data.len() * 2);
+    let mut pos = 0;
+    while let Some(&n) = data.get(pos) {
+        pos += 1;
+        match n {
+            128 => return (out, true),
+            0..=127 => {
+                let end = pos + n as usize + 1;
+                if end > data.len() {
+                    out.extend_from_slice(&data[pos..]);
+                    return (out, false);
+                }
+                out.extend_from_slice(&data[pos..end]);
+                pos = end;
+            }
+            _ => {
+                let Some(&b) = data.get(pos) else {
+                    return (out, false);
+                };
+                pos += 1;
+                out.extend(std::iter::repeat_n(b, 257 - n as usize));
+            }
+        }
+    }
+    (out, true)
 }
 // Byte ranges are found with the same parser used for decisions, but copied
 // verbatim. Only top-level /ToUnicode values are replaced; nested keys survive.
@@ -937,6 +1115,7 @@ mod tests {
             trailer: Obj::Null,
             prev: 0,
             loading: HashSet::new(),
+            crypt: None,
         };
         // Offset zero is reserved for deleted entries; add a prefix byte.
         pdf.bytes.insert(0, b'\n');

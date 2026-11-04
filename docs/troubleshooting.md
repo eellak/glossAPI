@@ -104,9 +104,13 @@ After the cause is removed, resume: the file is repaired and the run goes on. Fo
 the cause (or rerun the publication that must replace a product with a pending republication); the gate runs again at
 the end of that run.
 
-A leftover hidden temporary beside a product (`.<name>.<id>.tmp`) whose bytes recovery cannot prove to be its own
-abandoned copy is never deleted and never blocks a run, once the product itself is resolved. It is residue: delete it
-yourself if you do not need it.
+A temporary that an interrupted publication left beside a product (`.<name>.<id>.tmp`, or a metadata
+`<name>.<id>.tmp`) is removed at the next run start (`Corpus.run`, or a single-phase call such as `Corpus.clean()`),
+whether or not that publication is ever repeated, but only when the ledger's record of that publication proves it is
+the abandoned copy: the exact recorded path, a regular file with one name, holding the recorded bytes or a strict
+prefix of the recorded source, checked under the lock its writer held. One whose bytes recovery cannot prove to be its
+own abandoned copy is never deleted and never blocks a run, once the product itself is resolved. It is residue: delete
+it yourself if you do not need it.
 
 ## `conversion.log` appears in the working directory
 

@@ -210,6 +210,11 @@ class Corpus(
                 self.download()
                 self.logger.info("Download step completed, proceeding with extraction...")
             except Exception as e:
+                # An exhausted filesystem is never a "continue with what is there" condition (fix 6 F3 rule; K5-D,
+                # FIX6-G2): extraction would meet the same full disk, and the download step's own typed failure
+                # must reach the caller. Other download failures keep the documented best-effort continuation.
+                if _disk_full(e):
+                    raise
                 self.logger.error(f"Error during download step: {e}")
                 self.logger.warning("Continuing with extraction of already downloaded files...")
 

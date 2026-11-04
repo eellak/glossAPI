@@ -1,9 +1,11 @@
 """Per-page content-stream decode status of the safe extractor (K5 quality policy P4b, K5-A2b).
 
 ``partial``: the native content-stream check (``glossapi_rs_pdfrepair.page_decode_status_json``) observed a decode
-failure or a truncated content stream on the page (its own streams or a Form XObject it draws); the page keeps the
-readable text PDFium extracts. ``unknown``: the check could not run or could not decide (the native module is
-missing or stale, the document cannot be parsed by the native parser - for example an encrypted document - its page
+failure or a truncated content stream on the page (its own streams or a Form XObject it draws), or in the ToUnicode
+CMap of a font the page selects (K5-D, K5A2B-G4); the page keeps the readable text PDFium extracts. Annotation
+appearance streams are outside the check (PDFium's text page does not read them), and so are font programs. ``unknown``: the check could not run or could not decide (the native module is
+missing or stale, the document cannot be parsed by the native parser - for example a document encrypted with AES or
+a user password (an RC4 document with an empty user password is decrypted for the check, K5-D) - its page
 count differs from PDFium's, the page is unavailable, a stream object is unreadable, or a filter the check does not
 implement). ``complete``: the check ran and found no decode failure. PDFium's own error state is not a signal (on
 the K5P-093 page ``FPDF_GetLastError()`` is 0 before and after extracting 1,583 characters).

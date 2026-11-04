@@ -1390,6 +1390,9 @@ def _locked_run_corpus(corpus,*args,**options):
                     'error': f'{type(unrecorded).__name__}: {unrecorded}'}], boundary='start') from unrecorded
             # Copies the previous run close left unflushed are verified (and republished if torn) first (K4C-M2).
             writer.verify_excluded_copies()
+            # Abandoned temporaries of interrupted publications are removed now, verified, even if that publication is
+            # never repeated (K5-D, FIX8-G1); an unverifiable one is retained and never blocks.
+            writer.sweep_abandoned_temporaries()
             writer.refuse_ambiguous_copies()
             result=_run_corpus(corpus,*args,**options)
             # A run that would report completion passes the completion gate first (fix 13, decision B): inside the

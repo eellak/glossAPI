@@ -1809,6 +1809,74 @@ class LedgerWriter:
             unresolved[:] = _unique_conditions(unresolved)
         return changed
 
+    def sweep_abandoned_temporaries(self) -> list[str]:
+        """Run start (K5-D, FIX8-G1): remove the abandoned temporaries of every unresolved publication intent record,
+        whether or not the interrupted publication is ever repeated.
+
+        An intent record (``record_uncommitted_writes``) that binds a ``temporary`` names the one file its writer put the
+        bytes in before the atomic replace. After a normal replace the name is gone; a file still at that name at a run
+        start was left by a process death between the record and the replace (or during the copy). Until K5-D only the
+        repeated barrier (``roll_back_uncommitted_writes``) removed it, so a later fresh run over the same output that
+        never repeated that publication left it in place.
+
+        The sweep applies exactly the repeated barrier's temporary rules, and nothing else:
+        - Ownership: it runs on the ledger owner's thread at a run start, under the corpus flock and before any write of
+          this run, so the recording process has released the ledger (it died or its run ended): no writer owns the
+          temporary. A metadata temporary exists only while its writer holds the metadata lock, which is taken here.
+        - Lock: the records of the temporary's path in the record's own run must agree on one bound lock
+          (``_agreed_lock``, as the rollback groups the failed runs' records); the record's lock must be that lock; it is
+          taken through ``_recover_locked`` (a recorded lock the path's writers no longer take, or a replaced path, is a
+          refusal there). Disagreement or refusal: retained.
+        - Bytes: ``_verified_temporary`` (the exact recorded path; a regular file with one name, on the name and on the
+          opened descriptor; the recorded bytes, or a strict prefix of the recorded immutable source read once), checked
+          inside the lock; the name is unlinked only if it still names the verified inode (``_same_single_file``).
+        - Never by name alone; an unverifiable temporary is retained as residue and never blocks the run (fix 11, F4).
+          Any error is "retained", except an exhausted disk and the other ``_must_propagate`` errors, which propagate.
+        Nothing about products changes: temporaries are never registered, no product path is touched, and no ledger
+        record is written (as the rollback's temporary cleanup). Every ledger-recovery invariant (reconciliation,
+        durability phase, completion gate, certification) is untouched. Returns the removed temporaries (also in
+        ``self.swept_temporaries``)."""
+        self._owner(transaction=False)
+        self.swept_temporaries: list[str] = []
+        table = self.connection.event_table
+        rows = self.connection.execute(
+            f"SELECT event_id,run_id,details_json FROM {table} WHERE reason_code='uncommitted_projection_write' "
+            "ORDER BY event_id").fetchall()  # details are stored encoded: filtered after decoding
+        if not rows:
+            return []
+        records: list[tuple[str, dict[str, Any]]] = []
+        locks: dict[tuple[str, str], list[Any]] = {}
+        for _, run_id, encoded in rows:
+            try:
+                details = json.loads(encoded)
+            except ValueError:
+                continue  # an unreadable record binds nothing (never acted on)
+            if not isinstance(details, dict) or not details.get('path'):
+                continue
+            # The lock agreement counts every record of the path in the run, as the rollback's ``lock_of`` does.
+            locks.setdefault((run_id, str(details['path'])), []).append(details.get('lock'))
+            if details.get('temporary'):
+                records.append((run_id, details))
+        for run_id, details in records:
+            temporary = Path(details['temporary'])
+            if not os.path.lexists(temporary):
+                continue  # replaced normally, or already removed
+            lock, conflicting = _agreed_lock(locks[(run_id, str(details['path']))])
+            if details.get('lock') and details['lock'] != lock or conflicting:
+                continue  # retained: the path's records bind contradictory locks
+
+            def verify_temporary(target, temporary=temporary, details=details):
+                identity = _verified_temporary(temporary, details)
+                return None if identity is None else ('remove', temporary, identity)
+            try:
+                if _recover_locked(Path(details['path']), verify_temporary, lock=lock):
+                    self.swept_temporaries.append(str(temporary))
+            except BaseException as error:
+                if _must_propagate(error):
+                    raise
+                # retained as residue (a refused or stale lock, a hard-linked target, an unreadable file)
+        return self.swept_temporaries
+
     def completion_gate(self, run_id: str) -> dict[str, Any]:
         """THE completion gate (fix 13, decision B), run once per run completion after the run-close flush and under the
         workspace lock (``close``, when ``completion_gate_run`` is set). Independent of every recovery branch: every

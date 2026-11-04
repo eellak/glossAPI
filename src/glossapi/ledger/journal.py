@@ -736,6 +736,8 @@ def shadow_stage(stage: Any, operation: Any = None) -> Any:
                 if own_writer:
                     # A phase that owns its writer starts a run: verify the copies the previous run close left unflushed (K4C-M2).
                     writer.verify_excluded_copies()
+                    # K5-D (FIX8-G1): the run-start sweep of abandoned publication temporaries (verified; never blocks).
+                    cast(Any, writer).sweep_abandoned_temporaries()
                     cast(Any, writer).refuse_ambiguous_copies()
                 journal = ResultJournal(writer, self, stage, operation or f"{stage}.{function.__name__}", parameters)
                 if own_writer:
