@@ -28,6 +28,20 @@ def effective_selection(inputs, settings, *, report=None):
     selection is verified, including the native text and its strip metadata.
     max_pages is a physical-page ceiling, not a count of selected pages.
     """
+    # Validate even when a report overrides ranges or routing selects no pages.
+    # int(...) would silently accept booleans, fractions and numeric strings.
+    maximum = settings.get('max_pages')
+    if maximum is not None and (type(maximum) is not int or maximum < 1):
+        raise ValueError('max_pages must be a positive integer')
+    ranges = settings.get('page_ranges')
+    if ranges is None:
+        ranges = []
+    if not isinstance(ranges, (list, tuple)):
+        raise ValueError('Invalid OCR page ranges')
+    for pair in ranges:
+        if (not isinstance(pair, (list, tuple)) or len(pair) != 2
+                or any(type(page) is not int for page in pair) or not 1 <= pair[0] <= pair[1]):
+            raise ValueError('Invalid OCR page range')
     from ..stages.execution import sha256_file
     from ..stages.clean import LAYOUT_INPUT_KINDS
     relevant = {'source_payload', 'download_payload', 'native_markdown', 'raw_markdown', 'page_quality', *LAYOUT_INPUT_KINDS}
@@ -39,13 +53,26 @@ def effective_selection(inputs, settings, *, report=None):
         report = json.loads(quality.path.read_text())
     glyph = False
     if report is not None:
-        selected = {int(page['page']) for page in report['pages'] if page['page_needs_ocr'] is True}
+        if not isinstance(report, dict):
+            raise ValueError('Invalid OCR page range quality report')
+        count = report.get('pages_total')
+        pages = report.get('pages')
+        if ((count is not None and (type(count) is not int or count < 0)) or not isinstance(pages, list)
+                or any(not isinstance(page, dict) or type(page.get('page')) is not int
+                       or page['page'] < 1 or (count is not None and page['page'] > count)
+                       or type(page.get('page_needs_ocr')) is not bool
+                       for page in pages)):
+            raise ValueError('Invalid OCR page range in quality report')
+        if count is not None and any(last > count for _, last in ranges):
+            raise ValueError('Invalid OCR page range beyond quality report')
+        selected = {page['page'] for page in pages if page['page_needs_ocr']}
         if native_text_is_glyph_only(inputs):
-            selected = set(range(1, int(report['pages_total']) + 1))
+            if count is None:
+                raise ValueError('Invalid OCR page range: glyph selection requires pages_total')
+            selected = set(range(1, count + 1))
             glyph = True
-    elif settings.get('page_ranges'):
-        selected = {page for first, last in settings['page_ranges'] for page in range(int(first), int(last) + 1)}
+    elif ranges:
+        selected = {page for first, last in ranges for page in range(first, last + 1)}
     else:
         return None, False
-    maximum = settings.get('max_pages')
     return sorted(page for page in selected if maximum is None or page <= maximum), glyph

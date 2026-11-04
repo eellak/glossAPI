@@ -172,6 +172,7 @@ class LegacySource:
         self._chars_wanted = chars
         self._sha = sha
         self._tables: dict[int, Optional[bytes]] = {}
+        self.reader = "python" if chars else None
         with pdfium_guard():
             self.doc = pdfium.PdfDocument(str(self.path))
             try:
@@ -179,7 +180,6 @@ class LegacySource:
             except BaseException:
                 self.doc.close()
                 raise
-        self.reader = "python" if chars else None
 
     def text(self, index: int) -> str:
         with pdfium_guard():
