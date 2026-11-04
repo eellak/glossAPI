@@ -85,7 +85,9 @@ class PageRasterCache:
     def __init__(self, pdf_path: Path, max_cached_pages: int = 4):
         if pdfium is None:
             raise RuntimeError("pypdfium2 not available; cannot rasterize PDF")
-        self.doc = pdfium.PdfDocument(str(pdf_path))
+        from ...pdfium_guard import pdfium_guard
+        with pdfium_guard():
+            self.doc = pdfium.PdfDocument(str(pdf_path))
         self.cache: dict[Tuple[int, int], Any] = {}
         self.max_cached = int(max_cached_pages)
 
@@ -93,10 +95,12 @@ class PageRasterCache:
         key = (int(page_no_1b), int(dpi))
         if key in self.cache:
             return self.cache[key]
-        page = self.doc[int(page_no_1b) - 1]
-        scale = float(dpi) / 72.0
-        bm = page.render(scale=scale)
-        im = bm.to_pil()
+        from ...pdfium_guard import pdfium_guard
+        with pdfium_guard():
+            page = self.doc[int(page_no_1b) - 1]
+            scale = float(dpi) / 72.0
+            bm = page.render(scale=scale)
+            im = bm.to_pil()
         # naive LRU: cap cache size
         self.cache[key] = im
         if len(self.cache) > self.max_cached:

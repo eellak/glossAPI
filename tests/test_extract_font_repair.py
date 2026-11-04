@@ -205,7 +205,7 @@ if os.environ.get('K2_NATIVE_FAKE') == '1':
         record('native', 'repair')
         return tounicode.repair_pdf(src, dst, protected_sources=protected).to_dict()
     fake.analyze_pdf, fake.repair_pdf = analyze_pdf, repair_pdf
-    fake.__glossapi_native_api__ = 'GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:1;'  # the level the selector needs
+    fake.__glossapi_native_api__ = 'GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:2;'  # the level the selector needs (K5-A2)
     sys.modules['glossapi_rs_pdfrepair'] = fake
 else:
     class MissingExtension(importlib.abc.MetaPathFinder):

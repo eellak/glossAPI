@@ -99,14 +99,16 @@ def _estimate_extract_work_pages(path: Path) -> int:
 
     try:
         import pypdfium2 as pdfium  # type: ignore
+        from ..pdfium_guard import pdfium_guard
 
-        pdf = pdfium.PdfDocument(str(path))
-        try:
-            return max(1, int(len(pdf)))
-        finally:
-            close = getattr(pdf, "close", None)
-            if callable(close):
-                close()
+        with pdfium_guard():
+            pdf = pdfium.PdfDocument(str(path))
+            try:
+                return max(1, int(len(pdf)))
+            finally:
+                close = getattr(pdf, "close", None)
+                if callable(close):
+                    close()
     except Exception:
         pass
 

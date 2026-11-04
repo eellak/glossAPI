@@ -25,6 +25,7 @@ import unicodedata
 from typing import Iterable
 
 import pypdfium2 as pdfium
+from .pdfium_guard import pdfium_guard
 
 from glossapi.pdf_repair.text_stats import _is_greek, _load_words, _text_stats
 
@@ -535,7 +536,7 @@ def page_quality(pdf_path: str | Path, *,
                       **{name: fixed[name].default for name in ("min_chars", "min_image_ratio",
                                                                 "min_greek_share", "max_other_share")})
     pages: list[PageQuality] = []
-    with closing(pdfium.PdfDocument(str(path))) as pdf:
+    with pdfium_guard(), closing(pdfium.PdfDocument(str(path))) as pdf:
         for index in range(len(pdf)):
             page = pdf[index]
             try:

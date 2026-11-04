@@ -10,7 +10,7 @@ from glossapi.pdf_repair import rust_backend, tounicode
 
 
 # A fake extension declares the native API level this package needs (K4g fix 3: the selector skips other builds).
-API = {'__glossapi_native_api__': 'GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:1;'}
+API = {'__glossapi_native_api__': 'GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:2;'}  # level 2 since K5-A2
 
 
 class MissingExtension(importlib.abc.MetaPathFinder):

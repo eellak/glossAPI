@@ -95,11 +95,13 @@ def _assembly_id(*, pdf_path: Path, pages: List[int], configuration: Dict[str, A
 
 def _page_count(pdf_path: Path) -> int:
     import pypdfium2
-    pdf = pypdfium2.PdfDocument(pdf_path)
-    try:
-        return len(pdf)
-    finally:
-        pdf.close()
+    from ..pdfium_guard import pdfium_guard
+    with pdfium_guard():
+        pdf = pypdfium2.PdfDocument(pdf_path)
+        try:
+            return len(pdf)
+        finally:
+            pdf.close()
 
 
 def _page_split_comment(page_number: int) -> str:

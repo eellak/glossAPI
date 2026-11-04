@@ -41,6 +41,68 @@ The extraction logic distinguishes between safer extraction behavior and Docling
 
 This matters because Docling is powerful, but not equally stable under all batching and corpus conditions.
 
+## Layout-aware Markdown (layout v2, core install)
+
+The safe backend (the default `phase1_backend='auto'`/`'safe'`) writes layout-aware Markdown without Docling: the
+PDFium plain text in plain order, cut into blocks and labelled by layout v2 (`glossapi.markdown_layout`, Rust in
+`glossapi_rs_pdfrepair`). Labels never change the text and nothing is re-ordered. It needs only the core install
+(pypdfium2 and the `glossapi_rs_pdfrepair` extension at native API level 2); the `layout` extra and its `docling`
+alias are not involved.
+
+`GLOSSAPI_MARKDOWN_LAYOUT` selects the safe backend's Markdown: `layout_v2` (default, extract stage contract 2) or
+`plain` (the plain pages, byte for byte as before; contract 1). The value is part of the extract stage identity.
+
+Rendering rules (`glossapi-layout-md/1`, `markdown_layout/render.py`):
+
+| block | Markdown |
+| --- | --- |
+| page separator | one blank line between non-blank pages, as before (page offsets are in the metadata) |
+| between blocks of a page | one blank line (replaces the block's original whitespace separator) |
+| `title` | `# text` |
+| `section_header` level n | `#` x min(6, n + 1), a space, the text (newlines inside the heading become spaces) |
+| `list_item` | `- text`, unless the text already starts with `-`, `*`, `+`, `1.` or `1)` and a space |
+| `caption`, `footnote`, `table`, `picture`, `formula` | a `<!-- caption -->` (etc.) line, then the text |
+| `page_header`, `page_footer` | a `<!-- page-header -->` / `<!-- page-footer -->` line, then the text (kept) |
+| `paragraph`, unlabelled page | the text |
+
+Text is never escaped. Deleting the added markup and restoring each block's original separator gives the page text
+byte for byte. A page is emitted unlabelled (its text unchanged) when it has no char table, no text layer, a page box
+or font size outside the input contract (`layout_input_rejected`) or the labeller fails on it.
+
+The extract sidecar (`sidecars/extract/<stem>.json`) carries `markdown_layout`: schema, rules, reader (`native` or
+`python`), status (`labelled`, `partial`, `unlabelled`, `unavailable`), per-page and per-block code-point offsets into
+the Markdown with labels and levels, label counts, labeller warnings, rejected pages and the document context.
+
+Reading: each page is loaded once. `layout_v2_read_document` opens the document with Rust-owned PDFium handles and
+returns each page's text (exactly `get_text_range()`) and char table from the same text page. If the native reader is
+unavailable (`LayoutV2ReaderUnavailable`) the text comes from pypdfium2 as before and the char tables from the Python
+reference reader (same bytes, slower); a document or page the native reader cannot open is read the pypdfium2 way,
+with exactly pypdfium2's exceptions. A missing or stale extension gives the plain Markdown.
+
+Reader threat model (K5 policy P7): Documents and public argument values are untrusted; the Python runtime, installed
+dependencies and executable caller code are trusted. The wrapper validates arguments and preserves native handle
+ownership and lifetime. Dependency replacement, forged ctypes state and uncoordinated library teardown are
+unsupported. All PDFium users, initialization and destruction require process-wide coordination; the reader's mutex
+and GIL do not serialize external ctypes calls. Identity checks and self-tests detect accidental incompatibility, not
+malicious substitution. This boundary does not sandbox PDFium or guarantee unlimited resource availability.
+
+Coordination: every glossAPI module that opens a PDF with pypdfium2 does so under `glossapi.pdfium_guard` (one
+re-entrant lock per process, reset in a forked child), and every native read takes the same lock, so no two PDFium
+users overlap in one process. glossAPI never initializes or destroys PDFium: pypdfium2 does at import and at exit.
+
+Docling stays available through `phase1_backend='docling'` and the `layout` extra (alias `docling`) for what layout
+v2 does not replace:
+
+| capability | core (layout v2) | `layout` extra (Docling 2.81) |
+| --- | --- | --- |
+| headings, lists, captions, footnotes, furniture labels | yes (labels on the plain order) | yes (Docling layout model) |
+| text source | PDFium plain text | docling-parse text (transliterates TeX-encoded Greek) |
+| table structure (rows, cells, Markdown tables) | no (table text marked `<!-- table -->`) | yes |
+| math/code enrichment | no | yes (`formula_enrichment`, `code_enrichment`) |
+| Docling JSON (`json/<stem>.docling.json`) | no | yes (`export_doc_json`) |
+| non-PDF conversion | no | yes |
+| GPU | not needed | optional |
+
 ## Font repair pre-pass
 
 `Corpus.extract(..., repair_fonts=True)` enables CPU ToUnicode repair by default

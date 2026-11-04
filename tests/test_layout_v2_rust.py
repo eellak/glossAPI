@@ -388,7 +388,7 @@ def test_no_binding_accepts_pypdfium2_objects_proxies_subclasses_or_handles():
     out = run_child("""
 names = [n for n in dir(m) if not n.startswith("__")]
 assert "layout_v2_read_textpage" not in names and not [n for n in names if "pdfium_functions" in n], names
-assert m.layout_v2_read_document.__text_signature__ == "(source, pages, source_sha256, password=None)"
+assert m.layout_v2_read_document.__text_signature__ == "(source, pages, source_sha256, password=None, chars=True)"  # K5-A2: chars flag
 doc = pdfium.PdfDocument(SAMPLE); page = doc[0]; tp = page.get_textpage()
 tp.raw = ctypes.cast(ctypes.c_void_p(1), type(tp.raw))                 # cycle-2 N1: genuine object, raw = 1
 class Proxy:                                                            # cycle-2 N1: __class__-spoofing proxy
@@ -625,5 +625,5 @@ def test_abi3_extension_imports_on_this_interpreter():
             "print(m.__glossapi_native_api__); print(hasattr(m, 'layout_v2_label_page'))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.splitlines()
     assert any("abi3" in name for name in eval(out[0])), out[0]       # noqa: S307 - our own repr of a list
-    assert out[1] == "GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:1;"     # the package's required level is unchanged
+    assert out[1] == "GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:2;"     # the level K5-A2 requires (layout v2 wired in)
     assert out[2] == "True"
