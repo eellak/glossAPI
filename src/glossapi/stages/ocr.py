@@ -13,22 +13,7 @@ from .execution import failed_result, freeze_inputs, outputs_in, sha256_file
 from .receipts import capture_backend_observations
 
 
-def _native_text_is_glyph_only(inputs):
-    """P4a: True when the native Markdown input (its markup-free text when a layout input describes it, K5-A2b) is
-    entirely glyph-name residue (``corpus.phase_clean.glyph_only``)."""
-    from .clean import LAYOUT_INPUT_KINDS, layout_metadata_of
-    native = next((item for item in inputs if item.kind == 'native_markdown'), None)
-    if native is None:
-        return False
-    text = native.path.read_bytes().decode('utf-8', 'surrogateescape')
-    layout_input = next((item for item in inputs if item.kind in LAYOUT_INPUT_KINDS), None)
-    if layout_input is not None:
-        from ..markdown_layout import markup_free
-        stripped = markup_free(text, layout_metadata_of(layout_input.path))
-        if stripped is not None:
-            text = stripped
-    from ..corpus.phase_clean import glyph_only
-    return glyph_only(text)
+from ..ocr.selection import native_text_is_glyph_only as _native_text_is_glyph_only
 
 
 class OcrStage:
@@ -109,13 +94,8 @@ class OcrStage:
                 else:
                     from ..page_quality import page_quality
                     report = page_quality(source.path,output_dir=root).to_dict()
-                selected_pages = [int(page['page']) for page in report['pages'] if page['page_needs_ocr'] is True]
-                if _native_text_is_glyph_only(request.inputs):
-                    # P4a (K5 quality policy, K5-A2b): a text layer that is entirely glyph names has no readable
-                    # character on any page; the whole document is OCRed (page quality v4 does not route such
-                    # non-Greek symbol pages).
-                    selected_pages = list(range(1, int(report['pages_total'])+1))
-                    glyph_route = True
+                from ..ocr.selection import effective_selection
+                selected_pages, glyph_route = effective_selection(request.inputs, request.settings, report=report)
                 ranges = [[page,page] for page in selected_pages]
                 if not selected_pages:
                     native = next(item for item in request.inputs if item.kind == 'native_markdown')
@@ -132,6 +112,9 @@ class OcrStage:
                                       'ocr_layout' if item.relative_path.startswith('sidecars/ocr_layout/') else 'ocr_metrics',required=True)
                               for item in outputs_in(root) if item.relative_path.startswith(('markdown/','json/metrics/','sidecars/ocr_layout/'))),
                         ({'operation':request.operation,'pages':[],'needs_ocr':False},), {'wall_ns':time.monotonic_ns()-started})
+            else:
+                from ..ocr.selection import effective_selection
+                selected_pages, glyph_route = effective_selection(request.inputs, request.settings)
             destinations = {'native_markdown': root/'markdown'/source.path.with_suffix('.md').name,
                 'ocr_native': root/'sidecars/ocr_native'/source.path.with_suffix('.md').name,
                 'ocr_page_state': root/'sidecars/ocr_pages'/source.path.with_suffix('.json').name,
@@ -174,7 +157,7 @@ class OcrStage:
                 raise ValueError('Required canonical OCR output/metrics missing')
             metrics = json.loads(metrics_path.read_text())
             count = int(metrics['page_count'])
-            selected = (set(selected_pages or ()) if report is not None else
+            selected = (set(selected_pages) if selected_pages is not None else
                 {page for first,last in (request.settings.get('page_ranges') or [(1,count)]) for page in range(int(first), int(last)+1)})
             if configuration.max_pages is not None:
                 selected = {page for page in selected if page <= configuration.max_pages}

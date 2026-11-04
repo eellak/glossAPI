@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from glossapi.pdfium_guard import pdfium_guard
+
 import argparse
 import hashlib
 import json
@@ -80,7 +82,7 @@ def _apply_cli_tuning_overrides(args: argparse.Namespace) -> None:
 def _count_pdf_pages(pdf_path: Path) -> int:
     from contextlib import closing
     import pypdfium2 as pdfium
-    with closing(pdfium.PdfDocument(str(pdf_path))) as pdf:
+    with pdfium_guard(), closing(pdfium.PdfDocument(str(pdf_path))) as pdf:
         return len(pdf)
 
 

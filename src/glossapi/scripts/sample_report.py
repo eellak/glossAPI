@@ -8,6 +8,8 @@ execution, runtime or fidelity. Legacy parquet is enriched in memory only.
 """
 from __future__ import annotations
 
+from glossapi.pdfium_guard import pdfium_guard
+
 from contextlib import closing
 
 import argparse
@@ -41,7 +43,7 @@ def build_report(*, manifest: Path, parquet: Path, pdf_dir: Path, output_dir: Pa
     records = []
     for _, row in frame.sort_values('filename').iterrows():
         name = row.filename
-        with closing(pdfium.PdfDocument(str(pdf_dir / name))) as document:
+        with pdfium_guard(), closing(pdfium.PdfDocument(str(pdf_dir / name))) as document:
             pages = len(document)
         ranges = parse_page_ranges(row.ocr_pages)
         if any(end > pages for _, end in ranges):

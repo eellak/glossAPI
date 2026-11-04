@@ -44,11 +44,13 @@ core = load_core()
 
 def page_count(path):
     import pypdfium2
-    source = pypdfium2.PdfDocument(str(path))
-    try:
-        return len(source)
-    finally:
-        source.close()
+    from glossapi.pdfium_guard import pdfium_guard
+    with pdfium_guard():
+        source = pypdfium2.PdfDocument(str(path))
+        try:
+            return len(source)
+        finally:
+            source.close()
 
 
 # The experiment changes only layout dispatch size. All scientific/model,

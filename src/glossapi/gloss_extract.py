@@ -794,12 +794,10 @@ class GlossExtract:
             from .pdfium_guard import pdfium_guard
             with pdfium_guard():
                 pdf = pdfium.PdfDocument(str(file_path))
-                n = len(pdf)
-                # Explicit close to release resources
                 try:
+                    n = len(pdf)
+                finally:
                     pdf.close()
-                except Exception:
-                    pass
             return int(n)
         except Exception as e:
             self._log.warning(f"Failed to get page count for {file_path}: {e}")
