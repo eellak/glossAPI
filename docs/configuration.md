@@ -11,6 +11,9 @@ This page lists the main knobs you can use to tune GlossAPI.
 
 - `GLOSSAPI_IMAGES_SCALE`: image scale hint for OCR/layout (default ~1.1–1.25).
 - `GLOSSAPI_FORMULA_BATCH`: inline CodeFormula batch size (default `16`).
+- `GLOSSAPI_MARKDOWN_LAYOUT`: the safe backend's Markdown, `layout_v2` (default: layout-aware Markdown from Rust layout
+  v2, no Docling) or `plain` (the plain page text as before K5-A2). Part of the extract stage identity; see
+  [Extract stage](stages/extract.md#layout-aware-markdown-layout-v2-core-install).
 
 ### Batch Policy & PDF Backend
 

@@ -791,13 +791,15 @@ class GlossExtract:
             if file_path.suffix.lower() != ".pdf":
                 return None
             import pypdfium2 as pdfium  # local import to avoid hard dep at import time
-            pdf = pdfium.PdfDocument(str(file_path))
-            n = len(pdf)
-            # Explicit close to release resources
-            try:
-                pdf.close()
-            except Exception:
-                pass
+            from .pdfium_guard import pdfium_guard
+            with pdfium_guard():
+                pdf = pdfium.PdfDocument(str(file_path))
+                n = len(pdf)
+                # Explicit close to release resources
+                try:
+                    pdf.close()
+                except Exception:
+                    pass
             return int(n)
         except Exception as e:
             self._log.warning(f"Failed to get page count for {file_path}: {e}")
@@ -1160,132 +1162,158 @@ class GlossExtract:
         output_dir: Path,
         timeout_dir: Optional[Path] = None,
     ) -> bool:
-        """Minimal PyPDFium-based extraction path for safe mode."""
+        """Safe-mode extraction: one PDFium load per page; layout v2 Markdown (K5-A2).
+
+        Each page's text is production's ``get_text_range()`` text, read with the char table of the same text page
+        through Rust-owned handles (``glossapi.markdown_layout.reader``; pypdfium2 when the native reader cannot be
+        used, with exactly the previous exceptions and text). The text is unchanged. In the default Markdown mode
+        (``GLOSSAPI_MARKDOWN_LAYOUT=layout_v2``) the pages are labelled with layout v2 and rendered by the rules in
+        ``markdown_layout/render.py``; ``plain`` writes the plain pages as before K5-A2. The whole document is read
+        under the process-wide PDFium lock (``glossapi.pdfium_guard``, policy P7).
+        """
         try:
-            import pypdfium2 as pdfium  # type: ignore
+            import pypdfium2 as pdfium  # type: ignore  # noqa: F401
         except ImportError as exc:
             observe("pdf_backend_missing", path=file_path, error=exc, status="failed")
             self._log.error("PyPDFium backend requested but pypdfium2 is not installed: %s", exc)
             return False
+        from . import markdown_layout
+        from .pdfium_guard import pdfium_guard
 
+        layout_mode = markdown_layout.mode()
         file_path = self._prepare_font_repair(Path(file_path), output_dir)
         stem = Path(file_path).stem
         out_md_path = output_dir / f"{stem}.md"
+        labels = layout_mode == "layout_v2"
+        native, native_problem = markdown_layout.native_module() if labels else (None, None)
 
-        try:
-            doc = pdfium.PdfDocument(str(file_path))
-        except Exception as exc:
-            observe("pdf_open_failed", path=file_path, error=exc, status="failed")
-            self._log.error("PyPDFium failed to open %s: %s", Path(file_path).name, exc)
-            self._update_extraction_metadata(output_dir, file_path, "failure", "pypdfium")
-            return False
+        with pdfium_guard():
+            try:
+                source = markdown_layout.open_page_source(Path(file_path), chars=native is not None)
+            except Exception as exc:
+                observe("pdf_open_failed", path=file_path, error=exc, status="failed")
+                self._log.error("PyPDFium failed to open %s: %s", Path(file_path).name, exc)
+                self._update_extraction_metadata(output_dir, file_path, "failure", "pypdfium")
+                return False
+            labeller = (markdown_layout.DocumentLabeller(native) if native is not None and source.reader is not None
+                        else None)
 
-        texts: List[str] = []
-        attempted_pages, succeeded_pages, blank_pages, failed_pages = [], [], [], []
-        page_count = 0
-        try:
-            page_count = len(doc)
-            timeout_budget = self._calculate_text_timeout(
-                file_path=file_path,
-                page_count=page_count,
-                fallback=self.processing_timeout,
-            )
-            timeout_budget = self._remaining_text_timeout(file_path, timeout_budget)
-            deadline = time.monotonic() + timeout_budget
-            for index in range(page_count):
-                attempted_pages.append(index + 1)
-                if time.monotonic() > deadline:
-                    raise TimeoutError(
-                        f"PyPDFium extraction timed out after {timeout_budget}s "
-                        f"while processing {Path(file_path).name}"
-                    )
-                try:
-                    page = doc[index]
+            texts: List[str] = []
+            attempted_pages, succeeded_pages, blank_pages, failed_pages = [], [], [], []
+            page_count = 0
+            try:
+                page_count = source.page_count
+                timeout_budget = self._calculate_text_timeout(
+                    file_path=file_path,
+                    page_count=page_count,
+                    fallback=self.processing_timeout,
+                )
+                timeout_budget = self._remaining_text_timeout(file_path, timeout_budget)
+                deadline = time.monotonic() + timeout_budget
+                for index in range(page_count):
+                    attempted_pages.append(index + 1)
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(
+                            f"PyPDFium extraction timed out after {timeout_budget}s "
+                            f"while processing {Path(file_path).name}"
+                        )
+                    text: Optional[str] = None
                     try:
-                        text_page = page.get_textpage()
-                        try:
-                            content = text_page.get_text_range()
-                        finally:
-                            text_page.close()
-                    finally:
-                        page.close()
-                    text = content.replace("\r\n", "\n").replace("\r", "\n").strip()
-                    succeeded_pages.append(index + 1)
-                    if text:
-                        texts.append(text)
-                    else:
-                        blank_pages.append(index + 1)
-                except Exception as page_exc:
-                    failed_pages.append(index + 1)
-                    observe("safe_page_error", path=file_path, error=page_exc, page=index + 1, coverage="incomplete")
-                    self._log.warning(
-                        "PyPDFium failed on page %d of %s: %s",
-                        index + 1,
-                        Path(file_path).name,
-                        page_exc,
+                        text = markdown_layout.page_text(source.text(index))
+                        succeeded_pages.append(index + 1)
+                        if text:
+                            texts.append(text)
+                        else:
+                            blank_pages.append(index + 1)
+                    except Exception as page_exc:
+                        text = None
+                        failed_pages.append(index + 1)
+                        observe("safe_page_error", path=file_path, error=page_exc, page=index + 1, coverage="incomplete")
+                        self._log.warning(
+                            "PyPDFium failed on page %d of %s: %s",
+                            index + 1,
+                            Path(file_path).name,
+                            page_exc,
+                        )
+                    table = source.chars(index)      # always taken, so a plain-mode read keeps no tables
+                    if labeller is not None:
+                        labeller.add(index + 1, text, table)
+                observe("legacy_observed", path=file_path, page_coverage={"attempted": attempted_pages, "succeeded": succeeded_pages, "blank": blank_pages, "failed": failed_pages}, complete=not failed_pages)
+                layout_metadata = None
+                if labeller is not None:
+                    labelled = labeller.finish(lambda page: source.reread_chars(page - 1))
+                    markdown, layout_metadata = markdown_layout.render_document(labelled, reader=source.reader)
+                    for page, problem in labelled.rejected:
+                        observe("layout_input_rejected", path=file_path, page=page, problem=problem)
+                    if source.reason:
+                        observe("layout_reader_fallback", path=file_path, reader=source.reader, problem=source.reason)
+                else:
+                    markdown = "\n\n".join(texts)
+                    if labels:
+                        problem = native_problem or source.reason or "no char reader"
+                        layout_metadata = markdown_layout.unavailable_metadata(problem)
+                        observe("layout_unavailable", path=file_path, problem=problem)
+                if not markdown:
+                    observe("safe_empty_text", path=file_path, blank_pages=blank_pages)
+                out_md_path.write_text(markdown, encoding="utf-8")
+                self._update_extraction_metadata(
+                    output_dir=output_dir,
+                    src_file=Path(file_path),
+                    status="ok",
+                    extraction_mode="pypdfium",
+                    page_count=page_count,
+                    markdown_layout=layout_metadata,
+                )
+                return True
+            except TimeoutError as exc:
+                observe("extract_timeout", path=file_path, error=exc, status="failed")
+                self._log.error("PyPDFium extraction timeout for %s: %s", Path(file_path).name, exc)
+                try:
+                    self._update_extraction_metadata(
+                        output_dir=output_dir,
+                        src_file=Path(file_path),
+                        status="timeout",
+                        extraction_mode="pypdfium",
+                        page_count=page_count or None,
                     )
-            observe("legacy_observed", path=file_path, page_coverage={"attempted": attempted_pages, "succeeded": succeeded_pages, "blank": blank_pages, "failed": failed_pages}, complete=not failed_pages)
-            markdown = "\n\n".join(texts)
-            if not markdown:
-                observe("safe_empty_text", path=file_path, blank_pages=blank_pages)
-            out_md_path.write_text(markdown, encoding="utf-8")
-            self._update_extraction_metadata(
-                output_dir=output_dir,
-                src_file=Path(file_path),
-                status="ok",
-                extraction_mode="pypdfium",
-                page_count=page_count,
-            )
-            return True
-        except TimeoutError as exc:
-            observe("extract_timeout", path=file_path, error=exc, status="failed")
-            self._log.error("PyPDFium extraction timeout for %s: %s", Path(file_path).name, exc)
-            try:
-                self._update_extraction_metadata(
-                    output_dir=output_dir,
-                    src_file=Path(file_path),
-                    status="timeout",
-                    extraction_mode="pypdfium",
-                    page_count=page_count or None,
-                )
-            except Exception as _error:
-                if _disk_full(_error):
-                    raise
-            if timeout_dir is not None:
-                try:
-                    copy2(file_path, timeout_dir / Path(file_path).name)
                 except Exception as _error:
                     if _disk_full(_error):
                         raise
-            return False
-        except Exception as exc:
-            if _disk_full(exc):
-                raise
-            observe("extract_exception", path=self._original_extract_file(Path(file_path)), error=exc, status="failed")
-            self._log.error("PyPDFium extraction failed for %s: %s", Path(file_path).name, exc)
-            try:
-                self._update_extraction_metadata(
-                    output_dir=output_dir,
-                    src_file=Path(file_path),
-                    status="failure",
-                    extraction_mode="pypdfium",
-                    page_count=page_count or None,
-                )
-            except Exception as _error:
-                if _disk_full(_error):
+                if timeout_dir is not None:
+                    try:
+                        copy2(file_path, timeout_dir / Path(file_path).name)
+                    except Exception as _error:
+                        if _disk_full(_error):
+                            raise
+                return False
+            except Exception as exc:
+                if _disk_full(exc):
                     raise
-            if timeout_dir is not None:
+                observe("extract_exception", path=self._original_extract_file(Path(file_path)), error=exc, status="failed")
+                self._log.error("PyPDFium extraction failed for %s: %s", Path(file_path).name, exc)
                 try:
-                    copy2(file_path, timeout_dir / Path(file_path).name)
+                    self._update_extraction_metadata(
+                        output_dir=output_dir,
+                        src_file=Path(file_path),
+                        status="failure",
+                        extraction_mode="pypdfium",
+                        page_count=page_count or None,
+                    )
                 except Exception as _error:
                     if _disk_full(_error):
                         raise
-            return False
-        finally:
-            try:
-                doc.close()
-            except Exception:
-                pass
+                if timeout_dir is not None:
+                    try:
+                        copy2(file_path, timeout_dir / Path(file_path).name)
+                    except Exception as _error:
+                        if _disk_full(_error):
+                            raise
+                return False
+            finally:
+                try:
+                    source.close()
+                except Exception:
+                    pass
 
     def _update_extraction_metadata(
         self,
@@ -1300,8 +1328,12 @@ class GlossExtract:
         chunk_manifest_path: Optional[Path] = None,
         *,
         no_partial_output: bool = False,
+        markdown_layout: Optional[dict] = None,
     ) -> None:
-        """Write extraction metadata to sidecar (eliminate in-worker parquet writes)."""
+        """Write extraction metadata to sidecar (eliminate in-worker parquet writes).
+
+        ``markdown_layout``: the safe extractor's layout v2 metadata (``glossapi.markdown_layout.render``), stored
+        under that key; absent (and removed) otherwise, so a plain-mode or Docling sidecar is unchanged."""
         reason_code = ("extract_completed" if status in ("ok", "success") else "extract_timeout" if status == "timeout" else "extract_exception" if extraction_mode == "pypdfium" else "chunk_assembly_failed" if extraction_mode == "chunked" else "docling_partial" if status == "partial" else "docling_failed")
         observe(reason_code, path=self._original_extract_file(Path(src_file)), status="ok" if status in ("ok", "success") else "failed", backend_status=status, extraction_mode=extraction_mode, page_count=page_count, no_partial_output=no_partial_output)
         try:
@@ -1346,6 +1378,9 @@ class GlossExtract:
             data.pop("no_partial_output", None)
             if no_partial_output:
                 data["no_partial_output"] = True
+            data.pop("markdown_layout", None)
+            if markdown_layout is not None:
+                data["markdown_layout"] = markdown_layout
             import json as _json
             p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception as e:

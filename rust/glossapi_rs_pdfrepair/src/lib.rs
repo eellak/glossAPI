@@ -724,8 +724,11 @@ pub fn repair(src: &str, dst: &str) -> RepairResult {
 /// starts to rely on a new or changed export; `glossapi.capabilities.NATIVE_API_LEVELS` names the level it needs, and
 /// reads these bytes from the built binary without importing it. Level 1 (K4g fix 3): an OS-level I/O failure raises
 /// `OSError` with its errno instead of returning a `ValueError` text; the repair selector does not use an older build.
+/// Level 2 (K5-A2): the package's Markdown uses layout v2 (`layout_v2_read_document`, `LayoutV2ContextBuilder`,
+/// `layout_v2_input_problem`, `layout_v2_label_page`); `glossapi.markdown_layout` refuses an older build and emits
+/// unlabelled Markdown, and the repair selector uses the Python reference.
 /// Exported to Python as `__glossapi_native_api__`, which also keeps the bytes in the binary.
-pub const NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:1;";
+pub const NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:2;";
 #[cfg(all(feature = "python", not(test)))]
 mod python {
     use super::*;
@@ -818,7 +821,7 @@ mod python {
         let s = text::native_sample(&mut pdf).map_err(py_err)?;
         serde_json::to_string(&s).map_err(|e| PyValueError::new_err(e.to_string()))
     }
-    // ---- layout v2 (K5-A1): labels on the plain PDFium order; not used by the package yet --------------------------
+    // ---- layout v2 (K5-A1, wired into the safe Markdown in K5-A2 through glossapi.markdown_layout) -------------------
     /// Document context of layout v2 (body size, heading sizes, repeated furniture), from `layout_v2_context`.
     #[pyclass(module = "glossapi_rs_pdfrepair", frozen)]
     struct LayoutV2Context(layout::DocContext);
@@ -870,6 +873,42 @@ mod python {
             })
             .map_err(layout_err)?;
         Ok(LayoutV2Context(ctx))
+    }
+    /// `LayoutV2ContextBuilder()`: the document pass fed one page at a time (`add(page_no, k5chars bytes)` in
+    /// page-number order, then `finish()`); equal to `layout_v2_context` over the same pages in the same order, and
+    /// it keeps no page geometry (K5-A2 bounded memory). The GIL is released while a page is added.
+    #[pyclass(module = "glossapi_rs_pdfrepair")]
+    struct LayoutV2ContextBuilder(layout::ContextBuilder);
+    #[pymethods]
+    impl LayoutV2ContextBuilder {
+        #[new]
+        fn new() -> Self {
+            LayoutV2ContextBuilder(layout::ContextBuilder::default())
+        }
+        fn add(&mut self, py: Python<'_>, page_no: i64, table: Bound<'_, pyo3::types::PyBytes>) -> PyResult<()> {
+            let data = table.as_bytes();
+            let b = &mut self.0;
+            py.detach(|| -> anyhow::Result<()> {
+                let t = layout::k5chars::parse(data)?;
+                let g = layout::page_geo(&layout::fixture_text(&t), &t)?;
+                b.add(page_no, &g)
+            })
+            .map_err(layout_err)
+        }
+        #[getter]
+        fn added(&self) -> usize {
+            self.0.added()
+        }
+        fn finish(&self) -> PyResult<LayoutV2Context> {
+            Ok(LayoutV2Context(self.0.finish().map_err(layout_err)?))
+        }
+    }
+    /// `layout_v2_input_problem(k5chars bytes) -> str | None`: why the table is outside the exact-parity contract
+    /// (K5A1-G3: a non-finite or oversized page box, a non-finite font size or char angle), or `None`.
+    #[pyfunction]
+    fn layout_v2_input_problem(table: Bound<'_, pyo3::types::PyBytes>) -> PyResult<Option<String>> {
+        let t = layout::k5chars::parse(table.as_bytes()).map_err(layout_err)?;
+        Ok(layout::input_problem(&t))
     }
     /// `layout_v2_label_page(plain, k5chars bytes, ctx, page_no) -> (rotation, warnings, lines, blocks, markdown)`.
     /// lines: `[(start, end)]` code-point offsets of the line pieces; blocks: `[(start, end, label, level, rotated,
@@ -955,6 +994,8 @@ mod python {
         m.add_class::<LayoutV2Context>()?;
         m.add_function(wrap_pyfunction!(layout_v2_context, m)?)?;
         m.add_function(wrap_pyfunction!(layout_v2_label_page, m)?)?;
+        m.add_class::<LayoutV2ContextBuilder>()?;
+        m.add_function(wrap_pyfunction!(layout_v2_input_problem, m)?)?;
         crate::layout_reader_py::register(m)?;
         m.add_function(wrap_pyfunction!(_layout_v2_probe, m)?)?;
         m.add_function(wrap_pyfunction!(_layout_v2_round2, m)?)?;

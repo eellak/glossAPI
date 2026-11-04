@@ -28,7 +28,14 @@ _worker_extractors = {}
 
 class ExtractStage:
     name = "extract"
-    contract_version = 1
+
+    @property
+    def contract_version(self):
+        """2: the safe backend's raw Markdown carries layout v2 labels (K5-A2, ``glossapi.markdown_layout``);
+        1: ``GLOSSAPI_MARKDOWN_LAYOUT=plain``, the plain pages as before. The mode is part of the stage identity, so
+        a corpus never reuses an extraction made in the other mode."""
+        from ..markdown_layout import mode
+        return 2 if mode() == "layout_v2" else 1
 
     def packages(self, specification):
         requirements = [PackageRequirement("core", ("pypdfium2>=4.30,<5", "ftfy>=6.0.0", "zstandard>=0.22.0"))]

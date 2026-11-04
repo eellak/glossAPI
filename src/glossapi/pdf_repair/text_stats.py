@@ -7,6 +7,7 @@ import re
 import unicodedata
 from typing import Any
 import pypdfium2 as pdfium
+from ..pdfium_guard import pdfium_guard
 
 
 def _is_greek(char: str) -> bool:
@@ -62,7 +63,7 @@ def extract_text_stats(path: str | Path, max_pages: int | None = None, *,
     words = (frozenset(unicodedata.normalize("NFC", word).casefold() for word in word_set)
              if word_set is not None else _load_words(str(Path(dictionary).expanduser().resolve())) if dictionary else None)
     pages = []
-    with closing(pdfium.PdfDocument(str(path))) as pdf:
+    with pdfium_guard(), closing(pdfium.PdfDocument(str(path))) as pdf:
         count = len(pdf) if max_pages is None else min(max_pages, len(pdf))
         for index in range(count):
             stats = _text_stats(_page_text(pdf, index), words)

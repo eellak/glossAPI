@@ -189,3 +189,41 @@ fn degenerate_pages_do_not_panic() {
     inf.page_w = f64::INFINITY;
     assert!(label_page("x", &inf, &ctx, 1).is_err());
 }
+
+#[test]
+fn context_builder_equals_the_document_pass() {
+    let pages: Vec<(i64, PageGeo)> = (1..=5)
+        .map(|p| {
+            let mut t = sample();
+            t.page = p as u32;
+            (p, page_geo(&fixture_text(&t), &t).unwrap())
+        })
+        .collect();
+    let want = document_context(&pages).unwrap();
+    let mut b = ContextBuilder::default();
+    for (p, g) in &pages {
+        b.add(*p, g).unwrap();
+    }
+    let got = b.finish().unwrap();
+    assert_eq!(b.added(), 5);
+    assert_eq!((got.body, &got.heading_sizes, got.pages), (want.body, &want.heading_sizes, want.pages));
+    let sig = |c: &DocContext| c.furniture.iter().map(|f| (f.band.name(), f.signature.clone(), f.y, f.pages)).collect::<Vec<_>>();
+    assert_eq!(sig(&got), sig(&want));
+}
+
+#[test]
+fn input_contract_rejects_non_finite_sizes_angles_and_page_boxes() {
+    assert_eq!(input_problem(&sample()), None);
+    let mut t = sample();
+    t.size[0] = f32::NAN;
+    assert!(input_problem(&t).unwrap().contains("font size"));
+    let mut t = sample();
+    t.angle[1] = f32::INFINITY;
+    assert!(input_problem(&t).unwrap().contains("angle"));
+    let mut t = sample();
+    t.page_h = f64::NAN;
+    assert!(input_problem(&t).unwrap().contains("page box"));
+    let mut t = sample();
+    t.page_w = 2e7;
+    assert!(input_problem(&t).unwrap().contains("page box"));
+}

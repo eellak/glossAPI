@@ -697,78 +697,127 @@ type Occurrences = ((Band, Vec<char>), Vec<(i64, f64)>);
 
 /// geos: the document's sampled pages in the reference's dict order (the arm sorts by page number).
 pub fn document_context(geos: &[(i64, PageGeo)]) -> Result<DocContext> {
-    let mut sizes = FMap::default();
-    for (_, g) in geos {
-        for ln in g.lines.iter().filter(|l| l.geo()) {
-            sizes.add(size_key(ln.size)?, ln.n);
-        }
+    let mut b = ContextBuilder::default();
+    for (pg, g) in geos {
+        b.add(*pg, g)?;
     }
-    let body = sizes.mode().unwrap_or(10.0);
-    let mut hs = FMap::default();
-    for (_, g) in geos {
+    b.finish()
+}
+
+/// The reference's document pass, fed one page at a time (K5-A2: production adds the document's context pages in
+/// page-number order and keeps no page geometry). Every quantity of `document_context` is a sum or an ordered list
+/// over the pages, except the heading-size filter, which needs the body size: each page keeps the sizes of its
+/// heading-shaped lines (width and letter conditions) and the size filter runs in `finish`. Adding the pages of
+/// `geos` in order and calling `finish` equals the reference's pass over `geos`, including its errors (`size_key` of
+/// a non-finite size on a geometric line).
+#[derive(Default)]
+pub struct ContextBuilder {
+    sizes: FMap,
+    heading_candidates: Vec<f64>,
+    texted: Vec<i64>,
+    occ: Vec<Occurrences>,
+    occ_ix: HashMap<(u8, Vec<char>), usize>,
+    added: usize,
+}
+
+impl ContextBuilder {
+    pub fn add(&mut self, pg: i64, g: &PageGeo) -> Result<()> {
+        for ln in g.lines.iter().filter(|l| l.geo()) {
+            self.sizes.add(size_key(ln.size)?, ln.n);
+        }
         for ln in &g.lines {
-            if ln.geo()
-                && HEADING * body <= ln.size
-                && ln.size <= 4.0 * body
-                && ln.x1 - ln.x0 <= 0.7 * g.w(ln)
-                && g.text(ln).iter().filter(|&&c| is_alpha(c)).count() >= 3
-            {
-                hs.add(size_key(ln.size)?, 1);
+            if ln.geo() && ln.x1 - ln.x0 <= 0.7 * g.w(ln) && g.text(ln).iter().filter(|&&c| is_alpha(c)).count() >= 3 {
+                self.heading_candidates.push(ln.size);
             }
         }
-    }
-    let mut heading_sizes: Vec<f64> = hs.0.iter().map(|e| e.0).collect();
-    heading_sizes.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-    heading_sizes.truncate(3);
-    let texted: Vec<i64> = geos.iter().filter(|(_, g)| g.lines.iter().any(|l| l.geo())).map(|(p, _)| *p).collect();
-    let need = FURN_MIN.max((FURN_SHARE * texted.len() as f64).ceil() as usize);
-    let need_par: Vec<usize> = (0..2)
-        .map(|k| {
-            let c = texted.iter().filter(|&&pg| pg.rem_euclid(2) == k).count();
-            FURN_MIN.max((FURN_SHARE * c as f64).ceil() as usize)
-        })
-        .collect();
-    let mut occ: Vec<Occurrences> = Vec::new();
-    let mut occ_ix: HashMap<(u8, Vec<char>), usize> = HashMap::new();
-    for (pg, g) in geos {
+        if g.lines.iter().any(|l| l.geo()) {
+            self.texted.push(pg);
+        }
         for ln in &g.lines {
             if ln.geo() && !strip(g.text(ln)).is_empty() {
                 if let Some(band) = band_of(ln, g) {
                     let sig = norm_sig(g.text(ln));
                     let key = (band as u8, sig.clone());
-                    let ix = *occ_ix.entry(key).or_insert_with(|| {
+                    let occ = &mut self.occ;
+                    let ix = *self.occ_ix.entry(key).or_insert_with(|| {
                         occ.push(((band, sig), Vec::new()));
                         occ.len() - 1
                     });
-                    occ[ix].1.push((*pg, ln.yc()));
+                    self.occ[ix].1.push((pg, ln.yc()));
                 }
             }
         }
+        self.added += 1;
+        Ok(())
     }
-    // sorted(occ.items()): by (band name, signature) in code point order
-    occ.sort_by(|a, b| (a.0 .0.name(), &a.0 .1).cmp(&(b.0 .0.name(), &b.0 .1)));
-    let mut furniture = Vec::new();
-    for ((band, sig), lst) in &occ {
-        let mut seen: Vec<f64> = Vec::new();
-        for &(pg, yc) in lst {
-            let mut pages: Vec<i64> = lst.iter().filter(|(_, y)| (y - yc).abs() <= FURN_TOL).map(|(p, _)| *p).collect();
-            pages.sort_unstable();
-            pages.dedup();
-            let same = pages.iter().filter(|&&p| p.rem_euclid(2) == pg.rem_euclid(2)).count();
-            if (pages.len() >= need || same >= need_par[pg.rem_euclid(2) as usize])
-                && !seen.iter().any(|&y| (yc - y).abs() <= 0.01)
-            {
-                seen.push(yc);
-                furniture.push(Furniture {
-                    band: *band,
-                    signature: sig.iter().collect(),
-                    y: round2(yc),
-                    pages: pages.len(),
-                });
+
+    /// Pages added so far.
+    pub fn added(&self) -> usize {
+        self.added
+    }
+
+    pub fn finish(&self) -> Result<DocContext> {
+        let body = self.sizes.mode().unwrap_or(10.0);
+        let mut hs = FMap::default();
+        for &size in &self.heading_candidates {
+            if HEADING * body <= size && size <= 4.0 * body {
+                hs.add(size_key(size)?, 1);
             }
         }
+        let mut heading_sizes: Vec<f64> = hs.0.iter().map(|e| e.0).collect();
+        heading_sizes.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        heading_sizes.truncate(3);
+        let texted = &self.texted;
+        let need = FURN_MIN.max((FURN_SHARE * texted.len() as f64).ceil() as usize);
+        let need_par: Vec<usize> = (0..2)
+            .map(|k| {
+                let c = texted.iter().filter(|&&pg| pg.rem_euclid(2) == k).count();
+                FURN_MIN.max((FURN_SHARE * c as f64).ceil() as usize)
+            })
+            .collect();
+        // sorted(occ.items()): by (band name, signature) in code point order
+        let mut occ: Vec<&Occurrences> = self.occ.iter().collect();
+        occ.sort_by(|a, b| (a.0 .0.name(), &a.0 .1).cmp(&(b.0 .0.name(), &b.0 .1)));
+        let mut furniture = Vec::new();
+        for ((band, sig), lst) in occ {
+            let mut seen: Vec<f64> = Vec::new();
+            for &(pg, yc) in lst {
+                let mut pages: Vec<i64> = lst.iter().filter(|(_, y)| (y - yc).abs() <= FURN_TOL).map(|(p, _)| *p).collect();
+                pages.sort_unstable();
+                pages.dedup();
+                let same = pages.iter().filter(|&&p| p.rem_euclid(2) == pg.rem_euclid(2)).count();
+                if (pages.len() >= need || same >= need_par[pg.rem_euclid(2) as usize])
+                    && !seen.iter().any(|&y| (yc - y).abs() <= 0.01)
+                {
+                    seen.push(yc);
+                    furniture.push(Furniture {
+                        band: *band,
+                        signature: sig.iter().collect(),
+                        y: round2(yc),
+                        pages: pages.len(),
+                    });
+                }
+            }
+        }
+        Ok(DocContext { body, heading_sizes, furniture, pages: texted.len() })
     }
-    Ok(DocContext { body, heading_sizes, furniture, pages: texted.len() })
+}
+
+/// K5A1-G3 input contract (K5-A2): the reason a table is outside the exact-parity contract, or `None`. The page box
+/// must be finite and at most 1e7 pt (as `page_geo` requires), and every char's font size and angle must be finite
+/// (the reference raises on a non-finite angle and sorts non-finite sizes differently). Production emits such a page
+/// unlabelled with a `layout_input_rejected` warning and keeps it out of the document pass; its text is unchanged.
+pub fn input_problem(t: &CharTable) -> Option<String> {
+    if let Err(e) = check_table(t) {
+        return Some(e.to_string().trim_start_matches("ValueError: ").to_string());
+    }
+    if let Some(i) = t.size.iter().position(|s| !s.is_finite()) {
+        return Some(format!("char {i} has a non-finite font size {}", t.size[i]));
+    }
+    if let Some(i) = t.angle.iter().position(|a| !a.is_finite()) {
+        return Some(format!("char {i} has a non-finite angle {}", t.angle[i]));
+    }
+    None
 }
 
 // ---- per page: furniture, tables, blocks, labels -------------------------------------------------------------------

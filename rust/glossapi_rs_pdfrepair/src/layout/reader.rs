@@ -186,9 +186,9 @@ impl Drop for TextPage<'_> {
     }
 }
 
-/// One page read: the char table and the page text (production's `get_text_range()`).
+/// One page read: the char table (`None` when not requested) and the page text (production's `get_text_range()`).
 pub struct PageRead {
-    pub chars: CharTable,
+    pub chars: Option<CharTable>,
     pub text: String,
 }
 
@@ -267,9 +267,10 @@ impl Document<'_, '_> {
         unsafe { (self.f.page_count)(self.raw) }
     }
 
-    /// Read page `index` (0-based): load page and text page, read chars, page geometry and the production text,
-    /// close both (guards, also on error).
-    pub fn read_page(&self, index: i32, page_no: u32) -> std::result::Result<PageRead, String> {
+    /// Read page `index` (0-based): load page and text page, read chars and page geometry (when `chars`) and the
+    /// production text, close both (guards, also on error). `chars = false` (K5-A2: the plain Markdown mode) reads
+    /// the text only, on the same calls in the same order as with chars.
+    pub fn read_page(&self, index: i32, page_no: u32, chars: bool) -> std::result::Result<PageRead, String> {
         let f = self.f;
         // SAFETY: the document is open for this guard's lifetime; page and text page are closed by their guards in
         // reverse order before this function returns.
@@ -285,8 +286,12 @@ impl Document<'_, '_> {
         }
         OPENED[2].fetch_add(1, Ordering::SeqCst);
         let tp = TextPage { f, raw: tp_raw };
-        let (w, h, rotation) = unsafe { f.page_geometry(page.raw) }.map_err(|e| e.to_string())?;
-        let chars = unsafe { f.read_chars(tp.raw, w, h, rotation, page_no) }.map_err(|e| e.to_string())?;
+        let chars = if chars {
+            let (w, h, rotation) = unsafe { f.page_geometry(page.raw) }.map_err(|e| e.to_string())?;
+            Some(unsafe { f.read_chars(tp.raw, w, h, rotation, page_no) }.map_err(|e| e.to_string())?)
+        } else {
+            None
+        };
         let text = unsafe { f.bounded_text(page.raw, tp.raw) }?;
         drop(tp);
         drop(page);

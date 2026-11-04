@@ -112,6 +112,9 @@ def test_safe_page_failure_is_warning_with_incomplete_coverage(tmp_path, monkeyp
         def close(self):
             pass
     monkeypatch.setattr(pypdfium2, "PdfDocument", FakePdf)
+    # The pypdfium2 page reader (the native reader is tested in test_markdown_layout.py).
+    from glossapi.markdown_layout import reader
+    monkeypatch.setattr(reader, "_native_state", (None, "test: pypdfium2 reader"))
     source = simple_pdf(tmp_path/"source.pdf")
     task = request(tmp_path, source); task.work_directory.mkdir()
     result = ExtractStage().run_prepared(task, extractor=prepared_extractor(), reporter=ReceiptCollector())

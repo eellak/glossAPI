@@ -12,11 +12,12 @@ from contextlib import closing
 import json
 from pathlib import Path
 import pypdfium2 as pdfium
+from ..pdfium_guard import pdfium_guard
 
 
 def _sample_json(path: str) -> str:
     """PDFium reference text-presence sample (not on the default path; see module docstring)."""
-    with closing(pdfium.PdfDocument(path)) as pdf:
+    with pdfium_guard(), closing(pdfium.PdfDocument(path)) as pdf:
         count = len(pdf)
         indexes = (sorted({round(i * (count - 1) / (min(count, 8) - 1))
                            for i in range(min(count, 8))})

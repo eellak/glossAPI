@@ -15,6 +15,16 @@
 //!   throughout. Nothing is released to Python while a handle is open. PDFium is not thread-safe across documents
 //!   within one process, so callers must not drive PDFium through pypdfium2 from other threads during a native read.
 //!   That is pypdfium2's own rule; any such call already in flight with the GIL released is outside this lock.
+//!   glossAPI's own PDFium users and this reader share one process-wide lock (`glossapi.pdfium_guard.PDFIUM_LOCK`,
+//!   taken by `glossapi.markdown_layout` around every call), which closes that gap inside the package (K5-A2).
+//!
+//! **Threat model (K5 quality policy P7, decision DECIDE-reader-threat-model, 4 Nov 2026).** Documents and public
+//! argument values are untrusted; the Python runtime, installed dependencies and executable caller code are trusted.
+//! The wrapper validates arguments and preserves native handle ownership and lifetime. Dependency replacement, forged
+//! ctypes state and uncoordinated library teardown are unsupported. All PDFium users, initialization and destruction
+//! require process-wide coordination; the reader's mutex and GIL do not serialize external ctypes calls. Identity
+//! checks and self-tests detect accidental incompatibility, not malicious substitution. This boundary does not sandbox
+//! PDFium or guarantee unlimited resource availability.
 use crate::layout::k5chars;
 use crate::layout::reader::{self, PdfiumText, Source, PDFIUM_FUNCTIONS};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
@@ -164,14 +174,14 @@ fn selftest(py: Python<'_>, text: &PdfiumText) -> PyResult<Result<usize, String>
             Err(e) => return Ok(Err(e)),
         };
         let pages = doc.page_count();
-        (doc.read_page(0, 1), pages)
+        (doc.read_page(0, 1, true), pages)
     };
     let (page, pages) = got;
     let page = match page {
         Ok(p) => p,
         Err(e) => return Ok(Err(e)),
     };
-    let t = &page.chars;
+    let Some(t) = &page.chars else { return Ok(Err("the self-test read returned no chars".into())) };
     if pages as i64 != geometry.3 || page.text != want_text || page.text != SELFTEST_TEXT {
         return Ok(Err(format!("pages {pages}/{} text {:?}/{want_text:?}", geometry.3, page.text)));
     }
@@ -224,8 +234,9 @@ fn resolved(py: Python<'_>) -> PyResult<&'static Resolved> {
     Ok(r)
 }
 
-/// `layout_v2_read_document(source, pages, source_sha256, password=None) -> (page_count, [(page_no, chars, text,
-/// error)])`.
+/// `layout_v2_read_document(source, pages, source_sha256, password=None, chars=True) -> (page_count, [(page_no, chars,
+/// text, error)])`. `chars=False` (K5-A2, plain Markdown mode) returns `None` for every char table and reads the text
+/// only.
 ///
 /// `source` is a path (exact `str`) or the document (exact `bytes`). `pages` are 1-based page numbers. Per page:
 /// - `chars` is the `.k5chars` table (the K5c reader's fields, byte for byte);
@@ -236,13 +247,14 @@ fn resolved(py: Python<'_>) -> PyResult<&'static Resolved> {
 /// error name) or a page number is out of range, and `LayoutV2ReaderUnavailable` if the loaded PDFium fails the
 /// identity or self-test checks.
 #[pyfunction]
-#[pyo3(signature = (source, pages, source_sha256, password=None))]
+#[pyo3(signature = (source, pages, source_sha256, password=None, chars=true))]
 pub fn layout_v2_read_document<'py>(
     py: Python<'py>,
     source: Bound<'py, PyAny>,
     pages: Vec<i64>,
     source_sha256: &[u8],
     password: Option<Bound<'py, PyAny>>,
+    chars: bool,
 ) -> PyResult<(i32, Bound<'py, PyList>)> {
     let sha: [u8; 32] = source_sha256.try_into().map_err(|_| PyValueError::new_err("source_sha256 must be 32 bytes"))?;
     let password = match password {
@@ -283,14 +295,14 @@ pub fn layout_v2_read_document<'py>(
             return Err(LayoutV2DocumentError::new_err(format!("page {bad} is out of range 1..{count}")));
         }
         let reads: Vec<(i64, Result<reader::PageRead, String>)> =
-            pages.iter().map(|&p| (p, doc.read_page((p - 1) as i32, p as u32))).collect();
+            pages.iter().map(|&p| (p, doc.read_page((p - 1) as i32, p as u32, chars))).collect();
         drop(doc);
         (count, reads)
     };
     let out = PyList::empty(py);
     for (p, read) in reads {
         match read {
-            Ok(pr) => out.append((p, PyBytes::new(py, &k5chars::dump(&pr.chars, &sha)), pr.text, None::<String>))?,
+            Ok(pr) => out.append((p, pr.chars.map(|t| PyBytes::new(py, &k5chars::dump(&t, &sha))), pr.text, None::<String>))?,
             Err(e) => out.append((p, None::<Bound<'_, PyBytes>>, None::<String>, e))?,
         }
     }

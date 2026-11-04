@@ -36,6 +36,7 @@ with optional_dependencies("font-repair"):
     from pypdf import PdfReader, PdfWriter
     from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 import pypdfium2 as pdfium
+from ..pdfium_guard import pdfium_guard
 
 
 from .reports import FontReport, PdfFontReport, RepairResult
@@ -361,7 +362,7 @@ def _page_text(pdf: Any, index: int) -> str:
 
 def _sample_text(path: str | Path) -> tuple[int, list[int], bool]:
     """Sample up to eight evenly spread pages and close all PDFium handles."""
-    with closing(pdfium.PdfDocument(str(path))) as pdf:
+    with pdfium_guard(), closing(pdfium.PdfDocument(str(path))) as pdf:
         count = len(pdf)
         indexes = sorted({round(i * (count - 1) / (min(count, 8) - 1)) for i in range(min(count, 8))}) if count > 1 else list(range(count))
         has_text = False

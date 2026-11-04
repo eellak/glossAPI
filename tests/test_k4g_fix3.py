@@ -32,7 +32,7 @@ from test_pdf_font_repair import greek_fixture  # noqa: F401  (module fixture)
 
 REPO = Path(__file__).resolve().parents[1]
 CONTROL = REPO / 'samples' / 'lightweight_pdf_corpus' / 'pdfs' / 'alpha.pdf'
-API = 'GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:1;'
+API = 'GLOSSAPI_NATIVE_API:glossapi_rs_pdfrepair:2;'  # K5-A2 raised the level (layout v2 exports)
 
 FAULT = textwrap.dedent('''
     import os
@@ -338,6 +338,6 @@ def test_pdfrepair_level_is_reported_and_matches_the_crate():
     assert re.findall(r'NATIVE_API_MARKER: &str = "GLOSSAPI_NATIVE_API:([a-z_]+):(\d+);"', source) == [
         ('glossapi_rs_pdfrepair', str(NATIVE_API_LEVELS['glossapi_rs_pdfrepair']))]
     row = native_module_status('glossapi_rs_pdfrepair', False)
-    assert row['required'] is False and row['required_api_level'] == 1
+    assert row['required'] is False and row['required_api_level'] == 2
     if importlib.util.find_spec('glossapi_rs_pdfrepair') is not None:
-        assert row['status'] == 'present' and row['api_level'] == 1, row
+        assert row['status'] == 'present' and row['api_level'] == 2, row

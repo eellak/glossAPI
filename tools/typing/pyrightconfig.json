@@ -37,7 +37,12 @@
     "../../src/glossapi/stages/run.py",
     "../../src/glossapi/stages/scheduler.py",
     "../../src/glossapi/stages/sections.py",
-    "../../src/glossapi/stages/sequential.py"
+    "../../src/glossapi/stages/sequential.py",
+    "../../src/glossapi/pdfium_guard.py",
+    "../../src/glossapi/markdown_layout/__init__.py",
+    "../../src/glossapi/markdown_layout/reader.py",
+    "../../src/glossapi/markdown_layout/labels.py",
+    "../../src/glossapi/markdown_layout/render.py"
   ],
   "strict": [
     "../../src/glossapi/capabilities.py",
