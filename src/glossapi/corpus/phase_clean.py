@@ -2930,7 +2930,7 @@ def _attach_page_quality_routes(df: pd.DataFrame, metrics_dir: Path) -> pd.DataF
                 raise ValueError("Page-quality filename differs from metadata")
             profile = payload.get("rule_profile", "v2")
             folded = payload.get("fold_validity", False)
-            if profile not in ("v2", "v3", "v4", "v5") or not isinstance(folded, bool):
+            if profile not in ("v2", "v3", "v4", "v5", "v6") or not isinstance(folded, bool):
                 raise ValueError("Invalid page-quality rule profile or validity mode")
             result.at[index, "ocr_pages"] = ranges
             result.at[index, "ocr_pages_count"] = count

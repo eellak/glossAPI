@@ -60,6 +60,24 @@ certify all Latin-script languages, technical notation or Greek hidden behind
 Latin font encodings; qualification and rendered-page review determine whether
 this profile is suitable for a corpus.
 
+Experimental `v6` extends this measurement to English, French, German, Italian
+Spanish and Portuguese. It chooses one language per page by the greatest dictionary token
+hit rate (ties: en, fr, de, it, es, pt), then applies the same 40% validity bar.
+The additional Moby Language II vocabularies are public-domain surface lists;
+Portuguese uses OWN-PT one-word lemmas (CC BY 4.0) plus MIT function words;
+source hashes, normalization and notices ship beside the lists. They add no
+runtime dependency or language model. Rates are exact vocabulary measurements,
+not probabilities or proof of the page's physical language.
+
+The v6 check requires at least 50 characters, 10 Latin tokens and 80% Latin
+letters among Greek plus Latin letters. Shorter and substantially mixed-script
+pages retain v4 routing; Greek validity is never measured with a Latin list.
+All candidate-language rates, the selected language, token count, applicability
+and guards are recorded per page. ORP-style Latin-encoded Greek can still fail
+all vocabularies, which is useful for bad-layer detection but is not evidence
+that the physical page is English. v4 stays the default; v5 remains available
+with its original English-only behavior.
+
 Successful OCR updates canonical Markdown, metrics, `text`, `ocr_success`,
 `needs_ocr`, `extraction_mode="docling"`, and OCR artifact pointers/hashes in parquet,
 then refreshes the OCR cleaner and score-only cleaner.
