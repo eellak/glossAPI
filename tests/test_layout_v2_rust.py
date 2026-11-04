@@ -295,99 +295,141 @@ def read_chars_reference(raw, tp, page_w, page_h, rotation, page_no, sha):
     return t
 
 
-def test_native_reader_equals_reference_reader(tmp_path):
-    pdfium = pytest.importorskip("pypdfium2")
-    import pypdfium2.raw as raw
+REPO = Path(__file__).resolve().parents[1]
+SAMPLE = REPO / "samples/lightweight_pdf_corpus/pdfs/alpha.pdf"
+SELFTEST = REPO / "rust/glossapi_rs_pdfrepair/fixtures/layout_selftest.pdf"
+
+
+def _reader_pdf(path, pages=3):
     from pdf_fixtures import FixturePdf
     fx = FixturePdf()
-    for k, (w, h, rot) in enumerate([(595, 842, 0), (842, 595, 90), (612, 792, 270)]):
+    for k in range(pages):
+        w, h, rot = [(595, 842, 0), (842, 595, 90), (612, 792, 270)][k % 3]
         page = fx.new_page(w, h)
-        fx.insert_text(page, (72, 80), "1. Introduction to the subject", fontsize=16)
+        fx.insert_text(page, (72, 80), f"{k + 1}. Introduction to the subject", fontsize=16)
         fx.insert_text(page, (72, 120), "A line of running text that goes to the margin.\nThe second line.\n"
                        "Table 1: Results    10    20    30", fontsize=10)
         fx.insert_text(page, (290, 800 if h > 800 else 580), str(k + 1), fontsize=10)
         if rot:
             page.set_rotation(rot)
-    path = fx.save(tmp_path / "reader.pdf")
-    sha = hashlib.sha256(path.read_bytes()).digest()
+    return fx.save(path)
+
+
+def test_native_reader_equals_reference_reader_and_production_text(tmp_path):
+    """Rust-owned handles: the chars equal the K5c reader's and the text equals production's get_text_range()."""
+    pdfium = pytest.importorskip("pypdfium2")
+    import warnings
+    import pypdfium2.raw as raw
+    path = _reader_pdf(tmp_path / "reader.pdf")
     info = native.layout_v2_reader_info()
     assert info["selftest_chars"] == 9 and info["pypdfium2"] == pdfium.V_PYPDFIUM2
+    before = native._layout_v2_handle_counts()
     tables = []
-    for pdf in (path, REPO / "samples/lightweight_pdf_corpus/pdfs/alpha.pdf"):
+    for pdf in (path, SAMPLE):
+        data = pdf.read_bytes()
+        sha = hashlib.sha256(data).digest()
         doc = pdfium.PdfDocument(str(pdf))
+        want = []
         try:
             for i in range(len(doc)):
                 page = doc[i]
                 tp = page.get_textpage()
-                try:
-                    x0, y0, x1, y1 = page.get_mediabox()
-                    want = kc.dumps(read_chars_reference(raw, tp.raw, x1 - x0, y1 - y0, page.get_rotation(), i + 1, sha))
-                    got = native.layout_v2_read_textpage(tp, i + 1, sha)
-                    assert got == want, (pdf.name, i)
-                    tables.append((i + 1, kc.loads(got), tp.get_text_bounded()))
-                finally:
-                    tp.close()
-                    page.close()
+                x0, y0, x1, y1 = page.get_mediabox()
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    text = tp.get_text_range()                       # production's call (redirected to bounded)
+                want.append((kc.dumps(read_chars_reference(raw, tp.raw, x1 - x0, y1 - y0, page.get_rotation(), i + 1,
+                                                          sha)), text))
+                tp.close()
+                page.close()
+            n = len(doc)
         finally:
             doc.close()
-    assert sum(len(t.ch) for _, t, _ in tables) > 100
+        for source in (str(pdf), data):
+            count, got = native.layout_v2_read_document(source, list(range(1, n + 1)), sha)
+            assert count == n
+            assert [(c, t) for _, c, t, e in got] == want, pdf.name
+            assert all(e is None for *_, e in got)
+        tables += [(i + 1, kc.loads(c), t) for i, (c, t) in enumerate(want)]
+    after = native._layout_v2_handle_counts()
+    for k in ("documents", "pages", "text_pages"):
+        assert after[k][0] - before[k][0] == after[k][1] - before[k][1] > 0, k
+    assert after["open_documents"] == 0 and after["max_open_documents"] == 1
     pages = [(p, t, text.replace("\r\n", "\n").replace("\r", "\n").strip()) for p, t, text in tables[:3]]
     assert_document_equal([(p, t) for p, t, _ in pages], pages)
 
 
-# ---- native reader boundaries, each in a fresh interpreter (CP-K5a H1) -------------------------------------------
-REPO = Path(__file__).resolve().parents[1]
-SAMPLE = REPO / "samples/lightweight_pdf_corpus/pdfs/alpha.pdf"
-SELFTEST = REPO / "rust/glossapi_rs_pdfrepair/fixtures/layout_selftest.pdf"
+# ---- native reader boundaries, each in a fresh interpreter (CP-K5a H1, cycle 2 N1/N2) ----------------------------
 CHILD_HEAD = f"""
-import ctypes, random, sys, threading, time, warnings
+import ctypes, os, random, sys, threading, time, warnings
 warnings.simplefilter("ignore")
 import pypdfium2 as pdfium
 import glossapi_rs_pdfrepair as m
 SAMPLE = {str(SAMPLE)!r}
 SELFTEST = {str(SELFTEST)!r}
 SHA = bytes(32)
+def balanced():
+    c = m._layout_v2_handle_counts()
+    assert all(c[k][0] == c[k][1] for k in ("documents", "pages", "text_pages")) and c["open_documents"] == 0, c
+    return c
 """
 
 
-def run_child(body, timeout=120):
+def run_child(body, timeout=180, args=()):
     """Run `body` in a fresh interpreter; a crash shows as a nonzero (negative: signal) exit code."""
     pytest.importorskip("pypdfium2")
-    done = subprocess.run([sys.executable, "-c", CHILD_HEAD + body], capture_output=True, text=True, timeout=timeout)
+    done = subprocess.run([sys.executable, "-c", CHILD_HEAD + body, *map(str, args)], capture_output=True, text=True,
+                          timeout=timeout)
     assert done.returncode == 0, (done.returncode, done.stdout[-2000:], done.stderr[-2000:])
     return done.stdout
 
 
-def test_public_api_takes_no_function_addresses_or_raw_handles():
+def test_no_binding_accepts_pypdfium2_objects_proxies_subclasses_or_handles():
     out = run_child("""
 names = [n for n in dir(m) if not n.startswith("__")]
-assert not [n for n in names if "pdfium_functions" in n or "address" in n], names
-assert m.layout_v2_read_textpage.__text_signature__ == "(textpage, page_no, source_sha256)"
-doc = pdfium.PdfDocument(SAMPLE); tp = doc[0].get_textpage()
-raw_int = ctypes.cast(tp.raw, ctypes.c_void_p).value
-for bad in (raw_int, 1, [1] * 11, (raw_int,), tp.raw, doc, doc[0], "x", None):
+assert "layout_v2_read_textpage" not in names and not [n for n in names if "pdfium_functions" in n], names
+assert m.layout_v2_read_document.__text_signature__ == "(source, pages, source_sha256, password=None)"
+doc = pdfium.PdfDocument(SAMPLE); page = doc[0]; tp = page.get_textpage()
+tp.raw = ctypes.cast(ctypes.c_void_p(1), type(tp.raw))                 # cycle-2 N1: genuine object, raw = 1
+class Proxy:                                                            # cycle-2 N1: __class__-spoofing proxy
+    __class__ = str
+    def __str__(self): return SAMPLE
+    def __fspath__(self): return SAMPLE
+class Closing(str):                                                     # cycle-2 N2: user code via a subclass
+    def __del__(self): tp.close()
+class B(bytes): pass
+data = open(SAMPLE, "rb").read()
+rejected = 0
+for bad in (tp, page, doc, ctypes.cast(page.raw, ctypes.c_void_p).value, 1, tp.raw, page.raw, Proxy(),
+            Closing(SAMPLE), B(data), bytearray(data), memoryview(data), None, [SAMPLE], __import__("pathlib").Path(SAMPLE)):
     try:
-        m.layout_v2_read_textpage(bad, 1, SHA)
-    except TypeError as e:
+        m.layout_v2_read_document(bad, [1], SHA)
+    except TypeError:
+        rejected += 1
         continue
-    raise SystemExit(f"accepted {bad!r}")
-print("OK", len(m.layout_v2_read_textpage(tp, 1, SHA)))
+    raise SystemExit(f"accepted {type(bad).__name__}")
+try:
+    m.layout_v2_read_document(SAMPLE, [1], SHA, password=Closing("x"))
+except TypeError:
+    rejected += 1
+balanced()
+print("OK rejected", rejected, len(m.layout_v2_read_document(SAMPLE, [1], SHA)[1]))
 """)
-    assert out.startswith("OK ")
+    assert out.startswith("OK rejected 16 1")
 
 
 def test_tampered_function_table_is_refused_without_a_native_call():
     out = run_child("""
 import pypdfium2.raw as raw
-raw.FPDFText_CountChars = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)(1)   # garbage address
-doc = pdfium.PdfDocument(SAMPLE); tp = doc[0].get_textpage()
-for call in (lambda: m.layout_v2_read_textpage(tp, 1, SHA), m.layout_v2_reader_info):
+raw.FPDF_LoadPage = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int)(1)   # garbage address
+for call in (lambda: m.layout_v2_read_document(SAMPLE, [1], SHA), m.layout_v2_reader_info):
     try:
         call()
     except m.LayoutV2ReaderUnavailable as e:
-        assert "FPDFText_CountChars" in str(e), e
+        assert "FPDF_LoadPage" in str(e), e
     else:
         raise SystemExit("tampered table accepted")
+assert m._layout_v2_handle_counts()["documents"] == (0, 0)
 print("OK refused")
 """)
     assert "OK refused" in out
@@ -396,107 +438,114 @@ print("OK refused")
 def test_library_swap_after_resolution_is_refused():
     out = run_child("""
 from pypdfium2_raw import bindings
-doc = pdfium.PdfDocument(SAMPLE); tp = doc[0].get_textpage()
-assert len(m.layout_v2_read_textpage(tp, 1, SHA)) > 72
+assert m.layout_v2_read_document(SAMPLE, [1], SHA)[0] == 1
 lib = bindings._libs["pdfium"]
 real = lib._handle
 lib._handle = real + 4096
 try:
-    m.layout_v2_read_textpage(tp, 1, SHA)
+    m.layout_v2_read_document(SAMPLE, [1], SHA)
 except m.LayoutV2ReaderUnavailable as e:
     print("OK", e)
 finally:
     lib._handle = real
-assert len(m.layout_v2_read_textpage(tp, 1, SHA)) > 72
+assert m.layout_v2_read_document(SAMPLE, [1], SHA)[0] == 1
+balanced()
 """)
     assert "OK pypdfium2's PDFium library changed" in out
 
 
-def test_closed_text_page_page_and_document_raise_a_typed_error():
-    out = run_child("""
-assert issubclass(m.LayoutV2ClosedObject, ValueError)
-seen = []
-for what in ("textpage", "page", "document", "page_then_new_textpage_of_closed_doc"):
-    doc = pdfium.PdfDocument(SAMPLE); page = doc[0]; tp = page.get_textpage()
-    if what == "textpage":
-        tp.close()
-    elif what == "page":
-        page.close()
-    elif what == "document":
-        doc.close()
-    else:
-        tp2 = page.get_textpage(); doc.close(); tp = tp2
-    try:
-        m.layout_v2_read_textpage(tp, 1, SHA)
-    except m.LayoutV2ClosedObject as e:
-        seen.append(f"{what}: {e}")
-    else:
-        raise SystemExit(f"{what}: closed object accepted")
-print("\\n".join(seen))
-""")
-    assert out.count("is closed or being closed") == 4, out
+ZERO_PAGES = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\n"
+              b"endobj\ntrailer\n<< /Root 1 0 R /Size 3 >>\n%%EOF\n")
+ENCRYPTED = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\n"
+             b"endobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] >>\nendobj\n4 0 obj\n<< /Filter /Standard "
+             b"/V 1 /R 2 /O <" + b"41" * 32 + b"> /U <" + b"42" * 32 + b"> /P -4 >>\nendobj\ntrailer\n<< /Root 1 0 R /Size 5 "
+             b"/Encrypt 4 0 R /ID [<00112233445566778899aabbccddeeff> <00112233445566778899aabbccddeeff>] >>\n%%EOF\n")
 
 
-def test_repeated_open_read_close_cycles():
+def test_bad_documents_and_page_numbers_raise_typed_errors_and_close_every_handle(tmp_path):
+    big = _reader_pdf(tmp_path / "big.pdf", pages=300)
+    (tmp_path / "zero.pdf").write_bytes(ZERO_PAGES)
+    (tmp_path / "enc.pdf").write_bytes(ENCRYPTED)
     out = run_child("""
-rng = random.Random(3)
+big, zero, enc, tmp = sys.argv[1:5]
 data = open(SELFTEST, "rb").read()
-reads = refused = 0
-first = None
-for k in range(300):
-    doc = pdfium.PdfDocument(data if k % 2 else SELFTEST)
-    page = doc[0]; tp = page.get_textpage()
-    b = m.layout_v2_read_textpage(tp, 1, SHA); reads += 1
-    first = first or b
-    assert b == first
-    order = rng.choice([("tp", "page", "doc"), ("doc",), ("page", "doc"), ("tp", "doc")])
-    for o in order:
-        {"tp": tp, "page": page, "doc": doc}[o].close()
-        try:
-            m.layout_v2_read_textpage(tp, 1, SHA)
-        except m.LayoutV2ClosedObject:
-            refused += 1
-        else:
-            raise SystemExit("read after close accepted")
-print("OK", reads, refused)
-""")
-    assert out.startswith("OK 300 ")
+cases = {"empty bytes": (b"", [1]), "garbage": (b"%PDF-1.4 garbage" * 50, [1]), "truncated": (data[:200], [1]),
+         "missing path": (tmp + "/missing.pdf", [1]), "directory": (tmp, [1]), "zero pages": (zero, [1]),
+         "encrypted": (enc, [1]), "encrypted bytes": (open(enc, "rb").read(), [1]),
+         "page 0": (SELFTEST, [0]), "page -1": (SELFTEST, [-1]), "page 2 of 1": (SELFTEST, [1, 2]),
+         "page 2**40": (big, [2 ** 40])}
+seen = {}
+for name, (src, pages) in cases.items():
+    try:
+        m.layout_v2_read_document(src, pages, SHA)
+    except m.LayoutV2DocumentError as e:
+        seen[name] = str(e)
+    else:
+        raise SystemExit(f"{name}: accepted")
+    balanced()
+assert "password" in seen["encrypted"].lower() or "security" in seen["encrypted"].lower(), seen["encrypted"]
+assert "File access" in seen["missing path"] and "out of range" in seen["page 2 of 1"], seen
+for bad_pages in ([2 ** 70], ["1"], None):
+    try:
+        m.layout_v2_read_document(SELFTEST, bad_pages, SHA)
+    except (OverflowError, TypeError):
+        pass
+    else:
+        raise SystemExit(f"pages {bad_pages!r} accepted")
+count, got = m.layout_v2_read_document(big, list(range(1, 301)), SHA)
+assert count == 300 and all(c and e is None for _, c, _, e in got)
+c = balanced()
+print("OK", len(seen), c["documents"], c["pages"])
+""", args=(big, tmp_path / "zero.pdf", tmp_path / "enc.pdf", tmp_path))
+    assert out.startswith("OK 12 ")
 
 
-def test_concurrent_reads_with_a_close_in_another_thread():
+def test_concurrent_calls_are_serialised_and_identical(tmp_path):
+    big = _reader_pdf(tmp_path / "doc.pdf", pages=12)
     out = run_child("""
-rng = random.Random(11)
-data = open(SAMPLE, "rb").read()
-outcomes = {"bytes": 0, "closed": 0}
+path = sys.argv[1]; data = open(path, "rb").read()
+want = m.layout_v2_read_document(path, list(range(1, 13)), SHA)
+start = m._layout_v2_handle_counts()["documents"][0]          # includes the self-test document
 bad = []
-threading.excepthook = lambda a: bad.append(repr(a.exc_value))   # an exception escaping a reader thread fails too
-def reader(tp, stop):
-    while not stop.is_set():
-        try:
-            b = m.layout_v2_read_textpage(tp, 1, SHA)
-            assert len(b) > 72
-            outcomes["bytes"] += 1
-        except m.LayoutV2ClosedObject:
-            outcomes["closed"] += 1
-            return
-        except Exception as e:
-            bad.append(repr(e)); return
-for k in range(60):
-    doc = pdfium.PdfDocument(data); page = doc[0]; tp = page.get_textpage()
-    stop = threading.Event()
-    threads = [threading.Thread(target=reader, args=(tp, stop)) for _ in range(3)]
-    for t in threads: t.start()
-    time.sleep(rng.uniform(0, 0.003))
-    rng.choice([tp, page, doc]).close()
-    time.sleep(0.001)
-    stop.set()
-    for t in threads: t.join()
-    doc.close()
-assert not bad, bad
-assert outcomes["bytes"] > 0 and outcomes["closed"] == 3 * 60, outcomes   # every reader ended on the typed error
-print("OK", outcomes["bytes"], outcomes["closed"])
-""", timeout=300)
+def worker(k):
+    for j in range(15):
+        got = m.layout_v2_read_document(path if (j + k) % 2 else data, list(range(1, 13)), SHA)
+        if got != want:
+            bad.append((k, j))
+threading.excepthook = lambda a: bad.append(repr(a.exc_value))
+ts = [threading.Thread(target=worker, args=(k,)) for k in range(8)]
+for t in ts: t.start()
+for t in ts: t.join()
+assert not bad, bad[:3]
+c = balanced()
+assert c["max_open_documents"] == 1 and c["documents"][0] - start == 8 * 15, c
+print("OK", c["documents"])
+""", args=(big,), timeout=300)
     assert out.startswith("OK ")
+
+
+def test_fork_after_first_use_and_second_pypdfium2_import():
+    out = run_child("""
+want = m.layout_v2_read_document(SAMPLE, [1], SHA)
+pid = os.fork()
+if pid == 0:
+    ok = m.layout_v2_read_document(SAMPLE, [1], SHA) == want and m.layout_v2_read_document(open(SAMPLE, "rb").read(), [1], SHA) == want
+    os._exit(0 if ok else 3)
+_, status = os.waitpid(pid, 0)
+assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, status
+for name in [n for n in sys.modules if n.startswith(("pypdfium2", "pypdfium2_raw"))]:
+    del sys.modules[name]
+import pypdfium2 as again
+assert again is not pdfium
+try:
+    second = m.layout_v2_read_document(SAMPLE, [1], SHA)
+    outcome = "equal" if second == want else "DIFFERENT"
+except m.LayoutV2ReaderUnavailable as e:
+    outcome = "unavailable: " + str(e)
+balanced()
+print("OK fork child 0;", outcome)
+""")
+    assert out.startswith("OK fork child 0;") and "DIFFERENT" not in out
 
 
 # ---- crash and lifecycle -------------------------------------------------------------------------------------------
