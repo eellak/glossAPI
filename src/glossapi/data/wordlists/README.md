@@ -45,3 +45,36 @@ Licence: MIT AND BSD (SCOWL's component notices and permissions are reproduced
 in full in `LICENSE.en_US`). Lookup discards the count and Hunspell flags,
 normalizes NFC and casefolds. There is no affix expansion or text correction.
 The runtime verifies the source digest and entry count before using it.
+
+
+## European validity (experimental routing v6)
+
+The existing English SCOWL list is compared with four **public-domain** Moby
+Language II surface vocabularies, by Grady Ward (grant dated January 2001).
+`LICENSE.moby` retains the grant and provenance. `moby_manifest.json` records
+source URLs, original and normalized SHA256 digests, counts and transformations.
+The Moby sources are pinned by content hash at
+https://www.gutenberg.org/files/3206/files.zip .
+
+Moby uses ASCII accent notation. The derived files contain sorted, unique,
+lowercase ASCII letter keys, without reconstructing accented spellings. Spanish
+backslash notation maps to n; other notation punctuation is removed. Lookup
+casefolds and strips combining marks; German umlauts become ae/oe/ue before
+stripping. English retains v5's NFC/casefold normalization. This deliberately
+coarse normalization supports validity measurement, not spelling correction.
+
+v6 picks the single dictionary with the greatest token-weighted coverage, never
+a union. Short pages (<10 Latin tokens or <50 characters) and pages with <80%
+Latin among Greek/Latin letters retain v4 decisions. Every candidate rate and
+chosen dictionary are recorded. No identifier model is bundled or needed.
+
+
+Portuguese is included because raw identifier votes exceed about 1% when Latin
+text on mixed-script pages is counted. `pt_surface.txt.gz` contains single-word
+OWN-PT lemmas under CC BY 4.0, with MIT-licensed `stopwords-pt` function words.
+`LICENSE.pt` supplies attribution, pinned source URLs, both notices and the
+transformation statement. Its identity is also in `moby_manifest.json` (the
+shared European vocabulary registry). It uses the same ASCII mark-stripping
+lookup as the Romance-language Moby lists. This is a lemma/function-word
+vocabulary without generated inflections, so incomplete coverage remains a
+reason to keep v6 experimental.

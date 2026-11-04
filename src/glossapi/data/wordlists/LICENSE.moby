@@ -1,0 +1,13 @@
+Moby Language II, Grady Ward
+
+Public Domain material by grant from the author, January, 2001.
+
+Source: https://www.gutenberg.org/files/3206/files.zip
+Documentation: https://www.gutenberg.org/cache/epub/3206/pg3206.txt
+
+The original public-domain vocabulary is redistributed as normalized word sets.
+French, German, Italian and Spanish are included. The normalization removes
+ASCII accent notation rather than reconstructing accents. German retains the
+source ae/oe/ue spellings; Spanish backslash-n notation is reduced to n.
+This is a validity vocabulary, not a spelling-correction dictionary.
+Source and derived SHA256 identities are in moby_manifest.json.
