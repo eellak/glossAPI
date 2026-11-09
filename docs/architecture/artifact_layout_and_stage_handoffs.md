@@ -1,6 +1,9 @@
 # Artifact Layout and Stage Handoffs
 
-This document explains how the current pipeline uses on-disk artifacts to pass work from one stage to the next.
+This document explains how the phase methods (`extract()`, `clean()`, `ocr()`, ...) use on-disk artifacts to pass
+work from one stage to the next. A streaming run (`Corpus.run()`, `glossapi run`) decides from the ledger
+`corpus.sqlite3` and publishes these same directories at its [corpus-wide barriers](corpus_barriers.md); see
+[Resumability, Recovery, and Retention](resumability_recovery_and_retention.md).
 
 This is one of the most important implementation contracts in GlossAPI.
 

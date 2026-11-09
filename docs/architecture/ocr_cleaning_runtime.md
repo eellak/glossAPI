@@ -183,4 +183,7 @@ The correctness lock is:
 - `tests/test_ocr_golden_pages.py`
 
 That suite uses hundreds of real pages and compares exact output bytes. The
-speed work therefore optimizes implementation, not semantics.
+speed work therefore optimizes implementation, not semantics. The real-page
+fixture is external and owner-supplied (it is not distributed with the
+repository): set `GLOSSAPI_OCR_GOLDEN_DIR` to its root to run the suite;
+without it the test skips with that reason.

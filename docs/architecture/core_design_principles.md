@@ -68,7 +68,11 @@ That means contributors should treat:
 
 as contract-like behavior unless deliberately redesigned.
 
-## 6. Intermediate artifacts are retained intentionally
+## 6. Intermediate artifacts are retained intentionally (phase methods)
+
+Individual phase methods keep their intermediate artifacts. A streaming run (`Corpus.run()`, `glossapi run`) instead
+applies the retention settings frozen in its ledger; see
+[Resumability, Recovery, and Retention](resumability_recovery_and_retention.md).
 
 Keeping intermediate artifacts increases storage usage, but it provides strong benefits:
 
@@ -93,13 +97,14 @@ So recovery is not a rare edge case. It is part of standard corpus processing.
 
 ## 8. Current implementation details should be distinguished from logical contracts
 
-The current implementation relies heavily on:
+The phase methods rely heavily on:
 
 - filenames and stems
 - parquet files on local disk
 - retained intermediate artifacts
 
-Those are the current mechanics, but the deeper logical contract is:
+Streaming runs already implement the deeper contract in the ledger `corpus.sqlite3` (document identities, task
+attempts, recorded inputs and outputs, retention). The logical contract is:
 
 - each document needs a stable identity
 - each stage needs explicit inputs and outputs

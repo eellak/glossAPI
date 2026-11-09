@@ -2,7 +2,19 @@
 
 GlossAPI is a staged corpus-processing pipeline centered around the `Corpus` API.
 
-At a high level, the pipeline is:
+Core extraction uses PDFium with Rust layout_v2 labels. `Corpus.run()` and the CLI execute a ledger-backed DAG with frozen settings and retention; individual phase methods retain compatibility filesystem/parquet behavior. Docling layout/math is optional, and OCR uses the pinned Greek toolkit.
+
+GlossAPI therefore has two interfaces over the same stages:
+
+- **Streaming runs** (`Corpus.run()`, `glossapi plan` / `glossapi run`): one ledger-backed DAG recorded in
+  `corpus.sqlite3`, with frozen settings, per-task attempts and retries, and retention of intermediates. See
+  [Resumability, Recovery, and Retention](resumability_recovery_and_retention.md) and
+  [Corpus-wide barriers](corpus_barriers.md).
+- **Phase methods** (`download()`, `extract()`, `clean()`, `ocr()`, `section()`, `annotate()`, `jsonl()`,
+  `jsonl_sharded()`): individual calls that keep the compatibility behavior described below, where stages hand off
+  through the output directory, filenames and the metadata parquet.
+
+At a high level, the stages are:
 
 1. `download()`
 2. `extract()`
@@ -10,7 +22,7 @@ At a high level, the pipeline is:
 4. `ocr()`
 5. `section()`
 6. `annotate()`
-7. `export()`
+7. export: `jsonl()` / `jsonl_sharded()`, or the streaming `export` stage
 
 Not every run uses every stage, but the stages are designed to compose through a shared output directory and shared metadata.
 
@@ -73,12 +85,14 @@ Important characteristics:
 Purpose:
 
 - turn input documents into Markdown
-- optionally emit Docling JSON and formula index artifacts
+- with the optional Docling backend only, emit Docling JSON and formula index artifacts
 
 Important characteristics:
 
-- safe backend and Docling backend are both supported
-- Docling is used when OCR or enrichment is required, and also when throughput is the priority
+- the default safe backend uses PDFium and the bundled Rust extensions to write `layout_v2` Markdown, with no Docling
+  or GPU (`GLOSSAPI_MARKDOWN_LAYOUT=plain` selects plain page text)
+- the Docling backend is optional (the `layout` package); select it explicitly with `phase1_backend='docling'` when
+  you need Docling layout JSON for math/code enrichment or Docling layout throughput
 - backend selection is part performance decision, part stability decision
 
 ### 3. Clean
@@ -99,13 +113,15 @@ Important characteristics:
 
 Purpose:
 
-- rerun only the documents that need OCR or math-aware enrichment
+- OCR the physical pages that page quality routes, and optionally run math/code enrichment from existing Docling JSON
 
 Important characteristics:
 
-- uses external plugin OCR for remediation while keeping Docling in the surrounding extraction/layout flow
-- reads metadata to find OCR candidates
-- skiplist-aware
+- OCR uses the pinned Greek OCR toolkit (an optional install); retained native text is kept for pages that are not
+  routed
+- reads metadata to find OCR candidates: by default (`page_routing='all'`) routed pages in flagged and unflagged
+  documents; `page_routing='flagged'` restricts OCR to cleaner-flagged documents
+- the phase method is skiplist-aware; a streaming run records task attempts and retries in the ledger instead
 - designed as a corrective stage, not the default for every document
 
 ### 5. Section
@@ -137,8 +153,9 @@ Purpose:
 
 Four themes dominate the current design:
 
-1. Docling is used to maximize extraction throughput and to support OCR/layout/math-aware processing.
-2. Docling is also a source of instability, especially under batching and parallelism, so recovery logic matters.
+1. Core extraction needs neither Docling nor a GPU; Docling is an optional backend for layout JSON, math/code
+   enrichment and layout throughput.
+2. Optional backends (Docling, OCR) can be unstable under batching and parallelism, so recovery logic matters.
 3. Greek text validity is a first-class quality concern because raw extraction is often wrong even when it does not crash.
 4. Metadata is treated as a durable record of both original scraping context and pipeline-generated diagnostics.
 
@@ -154,7 +171,7 @@ For a practical corpus run, the intended flow is often:
 1. download the corpus
 2. extract to Markdown
 3. clean and score text quality
-4. OCR only documents marked as needing OCR
+4. OCR the pages page quality routes (in flagged and unflagged documents by default)
 5. section the resulting usable corpus
 6. optionally annotate and export
 
@@ -166,7 +183,8 @@ The current architecture is effective but has important tradeoffs:
 
 - stage handoff depends partly on method calls and partly on filesystem conventions
 - the phase methods resume from file presence and metadata parquet state; a streaming run (`Corpus.run()`, `glossapi run`) resumes from the ledger `corpus.sqlite3` instead
-- artifact retention improves auditing but increases long-term storage footprint
+- phase methods keep their intermediate artifacts, which improves auditing but increases storage; streaming runs apply
+  the retention settings recorded in the ledger
 - filename-based identity is practical but puts pressure on future chunking and storage redesigns
 
 These pressure points are documented separately in:
