@@ -583,6 +583,7 @@ def live_source_problems(module):
         return out
 
     import dataclasses
+    import reprlib
 
     def members(cls):
         for item in vars(cls).values():
@@ -594,8 +595,10 @@ def live_source_problems(module):
                 yield item
 
     def generated(code):
-        # methods that @dataclass writes (exec of generated text, or its own helpers); nothing else is exempt
-        return (code.co_filename == '<string>' and code.co_qualname.startswith('__create_fn__.')) or code.co_filename == dataclasses.__file__
+        # methods that @dataclass writes (exec of generated text, or its own helpers); nothing else is exempt. On
+        # Python 3.14 the generated __repr__ is wrapped by reprlib.recursive_repr, whose code lives in reprlib.
+        return ((code.co_filename == '<string>' and code.co_qualname.startswith('__create_fn__.'))
+                or code.co_filename in (dataclasses.__file__, reprlib.__file__))
 
     functions = []
     for value in vars(module).values():
