@@ -32,7 +32,8 @@ BARRIERS: tuple[dict[str, str | None], ...] = (
          why='Legacy section selection and global section IDs use corpus traversal order and the aggregate parquet needs the selected set.',
          continues='Per-document section parsing streams in the DAG; only selection, IDs and the aggregate parquet wait.'),
     dict(name='annotation_batch', stage='annotate', executed_as='annotate.compatibility_publish',
-         why='The legacy annotation adapter partitions and falls back per corpus batch (Dask); the whole section parquet is read back.',
+         why='Annotation predicts over PyArrow partitions, then materializes whole-corpus frames for post-processing and full '
+             'annotation.',
          continues='Every document\'s sections are parsed before it; annotation itself does not stream yet.'),
     dict(name='export_shards', stage='export', executed_as='export.compatibility_publish',
          why='Ordered export membership and shard boundaries need the sealed selected set; every selected version gets an inclusion or '

@@ -35,8 +35,7 @@ python install_glossapi.py ocr --device cpu \
 The override changes the install command, while wheel metadata retains the public
 source pin. At run time the same `GLOSSAPI_OCR_TOOLKIT_SOURCE` value must be set:
 it marks the installed source as a development override, is admitted only when it
-describes that installed source, and is recorded as such. The Mac qualification used a code-only `git archive` because the full
-tracked tree alone exceeds its 2 GB experiment limit; see the integration notes.
+describes that installed source, and is recorded as such.
 
 After extraction and cleaning:
 
@@ -154,7 +153,6 @@ provenance. The optional mixed native/scan public-run test additionally requires
 `tests/test_greekocr_cohort.py` compares independent direct segmentation and
 recognition against the routed plugin on at most two needs-OCR pages from an
 explicit owned cohort PDF. It is a correctness test, with no speed claims.
-The 72-page owner-private equality check stays with the Mac coordinator/OCR session.
 
 Printed upright Greek/Latin text is the qualified input scope; handwriting, whole-page rotation,
 vertical text and general non-text rejection are outside that scope.

@@ -1,5 +1,9 @@
 # Markdown Library Survey
 
+!!! note "Contributor design history"
+    This page records the design rationale behind the cleaner's parser-backed Phase A. It is background for
+    contributors, not installation or runtime guidance for GlossAPI 0.2.0.
+
 This document captures the design rationale behind the cleaner's parser-backed Phase A. It surveys established Markdown parsers, formatters, and renderers across Rust, C, JavaScript/TypeScript, Python, Go, and Pandoc/Haskell, then maps the lessons onto the choices that landed in the production cleaner.
 
 The goal was never to replace the cleaner with one of these tools wholesale. The goal was to extract design lessons for Docling-produced Markdown corpus cleanup: make raw Markdown closer to rendered preview while preserving the rendered element graph.

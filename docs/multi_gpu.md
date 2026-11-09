@@ -1,7 +1,8 @@
 # Multi‑GPU & Benchmarking
 
-GlossAPI can scale across multiple visible GPUs. Faster GPUs drain more work from a shared queue of **absolute
-file paths or pre-packed work items, so no worker rescans directories.
+GlossAPI can scale across multiple visible GPUs. Faster GPUs drain more work from a shared queue of absolute
+file paths or pre-packed work items, so no worker rescans directories. The GPU paths on this page need the optional
+`layout` package (`python install_glossapi.py layout --device cuda126`, or `cuda132`).
 
 ## Extract (Phase‑1) on Multiple GPUs
 
@@ -24,11 +25,16 @@ c.extract(input_format='pdf', use_gpus='multi', phase1_backend='docling', worker
 
 ## Phase‑2 (Math) on Multiple GPUs
 
+Math enrichment consumes existing Docling JSON (from a Docling extraction, as above) and performs no OCR in
+`math_only` mode:
+
 ```python
 from glossapi import Corpus
 c = Corpus('OUT', 'OUT')
-c.ocr(use_gpus='multi', math_batch_size=12)
+c.ocr(mode='math_only', fix_bad=False, use_gpus='multi', math_batch_size=12)
 ```
+
+Without `mode`, `Corpus.ocr()` selects `ocr_bad_then_math` and also runs OCR.
 
 - Spawns math workers that bind to their GPU via `CUDA_VISIBLE_DEVICES`. Formula decoding runs on `cuda:0` relative to each worker.
 - Each worker writes a marker file (`logs/math_workers/gpu<N>.current`) containing the stems it is processing and keeps an append-only log in `logs/math_workers/` (override with `GLOSSAPI_WORKER_LOG_DIR`).

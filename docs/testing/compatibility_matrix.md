@@ -1,6 +1,6 @@
 # Compatibility And Regression Matrix
 
-This document defines the release-validation matrix for the external OCR plugin migration and subsequent Docling upgrades.
+This document defines the release-validation matrix for the Greek OCR toolkit integration, Docling upgrades and other changes to the documented pipeline contracts. The current status of each gate is at the end of this page.
 
 It is not a generic unit-test list. It is a contract-based validation plan tied to the documented pipeline behavior.
 
@@ -16,14 +16,14 @@ This matrix applies to changes in:
 
 ## Validation policy
 
-Release validation for this migration must use:
+Release validation for these contracts must use:
 
 - real PDFs
 - real Docling
 - real external OCR engine
 - real GPUs where the code path requires them
 
-Developer-only tests may still use mocks or lightweight stubs for fast iteration, but those do not satisfy release gates for this migration.
+Developer-only tests may still use mocks or lightweight stubs for fast iteration, but those do not satisfy release gates.
 
 ## Test levels
 
@@ -232,9 +232,9 @@ Suggested real-world slice:
 
 For current local evaluation work, a Pergamos sample manifest has been prepared outside the repo and can be used as the L3/L4 real-PDF slice.
 
-## Suggested release sequence
+## Gate order
 
-For the planned migration, run gates in this order:
+For a change that touches these contracts, run gates in this order:
 
 1. `ENV-*`
 2. `EXT-*`
@@ -247,27 +247,18 @@ For the planned migration, run gates in this order:
 
 This keeps low-level compatibility failures from being confused with downstream quality regressions.
 
-## Exit criteria per stage
+## Current qualification status (0.2.0)
 
-### Stage 1 exit criteria
+The external OCR migration is complete: the pinned Greek OCR toolkit is the only supported OCR engine, the removed
+engines and install modes are gone, and Docling is an optional backend. The status of each gate group for 0.2.0:
 
-- external OCR path works on real PDFs
-- no-stub enforcement verified
-- OCR engines are supplied through Docling plugins
-
-### Stage 2 exit criteria
-
-- install paths reduced to supported environments
-- packaging/docs no longer reference removed OCR components
-
-### Stage 3 exit criteria
-
-- upgraded Docling passes `EXT-*`, `MTH-*`, `SEC-*`, `ANN-*`, and `EXP-*`
-
-### Stage 4 exit criteria
-
-- retained or removed Docling capabilities are justified by evaluation evidence
-
-### Stage 5 exit criteria
-
-- page-level branch is compared against the stabilized baseline before any adoption decision
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| `ENV-001` | Covered by tests; test required per target | Installer, declaration and capability tests run in the CPU suite. A fresh install must still be checked on each target platform and Python version. |
+| `EXT-001`, `CLN-001`, `SEC-001`, `ANN-001`, `EXP-001` | Covered by the CPU test suite | Lightweight corpus and phase tests (`tests/test_corpus_phases_lightweight.py` and the stage tests); no GPU or Docling. |
+| `EXT-002` | Optional backend; test required | Docling is mocked in the CPU suite. Run a real Docling extraction on the target before relying on Docling JSON. |
+| `OCR-*` | CPU fixture covered; test required per target | The synthetic CPU fixture checks the routed plugin path; accelerator/device combinations must be qualified on the target machine (see [OCR plugin migration](../ocr_plugin_migration.md) and the CHANGELOG limitations). |
+| `MTH-001` | Test required | Real Docling math inference is not part of the CPU suite; the phase API recipe needs a CUDA host with the `layout` package. Math is not executable in the streaming run yet. |
+| `RES-*`, `SKP-*` | Covered by tests | The ledger, resume and retention suites. |
+| `GPU-001` | Target, not qualified | The external plugin runs on one device; multi-GPU OCR has not been qualified. |
+| `CMP-*` | Evaluation, not a release gate | Comparative runs on real slices are evaluation work, run when a change claims a quality or runtime effect. |

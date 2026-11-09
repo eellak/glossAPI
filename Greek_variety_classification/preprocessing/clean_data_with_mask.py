@@ -1,10 +1,14 @@
 import pandas as pd
 import re
 import os
+import sys
 from transformers import AutoTokenizer
 
-# Set the working directory and filename
-working_directory = "/home/fivos/Downloads"
+# Historical research script (inherited Greek variety classification work). It has no machine default: pass the
+# folder that holds the dataset CSV.
+if len(sys.argv) != 2:
+    sys.exit("usage: python clean_data_with_mask.py DATA_DIR   (the folder holding dataset_Sep_3.csv)")
+working_directory = sys.argv[1]
 file_name = "dataset_Sep_3.csv"
 
 os.chdir(working_directory)

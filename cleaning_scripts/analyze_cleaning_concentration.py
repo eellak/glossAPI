@@ -24,8 +24,8 @@ Output: analysis.json + analysis.md at the stats dir root.
 
 Run:
   python3 analyze_cleaning_concentration.py \\
-    --stats-dir /home/foivos/runs/raw_clean_stats_20260422/stats \\
-    --output-dir /home/foivos/runs/raw_clean_stats_20260422/analysis
+    --stats-dir RUN_DIR/stats \\
+    --output-dir RUN_DIR/analysis
 """
 from __future__ import annotations
 

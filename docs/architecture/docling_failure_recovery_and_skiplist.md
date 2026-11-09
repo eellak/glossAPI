@@ -2,7 +2,10 @@
 
 One of the most important operational realities of GlossAPI is that Docling can fail in ways that matter at corpus scale.
 
-This document describes the recovery model that exists to keep runs usable when that happens.
+This document describes the recovery model of the individual phase methods (`extract()`, `ocr()`, math
+enrichment). Docling is optional in 0.2.0: core extraction uses PDFium and Rust. A streaming run (`Corpus.run()`,
+`glossapi run`) records task attempts and retries in the ledger instead; see
+[Resumability, Recovery, and Retention](resumability_recovery_and_retention.md).
 
 ## Problem statement
 

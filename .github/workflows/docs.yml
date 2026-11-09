@@ -1,18 +1,18 @@
-name: Build and Deploy Docs
+name: Docs
 
+# Pull requests get a read-only strict build. Only master deploys to gh-pages.
 on:
   push:
     branches:
-      - development
-      - main
       - master
+  pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  docs:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -21,15 +21,42 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
-      - name: Install MkDocs
-        run: |
-          python -m pip install --upgrade pip
-          pip install 'mkdocs<2' 'mkdocs-material<10'
+      - name: Install the locked docs profile
+        run: python -m pip install --require-hashes -r dependency_setup/requirements-docs.lock
 
-      - name: Build site
+      - name: Strict build
+        env:
+          NO_MKDOCS_2_WARNING: "1"
         run: mkdocs build --strict
+
+      - name: Keep the site for deployment
+        if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: site
+          retention-days: 1
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: docs-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch the built site
+        uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: site
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v3

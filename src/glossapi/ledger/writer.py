@@ -980,11 +980,11 @@ def statements(script):
 def integrity(connection):
     if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
         raise LedgerError("Ledger integrity check failed")
-    for digest, encoded, version in connection.execute("SELECT sha256,json,schema_version FROM snapshots"):
+    for digest, encoded, version, kind in connection.execute("SELECT sha256,json,schema_version,kind FROM snapshots"):
         if version != 1 or hashlib.sha256(encoded.encode("utf-8")).hexdigest() != digest:
             raise LedgerError("Snapshot checksum/schema mismatch")
         decoded = json.loads(encoded)
-        validate_evidence(decoded)
+        validate_evidence(decoded, snapshot_kind=kind)
         if canonical_json(decoded) != encoded: raise LedgerError("Snapshot is not canonical JSON")
     if connection.execute("PRAGMA foreign_key_check").fetchone():
         raise LedgerError("Ledger foreign key check failed")
@@ -2501,7 +2501,7 @@ class LedgerWriter:
     def snapshot(self, kind, value):
         self._owner()
         value = evidence(value)
-        validate_evidence(value)
+        validate_evidence(value, snapshot_kind=kind)
         encoded = canonical_json(value)
         digest = hashlib.sha256(encoded.encode()).hexdigest()
         if digest in self.snapshot_cache:

@@ -24,14 +24,27 @@ On fresh Linux hosts, make these assumptions explicit instead of relying on shel
 git clone https://github.com/eellak/glossAPI.git
 cd glossAPI
 ./dependency_setup/setup_glossapi.sh                       # core only, in .venv_glossapi_core
-./dependency_setup/setup_glossapi.sh layout --device cpu   # adds Docling layout (cpu, cuda126, cuda132 or mps)
+./dependency_setup/setup_glossapi.sh layout --device cpu   # optional: adds Docling layout (cpu, cuda126, cuda132 or mps)
 ```
 
-Add `--venv PATH` to choose the environment, `--editable` for an editable install, `--run-tests` to install the test
-tools and run the suite, and `--dry-run` to print every command without running it. Install the default Greek OCR
-package with `python install_glossapi.py ocr --device cpu` (or `mps` / `cuda126` / `cuda132`); see
-[OCR setup](ocr_plugin_migration.md). The full package list is in
-[Dependency setup](https://github.com/eellak/glossAPI/blob/main/dependency_setup/dependency_notes.md).
+The script installs into its own virtual environment but cannot activate it in your shell. Activate it before any
+other command on this page:
+
+```sh
+source .venv_glossapi_core/bin/activate
+python -m pip --version
+glossapi capabilities --json
+
+# Optional OCR, in this same environment:
+python install_glossapi.py ocr --device cpu
+```
+
+Add `--venv PATH` to choose the environment (then activate it with `source PATH/bin/activate`; the
+`GLOSSAPI_VENV` environment variable does the same), `--editable` for an editable install, `--run-tests` to install
+the test tools and run the suite, and `--dry-run` to print every command without running it. The OCR installer takes
+`--device cpu` (or `mps` / `cuda126` / `cuda132`) and installs into the interpreter that runs it, so run it from the
+activated environment; see [OCR setup](ocr_plugin_migration.md). The full package list is in
+[Dependency setup](https://github.com/eellak/glossAPI/blob/master/dependency_setup/dependency_notes.md).
 
 ### Manual editable install
 
@@ -82,7 +95,7 @@ shown on stderr while it runs.
 
 `setup_glossapi.sh layout --device cuda126` (or `cuda132`, `mps`) installs the matching torch build before Docling.
 The device name selects the wheel source only; it does not choose the device of a later run. To check that torch sees
-the GPU:
+the GPU (in the activated environment):
 
 ```bash
 python -c "import torch; print(torch.cuda.is_available())"
@@ -90,18 +103,28 @@ python -c "import torch; print(torch.cuda.is_available())"
 
 ## First run (lightweight corpus)
 
+Run this from the checkout, in the activated environment. It saves a small script and runs it; keep the
+`if __name__ == "__main__":` guard, because extraction workers start with `spawn` and import the script again (code
+piped to `python -` cannot be imported again, so its workers fail):
+
 ```bash
-python - <<'PY'
+cat > lightweight_run.py <<'PY'
 from pathlib import Path
 from glossapi import Corpus
 
-input_dir = Path("samples/lightweight_pdf_corpus/pdfs")
-output_dir = Path("artifacts/lightweight_pdf_run")
-output_dir.mkdir(parents=True, exist_ok=True)
 
-corpus = Corpus(input_dir, output_dir)
-corpus.extract(input_format="pdf")
+def main():
+    input_dir = Path("samples/lightweight_pdf_corpus/pdfs")
+    output_dir = Path("artifacts/lightweight_pdf_run")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    corpus = Corpus(input_dir, output_dir)
+    corpus.extract(input_format="pdf")  # safe PDFium backend, layout_v2 Markdown
+
+
+if __name__ == "__main__":  # extraction workers start with spawn and import this file again
+    main()
 PY
+python lightweight_run.py
 ```
 
 - Inspect `artifacts/lightweight_pdf_run/markdown/` and compare with `samples/lightweight_pdf_corpus/expected_outputs.json`.

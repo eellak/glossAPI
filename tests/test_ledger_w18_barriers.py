@@ -22,6 +22,11 @@ def test_documentation_table_is_generated_from_the_barrier_table():
     text = (REPO/'docs/architecture/corpus_barriers.md').read_text()
     assert markdown_table() in text
     assert all(row['why'] and row['continues'] for row in BARRIERS)
+    # The table describes the implementation: annotation partitions over PyArrow (annotation_partitions); Dask is
+    # only a pinned parity-test oracle (FINAL-ASTRA F09).
+    assert not any('dask' in str(value).lower() for row in BARRIERS for value in row.values())
+    annotation = next(row for row in BARRIERS if row['name'] == 'annotation_batch')
+    assert 'PyArrow partitions' in str(annotation['why'])
 
 
 def test_every_executed_barrier_is_previewed_and_documented(tmp_path):

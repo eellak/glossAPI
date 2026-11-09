@@ -78,7 +78,7 @@ extract(
 ) -> None
 ```
 
-- Purpose: Phase‑1 extraction from source files into markdown plus optional JSON intermediates.
+- Purpose: Phase‑1 extraction from source files into markdown plus optional JSON intermediates (Docling backend only).
 - Typical inputs:
   - files already present in `downloads/`
   - or explicit `file_paths`
@@ -88,17 +88,17 @@ extract(
   - `batched=None` (default): cross-document layout batching only for single-device, layout-only Docling on CUDA; CPU, MPS and the safe backend stay sequential
   - `page_range=(first, last)`: inclusive one-based pages, explicit sequential single-device Docling only
   - `ocr_options`: an external Docling OCR engine's options; sequential single-device Docling only
-  - `force_ocr`: deprecated no-op kept for compatibility; OCR remediation now lives in `Corpus.ocr(ocr_options=plugin_options)`
+  - `force_ocr`: deprecated no-op kept for compatibility; OCR remediation now lives in `Corpus.ocr(mode='ocr_bad')`
   - `use_gpus='multi'`: use all visible GPUs through a shared work queue
   - `workers_per_device`: fan out more than one extraction worker onto a single visible GPU when measuring throughput
   - `GLOSSAPI_DOCLING_MAX_BATCH_FILES`: optional environment override for how many PDFs one Docling worker processes per extractor batch; GlossAPI keeps the default at `1` until a benchmark proves a larger batch is safe on the target node
   - `GLOSSAPI_DOCLING_BATCH_TARGET_PAGES`: optional environment override for the page budget of each queued multi-GPU Docling work item; use it with benchmark checkpoints when long PDFs dominate the tail
   - `GLOSSAPI_DOCLING_PAGE_BATCH_SIZE`: optional environment override for Docling's internal `settings.perf.page_batch_size`; use it when a GPU can hold more pages in flight than the default internal batch window
-  - `export_doc_json=True`: write `json/<stem>.docling.json(.zst)`
-  - `emit_formula_index=True`: also write `json/<stem>.formula_index.jsonl`
+  - `export_doc_json=True`: write `json/<stem>.docling.json(.zst)` (Docling backend only; the safe backend writes none)
+  - `emit_formula_index=True`: also write `json/<stem>.formula_index.jsonl` (Docling backend only)
 - Main outputs:
   - `markdown/<stem>.md`
-  - `json/<stem>.docling.json(.zst)` when enabled
+  - `json/<stem>.docling.json(.zst)` when enabled with `phase1_backend='docling'`
   - `json/metrics/<stem>.metrics.json`
   - `json/metrics/<stem>.per_page.metrics.json`
 
@@ -182,7 +182,8 @@ ocr(
   - `backend` must be `"docling"`; `ocr_options` selects a configured external plugin, otherwise the pinned Greek
     OCR plugin is used
   - `use_gpus`, `devices`
-  - `math_targets` to restrict enrichment to specific items
+  - `math_targets` to restrict enrichment to specific items inside the named stems (other discovered stems are still
+    enriched; use `formula_enrich_from_json(files=..., targets_by_stem=...)` to restrict documents too)
   - `limit` and `dpi` are accepted for compatibility and ignored
 - Main outputs:
   - refreshed `markdown/<stem>.md`
@@ -203,14 +204,17 @@ formula_enrich_from_json(
 ) -> None
 ```
 
-- Purpose: Phase‑2 GPU enrichment from previously exported Docling JSON.
+- Purpose: Phase‑2 GPU enrichment from previously exported Docling JSON (an explicit `phase1_backend='docling'`
+  extraction; needs the `layout` package). It creates no JSON: without Docling JSON it logs that nothing was found
+  and returns.
 - Typical inputs:
   - `json/<stem>.docling.json(.zst)`
   - optional formula/code index data
 - Important parameters:
-  - `files`: restrict to specific stems
+  - `files`: restrict to specific stems; `None` (default) discovers every `json/<stem>.docling.json(.zst)`
   - `device`, `batch_size`, `dpi_base`
-  - `targets_by_stem`: target specific `(page_no, item_index)` tuples
+  - `targets_by_stem`: target specific `(page_no, item_index)` tuples within the named stems; pass the same stems as
+    `files` to restrict the documents as well
 - Main outputs:
   - enriched markdown back into `markdown/<stem>.md`
   - `json/<stem>.latex_map.jsonl`

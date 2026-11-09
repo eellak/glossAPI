@@ -16,7 +16,7 @@ preview equal.
 | `clean_publication` | clean | `clean.compatibility_publish` | clean_markdown/ and the cleaning report are written by the directory-level cleaner wrapper over the published raw markdown. | Per-document cleaning already ran in the DAG; this publishes its committed outputs. |
 | `ocr_publication` | ocr | `ocr.compatibility_publish` | OCR markdown is materialized and the cleaner refreshed over markdown/ by one publisher (OCR success metadata is a corpus parquet). | Per-document OCR and its re-clean already ran in the DAG. |
 | `sections_selection_ids` | sections | `sections.compatibility_publish` | Legacy section selection and global section IDs use corpus traversal order and the aggregate parquet needs the selected set. | Per-document section parsing streams in the DAG; only selection, IDs and the aggregate parquet wait. |
-| `annotation_batch` | annotate | `annotate.compatibility_publish` | The legacy annotation adapter partitions and falls back per corpus batch (Dask); the whole section parquet is read back. | Every document's sections are parsed before it; annotation itself does not stream yet. |
+| `annotation_batch` | annotate | `annotate.compatibility_publish` | Annotation predicts over PyArrow partitions, then materializes whole-corpus frames for post-processing and full annotation. | Every document's sections are parsed before it; annotation itself does not stream yet. |
 | `export_shards` | export | `export.compatibility_publish` | Ordered export membership and shard boundaries need the sealed selected set; every selected version gets an inclusion or omission receipt. | Record preparation inputs are complete; the single publisher seals one generation. |
 <!-- end generated -->
 

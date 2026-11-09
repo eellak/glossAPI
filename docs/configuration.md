@@ -5,11 +5,13 @@ This page lists the main knobs you can use to tune GlossAPI.
 ## GPU & Providers
 
 - `CUDA_VISIBLE_DEVICES`: restrict/assign visible GPUs, e.g. `export CUDA_VISIBLE_DEVICES=0,1`.
-- `GLOSSAPI_DOCLING_DEVICE`: preferred device for Docling (inside a worker), e.g. `cuda:0`.
+- Devices are chosen by explicit arguments, not by an environment variable: `Corpus.extract(accel_type=...)`
+  (`'CPU'`, `'CUDA'`, `'MPS'`, `'Auto'`), `Corpus.ocr(device=...)` and the OCR plugin's own options, and
+  `glossapi plan` / `glossapi run --device STAGE=cpu|mps|cuda:N` for the stages whose capability lists that device.
 
 ## OCR & Parsing
 
-- `GLOSSAPI_IMAGES_SCALE`: image scale hint for OCR/layout (default ~1.1–1.25).
+- `GLOSSAPI_IMAGES_SCALE` defaults to 1.25 for extraction/layout. Greek OCR crop scaling is a toolkit option (`crop_scale`, default 3.0), not this extraction setting.
 - `GLOSSAPI_FORMULA_BATCH`: inline CodeFormula batch size (default `16`).
 - `GLOSSAPI_MARKDOWN_LAYOUT`: the safe backend's Markdown, `layout_v2` (default: layout-aware Markdown from Rust layout
   v2, no Docling) or `plain` (the plain page text as before K5-A2). Part of the extract stage identity; see
@@ -40,7 +42,8 @@ These optional knobs map directly to current Docling `PdfPipelineOptions` fields
 Install `python install_glossapi.py ocr --device cpu` (or `mps` / `cuda126` /
 `cuda132`). `Corpus.ocr(mode='ocr_bad')` defaults to the pinned Greek R8+x1
 plugin; explicit `ocr_options` still select a configured external engine.
-See [OCR plugin migration](ocr_plugin_migration.md).
+See [OCR plugin migration](ocr_plugin_migration.md) for the toolkit's own variables (`GLOSSAPI_OCR_TOOLKIT_SOURCE`,
+`GREEKOCR_CACHE_DIR`, `GREEKOCR_SEGMENTER_MODEL_DIR`) and its model caches; this page does not repeat them.
 
 ## Math Enrichment (Phase‑2)
 

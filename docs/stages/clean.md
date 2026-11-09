@@ -127,9 +127,11 @@ that exists instead goes through the existing `is_empty` gate.
 Valid page-quality sidecars attach `ocr_pages` and `ocr_pages_count` to both
 flagged and unflagged PDFs without promoting the document-level `needs_ocr`
 flag. `ocr_pages_unflagged_count` records selected pages inside unflagged
-documents in both routing modes. `Corpus.ocr(page_routing="flagged")` is the
-default and dispatches only flagged documents; `page_routing="all"` additionally
-dispatches the non-empty routes of unflagged documents. A flagged document
+documents in both routing modes. `Corpus.ocr()` defaults to
+`page_routing='all'` for OCR modes: it considers page-quality routes in flagged
+and unflagged documents. Set `page_routing='flagged'` explicitly to restrict OCR
+to cleaner-flagged documents. `mode='math_only'` performs no OCR and retains its
+separate flagged-document exclusion policy. A flagged document
 whose valid page-quality report routes no page is not dispatched (as `glossapi
 run`, K5 quality policy P4d); a flagged document without a report keeps the
 whole-document fallback. Existing completion and skip-list gates

@@ -116,8 +116,9 @@ def build_ocr_selection(
             known = (df["page_rule_profile"].notna() if "page_rule_profile" in df.columns
                      else pd.Series(False, index=df.index))
             # P4a: an all-GLYPH text layer goes to OCR whole; the OCR stage's own glyph check selects every page.
-            glyphs = df.get("filter", pd.Series("", index=df.index)).astype(str).str.split(";").map(
-                lambda tokens: "glyph_only" in tokens)
+            # A missing filter (None, NaN, pd.NA) is unknown metadata, not glyph_only (FINAL-ASTRA F02).
+            glyphs = df.get("filter", pd.Series("", index=df.index)).map(
+                lambda value: isinstance(value, str) and "glyph_only" in value.split(";")).astype(bool)
             glyph_documents.update(df.loc[glyphs & flagged, "filename"].dropna().astype(str).map(canonical_stem))
             unrouted = (flagged & known & routed_counts.eq(0) & ~glyphs
                         & (mode in {"ocr_bad", "ocr_bad_then_math"}))
