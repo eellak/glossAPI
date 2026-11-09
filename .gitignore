@@ -8,7 +8,6 @@ tokenization/text.bin
 tokenization/text.txt
 tokenization/tokenize
 tokenization/tokenizer
-.gitignore
 tokenization/freqency.txt
 tokenization/paper_1.txt
 tokenization/cleaned_filtered_extracted_txt
@@ -88,3 +87,6 @@ deepseek-ocr-2/
 
 # Runtime extraction log a standalone run appends to in the working directory (LS6-G06); not source.
 /conversion.log
+
+# MkDocs build output (`mkdocs build` writes site/ at the repository root); the published site is built by CI.
+/site/

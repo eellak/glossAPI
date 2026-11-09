@@ -3,6 +3,7 @@
 Simple test of the GlossAPI Corpus functionality with the refactored pipeline
 """
 import logging
+import sys
 from pathlib import Path
 from glossapi.corpus import Corpus
 
@@ -10,10 +11,11 @@ from glossapi.corpus import Corpus
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("simple_test")
 
-# Test directory - using the directory where we downloaded the paper
-TEST_DIR = Path("/home/fivos/CascadeProjects/glossAPI/corpus_test")
-
 def main():
+    # Corpus directory (input and output) holding the downloaded paper(s); no machine default.
+    if len(sys.argv) != 2:
+        sys.exit("usage: python test_script.py CORPUS_DIR")
+    TEST_DIR = Path(sys.argv[1])
     # Create a basic corpus object - using same directory for input and output
     logger.info("Creating Corpus object")
     corpus = Corpus(
