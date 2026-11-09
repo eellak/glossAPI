@@ -21,7 +21,7 @@ PINS = {
     "tenacity": ("tenacity", "9.2.1"),
     "aiofiles": ("aiofiles", "25.1.0"),
     "dask": ("dask", "2026.8.0"),
-    "pypdf": ("pypdf", "6.21.3"),
+    "pypdf": ("pypdf", "6.21.4"),
     "fontTools": ("fonttools", "4.68.0"),
     "sklearn": ("scikit-learn", "1.6.1"),
 }

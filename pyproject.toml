@@ -45,7 +45,7 @@ reference = [
     "tenacity==9.2.1",
     "aiofiles==25.1.0",
     "dask[dataframe]==2026.8.0",
-    "pypdf==6.21.3",
+    "pypdf==6.21.4",
     "fonttools==4.68.0",
     "scikit-learn==1.6.1",
 ]

@@ -116,7 +116,7 @@ Retired, with no replacement fallback (accepted install-path behaviour change):
 
 The `test` dependency group (and `dev`, which includes it) installs the
 `reference` group: pinned oracles for the parity tests (tenacity 9.2.1,
-aiofiles 25.1.0, dask 2026.8.0, pypdf 6.21.3, fontTools 4.68.0). With
+aiofiles 25.1.0, dask 2026.8.0, pypdf 6.21.4, fontTools 4.68.0). With
 `GLOSSAPI_REFERENCE_REQUIRED=1` (set by `--run-tests`) a missing or different
 oracle fails its test instead of skipping it.
 `requirements-docs.lock` locks the docs profile (mkdocs 1.6.1,
