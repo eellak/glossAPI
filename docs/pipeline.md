@@ -30,6 +30,7 @@ workers are `spawn` processes that import the calling script again, so guard a s
 
 - Main code: `Corpus.download()` -> `GlossDownloader.download_files()`
 - Purpose: read a metadata parquet, expand list/JSON URL cells, deduplicate URLs, download supported file types, and checkpoint progress.
+- Public targets only: credential URLs, signed/token query fields, cookies and credential settings are refused before a request.
 - Typical inputs:
   - a parquet file in `input_dir` or an explicit `input_parquet`
   - a URL column such as `url` or `links_column`
@@ -47,6 +48,7 @@ workers are `spawn` processes that import the calling script again, so guard a s
   - or explicit `file_paths`
 - Important parameters:
   - `phase1_backend='safe'|'docling'|'auto'`
+  - default `auto` uses safe PDFium extraction with layout-aware Markdown, without Docling; `GLOSSAPI_MARKDOWN_LAYOUT=plain` keeps plain text. Docling extraction is an explicit optional layout backend.
   - `repair_fonts=True` (default): worker-local CPU ToUnicode repair before safe or Docling extraction; `False` uses the original text layer
   - `use_gpus='single'|'multi'`
   - `workers_per_device` to fan out more than one extraction worker onto each GPU

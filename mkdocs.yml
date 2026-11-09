@@ -1,5 +1,5 @@
 site_name: GlossAPI
-site_description: Academic document processing pipeline (Docling + external OCR plugins + Rust)
+site_description: Academic document processing with PDFium, Rust and the Greek OCR toolkit
 repo_url: https://github.com/eellak/glossAPI
 theme:
   name: material

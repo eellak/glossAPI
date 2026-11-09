@@ -4,7 +4,8 @@ GlossAPI is a GPU-ready document processing pipeline from [GFOSS](https://gfoss.
 
 ## Why GlossAPI
 - Handles download → extraction → cleaning → sectioning in one pipeline.
-- Ships safe PyPDFium extraction plus Docling for structured extraction and external Docling OCR engines for OCR remediation.
+- Ships layout-aware Markdown extraction with PDFium and bundled Rust extensions, without Docling in core.
+- Uses the [Greek OCR toolkit](https://github.com/fffoivos/greek-ocr-toolkit) as its only supported OCR engine; Docling layout is optional.
 - Rust-powered cleaner/noise metrics keep Markdown quality predictable.
 - Greek-first metadata and section classification tuned for academic corpora.
 - Modular Corpus API lets you resume from any stage or plug into existing flows.
@@ -45,6 +46,12 @@ PY
 
 ## Optional packages
 
+For 0.2.0 changes, API migration and limitations, see [CHANGELOG.md](CHANGELOG.md).
+The default Markdown mode is `layout_v2`; set `GLOSSAPI_MARKDOWN_LAYOUT=plain` before a run for plain page text.
+Neither core mode requires Docling. From this checkout, `pip install .`, `pip install '.[ocr]'` and
+`pip install '.[layout]'` install core, Greek OCR and optional Docling layout respectively. Source installs need
+Rust and a C toolchain; see [installation](docs/getting_started.md).
+
 The default install is **core**: extraction with PDFium, cleaning, sectioning, annotation and export. Add named
 packages when you need them:
 
@@ -60,6 +67,9 @@ See [Dependency setup](dependency_setup/dependency_notes.md) and
 [OCR setup, development override and qualification](docs/ocr_plugin_migration.md).
 
 ## Browser-Gated Download Mode
+
+All download routes support public targets only. URLs containing credentials, signed/token query fields, cookies
+or credential settings are refused before any request. Browser recovery handles public interstitials, not login.
 
 `Corpus.download(...)` now supports three high-level routes for file acquisition:
 
@@ -161,3 +171,5 @@ Open an issue or PR if you spot drift between expected outputs and the pipeline.
 ## License
 
 This project is licensed under the [EUPL 1.2](https://interoperable-europe.ec.europa.eu/collection/eupl/eupl-text-eupl-12).
+
+Bundled dictionary and fixture terms are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

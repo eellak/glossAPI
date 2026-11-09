@@ -10,7 +10,7 @@ without reading the entire repo.
 | --- | --- | --- |
 | Public package entry | `src/glossapi/__init__.py` | Lazy-exports `Corpus`, `GlossSectionClassifier`, `GlossDownloader`, and related classes without pulling heavy runtime dependencies at import time. |
 | High-level orchestration | `src/glossapi/corpus/corpus_orchestrator.py` | Coordinates the end-to-end pipeline and owns the main folder/artifact conventions. |
-| Phase-1 extraction engine | `src/glossapi/gloss_extract.py` | Builds/reuses Docling converters, handles safe vs Docling backend selection, batching, timeouts, resumption, and artifact export. |
+| Phase-1 extraction engine | `src/glossapi/gloss_extract.py` | Defaults to PDFium with Rust layout labels; handles optional Docling selection, batching, timeouts, resumption and artifact export. |
 | Streaming run and CLI | `src/glossapi/stages/run.py`, `src/glossapi/stages/scheduler.py`, `src/glossapi/cli.py` | `Corpus.run()` / `glossapi run`: plans the per-document DAG, runs stage workers, executes the corpus barriers (`stages/barriers.py`), retries interrupted attempts and publishes the products. |
 | Provenance ledger | `src/glossapi/ledger/` | The corpus SQLite ledger `corpus.sqlite3`: schema and storage versions (`schema.py`, `compact.py`), the single writer and durability barriers (`writer.py`), the read side of `status`/`report` (`reader.py`) and the legacy import (`importer.py`). |
 | Retention and disk budget | `src/glossapi/stages/retention.py`, `src/glossapi/stages/disk_budget.py`, `src/glossapi/stages/final_products.py` | `debug`/`memory_saving` deletion rules, the extreme-mode disk guard and the publication disk charge. |
