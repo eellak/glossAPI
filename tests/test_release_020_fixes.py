@@ -66,6 +66,8 @@ def test_f02_math_only_after_lightweight_extraction(tmp_path):
     corpus.extract(input_format="pdf", phase1_backend="safe", use_gpus="none")
     for mode in ("math_only", "ocr_bad"):
         assert build_ocr_selection(corpus, mode=mode, reprocess_completed=False).bad_files == []
+    # The reviewed call itself: no Docling JSON, so it selects, finds nothing to enrich and returns (no OCR, no model).
+    assert corpus.ocr(mode="math_only", fix_bad=False) is None
 
 
 # ---- F03: files=None is the auto-discovery selector, not an inventory --------------------------------------------
