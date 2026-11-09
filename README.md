@@ -31,18 +31,24 @@ cd glossAPI
 python -m venv .venv && source .venv/bin/activate   # Python 3.11–3.14
 pip install -e .                                    # builds the bundled Rust extensions (needs a Rust toolchain)
 
-# Run the lightweight PDF corpus (no GPU/Docling required)
-python - <<'PY'
+# Run the lightweight PDF corpus (no GPU/Docling required): save a guarded script, then run it
+cat > lightweight_run.py <<'PY'
 from pathlib import Path
 from glossapi import Corpus
 
-input_dir = Path("samples/lightweight_pdf_corpus/pdfs")
-output_dir = Path("artifacts/lightweight_pdf_run")
-output_dir.mkdir(parents=True, exist_ok=True)
 
-corpus = Corpus(input_dir, output_dir)
-corpus.extract(input_format="pdf")  # Safe PyPDFium backend by default
+def main():
+    input_dir = Path("samples/lightweight_pdf_corpus/pdfs")
+    output_dir = Path("artifacts/lightweight_pdf_run")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    corpus = Corpus(input_dir, output_dir)
+    corpus.extract(input_format="pdf")  # safe PDFium backend, layout_v2 Markdown
+
+
+if __name__ == "__main__":  # extraction workers start with spawn and import this file again
+    main()
 PY
+python lightweight_run.py
 ```
 
 - Compare the generated Markdown in `artifacts/lightweight_pdf_run/markdown/`
@@ -53,7 +59,7 @@ PY
 ### Corpus usage contract
 `Corpus` is the organizing surface: keep contributions wired through `Corpus.run()` and the phase methods (`download()`, `extract()`, `clean()`, `ocr()`, `section()`, `annotate()`, `jsonl()`, `jsonl_sharded()`). The intended use is a short script chaining those calls, or the `glossapi plan`/`glossapi run` commands; avoid bespoke monkeypatches or side channels so resumability and artifact layout stay consistent.
 
-`Corpus.run()` and `glossapi run` record every stage in the corpus ledger (`corpus.sqlite3`) and can resume an interrupted run (`glossapi run --resume RUN_ID`). Their stage workers are separate processes started with `spawn`, which import your script again; phase methods such as `extract()` also run their per-document work in `spawn` workers. A script file that calls `Corpus.run()` or a phase method must therefore guard those calls with `if __name__ == "__main__":` (the `python - <<'PY'` examples below run from standard input and need no guard). See [Resumability, recovery and retention](docs/architecture/resumability_recovery_and_retention.md) and the [CLI JSON schema](docs/cli_json_schema.md).
+`Corpus.run()` and `glossapi run` record every stage in the corpus ledger (`corpus.sqlite3`) and can resume an interrupted run (`glossapi run --resume RUN_ID`). Their stage workers are separate processes started with `spawn`, which import your script again; phase methods such as `extract()` also run their per-document work in `spawn` workers. Save such code as a script file and guard the calls with `if __name__ == "__main__":`, as in the quickstart above; code piped to `python -` (standard input) cannot be imported again, so its workers fail. See [Resumability, recovery and retention](docs/architecture/resumability_recovery_and_retention.md) and the [CLI JSON schema](docs/cli_json_schema.md).
 
 `Corpus.extract(batched=None)` defaults to layout batch 8 with 8 rasteriser workers for single-device, layout-only Docling on CUDA; safe PyPDFium and multi-GPU runs stay sequential by default.
 

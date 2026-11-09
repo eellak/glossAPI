@@ -103,20 +103,28 @@ python -c "import torch; print(torch.cuda.is_available())"
 
 ## First run (lightweight corpus)
 
-Run this from the checkout, in the activated environment:
+Run this from the checkout, in the activated environment. It saves a small script and runs it; keep the
+`if __name__ == "__main__":` guard, because extraction workers start with `spawn` and import the script again (code
+piped to `python -` cannot be imported again, so its workers fail):
 
 ```bash
-python - <<'PY'
+cat > lightweight_run.py <<'PY'
 from pathlib import Path
 from glossapi import Corpus
 
-input_dir = Path("samples/lightweight_pdf_corpus/pdfs")
-output_dir = Path("artifacts/lightweight_pdf_run")
-output_dir.mkdir(parents=True, exist_ok=True)
 
-corpus = Corpus(input_dir, output_dir)
-corpus.extract(input_format="pdf")
+def main():
+    input_dir = Path("samples/lightweight_pdf_corpus/pdfs")
+    output_dir = Path("artifacts/lightweight_pdf_run")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    corpus = Corpus(input_dir, output_dir)
+    corpus.extract(input_format="pdf")  # safe PDFium backend, layout_v2 Markdown
+
+
+if __name__ == "__main__":  # extraction workers start with spawn and import this file again
+    main()
 PY
+python lightweight_run.py
 ```
 
 - Inspect `artifacts/lightweight_pdf_run/markdown/` and compare with `samples/lightweight_pdf_corpus/expected_outputs.json`.
