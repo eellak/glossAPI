@@ -1,6 +1,6 @@
 """Adapt CP-R1c2/name_decoding_probe.py into self-contained crate fixtures.
 
-The original read-only reproducer is copied beside this script for provenance.
+The self-contained builders below preserve the historical reproducer's synthetic cases.
 Only crate fixture files are written; expectations use the unchanged reference.
 """
 from pathlib import Path

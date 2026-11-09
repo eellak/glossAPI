@@ -8,7 +8,7 @@ The preserved OCR outputs contain several distinct failure modes that should not
 
 The examples below were reviewed on April 3, 2026 from the preserved OCR lane:
 
-- `/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown`
+- `CORPUS/markdown`
 
 ## Group 1: Page-Local Low-Entropy Numeric Collapse
 
@@ -26,8 +26,8 @@ Examples:
 
 Anchored references:
 
-- [ABO_768__p00001-00096.md:955](/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown/ABO_768__p00001-00096.md#L955)
-- [ACH_787__p00001-00096.md:755](/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown/ACH_787__p00001-00096.md#L755)
+- [ABO_768__p00001-00096.md:955](CORPUS/markdown/ABO_768__p00001-00096.md#L955)
+- [ACH_787__p00001-00096.md:755](CORPUS/markdown/ACH_787__p00001-00096.md#L755)
 
 Detection ideas:
 
@@ -52,8 +52,8 @@ Example:
 
 Anchored references:
 
-- [ADQ_670.md:887](/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown/ADQ_670.md#L887)
-- [ADQ_670.md:954](/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown/ADQ_670.md#L954)
+- [ADQ_670.md:887](CORPUS/markdown/ADQ_670.md#L887)
+- [ADQ_670.md:954](CORPUS/markdown/ADQ_670.md#L954)
 
 Detection ideas:
 
@@ -78,8 +78,8 @@ Examples:
 
 Anchored references:
 
-- [ADS_856__p00001-00014.md:139](/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown/ADS_856__p00001-00014.md#L139)
-- [ADS_856__p00015-00082.md:1](/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown/ADS_856__p00015-00082.md#L1)
+- [ADS_856__p00001-00014.md:139](CORPUS/markdown/ADS_856__p00001-00014.md#L139)
+- [ADS_856__p00015-00082.md:1](CORPUS/markdown/ADS_856__p00015-00082.md#L1)
 
 Detection ideas:
 
@@ -111,8 +111,8 @@ Recommended future metadata:
 
 ## Current Examples To Keep Around
 
-- [ABO_768__p00001-00096.md:955](/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown/ABO_768__p00001-00096.md#L955)
-- [ACH_787__p00001-00096.md:755](/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown/ACH_787__p00001-00096.md#L755)
-- [ADQ_670.md:887](/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown/ADQ_670.md#L887)
-- [ADS_856__p00001-00014.md:139](/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown/ADS_856__p00001-00014.md#L139)
-- [ADS_856__p00015-00082.md:1](/home/foivos/data/openarchives_ocr_ingest_20260403/lanes/eu_node01_full_v1/markdown/ADS_856__p00015-00082.md#L1)
+- [ABO_768__p00001-00096.md:955](CORPUS/markdown/ABO_768__p00001-00096.md#L955)
+- [ACH_787__p00001-00096.md:755](CORPUS/markdown/ACH_787__p00001-00096.md#L755)
+- [ADQ_670.md:887](CORPUS/markdown/ADQ_670.md#L887)
+- [ADS_856__p00001-00014.md:139](CORPUS/markdown/ADS_856__p00001-00014.md#L139)
+- [ADS_856__p00015-00082.md:1](CORPUS/markdown/ADS_856__p00015-00082.md#L1)

@@ -238,12 +238,12 @@ Recommendation:
 
 ## Verification performed
 
-Commands run from `/home/foivos/glossAPI-development/rust/glossapi_rs_cleaner` unless noted:
+Commands run from `<checkout>/rust/glossapi_rs_cleaner` unless noted:
 
 - `cargo test md_module`: passed, 40 tests.
 - `cargo test md_verify`: passed, 34 tests.
 - `cargo test phase_b_`: passed, 12 tests.
-- `python3 -m py_compile /home/foivos/glossAPI-development/cleaning_scripts/verify_md_equivalence.py`: passed.
+- `python3 -m py_compile <checkout>/cleaning_scripts/verify_md_equivalence.py`: passed.
 - `cargo test`: failed in the broader suite, with 241 passed and 2 failed. The failures were `table_remover_module::tests::test_empty_content_with_remove_op` and `cleaning_module::tests::perf_mixed_doc_throughput_floor`. The latter was run in the default debug profile and appears to be a throughput-threshold issue, not a Markdown-equivalence failure.
 
 The Python scorecard itself was not run because `glossapi_rs_cleaner` is not installed in the active Python environment.

@@ -4,7 +4,7 @@
     "differences_token": "/X#F1Y",
     "text": "B",
     "analysis": {
-      "path": "/Users/foivoskarounos-zamparloukos/Projects/glossapi-development/rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_different_raw_byte.pdf",
+      "path": "rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_different_raw_byte.pdf",
       "category": "unsupported",
       "pages": 1,
       "sampled_pages": [
@@ -32,7 +32,7 @@
       "error": null
     },
     "repair": {
-      "src": "/Users/foivoskarounos-zamparloukos/Projects/glossapi-development/rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_different_raw_byte.pdf",
+      "src": "rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_different_raw_byte.pdf",
       "dst": "/tmp/t11-cycle3/name_decoding_different_raw_byte-reference.pdf",
       "category": "unsupported",
       "repaired_fonts": 0,
@@ -64,7 +64,7 @@
     "differences_token": "/X#C3#B1Y",
     "text": "B",
     "analysis": {
-      "path": "/Users/foivoskarounos-zamparloukos/Projects/glossapi-development/rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_valid_utf8.pdf",
+      "path": "rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_valid_utf8.pdf",
       "category": "unsupported",
       "pages": 1,
       "sampled_pages": [
@@ -92,7 +92,7 @@
       "error": null
     },
     "repair": {
-      "src": "/Users/foivoskarounos-zamparloukos/Projects/glossapi-development/rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_valid_utf8.pdf",
+      "src": "rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_valid_utf8.pdf",
       "dst": "/tmp/t11-cycle3/name_decoding_valid_utf8-reference.pdf",
       "category": "unsupported",
       "repaired_fonts": 0,

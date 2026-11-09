@@ -8,7 +8,7 @@
     "bytes": 9880512,
     "licence": "Apache-2.0",
     "upstream_url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/tree/28fe5895c24fd108c19eb3e8479f4ab385fbfc62",
-    "cached_path": "/Users/foivoskarounos-zamparloukos/Projects/glossapi-ocr-local/experiments/ocr_tests_20261029/cache/greekocr/detectors/models--PaddlePaddle--PP-OCRv6_small_det_onnx/snapshots/28fe5895c24fd108c19eb3e8479f4ab385fbfc62/inference.onnx"
+    "cached_path": "<CACHE>/greekocr/detectors/models--PaddlePaddle--PP-OCRv6_small_det_onnx/snapshots/28fe5895c24fd108c19eb3e8479f4ab385fbfc62/inference.onnx"
   },
   "model_acquisition": {
     "repo_id": "fffoivos/greek-ocr",
@@ -17,7 +17,7 @@
     "variant": "x1",
     "manifest_sha256": "85d455d2cae2b756ab17e7114a3de13d7d41426d1fa5093028a179cf0c7d1345"
   },
-  "model_release": "/Users/foivoskarounos-zamparloukos/Projects/glossapi-ocr-local/experiments/ocr_tests_20261029/cache/greekocr/models/repo-6e03e02cb44acdc7/2a6b019be728e5be70cdbd981414c630b63fca08/x1",
+  "model_release": "<CACHE>/greekocr/models/repo-6e03e02cb44acdc7/2a6b019be728e5be70cdbd981414c630b63fca08/x1",
   "options": {
     "lang": [
       "el",
@@ -46,7 +46,7 @@
     "routing_sidecar": null,
     "replace_policy": "all",
     "checkpoint_sha256": null,
-    "call_log": "/Users/foivoskarounos-zamparloukos/Projects/glossapi-ocr-local/experiments/ocr_tests_20261029/handoff/evidence/g3_offline/plugin_calls.jsonl",
+    "call_log": "<OUTPUT>/plugin_calls.jsonl",
     "tables": true,
     "join_lines": false,
     "granularity": "default",

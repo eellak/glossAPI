@@ -7,7 +7,7 @@ Date: 2026-04-24
 Findings as of the most recent commit on this work stream:
 
 - **Finding 1 (integration)** — STILL OPEN. Filed as Q4 in
-  `/home/foivos/AGENT_COORDINATION.md` for Claude-Cleaner (owns
+  `the historical coordination notes` for Claude-Cleaner (owns
   `cleaning_module.rs`). Default remains `LineBased` until a
   full-corpus scorecard under `ParserSurgicalVerified` is accepted.
 - **Finding 2 (refusal path)** — RESOLVED. `format_surgical_checked`
@@ -265,7 +265,7 @@ run on the cleaning instance shows non-regression under
 `ParserSurgicalVerified`. Scorecard tags the mode used so runs are
 auditable. Claude-Cleaner owns `cleaning_module.rs` per the agent
 coord doc, so the actual integration edit goes through them — I'll
-file a Q3 in `/home/foivos/AGENT_COORDINATION.md` proposing the
+file a Q3 in `the historical coordination notes` proposing the
 enum shape + transition plan.
 
 ### Finding 2 — no refusal path — **ADOPT, landing now**

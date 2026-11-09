@@ -1,5 +1,6 @@
 recursive-include rust *.toml *.lock *.rs
 include rust/glossapi_rs_pdfrepair/fixtures/font_tables.json
+recursive-include rust/glossapi_rs_pdfrepair/fixtures *.pdf *.ttf *.json
 include install_glossapi.py
 recursive-include dependency_setup *.sh *.txt *.md
 include src/glossapi/ocr_package.txt
@@ -8,3 +9,7 @@ include src/glossapi/data/package_catalog/measured.json
 include src/glossapi/data/measured_costs.json
 recursive-include tools/catalog *.py
 recursive-include src/glossapi/schemas *.json
+
+include CHANGELOG.md
+include THIRD_PARTY_NOTICES.md
+include FONT_TABLES_LICENSES.txt

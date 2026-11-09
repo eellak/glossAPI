@@ -106,7 +106,7 @@ Verification:
   direction and the dual-parser-oracle approach.
 - `PHASE_A_PARSER_BACKED_INDEX.md` — this file.
 
-## Data artifacts (under `/home/foivos/data/phase_a_audit/`)
+## Data artifacts (under `<audit-output>/`)
 
 - `phase_a_stats.jsonl` — 168,078 rows, ~65 MB. Per-doc Phase A
   alteration stats across the unified corpus.
@@ -120,7 +120,7 @@ Verification:
 
 ## Coordination
 
-- `/home/foivos/AGENT_COORDINATION.md` — shared file between
+- `the historical coordination notes` — shared file between
   Claude-Cleaner (cleaner + audits) and Claude-MD (md module +
   verifier). Ownership boundaries, planned/in-flight shared runs,
   Q&A. Updated whenever a long run goes on the cleaning instance.

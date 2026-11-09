@@ -355,7 +355,10 @@ def _nvidia_devices() -> list[int]:
             return []
         count = len([item for item in visible.split(',') if item.strip()])
         found = list(range(min(count, len(found)))) if found else []
-    return found
+    # Containers can expose /dev/nvidia7 as their only GPU. The node's host
+    # minor number is not a CUDA ordinal: the visible device is cuda:0. CUDA
+    # always numbers its visible devices contiguously, also without a mask.
+    return list(range(len(found)))
 
 
 def devices(*, probe: dict[str, Any] | None = None) -> list[dict[str, Any]]:

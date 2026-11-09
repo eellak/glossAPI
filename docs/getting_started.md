@@ -35,6 +35,32 @@ package with `python install_glossapi.py ocr --device cpu` (or `mps` / `cuda126`
 
 ### Manual editable install
 
+For a regular source install (including all three bundled Rust extensions):
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install .                  # core: PDFium, layout-aware Markdown, clean, section, annotate, export
+# Optional, in the same environment:
+python -m pip install '.[ocr]'           # Greek OCR toolkit and its inference stack
+python -m pip install '.[layout]'        # Docling layout and math/code enrichment
+glossapi --help
+glossapi capabilities --json
+glossapi doctor
+```
+
+Install Rust (for example with rustup) and a platform C linker first: Xcode Command Line Tools on macOS,
+or `build-essential` on Debian/Ubuntu. `pip install .` compiles cleaner, noise and PDF repair from `rust/`;
+no separate native installer or development overlay is needed. With rustup, the checkout's `rust-toolchain.toml`
+selects the qualified toolchain; the crates declare Rust 1.85 as their minimum. Use the device-aware installer
+above to choose CPU/CUDA/MPS torch wheels explicitly. OCR model assets are fetched by the toolkit on first use;
+allow network access or prewarm the caches described in [OCR setup](ocr_plugin_migration.md).
+
+To build distributable source and wheel archives, install `build`, then run `python -m build` from the checkout.
+The wheel bundles the native extensions for its build platform; build a separate wheel for each target platform.
+For development, an editable install is also available:
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -U pip

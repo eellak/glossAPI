@@ -120,7 +120,7 @@ def test_openarchives_ocr_enrich_resolves_rewritten_source_jsonl_path(tmp_path):
             {
                 "source_doc_id": "doc-x",
                 "filename": "XXX_000.pdf",
-                "source_jsonl": "/home/foivos/data/glossapi_raw/hf/openarchives.gr/data/openarchives/shard_02/chunk-001.jsonl.zst",
+                "source_jsonl": "/example/corpus/hf/openarchives.gr/data/openarchives/shard_02/chunk-001.jsonl.zst",
                 "needs_ocr": True,
             }
         ]

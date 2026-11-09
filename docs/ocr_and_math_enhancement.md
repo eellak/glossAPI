@@ -1,6 +1,6 @@
 # OCR and Math Enrichment
 
-OCR remediation uses externally installed Docling OCR engines. See
+OCR remediation uses the pinned external Greek OCR toolkit, the only supported OCR engine. See
 [OCR plugin migration](ocr_plugin_migration.md) for configuration and page routing.
 Math/code enrichment stays in the optional Docling layout stack.
 Use `Corpus.ocr(mode="math_only", fix_bad=False)` to enrich existing Docling JSON
@@ -16,6 +16,7 @@ c = Corpus('IN','OUT')
 # Emit JSON + formula index for Phase‑2
 c.extract(
     input_format='pdf',
+    phase1_backend='docling',   # optional layout extra; required for Docling JSON/formula artifacts
     accel_type='CUDA',
     emit_formula_index=True,     # request json/<stem>.formula_index.jsonl alongside the default JSON
 )

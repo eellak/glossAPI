@@ -196,8 +196,8 @@ def planned_device(device=None):
         return 'mps'
     visible = os.environ.get('CUDA_VISIBLE_DEVICES')
     if visible is not None:
-        return 'cpu' if visible.lower() in ('','-1','none','nodevfiles') else 'cuda:0'
-    if Path('/dev/nvidia0').exists():
+        return 'cpu' if visible.strip().lower() in ('','-1','none','nodevfiles') else 'cuda:0'
+    if any(path.name[6:].isdigit() for path in Path('/dev').glob('nvidia[0-9]*')):
         return 'cuda:0'
     return 'cpu'
 

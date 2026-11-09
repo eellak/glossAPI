@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "glossapi"
-version = "0.1.4"
+version = "0.2.0"
 dynamic = ["optional-dependencies"]
 description = "Academic document processing pipeline with Rust-powered markdown cleaning"
 authors = [
@@ -22,6 +22,7 @@ dependencies = [
     "filelock>=4.2.4",
 ]
 license = "EUPL-1.2"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "FONT_TABLES_LICENSES.txt"]
 classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",

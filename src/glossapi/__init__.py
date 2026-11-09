@@ -37,4 +37,4 @@ try:
     from importlib.metadata import version as _pkg_version
     __version__: str = _pkg_version(__name__)
 except Exception:
-    __version__ = "0.1.1"
+    __version__ = "0.2.0"
