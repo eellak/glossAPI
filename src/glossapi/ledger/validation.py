@@ -26,8 +26,11 @@ def validate_evidence(value):
         digest = value.get(name)
         if digest is not None and (not isinstance(digest, str) or not re.fullmatch("[0-9a-f]{64}", digest)):
             raise ValueError(f"Invalid {name}")
-    for name in ("files", "rows", "columns", "unavailable", "models", "packages", "native", "dictionaries"):
-        if name in value and not isinstance(value[name], list): raise ValueError(f"{name} must be an array")
+    # A settings snapshot records public API parameters as given: a selector such as files=None (auto-discovery) is
+    # not an inventory. Every other evidence kind keeps the inventory-array rule (FINAL-ASTRA F03).
+    if value.get("kind") != "settings":
+        for name in ("files", "rows", "columns", "unavailable", "models", "packages", "native", "dictionaries"):
+            if name in value and not isinstance(value[name], list): raise ValueError(f"{name} must be an array")
     if "wrapper_raised" in value and type(value["wrapper_raised"]) is not bool:
         raise ValueError("wrapper_raised must be boolean")
     if "reuse_eligible" in value and type(value["reuse_eligible"]) is not bool:
