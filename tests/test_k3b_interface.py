@@ -595,10 +595,20 @@ def live_source_problems(module):
                 yield item
 
     def generated(code):
-        # methods that @dataclass writes (exec of generated text, or its own helpers); nothing else is exempt. On
-        # Python 3.14 the generated __repr__ is wrapped by reprlib.recursive_repr, whose code lives in reprlib.
-        return ((code.co_filename == '<string>' and code.co_qualname.startswith('__create_fn__.'))
-                or code.co_filename in (dataclasses.__file__, reprlib.__file__))
+        # methods that @dataclass writes (exec of generated text, or its own helpers); nothing else is exempt
+        return (code.co_filename == '<string>' and code.co_qualname.startswith('__create_fn__.')) or code.co_filename == dataclasses.__file__
+
+    def unwrapped(function):
+        # Python 3.14 wraps the generated dataclass __repr__ in reprlib.recursive_repr: judge the wrapped function
+        while function.__code__.co_filename == reprlib.__file__:
+            inner = getattr(function, '__wrapped__', None)          # 3.12+; 3.11 keeps it only in the closure
+            if inner is None:
+                inner = next((cell.cell_contents for cell in function.__closure__ or ()
+                              if inspect.isfunction(cell.cell_contents)), None)
+            if not inspect.isfunction(inner):
+                break
+            function = inner
+        return function
 
     functions = []
     for value in vars(module).values():
@@ -607,7 +617,7 @@ def live_source_problems(module):
         elif inspect.isclass(value) and value.__module__ == module.__name__:
             functions.extend(members(value))
     problems = []
-    for function in functions:
+    for function in map(unwrapped, functions):
         if generated(function.__code__):
             continue
         live, source = function.__code__, compiled.get(function.__code__.co_qualname)
@@ -616,6 +626,19 @@ def live_source_problems(module):
             problems.append(f'{module.__name__}.{live.co_qualname} differs from its source file (added constants: {added})')
     return problems
 
+
+
+def test_live_source_check_sees_through_reprlib_wrappers(monkeypatch):
+    # the Python 3.14 dataclass allowance must not hide a stale application function wrapped by reprlib
+    import reprlib
+    import glossapi.plan_preview as owner
+    text = Path(owner.__file__).read_text()
+    changed = text.replace("PlanBindingError('plan_source_changed'", "PlanBindingError('plan_source_altered'")
+    assert changed != text
+    namespace = {'__name__': owner.__name__, '__package__': 'glossapi'}
+    exec(compile(changed, owner.__file__, 'exec'), namespace)
+    monkeypatch.setattr(owner, 'verify_plan_binding', reprlib.recursive_repr()(namespace['verify_plan_binding']))
+    assert any('verify_plan_binding' in item and 'plan_source_altered' in item for item in live_source_problems(owner))
 
 def test_guide_is_schema_valid_consistent_and_equals_the_docs_file():
     from glossapi.llm_guide import render_markdown
