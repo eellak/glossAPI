@@ -199,6 +199,8 @@ def test_seeded_fuzz_documents_equal_reference():
 
 # ---- Python-semantics primitives -----------------------------------------------------------------------------------
 def test_char_predicates_and_re_lower_on_every_code_point():
+    if unicodedata.unidata_version != "14.0.0":            # the native tables are generated from Python 3.11
+        pytest.skip(f"interpreter Unicode {unicodedata.unidata_version} differs from the native tables' 14.0.0")
     cps = [c for c in range(0x110000) if not 0xD800 <= c <= 0xDFFF]
     funcs = {"isspace": str.isspace, "isalpha": str.isalpha, "isdecimal": str.isdecimal, "isdigit": str.isdigit,
              "isnumeric": str.isnumeric, "isalnum": str.isalnum, "isupper": str.isupper}
