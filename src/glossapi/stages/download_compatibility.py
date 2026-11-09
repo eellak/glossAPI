@@ -1,0 +1,90 @@
+"""Sequential per-file acquisition behind the unchanged downloader serializer."""
+from pathlib import Path
+import tempfile
+import time
+import uuid
+
+from .contracts import DocumentSnapshot, StageRequest, StageSpecification
+from .download import DownloadStage
+from .execution import ReceiptCollector
+from .products import active_journal
+
+
+def install_download_adapter(corpus,downloader,configuration,download_mode):
+    import asyncio
+    if not callable(getattr(downloader,'download_file',None)):
+        from ..ledger.journal import observe
+        observe('legacy_observed',caller_supplied_aggregate_downloader=True,acquisition_provenance='unverified_no_per_file_kernel')
+        return
+    kernel=downloader.download_file
+    lock=asyncio.Lock()
+    async def acquire(row_index,url,semaphore,rate_limiter,retry_count=0,filename_base=None,referer=None):
+        projection=getattr(corpus,'_streaming_download_replays',None)
+        if projection is not None:
+            # Publication consumes the acquisition already committed by the
+            # frozen DAG. It must never open a second network attempt.
+            fact=projection.get((url,filename_base))
+            if fact is None:
+                raise ValueError('Download projection differs from the frozen source manifest')
+            journal=active_journal()
+            assert journal is not None  # the download serializer runs inside its publication journal
+            journal.adapter_stages.add('download');journal.adapter_attempts.add(fact['attempt_id'])
+            reference=fact['receipt']
+            if reference is None:
+                return False,'','',fact['message'] or fact['reason_code'],retry_count
+            from .execution import sha256_file
+            from .workers import read_result
+            if not reference.path.is_file() or reference.path.stat().st_size!=reference.bytes or sha256_file(reference.path)!=reference.sha256:
+                raise ValueError('Committed acquisition receipt is missing or corrupt')
+            result=read_result(reference.path)
+            if not result.decisions:
+                return False,'','',result.error.message if result.error else result.reason_code,retry_count
+            receipt=result.decisions[0]
+            if result.status=='ok':
+                from .compatibility import materialize_stage_outputs
+                from .execution import checked_path
+                from .retention import released_source
+                # memory_saving=extreme already deleted a fully read download (streaming): its
+                # downloads/ copy is not recreated; the results row still names the acquisition.
+                extreme=(getattr(journal,'retention_settings',None) or {}).get('memory_saving')=='extreme'
+                paths={a.relative_path:corpus.output_dir/a.relative_path for a in result.outputs if a.kind=='download_payload'
+                    and not (extreme and released_source(journal.writer.connection,checked_path(reference.path.parent,a.relative_path).as_uri()) is not None)}
+                if paths:materialize_stage_outputs(corpus,result,reference.path.parent,paths)
+            return result.status=='ok',receipt['assigned_filename'],receipt['file_ext'],receipt['backend_message'],receipt['legacy_outer_retry_count']
+        settings={**configuration,'download_mode':download_mode,'url':url,'row_index':int(row_index),
+            'legacy_outer_retry_count':int(retry_count),'filename_base':filename_base,'referer':referer}
+        settings.pop('input_parquet',None)
+        specification=StageSpecification('download.acquire',(),('download_payload',),settings=settings)
+        if semaphore:await semaphore.acquire()
+        await lock.acquire()
+        try:
+            stage=DownloadStage()
+            stage.downloader,stage.kernel,stage.rate_limiter=downloader,kernel,rate_limiter
+            journal=active_journal()
+            if journal:
+                from ..ledger.journal import source_key
+                from .sequential import SequentialStageRunner
+                with journal.writer.transaction():document_id=journal.writer.document(source_key(url))
+                result,workspace=await SequentialStageRunner(journal.writer,corpus.output_dir).execute_async(stage,
+                    DocumentSnapshot(document_id,None,url),specification,run_id=journal.run_id)
+                journal.adapter_stages.add('download');journal.adapter_attempts.add(result.attempt_id)
+            else:
+                temporary=Path(tempfile.mkdtemp(prefix='glossapi-download-',dir=corpus.output_dir))
+                request=StageRequest(*(str(uuid.uuid4()) for _ in range(5)),specification.operation,(),settings,{},'cpu',
+                    temporary/'attempt',time.monotonic_ns()+600_000_000_000)
+                result=await stage.run_document_async(request,reporter=ReceiptCollector());workspace=request.work_directory
+            if not result.decisions:
+                return False,'','',result.error.message if result.error else result.reason_code,retry_count
+            receipt=result.decisions[0]
+            if result.status=='ok':
+                from .compatibility import materialize_stage_outputs
+                paths={a.relative_path:corpus.output_dir/a.relative_path for a in result.outputs if a.kind=='download_payload'}
+                materialize_stage_outputs(corpus,result,workspace,paths)
+            elif not journal:
+                import shutil
+                shutil.rmtree(workspace.parent)
+            return result.status=='ok',receipt['assigned_filename'],receipt['file_ext'],receipt['backend_message'],receipt['legacy_outer_retry_count']
+        finally:
+            lock.release()
+            if semaphore:semaphore.release()
+    downloader.download_file=acquire

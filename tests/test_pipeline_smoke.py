@@ -1,16 +1,14 @@
 import os
+import sys
 from pathlib import Path
 
 import pandas as pd
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
 
 pytest.importorskip("docling")
 pytest.importorskip("glossapi_rs_cleaner")
-pytest.importorskip(
-    "onnxruntime", reason="RapidOCR/DeepSeek end-to-end tests require onnxruntime"
-)
-import onnxruntime as ort  # noqa: E402
 
 from glossapi import Corpus
 from glossapi.corpus import _resolve_skiplist_path
@@ -19,6 +17,15 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 _FONT_PATH = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+
+
+def _require_cuda(purpose: str) -> None:
+    """GPU-only tests skip with a reason on CPU profiles (T3b-G02); GLOSSAPI_REQUIRE_GPU=1 makes a missing GPU fail."""
+    if torch.cuda.is_available():
+        return
+    if os.environ.get("GLOSSAPI_REQUIRE_GPU", "").strip().lower() in {"1", "true", "yes"}:
+        pytest.fail(f"CUDA GPU required for {purpose} (GLOSSAPI_REQUIRE_GPU is set) but torch reports none")
+    pytest.skip(f"GPU-only: {purpose} needs a CUDA GPU; this profile has none")
 
 
 def _render_formula_image(text: str, dest: Path) -> None:
@@ -106,11 +113,8 @@ def _assert_dir_contents(
                 pytest.fail(f"Unexpected file {entry} in {root}")
 
 
-@pytest.mark.rapidocr
-def test_pipeline_smoke_and_artifacts(tmp_path):
-    assert torch.cuda.is_available(), "CUDA GPU expected for pipeline smoke test"
-    providers = ort.get_available_providers()
-    assert "CUDAExecutionProvider" in providers, f"CUDAExecutionProvider missing: {providers}"
+def test_pipeline_smoke_and_artifacts(tmp_path, monkeypatch):
+    _require_cuda("the pipeline smoke test")
 
     device_idx = 0
     if torch.cuda.device_count() > 1:
@@ -132,7 +136,6 @@ def test_pipeline_smoke_and_artifacts(tmp_path):
         num_threads=1,
         emit_formula_index=True,
         phase1_backend="docling",
-        force_ocr=True,
         use_gpus="single",
         devices=[device_idx],
     )
@@ -145,6 +148,21 @@ def test_pipeline_smoke_and_artifacts(tmp_path):
     needs = df.set_index("filename").get("needs_ocr")
     assert bool(needs.get("blank.pdf")), "Blank PDF should be flagged for OCR"
     assert not bool(needs.get("text.pdf"))
+
+    from glossapi.corpus.ocr import dispatch as plugin_dispatch
+
+    def fake_run_for_files(self_ref, files, **kwargs):
+        markdown_dir = self_ref.output_dir / "markdown"
+        metrics_dir = self_ref.output_dir / "json" / "metrics"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        for name in files:
+            stem = Path(name).stem
+            (markdown_dir / f"{stem}.md").write_text("[[Blank page]]\n", encoding="utf-8")
+            (metrics_dir / f"{stem}.metrics.json").write_text("{\n  \"page_count\": 1\n}\n", encoding="utf-8")
+        return {Path(name).stem: {"page_count": 1} for name in files}
+
+    monkeypatch.setattr(plugin_dispatch, "run_plugin_ocr", fake_run_for_files)
 
     corpus.ocr(
         mode="ocr_bad",
@@ -193,15 +211,8 @@ def test_pipeline_smoke_and_artifacts(tmp_path):
     assert sections_file.exists()
 
 
-@pytest.mark.rapidocr
 def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
-    assert torch.cuda.is_available(), "CUDA GPU expected for docling pipeline test"
-    providers = ort.get_available_providers()
-    assert "CUDAExecutionProvider" in providers, f"CUDAExecutionProvider missing: {providers}"
-
-    assert torch.cuda.is_available(), "CUDA GPU expected for docling pipeline test"
-    providers = ort.get_available_providers()
-    assert "CUDAExecutionProvider" in providers, f"CUDAExecutionProvider missing: {providers}"
+    _require_cuda("the docling pipeline test")
 
     device_idx = 0
     if torch.cuda.device_count() > 1:
@@ -242,7 +253,6 @@ def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
         num_threads=1,
         emit_formula_index=True,
         phase1_backend="docling",
-        force_ocr=True,
         use_gpus="single",
         devices=[device_idx],
     )
@@ -256,6 +266,25 @@ def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
     assert bool(greek_row["needs_ocr"]), "Greek consonant doc should require OCR rerun"
     assert "non_greek_text" in str(greek_row.get("filter", "")), "Filter should record non-Greek text"
 
+    from glossapi.corpus.ocr import dispatch as plugin_dispatch
+
+    def fake_run_for_files(self_ref, files, **kwargs):
+        markdown_dir = self_ref.output_dir / "markdown"
+        metrics_dir = self_ref.output_dir / "json" / "metrics"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        for name in files:
+            stem = Path(name).stem
+            if stem == "greek_consonants":
+                text = documents["greek_consonants"]
+            else:
+                text = documents.get(stem) or "[[Blank page]]"
+            (markdown_dir / f"{stem}.md").write_text(f"{text}\n", encoding="utf-8")
+            (metrics_dir / f"{stem}.metrics.json").write_text("{\n  \"page_count\": 1\n}\n", encoding="utf-8")
+        return {Path(name).stem: {"page_count": 1} for name in files}
+
+    monkeypatch.setattr(plugin_dispatch, "run_plugin_ocr", fake_run_for_files)
+
     corpus.ocr(
         fix_bad=True,
         math_enhance=True,
@@ -267,6 +296,15 @@ def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
     greek_after = results_after_ocr.loc["greek_consonants.pdf"]
     assert not bool(greek_after["needs_ocr"]), "Greek consonant doc should be resolved after OCR rerun"
     assert bool(greek_after.get("ocr_success", False)), "OCR rerun should mark greek consonant doc as success"
+
+    corpus.ocr(
+        backend="docling",
+        fix_bad=False,
+        math_enhance=True,
+        mode="math_only",
+        use_gpus="single",
+        devices=[device_idx],
+    )
 
     json_dir = corpus_dir / "json"
     assert json_dir.exists(), "Docling JSON directory should exist after extraction"
@@ -304,11 +342,8 @@ def test_docling_math_pipeline_with_mixed_pdfs(tmp_path, monkeypatch):
         assert not skiplist_path.read_text(encoding="utf-8").strip(), "Fatal skip-list should remain empty"
 
 
-@pytest.mark.rapidocr
 def test_clean_skips_files_with_successful_ocr(tmp_path, monkeypatch):
-    assert torch.cuda.is_available(), "CUDA GPU expected for OCR recovery test"
-    providers = ort.get_available_providers()
-    assert "CUDAExecutionProvider" in providers, f"CUDAExecutionProvider missing: {providers}"
+    _require_cuda("the OCR recovery test")
 
     device_idx = 0
     if torch.cuda.device_count() > 1:
@@ -351,7 +386,6 @@ def test_clean_skips_files_with_successful_ocr(tmp_path, monkeypatch):
         accel_type="CUDA",
         num_threads=1,
         phase1_backend="docling",
-        force_ocr=True,
         use_gpus="single",
         devices=[device_idx],
     )
@@ -372,121 +406,3 @@ def test_clean_skips_files_with_successful_ocr(tmp_path, monkeypatch):
     df_after = pd.read_parquet(parquet_path).set_index("filename")
     assert not bool(df_after.loc["consonants.pdf", "needs_ocr"])
     assert "non_greek_text" in str(df_after.loc["consonants.pdf", "filter"])
-
-
-@pytest.mark.deepseek
-def test_deepseek_cli_pipeline_with_synthetic_pdfs(tmp_path, monkeypatch):
-    """Optional DeepSeek integration smoke test that exercises the real CLI."""
-    if os.getenv("GLOSSAPI_RUN_DEEPSEEK_CLI") != "1":
-        pytest.skip("Set GLOSSAPI_RUN_DEEPSEEK_CLI=1 to enable DeepSeek CLI smoke test")
-
-    assert torch.cuda.is_available(), "CUDA GPU expected for DeepSeek pipeline test"
-
-    script = Path(
-        os.environ.get(
-            "GLOSSAPI_DEEPSEEK_VLLM_SCRIPT",
-            Path.cwd() / "deepseek-ocr" / "run_pdf_ocr_vllm.py",
-        )
-    )
-    if not script.exists():
-        pytest.skip(f"DeepSeek CLI script missing: {script}")
-
-    python_bin = Path(
-        os.environ.get(
-            "GLOSSAPI_DEEPSEEK_TEST_PYTHON",
-            Path("/mnt/data/glossAPI/deepseek_venv/bin/python"),
-        )
-    )
-    if not python_bin.exists():
-        pytest.skip(f"DeepSeek Python interpreter missing: {python_bin}")
-
-    model_dir_env = os.environ.get("GLOSSAPI_DEEPSEEK_TEST_MODEL_DIR") or os.environ.get(
-        "GLOSSAPI_DEEPSEEK_MODEL_DIR"
-    )
-    if not model_dir_env:
-        pytest.skip("Set GLOSSAPI_DEEPSEEK_TEST_MODEL_DIR (or GLOSSAPI_DEEPSEEK_MODEL_DIR) to run DeepSeek CLI test")
-    model_dir = Path(model_dir_env)
-    if not model_dir.exists():
-        pytest.skip(f"DeepSeek model directory missing: {model_dir}")
-
-    lib_path = os.environ.get("GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH")
-    if not lib_path:
-        candidate = Path.cwd() / "deepseek-ocr" / "libjpeg-turbo" / "lib"
-        if candidate.exists():
-            lib_path = str(candidate)
-    if not lib_path or not Path(lib_path).exists():
-        pytest.skip("Set GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH to the libjpeg-turbo library directory")
-
-    providers = ort.get_available_providers()
-    assert "CUDAExecutionProvider" in providers, f"CUDAExecutionProvider missing: {providers}"
-
-    device_idx = 0
-    if torch.cuda.device_count() > 1:
-        device_idx = torch.cuda.current_device()
-
-    # Force the CLI path (no stub fallback) and point to the desired interpreter/script.
-    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_ALLOW_STUB", "0")
-    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_ALLOW_CLI", "1")
-    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_PYTHON", str(python_bin))
-    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_VLLM_SCRIPT", str(script))
-    monkeypatch.setenv("GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH", lib_path)
-    monkeypatch.setenv("VLLM_ALLOW_REMOTE_CODE", "1")
-    existing_py_path = os.environ.get("PYTHONPATH", "")
-    src_path = str(Path.cwd() / "src")
-    if existing_py_path:
-        monkeypatch.setenv("PYTHONPATH", f"{src_path}{os.pathsep}{existing_py_path}")
-    else:
-        monkeypatch.setenv("PYTHONPATH", src_path)
-
-    import glossapi.ocr.deepseek.runner as deepseek_runner
-
-    def _raise_if_stub(*_args, **_kwargs):
-        raise AssertionError("DeepSeek fallback stub should not run in CLI smoke test")
-
-    monkeypatch.setattr(deepseek_runner, "_run_one_pdf", _raise_if_stub)
-
-    corpus_dir = tmp_path / "corpus"
-    corpus_dir.mkdir()
-
-    text_pdf = corpus_dir / "text.pdf"
-    blank_pdf = corpus_dir / "blank.pdf"
-    _write_pdf(text_pdf, "A short synthetic document for DeepSeek CLI testing")
-    _write_pdf(blank_pdf, None)
-
-    corpus = Corpus(input_dir=corpus_dir, output_dir=corpus_dir)
-    corpus.extract(
-        input_format="pdf",
-        accel_type="CUDA",
-        num_threads=1,
-        emit_formula_index=True,
-        phase1_backend="docling",
-        force_ocr=True,
-        use_gpus="single",
-        devices=[device_idx],
-    )
-    corpus.clean()
-
-    parquet_path = corpus_dir / "download_results" / "download_results.parquet"
-    df_before = pd.read_parquet(parquet_path).set_index("filename")
-    assert bool(df_before.loc["blank.pdf", "needs_ocr"]), "Expect blank.pdf to be flagged for OCR"
-
-    corpus.ocr(
-        mode="ocr_bad",
-        backend="deepseek",
-        math_enhance=False,
-        use_gpus="single",
-        devices=[device_idx],
-        model_dir=model_dir,
-    )
-
-    markdown_dir = corpus_dir / "markdown"
-    blank_md = markdown_dir / "blank.md"
-    assert blank_md.exists(), "DeepSeek CLI should produce markdown for blank.pdf"
-    assert blank_md.read_text(encoding="utf-8").strip(), "DeepSeek output markdown should not be empty"
-
-    df_after = pd.read_parquet(parquet_path).set_index("filename")
-    blank_row = df_after.loc["blank.pdf"]
-    assert bool(blank_row.get("ocr_success", False)), "DeepSeek CLI should set ocr_success=True"
-    assert not bool(blank_row.get("needs_ocr", True)), "DeepSeek CLI should clear needs_ocr flag"
-    assert blank_row.get("extraction_mode") == "deepseek", "DeepSeek CLI should set extraction_mode='deepseek'"

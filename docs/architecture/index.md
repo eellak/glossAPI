@@ -103,7 +103,7 @@ Purpose:
 
 Important characteristics:
 
-- can use RapidOCR via Docling or DeepSeek OCR
+- uses external plugin OCR for remediation while keeping Docling in the surrounding extraction/layout flow
 - reads metadata to find OCR candidates
 - skiplist-aware
 - designed as a corrective stage, not the default for every document
@@ -165,11 +165,13 @@ This allows expensive OCR to be focused on genuinely problematic files.
 The current architecture is effective but has important tradeoffs:
 
 - stage handoff depends partly on method calls and partly on filesystem conventions
-- resumability depends on both file presence and metadata parquet state
+- the phase methods resume from file presence and metadata parquet state; a streaming run (`Corpus.run()`, `glossapi run`) resumes from the ledger `corpus.sqlite3` instead
 - artifact retention improves auditing but increases long-term storage footprint
 - filename-based identity is practical but puts pressure on future chunking and storage redesigns
 
 These pressure points are documented separately in:
 
 - [Artifact Layout and Stage Handoffs](artifact_layout_and_stage_handoffs.md)
+- [OCR Cleaning Runtime](ocr_cleaning_runtime.md)
 - [Resumability, Recovery, and Retention](resumability_recovery_and_retention.md)
+- [Markdown Library Survey](markdown_library_survey.md) — design rationale for the parser-backed Phase A (Pilot B).

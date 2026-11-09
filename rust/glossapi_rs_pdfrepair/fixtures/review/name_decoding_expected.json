@@ -1,0 +1,122 @@
+{
+  "name_decoding_different_raw_byte": {
+    "post_hex": "58e959",
+    "differences_token": "/X#F1Y",
+    "text": "B",
+    "analysis": {
+      "path": "rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_different_raw_byte.pdf",
+      "category": "unsupported",
+      "pages": 1,
+      "sampled_pages": [
+        1
+      ],
+      "fonts": [
+        {
+          "font_name": "Synthetic",
+          "subtype": "TrueType",
+          "embedded": true,
+          "font_program_kind": "FontFile2",
+          "has_tounicode": true,
+          "codes": 1,
+          "disagreeing_codes": 0,
+          "greek_codes": 0,
+          "affected_greek_codes": 0,
+          "unmapped_codes": 1,
+          "category": "unsupported",
+          "repair_possible": false,
+          "reason": "Simple font needs a symbol (3,0) cmap or Differences; no encoding guesses",
+          "error": null,
+          "object_id": 8
+        }
+      ],
+      "error": null
+    },
+    "repair": {
+      "src": "rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_different_raw_byte.pdf",
+      "dst": "/tmp/t11-cycle3/name_decoding_different_raw_byte-reference.pdf",
+      "category": "unsupported",
+      "repaired_fonts": 0,
+      "fonts": [
+        {
+          "font_name": "Synthetic",
+          "subtype": "TrueType",
+          "embedded": true,
+          "font_program_kind": "FontFile2",
+          "has_tounicode": true,
+          "codes": 1,
+          "disagreeing_codes": 0,
+          "greek_codes": 0,
+          "affected_greek_codes": 0,
+          "unmapped_codes": 1,
+          "category": "unsupported",
+          "repair_possible": false,
+          "reason": "Simple font needs a symbol (3,0) cmap or Differences; no encoding guesses",
+          "error": null,
+          "object_id": 8
+        }
+      ],
+      "written": true,
+      "error": null
+    }
+  },
+  "name_decoding_valid_utf8": {
+    "post_hex": "58c3a959",
+    "differences_token": "/X#C3#B1Y",
+    "text": "B",
+    "analysis": {
+      "path": "rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_valid_utf8.pdf",
+      "category": "unsupported",
+      "pages": 1,
+      "sampled_pages": [
+        1
+      ],
+      "fonts": [
+        {
+          "font_name": "Synthetic",
+          "subtype": "TrueType",
+          "embedded": true,
+          "font_program_kind": "FontFile2",
+          "has_tounicode": true,
+          "codes": 1,
+          "disagreeing_codes": 0,
+          "greek_codes": 0,
+          "affected_greek_codes": 0,
+          "unmapped_codes": 1,
+          "category": "unsupported",
+          "repair_possible": false,
+          "reason": "Simple font needs a symbol (3,0) cmap or Differences; no encoding guesses",
+          "error": null,
+          "object_id": 8
+        }
+      ],
+      "error": null
+    },
+    "repair": {
+      "src": "rust/glossapi_rs_pdfrepair/fixtures/review/name_decoding_valid_utf8.pdf",
+      "dst": "/tmp/t11-cycle3/name_decoding_valid_utf8-reference.pdf",
+      "category": "unsupported",
+      "repaired_fonts": 0,
+      "fonts": [
+        {
+          "font_name": "Synthetic",
+          "subtype": "TrueType",
+          "embedded": true,
+          "font_program_kind": "FontFile2",
+          "has_tounicode": true,
+          "codes": 1,
+          "disagreeing_codes": 0,
+          "greek_codes": 0,
+          "affected_greek_codes": 0,
+          "unmapped_codes": 1,
+          "category": "unsupported",
+          "repair_possible": false,
+          "reason": "Simple font needs a symbol (3,0) cmap or Differences; no encoding guesses",
+          "error": null,
+          "object_id": 8
+        }
+      ],
+      "written": true,
+      "error": null
+    }
+  }
+}

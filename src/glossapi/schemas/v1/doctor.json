@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/doctor.json",
+  "title": "glossAPI CLI v1 doctor data",
+  "description": "The checks behind capabilities plus environment problems, each with a fix hint. --probe-devices imports torch in a child process.",
+  "type": "object",
+  "required": [
+    "healthy",
+    "counts",
+    "checks",
+    "capabilities",
+    "device_probe",
+    "corpus"
+  ],
+  "properties": {
+    "healthy": {
+      "type": "boolean"
+    },
+    "counts": {
+      "type": "object",
+      "required": [
+        "ok",
+        "info",
+        "warning",
+        "error"
+      ],
+      "properties": {
+        "ok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "info": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warning": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "check_id",
+          "status",
+          "message",
+          "fix_hint",
+          "details"
+        ],
+        "properties": {
+          "check_id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "info",
+              "warning",
+              "error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "fix_hint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "details": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "capabilities": {
+      "$ref": "capabilities.json"
+    },
+    "device_probe": {
+      "type": "object",
+      "required": [
+        "requested",
+        "imported",
+        "process",
+        "framework",
+        "error"
+      ],
+      "properties": {
+        "requested": {
+          "type": "boolean"
+        },
+        "imported": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "process": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "framework": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "corpus": {
+      "type": "object",
+      "required": [
+        "path",
+        "corpus_id"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "corpus_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/status.json",
+  "title": "glossAPI CLI v1 status data",
+  "description": "status --json data for the selected run; sources appears with --file.",
+  "type": "object",
+  "required": [
+    "state",
+    "counts",
+    "documents",
+    "queues",
+    "barriers",
+    "resources",
+    "last_event_id",
+    "unknowns"
+  ],
+  "properties": {
+    "state": {
+      "type": "string"
+    },
+    "counts": {
+      "$ref": "common.json#/$defs/counts"
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "document_id",
+          "version_id",
+          "stage",
+          "operation",
+          "status",
+          "reason_code",
+          "attempt_number",
+          "worker_id",
+          "device_id",
+          "started_at",
+          "elapsed_ns",
+          "last_heartbeat_at",
+          "heartbeat_age_ns",
+          "stale_reason"
+        ],
+        "properties": {
+          "document_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stage": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "common.json#/$defs/task_status"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attempt_number": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "worker_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "elapsed_ns": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "last_heartbeat_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "heartbeat_age_ns": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "stale_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "queues": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "barriers": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "resources": {
+      "type": "object",
+      "required": [
+        "disk_budget_bytes",
+        "present_bytes",
+        "reserved_bytes",
+        "free_bytes"
+      ],
+      "properties": {
+        "disk_budget_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "present_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reserved_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "free_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "last_event_id": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "document_id",
+          "source_record_id",
+          "run_id",
+          "source_uri",
+          "source_row",
+          "metadata",
+          "metadata_encoding"
+        ],
+        "properties": {
+          "document_id": {
+            "type": "string"
+          },
+          "source_record_id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "source_uri": {
+            "type": "string"
+          },
+          "source_row": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metadata": {},
+          "metadata_encoding": {
+            "enum": [
+              "json",
+              "typed_v1"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

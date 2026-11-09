@@ -1,0 +1,50 @@
+Portuguese validity vocabulary, derived from OWN-PT and stopwords-iso/stopwords-pt.
+The bundled file contains normalized single-word surface labels/function words;
+phrases and hyphenated entries are excluded; NFC/casefold then NFD mark stripping
+is applied and only ASCII letters are retained. No inflection generation.
+
+Attribution: the OpenWordnet-PT team and contributors, https://github.com/own-pt/openWordnet-PT
+Changes: normalized one-word labels only, merged with the MIT function-word list.
+This is a validity vocabulary, not a full inflectional spelling dictionary.
+
+===== own-pt/openWordnet-PT at 264016d5899e6969f6f7cb4f1d75fa06037c1fd7 =====
+Source: https://raw.githubusercontent.com/own-pt/openWordnet-PT/264016d5899e6969f6f7cb4f1d75fa06037c1fd7/data/own-pt-words.ttl
+
+
+
+The OWN-PT (Open Wordnet for Portuguese) is licensed under:
+
+This work is licensed under the Creative Commons Attribution 4.0
+International License. To view a copy of this license, visit
+http://creativecommons.org/licenses/by/4.0/.
+
+The OpenWN-PT is constructed based on the Princeton WordNet 3.0
+distributed here in the RDF format named as OWN-EN (Open Wordnet for
+English). The Princeton WordNet 3.0 is distributed under the license
+http://wordnet.princeton.edu/wordnet/license/.
+
+
+===== stopwords-iso/stopwords-pt at 84249b7ca37005f8cd19df70d86f44dc1f1936a5 =====
+Source: https://raw.githubusercontent.com/stopwords-iso/stopwords-pt/84249b7ca37005f8cd19df70d86f44dc1f1936a5/stopwords-pt.txt
+
+The MIT License (MIT)
+
+Copyright (c) 2016 Gene Diaz
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

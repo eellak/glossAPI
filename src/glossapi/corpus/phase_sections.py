@@ -1,6 +1,10 @@
 """Section extraction helpers split from Corpus."""
 from __future__ import annotations
 
+from ..stages.profile import adapters_enabled
+from .._naming import canonical_stem as _canonical_stem
+from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
+
 import json
 import logging
 import math
@@ -19,21 +23,26 @@ import numpy as np
 import pandas as pd
 
 from .._naming import canonical_stem
-from ..gloss_downloader import GlossDownloader
 from ..gloss_section import GlossSection
 # Avoid importing classifier here; section phase does not require it at import time.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch
+from glossapi.parquet_schema import MetadataPolicyError
 
 
 class SectionPhaseMixin:
+    @shadow_stage("sections", "sections.wrapper")
     def section(self) -> None:
         """
         Extract sections from markdown files and save to Parquet format.
 
         Uses files marked with 'good' extraction quality (if available) or all markdown files.
         """
+        if adapters_enabled(self):
+            from ..stages.sections import restore_clean_selection
+            restore_clean_selection(self)
+
         self.logger.info("Extracting sections from markdown files...")
 
         # Create output directory
@@ -52,68 +61,107 @@ class SectionPhaseMixin:
         else:
             # Fallback path: derive good filenames from parquet metadata
             self.logger.info("No good_files from clean(); using parquet filter/ocr_success if available")
-            from glossapi.parquet_schema import ParquetSchema
+            from glossapi.parquet_schema import ParquetSchema, update_metadata_parquet
             parquet_schema = ParquetSchema({'url_column': self.downloader_config.get('url_column', 'url')})
             parquet_path = self._resolve_metadata_parquet(parquet_schema, ensure=True, search_input=True)
 
             if parquet_path is not None and parquet_path.exists():
                 try:
-                    df_meta = pd.read_parquet(parquet_path)
-                    mask = pd.Series(False, index=df_meta.index)
-                    if 'filter' in df_meta.columns:
-                        mask = mask | (df_meta['filter'] == 'ok')
-                    if 'ocr_success' in df_meta.columns:
-                        mask = mask | (df_meta['ocr_success'].fillna(False))
-                    good_rows = df_meta[mask]
-                    # Legacy fallback: if nothing selected yet, try 'extraction' == 'good'
-                    if good_rows.empty and 'extraction' in df_meta.columns:
-                        legacy_rows = df_meta[df_meta['extraction'] == 'good']
-                        if not legacy_rows.empty:
-                            good_rows = legacy_rows
-                    if not good_rows.empty and 'filename' in good_rows.columns:
-                        good_filenames = [os.path.splitext(fn)[0] for fn in good_rows['filename'].astype(str).tolist() if fn]
-                        self.logger.info(f"Selected {len(good_filenames)} files via metadata from {parquet_path}")
-                        # Update processing_stage for selected rows
-                        try:
-                            if 'processing_stage' not in df_meta.columns:
-                                df_meta['processing_stage'] = pd.NA
-                            sel_idx = good_rows.index
-                            df_meta.loc[sel_idx, 'processing_stage'] = df_meta.loc[sel_idx, 'processing_stage'].apply(
-                                lambda x: (str(x) + ',section') if (pd.notna(x) and 'section' not in str(x)) else ('download,extract,section' if pd.isna(x) else x)
-                            )
-                            # Write back in-place
-                            self._cache_metadata_parquet(parquet_path)
-                            parquet_schema.write_metadata_parquet(df_meta, parquet_path)
-                        except Exception as e:
-                            self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
+                    # One locked read-modify-write (K2 native): select from and update the rows read under the lock.
+                    # Failure handling is unchanged: read/selection errors reach the handler below; a failed
+                    # processing_stage update or write only logs and keeps the selection.
+                    phase = {"value": "select"}
+                    selected = {}
+
+                    def _update(df_meta):
+                        if not parquet_path.exists():
+                            pd.read_parquet(parquet_path)  # raises the same missing-file error as before
+                        mask = pd.Series(False, index=df_meta.index)
+                        if 'filter' in df_meta.columns:
+                            # A row no cleaner has judged (null filter) is unfiltered, as clean's own reader treats it
+                            # (K4(b) round 2: the metadata row no longer carries an invented 'ok' before clean runs).
+                            mask = mask | df_meta['filter'].isna() | (df_meta['filter'] == 'ok')
+                        if 'ocr_success' in df_meta.columns:
+                            mask = mask | (df_meta['ocr_success'].fillna(False))
+                        good_rows = df_meta[mask]
+                        # Legacy fallback: if nothing selected yet, try 'extraction' == 'good'
+                        if good_rows.empty and 'extraction' in df_meta.columns:
+                            legacy_rows = df_meta[df_meta['extraction'] == 'good']
+                            if not legacy_rows.empty:
+                                good_rows = legacy_rows
+                        if not good_rows.empty and 'filename' in good_rows.columns:
+                            selected['names'] = [os.path.splitext(fn)[0] for fn in good_rows['filename'].astype(str).tolist() if fn]
+                            self.logger.info(f"Selected {len(selected['names'])} files via metadata from {parquet_path}")
+                            # Update processing_stage for selected rows
+                            phase["value"] = "update"
+                            try:
+                                if 'processing_stage' not in df_meta.columns:
+                                    df_meta['processing_stage'] = pd.NA
+                                sel_idx = good_rows.index
+                                df_meta.loc[sel_idx, 'processing_stage'] = df_meta.loc[sel_idx, 'processing_stage'].apply(
+                                    lambda x: (str(x) + ',section') if (pd.notna(x) and 'section' not in str(x)) else ('download,extract,section' if pd.isna(x) else x)
+                                )
+                                # Write back in-place
+                                self._cache_metadata_parquet(parquet_path)
+                            except Exception as e:
+                                self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
+                                return None
+                            return df_meta
+                        return None
+
+                    try:
+                        update_metadata_parquet(parquet_path, _update)
+                    except MetadataPolicyError:
+                        raise  # policy refusals are never swallowed (CP-K2e F5)
+                    except Exception as e:
+                        if phase["value"] != "update":
+                            raise
+                        self.logger.warning(f"Failed to update processing_stage in {parquet_path}: {e}")
+                    if 'names' in selected:
+                        good_filenames = selected['names']
+                except MetadataPolicyError:
+                    raise  # policy refusals are never swallowed (CP-K2e F5)
                 except Exception as e:
+                    observe("section_metadata_unavailable", path=parquet_path, error=e)
                     self.logger.warning(f"Error reading parquet file {parquet_path}: {e}")
             else:
                 self.logger.info("No metadata parquet found for section selection; will fall back to all markdown files")
 
+        planned = getattr(self, "_streaming_publication_stems", None)
+        if planned:
+            # A streaming run sections exactly its plan's documents (K4BI-G3).
+            stems = set(planned.values())
+            good_filenames = [name for name in good_filenames if _canonical_stem(name) in stems]
         self.logger.info(f"Found {len(good_filenames)} good quality files for sectioning")
         if good_filenames:
             self.logger.info(f"Good filenames: {good_filenames}")
 
         if not good_filenames:
+            observe("section_legacy_all_fallback", selection="all_available_markdown")
             self.logger.warning("No files marked as 'good' – falling back to processing all extracted markdown files.")
             good_filenames = [
                 os.path.splitext(p.name)[0]
                 for p in Path(self.markdown_dir).glob("*.md")
+                if not planned or _canonical_stem(p) in set(planned.values())
             ]
             if not good_filenames:
                 error_msg = "No markdown files found to section. Extraction might have failed."
+                observe("section_no_markdown", status="failed", message=error_msg)
                 self.logger.error(error_msg)
                 raise ValueError(error_msg)
 
         # Extract sections - pass list of good filenames to the sectioner
         # We will pass the original markdown directory and the list of good filenames 
         # rather than creating a separate directory
-        self.sectioner.to_parquet(
-            input_dir=str(self.markdown_dir),  # Use the markdown directory directly
-            output_dir=str(self.sections_dir),
-            filenames_to_process=good_filenames  # Pass the list of good filenames
-        )
+        if adapters_enabled(self):
+            from ..stages.sections import section_products
+            section_products(self, good_filenames)
+        else:
+            self.sectioner.to_parquet(
+                input_dir=str(self.markdown_dir),  # Use the markdown directory directly
+                output_dir=str(self.sections_dir),
+                filenames_to_process=good_filenames  # Pass the list of good filenames
+            )
 
         self.logger.info(f"Finished sectioning {len(good_filenames)} good quality files")
         self.logger.info(f"Section extraction complete. Parquet file saved to {self.sections_parquet}")

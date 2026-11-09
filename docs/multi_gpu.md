@@ -1,17 +1,21 @@
 # Multi‑GPU & Benchmarking
 
 GlossAPI can scale across multiple visible GPUs. Faster GPUs drain more work from a shared queue of **absolute
-file paths**, so no worker rescans directories.
+file paths or pre-packed work items, so no worker rescans directories.
 
 ## Extract (Phase‑1) on Multiple GPUs
 
 ```python
 from glossapi import Corpus
 c = Corpus('IN', 'OUT')
-c.extract(input_format='pdf', use_gpus='multi', force_ocr=True)
+c.extract(input_format='pdf', use_gpus='multi', phase1_backend='docling', workers_per_device=2)
 ```
 
 - Workers are bound using `CUDA_VISIBLE_DEVICES=<id>` and run Docling on `cuda:0` relative to each worker.
+- `workers_per_device` defaults to `1`; raise it only when benchmarking a strong GPU such as an A100.
+- `GLOSSAPI_DOCLING_MAX_BATCH_FILES` lets one Docling worker take more than one PDF per extractor batch; keep the default `1` for fresh-node stability and benchmark larger values explicitly.
+- `GLOSSAPI_DOCLING_BATCH_TARGET_PAGES` controls the page budget per queued multi-GPU Docling work item. The controller now sorts heavier work first and packs smaller PDFs toward that page budget so workers do not immediately collapse into a long single-file tail.
+- `GLOSSAPI_DOCLING_PAGE_BATCH_SIZE` controls Docling's internal per-device page window (`settings.perf.page_batch_size`). Use it together with the outer queue page budget when you want steadier GPU residency instead of just fatter file bundles.
 - Threads auto‑tune when `num_threads=None` (roughly `min(cpu_count, 2 * #GPUs)`). Override explicitly if needed.
 - The controller persists extraction progress in `download_results/download_results.parquet` after each reported
   batch, so interrupted runs can resume cleanly without ad-hoc checkpoint files.
@@ -31,9 +35,9 @@ c.ocr(use_gpus='multi', math_batch_size=12)
 - Crashed workers are respawned automatically; control the retry budget per GPU with `GLOSSAPI_MATH_RESPAWN_CAP` (default `5`). Use `GLOSSAPI_WORKER_LOG_VERBOSE=0` to silence the banner that prints the binding info.
 - When a device exceeds the respawn cap, remaining stems are added to the fatal skip-list and their artifacts are quarantined under `downloads/problematic_math/` and `json/problematic_math/` for follow-up.
 
+
 ## Provider & Device Checks
 
-- ONNXRuntime providers must include `CUDAExecutionProvider`.
 - Torch must see CUDA devices (`torch.cuda.is_available()` and device count).
 
 ## Benchmarking Tips
@@ -41,3 +45,10 @@ c.ocr(use_gpus='multi', math_batch_size=12)
 - Use `benchmark_mode=True` for `extract(...)` to skip per‑doc/page metrics (reduces I/O and profiling overhead).
 - Pin `OMP_NUM_THREADS`/`MKL_NUM_THREADS` to avoid CPU oversubscription on multi‑GPU nodes.
 - Keep caches (`HF_HOME`, `XDG_CACHE_HOME`, `DOCLING_CACHE_DIR`) on fast disks.
+
+## OCR
+
+OCR with the external plugin runs on one device: `Corpus.ocr(use_gpus='multi')` spreads only the math enrichment
+step over GPUs, and `glossapi run` admits one OCR operation per accelerator at a time. Distributing OCR over several
+GPUs is a target that has not been qualified. The device contract is in
+[OCR plugin migration](ocr_plugin_migration.md); the plugin owns its own device options.

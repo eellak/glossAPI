@@ -1,0 +1,2 @@
+pypdf>=6.0.0
+fonttools>=4.0.0

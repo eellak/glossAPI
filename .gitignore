@@ -58,10 +58,15 @@ htmlcov/
 # OCR test outputs
 test_ocr_*_output/
 *_demo_output/
+artifacts/
 
 # OCR model weights (if downloaded locally)
 nanonets/
 ocr_models/
+deepseek-ocr-2-model/
+models/
+# Packaged glossAPI models are source (the joblib pickles and the neutral section-classifier export, K2 W2b).
+!src/glossapi/models/
 
 # Noise analysis reports
 glossapi_noise_analysis_report.md
@@ -75,7 +80,11 @@ glossapi_vanilla_venv/
 deepseek_venv/
 dependency_setup/.venvs/
 .venv_docling/
+.venv*/
 deepseek-ocr/DeepSeek-OCR-empty/
 # Local DeepSeek checkout and repro scripts (keep out of master)
 deepseek-ocr/
-repro_rapidocr_onnx/
+deepseek-ocr-2/
+
+# Runtime extraction log a standalone run appends to in the working directory (LS6-G06); not source.
+/conversion.log

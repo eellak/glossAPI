@@ -1,68 +1,65 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=84.2.1", "wheel", "setuptools-rust>=1.13.0,<2"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "glossapi"
-version = "0.1.3"
+version = "0.2.0"
+dynamic = ["optional-dependencies"]
 description = "Academic document processing pipeline with Rust-powered markdown cleaning"
 authors = [
     {name = "GlossAPI Team", email = "glossapi.team@eellak.gr"}
 ]
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11,<3.15"
 dependencies = [
-    # Core pipeline deps
-    "pandas>=1.3.0",
-    "numpy<2",  # ORT+RapidOCR best compatibility
-    "scikit-learn==1.6.1",
-    "joblib>=1.0.0",
-    "dask>=2022.1.0",
-    "pyarrow>=7.0.0",
-    "aiohttp>=3.8.0",
-    "aiofiles>=23.0.0",
+    "pandas>=3.0.0",
+    "numpy>=1.26,<3",
+    "pyarrow>=26,<27",
     "ftfy>=6.0.0",
-    "tenacity>=8.0.0",
-    "tqdm>=4.67.0",
-    "pyyaml>=6.0",
-    # Math/JSON enrichment helpers
-    "pypdfium2>=4.0.0",
+    "pypdfium2>=4.30,<5",
     "zstandard>=0.22.0",
+    "filelock>=4.2.4",
 ]
 license = "EUPL-1.2"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "FONT_TABLES_LICENSES.txt"]
 classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
 ]
 
-[project.optional-dependencies]
-# Docling + RapidOCR ONNX stack (kept optional to preserve import-light installs)
-rapidocr = [
-    "docling==2.48.0",
-    # Use RapidOCR core package; avoid rapidocr_onnxruntime to prevent pip
-    # from auto-installing the CPU-only 'onnxruntime' wheel.
-    "rapidocr>=3.3.0",
-    "onnxruntime-gpu==1.18.1",
+[project.scripts]
+glossapi = "glossapi.cli:main"
+
+[dependency-groups]
+# Pinned oracles for the parity tests: the packages K2 replaced (tenacity, aiofiles, dask, and scikit-learn
+# for section-classifier inference, W2b) and the Python font-repair reference (pypdf, fontTools). Runtime installs never need them. Tests read the
+# same pins from tests/reference_oracles.py; with GLOSSAPI_REFERENCE_REQUIRED=1 a missing or
+# different oracle fails instead of skipping.
+reference = [
+    "tenacity==9.2.1",
+    "aiofiles==25.1.0",
+    "dask[dataframe]==2026.8.0",
+    "pypdf==6.21.3",
+    "fonttools==4.68.0",
+    "scikit-learn==1.6.1",
 ]
-# Optional CUDA layout acceleration (Docling)
-cuda = [
-    "torch==2.5.1",
-    "torchvision==0.20.1",
+test = [
+    "pytest>=9.2.0,<10",
+    "fpdf2>=2.7.0",
+    # CLI JSON schema v1 validation in tests only; the runtime never imports it (K3).
+    "jsonschema>=4.23,<5",
+    {include-group = "reference"},
 ]
-# DeepSeek OCR backend extras (CUDA 12.1 build of vLLM). Torch is not pinned here
-# because users should install the CUDA wheel from the PyTorch index
-# (see docs: installing torch==2.5.1+cu121 via extra index URL).
-deepseek = [
-    "vllm>=0.11.0",
-    "transformers>=4.45,<5",
-    "accelerate>=1.2.1,<2",
-    "pymupdf==1.24.10",
-    "Pillow==10.4.0",
-]
-docs = [
-    "mkdocs>=1.5",
-    "mkdocs-material>=9.5",
+dev = [
+    {include-group = "test"},
+    # W19 typing gate (tools/typing/check_typing.py); a dev/test tool only.
+    "pyright==1.1.408",
 ]
 
 [tool.setuptools]
@@ -74,10 +71,42 @@ where = ["src"]
 include = ["glossapi", "glossapi.*"]
 
 [tool.setuptools.package-data]
-glossapi = ["models/**/*"]
+glossapi = ["models/**/*", "ocr_package.txt", "data/wordlists/*", "data/package_catalog/*.json", "data/measured_costs.json", "schemas/v1/*.json"]
 
 [tool.pytest.ini_options]
 markers = [
-    "rapidocr: requires the RapidOCR/Docling execution stack",
-    "deepseek: exercises the DeepSeek OCR pipeline",
+    "linux_dev_node: Linux-only deployment resource gate; run on the dev node",
+    "slow: explicit local CPU cohort integration run",
+    "greekocr_integration: real CPU/GPU conversion with pinned warm model caches",
 ]
+
+# Bundle the three core extensions so `uv pip install .` needs no second installer.
+[[tool.setuptools-rust.ext-modules]]
+target = "glossapi_rs_cleaner"
+path = "rust/glossapi_rs_cleaner/Cargo.toml"
+binding = "PyO3"
+py-limited-api = "auto"
+
+[[tool.setuptools-rust.ext-modules]]
+target = "glossapi_rs_noise"
+path = "rust/glossapi_rs_noise/Cargo.toml"
+binding = "PyO3"
+py-limited-api = "auto"
+
+[[tool.setuptools-rust.ext-modules]]
+target = "glossapi_rs_pdfrepair"
+path = "rust/glossapi_rs_pdfrepair/Cargo.toml"
+binding = "PyO3"
+py-limited-api = "auto"
+
+# One source of OCR pins, shared by wheel metadata and the package installer.
+[tool.setuptools.dynamic.optional-dependencies]
+download = {file = ["dependency_setup/extra-download.txt"]}
+browser = {file = ["dependency_setup/extra-browser.txt"]}
+layout = {file = ["dependency_setup/extra-layout.txt"]}
+docling = {file = ["dependency_setup/extra-docling.txt"]}
+annotate = {file = ["dependency_setup/extra-annotate.txt"]}
+annotate-legacy = {file = ["dependency_setup/extra-annotate-legacy.txt"]}
+font-repair = {file = ["dependency_setup/extra-font-repair.txt"]}
+docs = {file = ["dependency_setup/extra-docs.txt"]}
+ocr = {file = ["src/glossapi/ocr_package.txt"]}

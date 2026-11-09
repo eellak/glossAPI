@@ -1,0 +1,597 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/guide.json",
+  "title": "glossAPI CLI v1 guide data",
+  "description": "`guide --json`: the versioned LLM guide (docs/llm_guide.md renders the same content). Generated from the capabilities, catalog, settings contract, manifest, schemas and measured costs; environment-independent.",
+  "type": "object",
+  "required": [
+    "guide_version",
+    "schema_version",
+    "summary",
+    "phases",
+    "products",
+    "choices",
+    "costs",
+    "workflow",
+    "handover",
+    "errors",
+    "exit_codes",
+    "schemas",
+    "sources"
+  ],
+  "properties": {
+    "guide_version": {
+      "const": 1
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "summary": {
+      "type": "string"
+    },
+    "phases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage",
+          "purpose",
+          "device_kinds",
+          "executable_by_run",
+          "packages",
+          "variants"
+        ],
+        "properties": {
+          "stage": {
+            "$ref": "common.json#/$defs/stage"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "device_kinds": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "cpu",
+                "mps",
+                "cuda"
+              ]
+            }
+          },
+          "executable_by_run": {
+            "type": "boolean"
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "settings",
+                "requires_profiles"
+              ],
+              "properties": {
+                "settings": {
+                  "type": "object"
+                },
+                "requires_profiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "products": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "stage",
+          "purpose"
+        ],
+        "properties": {
+          "name": {
+            "enum": [
+              "document_export",
+              "annotated_sections"
+            ]
+          },
+          "stage": {
+            "$ref": "common.json#/$defs/stage"
+          },
+          "purpose": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "choices": {
+      "type": "object",
+      "required": [
+        "files",
+        "devices",
+        "packages",
+        "settings"
+      ],
+      "properties": {
+        "files": {
+          "type": "object",
+          "required": [
+            "how",
+            "selector_keys",
+            "required",
+            "selection",
+            "metadata",
+            "no_scraping"
+          ],
+          "properties": {
+            "how": {
+              "type": "string"
+            },
+            "selector_keys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "required": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "selection": {
+              "type": "string"
+            },
+            "metadata": {
+              "type": "string"
+            },
+            "no_scraping": {
+              "type": "string"
+            }
+          }
+        },
+        "devices": {
+          "type": "object",
+          "required": [
+            "run_device_kinds",
+            "run_device_syntax",
+            "install_device_profiles",
+            "install_rule"
+          ],
+          "properties": {
+            "run_device_kinds": {
+              "type": "object"
+            },
+            "run_device_syntax": {
+              "type": "string"
+            },
+            "install_rule": {
+              "type": "string"
+            },
+            "install_device_profiles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "device",
+                  "platforms"
+                ],
+                "properties": {
+                  "device": {
+                    "$ref": "common.json#/$defs/device_profile"
+                  },
+                  "platforms": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "kind",
+              "purpose",
+              "devices",
+              "enables",
+              "install_size",
+              "licences",
+              "install_command"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "base",
+                  "feature",
+                  "alias",
+                  "tooling"
+                ]
+              },
+              "purpose": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "alias_of": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "includes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "device_bound": {
+                "type": "boolean"
+              },
+              "devices": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.json#/$defs/device_profile"
+                }
+              },
+              "enables": {
+                "type": "array",
+                "items": {
+                  "$ref": "common.json#/$defs/stage"
+                }
+              },
+              "install_size": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "licences": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "proprietary": {
+                "type": "boolean",
+                "description": "The catalog's explicit proprietary-licence flag for this package; added in 1.2."
+              },
+              "proprietary_packages": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The packages under a proprietary licence; added in 1.2."
+              },
+              "install_command": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "settings": {
+          "type": "object",
+          "required": [
+            "values",
+            "fixed_stages"
+          ],
+          "properties": {
+            "values": {
+              "type": "object",
+              "required": [
+                "debug",
+                "memory_saving"
+              ],
+              "properties": {
+                "debug": {
+                  "type": "object",
+                  "required": [
+                    "values",
+                    "default"
+                  ],
+                  "properties": {
+                    "values": {
+                      "type": "object",
+                      "required": [
+                        "off",
+                        "on"
+                      ],
+                      "properties": {
+                        "off": {
+                          "type": "string"
+                        },
+                        "on": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "default": {
+                      "enum": [
+                        "off",
+                        "on"
+                      ]
+                    }
+                  }
+                },
+                "memory_saving": {
+                  "type": "object",
+                  "required": [
+                    "values",
+                    "default"
+                  ],
+                  "properties": {
+                    "values": {
+                      "type": "object",
+                      "required": [
+                        "normal",
+                        "extreme"
+                      ],
+                      "properties": {
+                        "normal": {
+                          "type": "string"
+                        },
+                        "extreme": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "default": {
+                      "enum": [
+                        "normal",
+                        "extreme"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "fixed_stages": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "costs": {
+      "type": "object",
+      "required": [
+        "time_per_page",
+        "disk",
+        "not_measured",
+        "install_size_basis",
+        "rule"
+      ],
+      "properties": {
+        "time_per_page": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "stages",
+              "device",
+              "unit",
+              "machine",
+              "workload",
+              "date",
+              "evidence"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "stages": {
+                "type": "object"
+              },
+              "device": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "machine": {
+                "type": "string"
+              },
+              "workload": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "disk": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "what",
+              "values_kb",
+              "machine",
+              "date",
+              "evidence"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "what": {
+                "type": "string"
+              },
+              "values_kb": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "machine": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "not_measured": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "install_size_basis": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "measured_locks_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule": {
+          "type": "string"
+        }
+      }
+    },
+    "workflow": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "step",
+          "argv",
+          "command",
+          "purpose"
+        ],
+        "properties": {
+          "step": {
+            "type": "string"
+          },
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "command": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "handover": {
+      "type": "object",
+      "required": [
+        "example",
+        "rules"
+      ],
+      "properties": {
+        "example": {
+          "$ref": "manifest.json"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "errors": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "command",
+          "exit_code",
+          "meaning"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "exit_code": {
+            "enum": [
+              1,
+              2,
+              3
+            ]
+          },
+          "meaning": {
+            "type": "string"
+          }
+        }
+      },
+      "propertyNames": {
+        "$ref": "common.json#/$defs/code"
+      }
+    },
+    "exit_codes": {
+      "type": "object"
+    },
+    "schemas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "file",
+          "id"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "sources": {
+      "type": "object"
+    }
+  }
+}

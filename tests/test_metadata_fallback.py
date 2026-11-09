@@ -81,7 +81,7 @@ def test_ensure_metadata_parquet_builds_from_artifacts(tmp_path):
 
     row2 = df.loc[df["filename"] == "paper2.pdf"].iloc[0]
     assert bool(row2["download_success"])
-    assert not bool(row2["math_enriched"])
+    assert row2["math_enriched"] is not True and pd.isna(row2["math_enriched"])  # no math producer ran (K4BI-G9)
     assert "download" in (row2["processing_stage"] or "")
 
     # Subsequent ensure calls should be idempotent (existing parquet reused)
@@ -210,6 +210,8 @@ def test_canonical_stem_variants():
         "beta.metrics.json": "beta",
         "gamma.per_page.metrics.json": "gamma",
         "delta.with.dots.pdf": "delta.with.dots",
+        "needs__p0001-0002.pdf": "needs",
+        "needs__p00001-00096.md": "needs",
     }
     for source, expected in cases.items():
         assert canonical_stem(source) == expected

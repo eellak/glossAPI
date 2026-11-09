@@ -1,0 +1,887 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/common.json",
+  "title": "glossAPI CLI v1 shared definitions",
+  "description": "Objects shared by several commands: capability and device objects (capabilities, doctor, plan), conflicts, warnings.",
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stage": {
+      "enum": [
+        "download",
+        "extract",
+        "clean",
+        "ocr",
+        "math",
+        "sections",
+        "annotate",
+        "export"
+      ]
+    },
+    "task_status": {
+      "enum": [
+        "planned",
+        "running",
+        "ok",
+        "skipped",
+        "failed",
+        null
+      ]
+    },
+    "device_id": {
+      "type": "string",
+      "pattern": "^(cpu|mps|cuda|cuda:[0-9]+)$"
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "counts": {
+      "type": "object",
+      "required": [
+        "planned",
+        "running",
+        "ok",
+        "skipped",
+        "failed"
+      ],
+      "properties": {
+        "planned": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "running": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "package_status": {
+      "type": "object",
+      "required": [
+        "package_group",
+        "requirement",
+        "name",
+        "installed_version",
+        "check",
+        "status",
+        "detail",
+        "blocking"
+      ],
+      "properties": {
+        "package_group": {
+          "type": "string"
+        },
+        "requirement": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "installed_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "check": {
+          "enum": [
+            "presence",
+            "version"
+          ]
+        },
+        "status": {
+          "enum": [
+            "present",
+            "missing",
+            "version_mismatch",
+            "not_admitted",
+            "not_applicable"
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "blocking": {
+          "type": "boolean"
+        }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "required": [
+        "stage",
+        "available",
+        "reason_code",
+        "packages",
+        "entry_points",
+        "native_modules",
+        "toolkit",
+        "missing_install_profiles",
+        "install_commands",
+        "supported_device_kinds",
+        "executable_by_run",
+        "unavailable_reason"
+      ],
+      "properties": {
+        "stage": {
+          "$ref": "common.json#/$defs/stage"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "reason_code": {
+          "enum": [
+            null,
+            "missing_package",
+            "version_mismatch",
+            "toolkit_not_admitted",
+            "missing_entry_point",
+            "missing_native_module"
+          ]
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/package_status"
+          }
+        },
+        "entry_points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "group",
+              "name",
+              "status"
+            ],
+            "properties": {
+              "group": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "registered",
+                  "missing"
+                ]
+              }
+            }
+          }
+        },
+        "native_modules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "module",
+              "required",
+              "status"
+            ],
+            "properties": {
+              "module": {
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "status": {
+                "enum": [
+                  "present",
+                  "missing"
+                ]
+              }
+            }
+          }
+        },
+        "toolkit": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "admitted",
+            "status"
+          ],
+          "properties": {
+            "admitted": {
+              "type": "boolean"
+            },
+            "status": {
+              "type": "string"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "missing_install_profiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "install_commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "supported_device_kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "cpu",
+              "mps",
+              "cuda"
+            ]
+          },
+          "minItems": 1
+        },
+        "executable_by_run": {
+          "type": "boolean"
+        },
+        "unavailable_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "device": {
+      "type": "object",
+      "required": [
+        "device_id",
+        "kind",
+        "hardware",
+        "state",
+        "basis",
+        "reason"
+      ],
+      "properties": {
+        "device_id": {
+          "$ref": "common.json#/$defs/device_id"
+        },
+        "kind": {
+          "enum": [
+            "cpu",
+            "mps",
+            "cuda"
+          ]
+        },
+        "hardware": {
+          "enum": [
+            "present",
+            "absent",
+            "unknown"
+          ]
+        },
+        "state": {
+          "enum": [
+            "available",
+            "unknown_until_probe",
+            "unavailable"
+          ]
+        },
+        "basis": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "common.json#/$defs/code"
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "blocking",
+            "warning"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "stage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "common.json#/$defs/code"
+        },
+        "message": {
+          "type": "string"
+        },
+        "stage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "device_profile": {
+      "enum": [
+        "cpu",
+        "cuda126",
+        "cuda132",
+        "mps"
+      ]
+    },
+    "lock_size": {
+      "type": "object",
+      "required": [
+        "lock",
+        "status",
+        "device",
+        "target",
+        "packages",
+        "download_bytes",
+        "installed_bytes",
+        "added_packages",
+        "added_download_bytes",
+        "added_installed_bytes",
+        "unmeasured",
+        "licences",
+        "current"
+      ],
+      "properties": {
+        "lock": {
+          "type": "string"
+        },
+        "lock_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lock_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "resolved",
+            "failed"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "device": {
+          "anyOf": [
+            {
+              "$ref": "common.json#/$defs/device_profile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target": {
+          "type": "string"
+        },
+        "python": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputs_sha256": {
+          "$ref": "common.json#/$defs/sha256"
+        },
+        "packages": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "download_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "installed_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "added_packages": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "added_download_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "added_installed_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "added_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unmeasured": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "licences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "proprietary_packages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Packages of this lock under a proprietary licence (package_profile.licence.proprietary_basis); added in 1.2."
+        },
+        "current": {
+          "type": "boolean"
+        }
+      },
+      "description": "One measured lock of a package profile (uv pip compile, PEP 751): totals over measured packages, and the packages added over the core lock of the same target."
+    },
+    "requirement_state": {
+      "type": "object",
+      "required": [
+        "requirement",
+        "name",
+        "installed_version",
+        "status"
+      ],
+      "properties": {
+        "requirement": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "installed_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "package": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "satisfied",
+            "missing",
+            "version_mismatch",
+            "not_applicable"
+          ]
+        }
+      },
+      "description": "Installed state of one requirement line (marker evaluated)."
+    },
+    "package_profile": {
+      "type": "object",
+      "required": [
+        "name",
+        "kind",
+        "purpose",
+        "alias_of",
+        "includes",
+        "requirements",
+        "enables",
+        "device_bound",
+        "devices",
+        "licence",
+        "install_size",
+        "measurement",
+        "install_command"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "base",
+            "feature",
+            "alias",
+            "tooling"
+          ]
+        },
+        "purpose": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alias_of": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "includes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enables": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "stage",
+              "settings",
+              "requires_profiles"
+            ],
+            "properties": {
+              "stage": {
+                "$ref": "common.json#/$defs/stage"
+              },
+              "settings": {
+                "type": "object"
+              },
+              "requires_profiles": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "device_bound": {
+          "type": "boolean"
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "device",
+              "supported",
+              "platforms",
+              "reason"
+            ],
+            "properties": {
+              "device": {
+                "$ref": "common.json#/$defs/device_profile"
+              },
+              "supported": {
+                "type": "boolean"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "platforms": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "target",
+                    "lock",
+                    "resolved"
+                  ],
+                  "properties": {
+                    "target": {
+                      "type": "string"
+                    },
+                    "lock": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "resolved": {
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "licence": {
+          "type": "object",
+          "required": [
+            "roots",
+            "all_added"
+          ],
+          "properties": {
+            "roots": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "all_added": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "proprietary": {
+              "type": "boolean",
+              "description": "Whether any measured lock of this profile installs a package under a proprietary licence (for example the NVIDIA CUDA runtimes of a CUDA device profile); added in 1.2."
+            },
+            "proprietary_packages": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Those packages, over every target and device profile; added in 1.2."
+            },
+            "proprietary_basis": {
+              "type": "string",
+              "description": "The rule that flags a package as proprietary; added in 1.2."
+            }
+          }
+        },
+        "install_size": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/lock_size"
+          }
+        },
+        "measurement": {
+          "type": "object",
+          "required": [
+            "state",
+            "stale_locks"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "current",
+                "stale",
+                "missing"
+              ]
+            },
+            "stale_locks": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "install_command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "installed": {
+          "type": "object",
+          "required": [
+            "state",
+            "requirements"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "installed",
+                "partial",
+                "missing"
+              ]
+            },
+            "requirements": {
+              "type": "array",
+              "items": {
+                "$ref": "common.json#/$defs/requirement_state"
+              }
+            }
+          }
+        }
+      },
+      "description": "One optional package/profile of `capabilities --catalog`: what it adds, devices, measured install size, licences, install state."
+    },
+    "catalog": {
+      "type": "object",
+      "required": [
+        "catalog_version",
+        "requirements_source",
+        "devices",
+        "torch_profiles",
+        "measurement",
+        "stages",
+        "profiles"
+      ],
+      "properties": {
+        "catalog_version": {
+          "const": 1
+        },
+        "requirements_source": {
+          "type": "object",
+          "required": [
+            "kind",
+            "location"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "source_tree",
+                "installed_metadata"
+              ]
+            },
+            "location": {
+              "type": "string"
+            }
+          }
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/device_profile"
+          }
+        },
+        "torch_profiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "measurement": {
+          "type": "object",
+          "required": [
+            "file",
+            "present",
+            "measured_at",
+            "tool",
+            "resolver",
+            "python",
+            "targets",
+            "size_basis"
+          ],
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "present": {
+              "type": "boolean"
+            },
+            "measured_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tool": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "resolver": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "python": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "targets": {
+              "type": "object"
+            },
+            "size_basis": {
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          }
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/stage"
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "common.json#/$defs/package_profile"
+          }
+        }
+      },
+      "description": "`capabilities --catalog` data: every install profile, from the requirement sources and the measured locks."
+    }
+  }
+}

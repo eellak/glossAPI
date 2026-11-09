@@ -1,0 +1,6 @@
+# Qualified Rust toolchain for the native extensions (K2 U2a). Each crate declares its minimum (rust-version = "1.85",
+# PyO3 0.30's floor), tested separately; this file pins the toolchain the release builds and gates were qualified on.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["clippy"]

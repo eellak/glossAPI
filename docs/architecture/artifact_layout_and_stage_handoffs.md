@@ -92,6 +92,13 @@ That affects:
 
 Chunk suffix behavior is therefore part of the current contract.
 
+External OCR engines execute selected physical page ranges through Docling. The
+backend-neutral `ocr/page_artifacts.py` assembles canonical Markdown and metrics;
+downstream stages consume those canonical files and the updated metadata rows.
+Range artifacts are archived under `sidecars/ocr_shards/`; retained native Markdown
+and per-page replacements live under `sidecars/ocr_native/` and `sidecars/ocr_pages/`.
+See [OCR plugin migration](../ocr_plugin_migration.md).
+
 ## Authoritative state vs derived artifacts
 
 Not every file has equal semantic importance.

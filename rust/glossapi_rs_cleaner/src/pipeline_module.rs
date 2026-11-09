@@ -10,15 +10,31 @@ use rayon::ThreadPoolBuilder;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex}; // Mutex will be needed for collecting report_entries if done from parallel loop
-use walkdir;
+use std::sync::{Arc, Mutex, LazyLock}; // Mutex will be needed for collecting report_entries if done from parallel loop
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono;
-use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::cleaning_module;
 use crate::directory_processor; // Add this import
+use crate::os_error::{py_err, stage_err, FirstOsError};
+
+/// Signed nanoseconds since the Unix epoch, or 0 when they do not fit in an i64 (before
+/// 1677-09-21 or after 2262-04-11). Replaces chrono's `Utc::now().timestamp_nanos_opt()
+/// .unwrap_or_default()`, which also gave 0 outside that range; chrono panicked for a clock
+/// set before 1970, where this returns the negative count instead.
+fn unix_timestamp_nanos(now: SystemTime) -> i64 {
+    let nanos = match now.duration_since(UNIX_EPOCH) {
+        Ok(after) => i128::try_from(after.as_nanos()).unwrap_or(i128::MAX),
+        Err(before) => i128::try_from(before.duration().as_nanos()).map_or(i128::MIN, |n| -n),
+    };
+    i64::try_from(nanos).unwrap_or(0)
+}
+
+/// Name of the per-run temporary directory: `text_cleaner_rs_pipeline_<nanoseconds>`.
+fn temp_pipeline_root_name(now: SystemTime) -> String {
+    format!("text_cleaner_rs_pipeline_{}", unix_timestamp_nanos(now))
+}
 
 // Struct for the final 4-column CSV report
 #[derive(Debug, serde::Serialize)] // Added serde::Serialize
@@ -31,9 +47,9 @@ struct FinalReportEntry {
     is_empty: bool,
 }
 
-static HTML_COMMENT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<!--.*?-->").unwrap());
-static INLINE_DISPLAY_MATH_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(\\\[.*?\\\])|(\\\(.*?\\\))|(\$\$.*?\$\$)").unwrap());
+static HTML_COMMENT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<!--.*?-->").unwrap());
+static INLINE_DISPLAY_MATH_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(\\\[.*?\\\])|(\\\(.*?\\\))|(\$\$.*?\$\$)").unwrap());
 
 fn strip_latex_envs(mut text: String) -> String {
     const LATEX_ENVS: [&str; 11] = [
@@ -75,7 +91,7 @@ fn sanitized_char_count(content: &str) -> (i64, bool) {
 /// 4. Writing processed files to the output directory.
 /// 5. Final analysis (badness, script percentages) on processed files, generating a CSV report.
 #[pyfunction]
-#[pyo3(signature = (input_dir_str, output_cleaned_files_dir_str, output_report_csv_str, scripts_to_keep_input, num_threads, write_cleaned_files=true))]
+#[pyo3(signature = (input_dir_str, output_cleaned_files_dir_str, output_report_csv_str, scripts_to_keep_input, num_threads, write_cleaned_files=true, evidence_directory=None))]
 pub fn run_complete_pipeline(
     py: Python,
     input_dir_str: &str,
@@ -84,6 +100,7 @@ pub fn run_complete_pipeline(
     scripts_to_keep_input: Vec<String>,
     num_threads: usize,
     write_cleaned_files: bool,
+    evidence_directory: Option<&str>,
 ) -> PyResult<()> {
     println!("Rust: Starting REFACTORED STAGED complete pipeline (calling batch functions)...");
     println!("Rust: Input directory: {}", input_dir_str);
@@ -108,30 +125,21 @@ pub fn run_complete_pipeline(
 
     // Ensure final output directory for cleaned files exists when asked to persist them
     let final_output_cleaned_files_path = Path::new(output_cleaned_files_dir_str);
-    if write_cleaned_files {
-        if !final_output_cleaned_files_path.exists() {
-            println!(
-                "Rust: Creating final output directory for cleaned files: {}...",
-                final_output_cleaned_files_path.display()
-            );
-            fs::create_dir_all(final_output_cleaned_files_path).map_err(|e| {
-                PyValueError::new_err(format!(
-                    "Failed to create final output directory {}: {}",
-                    final_output_cleaned_files_path.display(),
-                    e
-                ))
-            })?;
-            println!("Rust: Final output directory for cleaned files created.");
-        }
+    if write_cleaned_files && !final_output_cleaned_files_path.exists() {
+        println!(
+            "Rust: Creating final output directory for cleaned files: {}...",
+            final_output_cleaned_files_path.display()
+        );
+        fs::create_dir_all(final_output_cleaned_files_path).map_err(|e| {
+            py_err(format_args!("Failed to create final output directory {}", final_output_cleaned_files_path.display()), &e)
+        })?;
+        println!("Rust: Final output directory for cleaned files created.");
     }
 
     // --- Setup Main Temporary Directory for this Pipeline Run ---
     // Let's use a subdirectory within the system's temp directory for better isolation and cleanup.
-    let temp_pipeline_root_name = format!(
-        "text_cleaner_rs_pipeline_{}",
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    );
-    let mut temp_pipeline_root_dir = std::env::temp_dir();
+    let temp_pipeline_root_name = temp_pipeline_root_name(SystemTime::now());
+    let mut temp_pipeline_root_dir = evidence_directory.map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     temp_pipeline_root_dir.push(temp_pipeline_root_name);
 
     println!(
@@ -139,11 +147,7 @@ pub fn run_complete_pipeline(
         temp_pipeline_root_dir.display()
     );
     fs::create_dir_all(&temp_pipeline_root_dir).map_err(|e| {
-        PyValueError::new_err(format!(
-            "Failed to create main temporary pipeline directory {}: {}",
-            temp_pipeline_root_dir.display(),
-            e
-        ))
+        py_err(format_args!("Failed to create main temporary pipeline directory {}", temp_pipeline_root_dir.display()), &e)
     })?;
     println!("Rust: Main temporary pipeline directory created.");
 
@@ -161,7 +165,7 @@ pub fn run_complete_pipeline(
     // --- Setup for character sets (used by Stage 4, generate_analysis_report_for_directory sets its own) ---
     println!("Rust: Setting up allowed characters for final analysis stage...");
     let mut allowed_chars_final_analysis = HashSet::new();
-    let base_scripts = vec!["punctuation", "numbers", "common_symbols"];
+    let base_scripts = ["punctuation", "numbers", "common_symbols"];
     for script_key_str in scripts_to_keep_input
         .iter()
         .map(|s| s.as_str())
@@ -192,20 +196,17 @@ pub fn run_complete_pipeline(
             temp_stage1_cleaned_dir.display()
         );
         fs::create_dir_all(&temp_stage1_cleaned_dir).map_err(|e| {
-            PyValueError::new_err(format!(
-                "Failed to create stage 1 temp output directory {}: {}",
-                temp_stage1_cleaned_dir.display(),
-                e
-            ))
+            py_err(format_args!("Failed to create stage 1 temp output directory {}", temp_stage1_cleaned_dir.display()), &e)
         })?;
 
-        directory_processor::generate_analysis_report_for_directory(
+        directory_processor::generate_analysis_report_with_evidence(
             py,
             input_dir_str,
             None, // output_csv_path_str: We don't want a CSV from this stage
             Some(&temp_stage1_cleaned_dir_str), // output_dir_cleaned_files_str: Output to our temp dir
             scripts_to_keep_input.clone(),      // scripts_to_keep
             num_threads,
+            evidence_directory,
         )
         .map_err(|e| {
             let err_msg = format!(
@@ -213,7 +214,7 @@ pub fn run_complete_pipeline(
                 e
             );
             println!("Rust: ERROR - {}", err_msg);
-            PyValueError::new_err(err_msg)
+            stage_err(py, e, |_| err_msg)
         })?;
         println!("Rust: === STAGE 1: Initial Cleaning COMPLETED ===\n");
 
@@ -234,7 +235,7 @@ pub fn run_complete_pipeline(
                 e
             );
             println!("Rust: ERROR - {}", err_msg);
-            PyValueError::new_err(err_msg)
+            stage_err(py, e, |_| err_msg)
         })?;
         println!("Rust: === STAGE 2: Detailed Table Report Generation COMPLETED ===\n");
 
@@ -246,11 +247,7 @@ pub fn run_complete_pipeline(
         };
         if !stage3_output_dir.exists() {
             fs::create_dir_all(&stage3_output_dir).map_err(|e| {
-                PyValueError::new_err(format!(
-                    "Failed to create Stage 3 output directory {}: {}",
-                    stage3_output_dir.display(),
-                    e
-                ))
+                py_err(format_args!("Failed to create Stage 3 output directory {}", stage3_output_dir.display()), &e)
             })?;
         }
         let stage3_output_dir_str = stage3_output_dir.to_string_lossy().into_owned();
@@ -271,7 +268,7 @@ pub fn run_complete_pipeline(
         .map_err(|e| {
             let err_msg = format!("Stage 3 (batch_remove_tables_from_files) failed: {}", e);
             println!("Rust: ERROR - {}", err_msg);
-            PyValueError::new_err(err_msg)
+            stage_err(py, e, |_| err_msg)
         })?;
         println!("Rust: === STAGE 3: Table Removal COMPLETED ===\n");
 
@@ -279,13 +276,16 @@ pub fn run_complete_pipeline(
         println!("Rust: === Starting STAGE 4: Final Analysis & Report Generation ===");
         let report_entries_mutex: Arc<Mutex<Vec<FinalReportEntry>>> =
             Arc::new(Mutex::new(Vec::new()));
+        // A file that cannot be read for an OS reason fails the call after the loop (native API level 2); before, it
+        // was printed and left out of the report.
+        let failure = FirstOsError::default();
 
         let final_processed_files_for_report: Vec<PathBuf> =
             walkdir::WalkDir::new(&stage3_output_dir)
                 .into_iter()
                 .filter_map(Result::ok)
                 .filter(|e| {
-                    e.path().is_file() && e.path().extension().map_or(false, |ext| ext == "md")
+                    e.path().is_file() && e.path().extension().is_some_and(|ext| ext == "md")
                 })
                 .map(|e| e.path().to_path_buf())
                 .collect();
@@ -328,9 +328,9 @@ pub fn run_complete_pipeline(
                                 // println!("Rust: [S4-Thread {}] Read final_content for report: {}", thread_id, report_relative_path.display()); // Verbose
                                 let analysis_result = cleaning_module::perform_text_analysis(
                                     &final_content,
-                                    &*allowed_chars_final_analysis_arc,
-                                    &*unusual_chars_final_analysis_arc,
-                                    &*scripts_to_keep_input_arc_final,
+                                    &allowed_chars_final_analysis_arc,
+                                    &unusual_chars_final_analysis_arc,
+                                    &scripts_to_keep_input_arc_final,
                                     true,
                                     None,
                                 );
@@ -397,12 +397,15 @@ pub fn run_complete_pipeline(
                                 // println!("Rust: [S4-Thread {}] Report entry pushed for: {}", thread_id, report_relative_path.display()); // Verbose
                             }
                             Err(e) => {
-                                eprintln!("Rust: [S4-Thread {}] Error reading final file {} for analysis: {}. Skipping for report.", thread_id, final_file_path.display(), e);
+                                if !failure.io(format_args!("Error reading final file {} for analysis", final_file_path.display()), &e) {
+                                    eprintln!("Rust: [S4-Thread {}] Error reading final file {} for analysis: {}. Skipping for report.", thread_id, final_file_path.display(), e);
+                                }
                             }
                         }
                     });
             });
         }
+        failure.into_result()?;
         println!("Rust: === STAGE 4: Final Analysis & Report Generation COMPLETED ===\n");
 
         // --- Final CSV Writing (after all stages) ---
@@ -436,11 +439,7 @@ pub fn run_complete_pipeline(
                         parent_dir.display()
                     );
                     fs::create_dir_all(parent_dir).map_err(|e| {
-                        PyValueError::new_err(format!(
-                            "Failed to create parent for Parquet {}: {}",
-                            parent_dir.display(),
-                            e
-                        ))
+                        py_err(format_args!("Failed to create parent for Parquet {}", parent_dir.display()), &e)
                     })?;
                     println!("Rust: Parent directory for Parquet created.");
                 }
@@ -498,20 +497,17 @@ pub fn run_complete_pipeline(
             )
             .map_err(|e| PyValueError::new_err(format!("Failed to build RecordBatch: {}", e)))?;
 
-            let file = File::create(output_report_csv_str).map_err(|e| {
-                PyValueError::new_err(format!("Failed to create Parquet file: {}", e))
-            })?;
+            let file = File::create(output_report_csv_str)
+                .map_err(|e| py_err("Failed to create Parquet file", &e))?;
             let props = WriterProperties::builder().build();
-            let mut writer =
-                ArrowWriter::try_new(file, Arc::new(schema), Some(props)).map_err(|e| {
-                    PyValueError::new_err(format!("Failed to create Parquet writer: {}", e))
-                })?;
-            writer.write(&batch).map_err(|e| {
-                PyValueError::new_err(format!("Failed to write batch to Parquet: {}", e))
-            })?;
-            writer.close().map_err(|e| {
-                PyValueError::new_err(format!("Failed to close Parquet writer: {}", e))
-            })?;
+            let mut writer = ArrowWriter::try_new(file, Arc::new(schema), Some(props))
+                .map_err(|e| py_err("Failed to create Parquet writer", &e))?;
+            writer
+                .write(&batch)
+                .map_err(|e| py_err("Failed to write batch to Parquet", &e))?;
+            writer
+                .close()
+                .map_err(|e| py_err("Failed to close Parquet writer", &e))?;
 
             println!(
                 "Rust: Parquet report written successfully at {}.",
@@ -524,6 +520,16 @@ pub fn run_complete_pipeline(
     })(); // End of the main try block for pipeline stages
 
     // --- Cleanup Main Temporary Directory ---
+    if let Some(directory) = evidence_directory {
+        let retained = Path::new(directory).join("native_stages");
+        // Hand ownership to the orchestrator without copying and then deleting
+        // an unregistered native tree. The writer seals every retained file and
+        // applies the run's debug/retention policy after successful consumption.
+        fs::rename(&temp_pipeline_root_dir, &retained).map_err(|e| {
+            py_err(format_args!("Failed to hand over {}", temp_pipeline_root_dir.display()), &e)
+        })?;
+    }
+
     println!(
         "Rust: Attempting to clean up main temporary pipeline directory: {}...",
         temp_pipeline_root_dir.display()
@@ -560,5 +566,64 @@ pub fn run_complete_pipeline(
             println!("Rust: REFACTORED STAGED complete pipeline FAILED: {}", e);
             Err(e) // Propagate the error
         }
+    }
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::{temp_pipeline_root_name, unix_timestamp_nanos};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    // chrono stays pinned as a dependency (arrow 50); it is the oracle for every representable time.
+    fn chrono_nanos(time: SystemTime) -> i64 {
+        chrono::DateTime::<chrono::Utc>::from(time).timestamp_nanos_opt().unwrap_or_default()
+    }
+
+    fn after(nanos: u64) -> SystemTime { UNIX_EPOCH + Duration::from_nanos(nanos) }
+    fn before(nanos: u64) -> SystemTime { UNIX_EPOCH - Duration::from_nanos(nanos) }
+
+    #[test]
+    fn epoch_is_zero() {
+        assert_eq!(unix_timestamp_nanos(UNIX_EPOCH), 0);
+        assert_eq!(temp_pipeline_root_name(UNIX_EPOCH), "text_cleaner_rs_pipeline_0");
+    }
+
+    #[test]
+    fn normal_times_match_chrono() {
+        for nanos in [1u64, 999, 1_000_000_000, 1_761_900_000_123_456_789, 1_700_000_000_000_000_001] {
+            assert_eq!(unix_timestamp_nanos(after(nanos)), nanos as i64);
+            assert_eq!(unix_timestamp_nanos(after(nanos)), chrono_nanos(after(nanos)));
+        }
+        let now = SystemTime::now();
+        assert_eq!(unix_timestamp_nanos(now), chrono_nanos(now));
+        assert_eq!(temp_pipeline_root_name(after(42)), "text_cleaner_rs_pipeline_42");
+    }
+
+    #[test]
+    fn before_epoch_is_negative_like_chrono_timestamps() {
+        for nanos in [1u64, 999_999_999, 1_000_000_000, 1_000_000_001, 86_400_000_000_123] {
+            assert_eq!(unix_timestamp_nanos(before(nanos)), -(nanos as i64));
+            assert_eq!(unix_timestamp_nanos(before(nanos)), chrono_nanos(before(nanos)));
+        }
+        assert_eq!(temp_pipeline_root_name(before(5)), "text_cleaner_rs_pipeline_-5");
+    }
+
+    #[test]
+    fn i64_bounds_and_overflow_fall_back_to_zero() {
+        let max = after(i64::MAX as u64);
+        let min = before(1u64 << 63); // i64::MIN nanoseconds
+        assert_eq!(unix_timestamp_nanos(max), i64::MAX);
+        assert_eq!(unix_timestamp_nanos(min), i64::MIN);
+        assert_eq!(chrono_nanos(max), i64::MAX);
+        assert_eq!(chrono_nanos(min), i64::MIN);
+        let over = max + Duration::from_nanos(1);
+        let under = min - Duration::from_nanos(1);
+        assert_eq!(unix_timestamp_nanos(over), 0);
+        assert_eq!(unix_timestamp_nanos(under), 0);
+        assert_eq!(chrono_nanos(over), 0);
+        assert_eq!(chrono_nanos(under), 0);
+        let far = UNIX_EPOCH + Duration::from_secs(400 * 365 * 86_400);
+        assert_eq!(unix_timestamp_nanos(far), 0);
+        assert_eq!(temp_pipeline_root_name(far), "text_cleaner_rs_pipeline_0");
     }
 }

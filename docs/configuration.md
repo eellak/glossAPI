@@ -11,6 +11,9 @@ This page lists the main knobs you can use to tune GlossAPI.
 
 - `GLOSSAPI_IMAGES_SCALE`: image scale hint for OCR/layout (default ~1.1–1.25).
 - `GLOSSAPI_FORMULA_BATCH`: inline CodeFormula batch size (default `16`).
+- `GLOSSAPI_MARKDOWN_LAYOUT`: the safe backend's Markdown, `layout_v2` (default: layout-aware Markdown from Rust layout
+  v2, no Docling) or `plain` (the plain page text as before K5-A2). Part of the extract stage identity; see
+  [Extract stage](stages/extract.md#layout-aware-markdown-layout-v2-core-install).
 
 ### Batch Policy & PDF Backend
 
@@ -18,30 +21,26 @@ GlossAPI exposes two Phase‑1 profiles. Use `Corpus.extract(..., phase1_backend
 
 Regardless of backend, the extractor clamps OMP/OpenBLAS/MKL pools to one thread per worker so multi‑GPU runs do not explode thread counts.
 
-### DeepSeek optional dependencies
+### Docling Runtime Tuning
 
-Install DeepSeek backend extras to enable the DeepSeek OCR path (imports remain lazy, so the package is optional). Use the CUDA 12.1 wheels for both vLLM and Torch:
+These optional knobs map directly to current Docling `PdfPipelineOptions` fields and are mainly useful for benchmarking on strong GPUs:
 
-```bash
-pip install '.[deepseek]'
+- `GLOSSAPI_DOCLING_MAX_BATCH_FILES`: override the number of PDF documents a single Phase‑1 Docling worker processes per extractor batch. Defaults to `1` in GlossAPI for stability; raise it deliberately when benchmarking fresh A100 nodes.
+- `GLOSSAPI_DOCLING_BATCH_TARGET_PAGES`: target page budget for each queued multi‑GPU Docling work item. Defaults to `256`; lower it when a single worker hoards long PDFs, raise it when a strong GPU can keep larger mixed bundles resident.
+- `GLOSSAPI_DOCLING_LAYOUT_BATCH_SIZE`: override Docling `layout_batch_size`.
+- `GLOSSAPI_DOCLING_PAGE_BATCH_SIZE`: override Docling `settings.perf.page_batch_size` so Phase‑1 can raise or lower the number of pages each device keeps in flight internally without changing GlossAPI queue semantics.
+- `GLOSSAPI_DOCLING_TABLE_BATCH_SIZE`: override Docling `table_batch_size`.
+- `GLOSSAPI_DOCLING_OCR_BATCH_SIZE`: override Docling `ocr_batch_size` even though Phase‑1 OCR stays disabled.
+- `GLOSSAPI_DOCLING_QUEUE_MAX_SIZE`: override Docling `queue_max_size`.
+- `GLOSSAPI_DOCLING_DOCUMENT_TIMEOUT`: override Docling `document_timeout`.
+- `GLOSSAPI_DOCLING_BATCH_POLL_INTERVAL`: override Docling `batch_polling_interval_seconds`.
 
-# Install Torch CUDA 12.1 wheels (required by the DeepSeek script)
-pip install --extra-index-url https://download.pytorch.org/whl/cu121 \
-  'torch==2.5.1+cu121' 'torchvision==0.20.1+cu121'
+### External OCR engines
 
-# Alternatively, use the requirements file (edit to uncomment torch lines):
-pip install -r deepseek-ocr/requirements-deepseek.txt
-```
-
-When using `backend='deepseek'`, equations are included inline in the OCR output; Phase‑2 math flags are accepted but skipped.
-
-### DeepSeek runtime controls
-
-- `GLOSSAPI_DEEPSEEK_ALLOW_STUB` (`1` by default): allow the builtin stub runner for tests and lightweight environments.
-- `GLOSSAPI_DEEPSEEK_ALLOW_CLI` (`0` by default): flip to `1` to force the real vLLM CLI even when the stub is allowed.
-- `GLOSSAPI_DEEPSEEK_PYTHON`: absolute path to the Python interpreter that runs `run_pdf_ocr_vllm.py` (defaults to the current interpreter).
-- `GLOSSAPI_DEEPSEEK_VLLM_SCRIPT`: override path to the DeepSeek CLI script (defaults to `deepseek-ocr/run_pdf_ocr_vllm.py` under the repo).
-- `GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH`: prepend extra library search paths (e.g., for `libjpeg-turbo`) when launching the CLI.
+Install `python install_glossapi.py ocr --device cpu` (or `mps` / `cuda126` /
+`cuda132`). `Corpus.ocr(mode='ocr_bad')` defaults to the pinned Greek R8+x1
+plugin; explicit `ocr_options` still select a configured external engine.
+See [OCR plugin migration](ocr_plugin_migration.md).
 
 ## Math Enrichment (Phase‑2)
 
@@ -61,6 +60,17 @@ When using `backend='deepseek'`, equations are included inline in the OCR output
 
 All LaTeX policy knobs are loaded via `glossapi.text_sanitize.load_latex_policy()` and used consistently in early‑stop, Phase‑2 post‑processing, and metrics.
 
+## Runs, ledger and logs
+
+- `GLOSSAPI_STAGE_PROFILE`: unset for the default `cutover` profile, which writes the ledger `corpus.sqlite3` and
+  decides from it. `legacy` runs the pre-ledger stage code as a comparison control (its wrappers only record
+  observations); `sequential-adapters` is the earlier qualification profile. See
+  [Resumability, recovery and retention](architecture/resumability_recovery_and_retention.md).
+- `GLOSSAPI_CONVERSION_LOG_FILE`: where the extractor writes its conversion log. Standalone scripts that construct the
+  extractor write `conversion.log` in the working directory unless this names another path; stage workers of a
+  streaming run write it inside their own work directory. `conversion.log` is ignored by git and is not part of the
+  source tree; point the variable outside the checkout for long runs.
+
 ## Performance & Caches
 
 - `OMP_NUM_THREADS` / `MKL_NUM_THREADS`: cap CPU threads to avoid oversubscription.
@@ -71,9 +81,24 @@ All LaTeX policy knobs are loaded via `glossapi.text_sanitize.load_latex_policy(
 - `GLOSSAPI_WORKER_LOG_DIR`: override the directory used for per-worker logs and `gpu<N>.current` markers (defaults to `logs/ocr_workers/` or `logs/math_workers/` under the output directory).
 - `GLOSSAPI_WORKER_LOG_VERBOSE` = `1|0` (default `1`): emit (or suppress) the GPU binding banner each worker prints on startup.
 
-## RapidOCR Model Paths
+## Test suite
 
-- `GLOSSAPI_RAPIDOCR_ONNX_DIR`: directory containing `det/rec/cls` ONNX models and keys.
+- `GLOSSAPI_REFERENCE_REQUIRED=1`: a missing or different pinned reference oracle fails its test instead of skipping
+  (set by `setup_glossapi.sh --run-tests`).
+- `GLOSSAPI_OCR_GOLDEN_DIR`: root of the external real-page OCR golden fixture (`manifest.jsonl`, `inputs/`,
+  `expected/`; build it with `glossapi.scripts.build_ocr_golden_pages`). `tests/test_ocr_golden_pages.py` skips
+  without it and fails when it is set but holds no `manifest.jsonl`. Owner-private scans are never committed.
+- `GLOSSAPI_NATIVE_WITNESS_PDF`: the `ABO_768.pdf` witness for the Docling native-cache test in
+  `tests/test_batched_extract.py` (sha256 `a58e3a241c3af817a95892fc7d3db437ccaa616a7f57dbd5e24974b829eb0b05`). The
+  test skips when the file is absent and fails when its bytes differ.
+- `GLOSSAPI_REQUIRE_GPU=1`: the GPU-only tests in `tests/test_pipeline_smoke.py` fail instead of skipping when no CUDA
+  GPU is visible.
+- The exact font-repair rates in `tests/test_pdf_font_repair.py` are bound to the PDF, dictionary and PDFium library
+  hashes. With other inputs the test still checks the repair invariants and skips only the exact rate, naming each
+  hash that differs.
+- Do not wrap pytest in an inherited `alarm` (for example `perl -e 'alarm N; exec pytest ...'`). The timer survives
+  `exec`, font repair refuses to replace an active `SIGALRM` timer, and the repair tests then fail with status
+  `error`. Bound the wait from outside instead (a background job and a watcher).
 
 ## Triage & Parquet
 

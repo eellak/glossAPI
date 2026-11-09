@@ -1,4 +1,6 @@
+from .ledger.journal import observe, observe_store, observe_source_rows
 import re
+from pathlib import Path
 import os
 import json
 from typing import List, Tuple, Dict, Any
@@ -493,6 +495,28 @@ class GlossSection:
             
         return rows
     
+    def rows_for_document(self, text, short_name):
+        doc_rows = self._format_academic_document(text, short_name)
+
+        # Calculate section_length for each row (number of non-empty lines)
+        for row in doc_rows:
+            section_lines = row.get("section", "").splitlines()
+            section_length = sum(1 for line in section_lines if line.strip())
+            row['section_length'] = section_length
+
+        # Calculate the total article length (sum of all section lengths)
+        article_length = sum(row.get("section_length", 0) for row in doc_rows)
+
+        # Calculate section_propo for each row (proportion * 1000, rounded)
+        for row in doc_rows:
+            if article_length > 0:
+                section_propo = round((row.get("section_length", 0) / article_length) * 1000)
+            else:
+                section_propo = 0
+            row['section_propo'] = section_propo
+
+        return doc_rows
+
     def to_parquet(self, input_dir, output_dir, filenames_to_process):
         """
         Process Markdown files from input_dir and write structured data to a Parquet file.
@@ -510,22 +534,8 @@ class GlossSection:
         os.makedirs(output_dir, exist_ok=True)
         
         parquet_path = os.path.join(output_dir, "sections_for_annotation.parquet")
-        schema = pa.schema([
-            pa.field("id", pa.int64()),
-            pa.field("row_id", pa.string()),
-            pa.field("filename", pa.string()),
-            pa.field("has_table", pa.bool_()),
-            pa.field("has_list", pa.bool_()),
-            pa.field("has_other", pa.bool_()),
-            pa.field("has_text", pa.bool_()),
-            pa.field("header", pa.string()),
-            pa.field("place", pa.string()),
-            pa.field("section", pa.string()),  # Raw section text
-            pa.field("json_section", pa.string()),  # Formatted JSON content
-            pa.field("section_length", pa.int64()),  # Number of non-empty lines in section
-            pa.field("section_propo", pa.int64()),  # Proportion of document (0-1000)
-        ])
-        
+        schema = section_schema()
+
         writer = pq.ParquetWriter(parquet_path, schema=schema)
         row_counter = 1  # global row id counter
 
@@ -537,17 +547,20 @@ class GlossSection:
         print(f"Output directory: {output_dir}")
         print(f"Good files list (length {len(filenames_to_process)}): {filenames_to_process}")
         print(f"Available files in directory:")
-        md_files = [f for f in os.listdir(input_dir) if f.endswith(".md")]
+        # The canonical document order (sorted file names), as the staged section publication uses: the global ids follow
+        # it, not the directory's listing order (K4g fix 5).
+        md_files = sorted(f for f in os.listdir(input_dir) if f.endswith(".md"))
         for i, md_file in enumerate(md_files):
             print(f"  {i+1}. {md_file} (basename: {os.path.splitext(md_file)[0]})")
         
-        for filename in os.listdir(input_dir):
+        for filename in md_files:
             if filename.endswith(".md"):
                 # Get the base name without extension for filtering
                 base_name = os.path.splitext(filename)[0]
                 
                 # Only process files that are in our whitelist
                 if base_name not in filenames_to_process:
+                    observe("section_not_selected", path=Path(input_dir) / filename, status="skipped")
                     skipped_files.append(base_name)
                     print(f"⚠️ SKIPPED: {base_name} - not in the good files list")
                     continue  # Skip this file as it's not in our list of good files
@@ -559,31 +572,15 @@ class GlossSection:
                     text = f.read()
                 
                 short_name = os.path.splitext(filename)[0]
-                doc_rows = self._format_academic_document(text, short_name)
-                
-                # Calculate section_length for each row (number of non-empty lines)
-                for row in doc_rows:
-                    section_lines = row.get("section", "").splitlines()
-                    section_length = sum(1 for line in section_lines if line.strip())
-                    row['section_length'] = section_length
-                
-                # Calculate the total article length (sum of all section lengths)
-                article_length = sum(row.get("section_length", 0) for row in doc_rows)
-                
-                # Calculate section_propo for each row (proportion * 1000, rounded)
-                for row in doc_rows:
-                    if article_length > 0:
-                        section_propo = round((row.get("section_length", 0) / article_length) * 1000)
-                    else:
-                        section_propo = 0
-                    row['section_propo'] = section_propo
-                
+                doc_rows = self.rows_for_document(text, short_name)
+
                 # Add id and row_id to each row
                 for row in doc_rows:
                     row['id'] = row_counter
                     row['row_id'] = f'row_{row_counter}'
                     row_counter += 1
                 
+                observe("sections_completed" if doc_rows else "sections_empty", path=input_path, status="ok", row_count=len(doc_rows))
                 if doc_rows:
                     df = pd.DataFrame(doc_rows)
                     table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
@@ -598,3 +595,20 @@ class GlossSection:
         if skipped_files:
             print(f"  - Skipped {len(skipped_files)} files that weren't in good list: {skipped_files}")
         print(f"  - Saved {row_counter - 1} total sections to {parquet_path}")
+
+def section_schema():
+    return pa.schema([
+            pa.field("id", pa.int64()),
+            pa.field("row_id", pa.string()),
+            pa.field("filename", pa.string()),
+            pa.field("has_table", pa.bool_()),
+            pa.field("has_list", pa.bool_()),
+            pa.field("has_other", pa.bool_()),
+            pa.field("has_text", pa.bool_()),
+            pa.field("header", pa.string()),
+            pa.field("place", pa.string()),
+            pa.field("section", pa.string()),  # Raw section text
+            pa.field("json_section", pa.string()),  # Formatted JSON content
+            pa.field("section_length", pa.int64()),  # Number of non-empty lines in section
+            pa.field("section_propo", pa.int64()),  # Proportion of document (0-1000)
+        ])

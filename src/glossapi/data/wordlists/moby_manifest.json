@@ -1,0 +1,80 @@
+{
+  "fr": {
+    "name": "Moby Language II french",
+    "source": "https://www.gutenberg.org/files/3206/files/french.txt",
+    "license": "LicenseRef-Public-Domain-Moby",
+    "source_sha256": "6e3e583a24c90e041648fbf328726d68d7a34c5568d8a9bfdbb44dd45ec20798",
+    "sha256": "b1c197e6e44a3522beef557a714570472b95cfc6ddf54c57c4cc47e72f08bf4d",
+    "file": "fr_moby.txt.gz",
+    "entries": 132554,
+    "compressed_bytes": 314570,
+    "normalization": "NFC casefold; de umlaut ae/oe/ue; NFD strip marks; ASCII letters only; Moby es backslash to n",
+    "lookup": "Normalized surface entries, no affix expansion"
+  },
+  "de": {
+    "name": "Moby Language II german",
+    "source": "https://www.gutenberg.org/files/3206/files/german.txt",
+    "license": "LicenseRef-Public-Domain-Moby",
+    "source_sha256": "21067baa4a18ddadf560930e776101da007f4e29671a38969ac8b47aca73bbc3",
+    "sha256": "eb112d3f9e633ab9e3b39fd8768a676857e2e160087f9daf2aab5bef4b140534",
+    "file": "de_moby.txt.gz",
+    "entries": 158970,
+    "compressed_bytes": 478400,
+    "normalization": "NFC casefold; de umlaut ae/oe/ue; NFD strip marks; ASCII letters only; Moby es backslash to n",
+    "lookup": "Normalized surface entries, no affix expansion"
+  },
+  "it": {
+    "name": "Moby Language II italian",
+    "source": "https://www.gutenberg.org/files/3206/files/italian.txt",
+    "license": "LicenseRef-Public-Domain-Moby",
+    "source_sha256": "83ce241f428b59b8a81b79a0964355b3e40e34dd58423325489f34fde574bb72",
+    "sha256": "1228553dab66a3f26e23119892494152e36484e9916c31d24e59d6cf4227ca63",
+    "file": "it_moby.txt.gz",
+    "entries": 60417,
+    "compressed_bytes": 143672,
+    "normalization": "NFC casefold; de umlaut ae/oe/ue; NFD strip marks; ASCII letters only; Moby es backslash to n",
+    "lookup": "Normalized surface entries, no affix expansion"
+  },
+  "es": {
+    "name": "Moby Language II spanish",
+    "source": "https://www.gutenberg.org/files/3206/files/spanish.txt",
+    "license": "LicenseRef-Public-Domain-Moby",
+    "source_sha256": "9b97c2d8cff3a9c06818dde3a8e5ba130145fa1debe55550b3173d15a0208021",
+    "sha256": "adaf0a0ea007e15e3a1b9a8b703c364c00df8662f16f7978da322b6860b7ba5a",
+    "file": "es_moby.txt.gz",
+    "entries": 85690,
+    "compressed_bytes": 237575,
+    "normalization": "NFC casefold; de umlaut ae/oe/ue; NFD strip marks; ASCII letters only; Moby es backslash to n",
+    "lookup": "Normalized surface entries, no affix expansion"
+  },
+  "pt": {
+    "name": "OWN-PT surface labels + stopwords-pt function words",
+    "license": "CC-BY-4.0 AND MIT",
+    "sources": [
+      {
+        "repository": "own-pt/openWordnet-PT",
+        "revision": "264016d5899e6969f6f7cb4f1d75fa06037c1fd7",
+        "source": "https://raw.githubusercontent.com/own-pt/openWordnet-PT/264016d5899e6969f6f7cb4f1d75fa06037c1fd7/data/own-pt-words.ttl",
+        "source_sha256": "8aad718f57f041511eee31a33d96c289a6d7ac5f1e52980069b7075b71784ad4",
+        "license": "CC-BY-4.0",
+        "license_sha256": "575877531d567fcd30848c489e5216381d61121422a2a2337163847ad2da5c6d",
+        "accepted_entries": 59211
+      },
+      {
+        "repository": "stopwords-iso/stopwords-pt",
+        "revision": "84249b7ca37005f8cd19df70d86f44dc1f1936a5",
+        "source": "https://raw.githubusercontent.com/stopwords-iso/stopwords-pt/84249b7ca37005f8cd19df70d86f44dc1f1936a5/stopwords-pt.txt",
+        "source_sha256": "cf89f34dd7474cf1cddf49f4295f4221f25be2ab108d7e59f0bcf17fc5939f92",
+        "license": "MIT",
+        "license_sha256": "27403c9741017239dc227eab9d6118c7c0569b199b42a853bd4ffbca898b1007",
+        "accepted_entries": 560
+      }
+    ],
+    "sha256": "06a00146e669caceb7e5a5cd1ee5af64ad23034a3a3ed2c3c5bec8839130e34d",
+    "file": "pt_surface.txt.gz",
+    "entries": 36511,
+    "compressed_bytes": 114946,
+    "normalization": "NFC casefold; NFD strip marks; ASCII letters only",
+    "lookup": "Single-word surface labels and function words; no affix expansion"
+  }
+}

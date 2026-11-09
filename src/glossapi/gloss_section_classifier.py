@@ -1,23 +1,91 @@
+from .ledger.journal import observe, observe_store, observe_source_rows
 import logging
 import os
+import threading
 import re
 import time
+import traceback
+from .ledger.encoding import file_hash, typed_value
 import numpy as np
 import pandas as pd
-import joblib
-import dask.dataframe as dd
-from dask.diagnostics import ProgressBar
-from sklearn.pipeline import Pipeline
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.compose import ColumnTransformer
-from sklearn.svm import LinearSVC
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import confusion_matrix, classification_report
-from sklearn.preprocessing import FunctionTransformer
-from typing import Dict
+from .optional_dependencies import optional_dependencies
+from typing import Dict, cast
+
+# K2 W2b: the packaged default model is the neutral export (glossapi.section_model: numpy only). scikit-learn and
+# joblib are needed only for explicitly supplied legacy *.joblib models and for training, from the
+# `annotate-legacy` extra, and are imported only there.
+LEGACY_EXTRA = "annotate-legacy"
+
+
+def _legacy_joblib():
+    with optional_dependencies(LEGACY_EXTRA):
+        import joblib
+        import sklearn  # noqa: F401  (the legacy pickles need scikit-learn 1.6.1)
+    return joblib
+
+
+# K4(c) part 3 (coordinator decision 3): an explicit legacy *.joblib model is imported and unpickled while the
+# streaming DAG runs (its main thread otherwise waits), keyed by the pickle's sha256. The annotation barrier then takes
+# the loaded object for the same bytes (its frozen copy has the same hash) instead of importing scikit-learn and
+# unpickling at the start of the serial tail. Same bytes, same object graph: predictions are unchanged.
+_PRELOADED = {}
+_PRELOAD_THREADS = {}
+
+
+def preload_legacy_model(model_path: object) -> 'threading.Thread | None':
+    """Start a background load of an explicit legacy pickle (no-op for the neutral model, which loads in ms)."""
+    from . import section_model
+    if not isinstance(model_path, (str, os.PathLike)):
+        return None
+    path = os.fspath(cast('str | os.PathLike[str]', model_path))
+    if not path or section_model.is_neutral(path) or not os.path.isfile(path):
+        return None
+    key = os.path.abspath(path)
+    if key in _PRELOAD_THREADS:
+        return _PRELOAD_THREADS[key]
+    def load():
+        try:
+            digest = file_hash(key)
+            model = _legacy_joblib().load(key)
+            if file_hash(key) == digest:
+                _PRELOADED[digest] = model
+        except Exception:  # the barrier loads (and reports) the model itself
+            pass
+    thread = threading.Thread(target=load, name='glossapi-model-preload', daemon=True)
+    _PRELOAD_THREADS[key] = thread
+    thread.start()
+    return thread
+
+
+def release_preloaded_models() -> None:
+    """End of a run: wait for any background load and drop the preloaded objects."""
+    for thread in list(_PRELOAD_THREADS.values()):
+        thread.join()
+    _PRELOAD_THREADS.clear()
+    _PRELOADED.clear()
+
+
+def _preloaded(model_file):
+    """The preloaded object for exactly these bytes, waiting for a load still in progress."""
+    if not _PRELOAD_THREADS:
+        return None, None
+    for thread in list(_PRELOAD_THREADS.values()):
+        thread.join()
+    digest = file_hash(model_file)
+    return _PRELOADED.get(digest), digest
+
+
+def _model_sha256(model_path):
+    """The joblib file hash, or the manifest hash of a neutral model (which binds every model file)."""
+    if not model_path:
+        return None
+    from .section_model import stage_input
+    path = stage_input(model_path)
+    return file_hash(path) if os.path.isfile(path) else None
 
 
 # Define the combine_text function outside of the class for compatibility
+# (legacy pickles reference glossapi.gloss_section_classifier.combine_text by import path).
 def combine_text(df):
     """
     Combine header and section text into a single text field for analysis.
@@ -37,7 +105,7 @@ class GlossSectionClassifier:
     sections into different types (e.g., introduction, index, bibliography, etc.)
     
     The class provides functionality to train a classifier model, process predictions
-    in parallel using Dask, and annotate document sections based on specific boundary markers.
+    partition by partition, and annotate document sections based on specific boundary markers.
     """
     
     def __init__(self):
@@ -79,8 +147,15 @@ class GlossSectionClassifier:
             raise ValueError("Model file path is required. Please specify a valid model path.")
                 
         self.logger.info(f"Loading model from: {model_file}")
+        from . import section_model
         try:
-            self.loaded_model = joblib.load(model_file)
+            if section_model.is_neutral(model_file):
+                # Neutral directory (or its manifest.json): own inference, no pickle.
+                self.loaded_model = section_model.load(model_file)
+            else:
+                # Explicit legacy *.joblib pickle: scikit-learn 1.6.1 from glossapi[annotate-legacy].
+                preloaded, _ = _preloaded(model_file)
+                self.loaded_model = preloaded if preloaded is not None else _legacy_joblib().load(model_file)
             self.clf_pipeline = self.loaded_model
             return self.loaded_model
         except Exception as e:
@@ -98,6 +173,12 @@ class GlossSectionClassifier:
         and includes binary features (has_table, has_list). Now with better handling
         of edge cases like empty arrays.
         """
+        with optional_dependencies(LEGACY_EXTRA):
+            from sklearn.pipeline import Pipeline
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            from sklearn.compose import ColumnTransformer
+            from sklearn.svm import LinearSVC
+            from sklearn.preprocessing import FunctionTransformer
         # Create a custom TF-IDF vectorizer that can handle empty arrays
         class RobustTfidfVectorizer(TfidfVectorizer):
             def transform(self, X):
@@ -146,6 +227,10 @@ class GlossSectionClassifier:
         Returns:
             sklearn.pipeline.Pipeline: The trained classifier pipeline
         """
+        with optional_dependencies(LEGACY_EXTRA):
+            from sklearn.model_selection import train_test_split
+            from sklearn.metrics import confusion_matrix, classification_report
+        joblib = _legacy_joblib()
         self.logger.info(f"Loading training data from {csv_file}...")
         df_train = pd.read_csv(csv_file)
         self.logger.info(f"Loaded training data with {len(df_train)} rows.")
@@ -212,7 +297,9 @@ class GlossSectionClassifier:
             pandas.DataFrame: DataFrame with adjusted predictions
         """
         def process_group(group):
+            filename = group.name  # pandas 3 excludes the grouping column from apply.
             group = group.sort_values('id').copy()
+            group['filename'] = filename
             running_length = 0
             running_propo = 0
             new_preds = []
@@ -227,6 +314,7 @@ class GlossSectionClassifier:
                     flag, nums = self._compute_likely_index_for_section(row['section'])
                     if flag == 1:
                         # If detected as index, override with "π" and skip SVM decision.
+                        observe("annotation_index_override", legacy_filename=str(filename), legacy_row_id=int(row["id"]), model_label=str(row["predicted_section"]), final_label="π", effective_thresholds={"length":length_threshold,"proportion":propo_threshold})
                         new_preds.append("π")
                         continue
                 else:
@@ -242,22 +330,24 @@ class GlossSectionClassifier:
             group['predicted_section'] = new_preds
             return group
 
-        return df.groupby('filename', group_keys=False).apply(process_group)
+        # Selecting the original columns also preserves their order across pandas 2/3.
+        return df.groupby('filename', group_keys=False).apply(process_group).loc[:, df.columns]
 
     # -----------------------------------------------------------------------------
-    # Process Predictions Using Dask with Progress Bar and Checkpointing
+    # Process Predictions per Partition with Checkpointing
     # -----------------------------------------------------------------------------
-    def _process_predictions_with_dask(self, input_parquet, output_parquet, model_path=None, pretrained_model=True, n_cpus=4):
+    def _process_predictions(self, input_parquet, output_parquet, model_path=None, pretrained_model=True, n_cpus=4):
         """
-        Process predictions on the input Parquet file using Dask for parallel processing.
+        Predict section labels partition by partition (annotation_partitions) with checkpoint resume.
         
         Args:
             input_parquet (str): Path to the input Parquet file with sections to classify
             output_parquet (str): Path where the classified Parquet file will be saved
             model_path (str, optional): Path to the model file to load
             pretrained_model (bool): If True, use the loaded model; otherwise, use the trained model
-            n_cpus (int, optional): Number of CPU cores to use for parallel processing. Default is 4.
+            n_cpus (int, optional): Sets the partition count (5 per CPU). Default is 4.
         """
+        from . import annotation_partitions as partitions
         if pretrained_model:
             # Ensure the model is loaded
             if model_path is not None:
@@ -268,12 +358,9 @@ class GlossSectionClassifier:
                 self.load_model()  # Load default model
             self.clf_pipeline = self.loaded_model
             
-        # Read all columns from the input Parquet file to preserve them
+        # Read the schema; every column is preserved
         self.logger.info(f"Reading data from Parquet file: {input_parquet}")
-        ddf = dd.read_parquet(input_parquet)
-        
-        # Get list of all columns to preserve them
-        all_columns = ddf.columns.tolist()
+        all_columns = partitions.to_frame(partitions.pq.read_schema(input_parquet).empty_table()).columns.tolist()
         
         # Verify required columns exist
         required_columns = ['id', 'header', 'section', 'has_table', 'has_list']
@@ -282,27 +369,26 @@ class GlossSectionClassifier:
             self.logger.error(f"Missing required columns: {missing_columns}")
             raise ValueError(f"Input parquet file missing required columns: {missing_columns}")
         
-        # Preprocess key columns
-        ddf['header'] = ddf['header'].fillna('')
-        ddf['section'] = ddf['section'].fillna('')
-        ddf['has_table'] = ddf['has_table'].astype(int)
-        ddf['has_list'] = ddf['has_list'].astype(int)
-        
         # Identify already processed rows via output file checkpoint (read only 'id')
         processed_ids = set()
         if os.path.exists(output_parquet):
             try:
                 self.logger.info(f"Found existing output file {output_parquet}. Loading processed IDs...")
-                ddf_existing = dd.read_parquet(output_parquet, columns=['id'])
-                processed_ids = set(ddf_existing['id'].unique().compute().tolist())
+                processed_ids = set(partitions.read_frame(output_parquet, columns=['id'])['id'].unique().tolist())
                 self.logger.info(f"{len(processed_ids)} rows have already been processed.")
             except Exception as e:
                 self.logger.error("Error reading existing output file. Processing all rows.", exc_info=e)
         
+        def prepare(df):
+            # Preprocess key columns, then drop already predicted rows (isin on the small ID set).
+            df['header'] = df['header'].fillna('')
+            df['section'] = df['section'].fillna('')
+            df['has_table'] = df['has_table'].astype(int)
+            df['has_list'] = df['has_list'].astype(int)
+            return df[~df['id'].isin(list(processed_ids))] if processed_ids else df
+        
         if processed_ids:
-            # Filter out already predicted rows using efficient isin on the small set of IDs.
-            ddf = ddf[~ddf['id'].isin(list(processed_ids))]
-            remaining = int(ddf.shape[0].compute())
+            remaining = int((~partitions.read_frame(input_parquet, columns=['id'])['id'].isin(list(processed_ids))).sum())
             self.logger.info(f"Processing only {remaining} remaining rows.")
             
             # Skip processing if no remaining rows
@@ -312,18 +398,11 @@ class GlossSectionClassifier:
         else:
             self.logger.info("No prior progress found; processing all rows.")
         
-        # (Optional) Repartition to a moderate number of partitions
         # Use n_cpus to determine the number of partitions (5 partitions per CPU)
         npartitions = max(5 * n_cpus, 1)  # Ensure at least 1 partition
         self.logger.info(f"Repartitioning data into {npartitions} partitions based on {n_cpus} CPU cores")
-        ddf = ddf.repartition(npartitions=npartitions)
-        ddf = ddf.persist()  # Cache in memory to avoid repeated computations
         
-        # Create metadata that includes the new column "predicted_section"
-        meta = ddf._meta.copy()
-        meta['predicted_section'] = ''
-        
-        # Define a closure that captures self
+        prediction_failures = []
         def predict_partition(df):
             # If the dataframe is empty, return it with the predicted_section column added
             if len(df) == 0:
@@ -339,6 +418,7 @@ class GlossSectionClassifier:
                 # Assign SVM predictions
                 df['predicted_section'] = self.clf_pipeline.predict(X)
             except Exception as e:
+                prediction_failures.append({"error_type": type(e).__module__ + "." + type(e).__name__, "message": str(e), "traceback": "".join(traceback.format_exception(type(e), e, e.__traceback__)), "row_ids": df["id"].tolist()})
                 # If prediction fails, assign a default value
                 print(f"Error during prediction: {str(e)}")
                 print(f"Assigning default prediction value to all rows")
@@ -346,22 +426,21 @@ class GlossSectionClassifier:
                 
             return df
         
-        self.logger.info("Running predictions in parallel using Dask...")
+        self.logger.info("Running predictions partition by partition...")
         start = time.time()
-        ddf_pred = ddf.map_partitions(predict_partition, meta=meta)
-        
         temp_output = output_parquet + ".tmp"
-        self.logger.info("Writing new predictions to temporary Parquet file with progress bar...")
-        with ProgressBar():
-            ddf_pred.to_parquet(temp_output, write_index=False)
+        self.logger.info("Writing new predictions to temporary Parquet partitions...")
+        partitions.predict_partitions(input_parquet, temp_output, npartitions, prepare, predict_partition)
         end = time.time()
+        for failure in prediction_failures:
+            observe("annotation_prediction_fallback", reported_error={key:failure[key] for key in ("error_type", "message", "traceback")}, row_ids=failure["row_ids"], fallback_label="άλλο", degraded=True)
         self.logger.info(f"New predictions written in {end - start:.2f} seconds.")
         
         # Merge new predictions with existing ones, if any.
         if processed_ids:
             self.logger.info("Merging new predictions with existing progress...")
-            df_existing = dd.read_parquet(output_parquet).compute()
-            df_new = dd.read_parquet(temp_output).compute()
+            df_existing = partitions.read_frame(output_parquet)
+            df_new = partitions.read_frame(temp_output)
             
             # Ensure both dataframes have the same columns for clean merging
             missing_cols_new = [c for c in df_existing.columns if c not in df_new.columns]
@@ -374,16 +453,18 @@ class GlossSectionClassifier:
             
             df_final = pd.concat([df_existing, df_new], ignore_index=True)
         else:
-            df_final = dd.read_parquet(temp_output).compute()
+            df_final = partitions.read_frame(temp_output)
         
         # Post-process predictions: for each article, before the cumulative thresholds are exceeded,
         # run compute_likely_index_for_section on the section text (without the header) and override
         # the predicted label with "π" if detected.
         self.logger.info("Adjusting predictions based on index detection and cumulative thresholds...")
+        observe("legacy_observed", annotation_model_labels=typed_value(df_final[[column for column in ("id", "row_id", "filename", "predicted_section") if column in df_final.columns]].to_dict("records")), model_path=str(model_path), model_sha256=_model_sha256(model_path))
         df_final = self._adjust_predictions_with_index_detection(df_final, length_threshold=300, propo_threshold=300)
         
         self.logger.info("Writing merged and adjusted predictions to final output Parquet file...")
         df_final.to_parquet(output_parquet, index=False)
+        observe("annotate_completed", path=output_parquet, status="ok")
         self.logger.info("Predictions saved and progress maintained.")
 
     # -----------------------------------------------------------------------------
@@ -633,6 +714,7 @@ class GlossSectionClassifier:
             
             # Check if markers are in the correct order
             if first_pi_id > last_beta_id:
+                observe("annotation_boundary_reversed", legacy_filename=str(group["filename"].iloc[0]), first_start_id=int(first_pi_id), last_end_id=int(last_beta_id))
                 self.logger.warning(f"Boundary markers in wrong order for {group['filename'].iloc[0]}. Keeping original labels.")
                 return group  # Return with original labels
             
@@ -658,10 +740,13 @@ class GlossSectionClassifier:
         else:
             # Missing one or both boundary markers, log warning but don't change labels
             if not has_pi and not has_beta:
+                observe("annotation_boundaries_missing", legacy_filename=str(group["filename"].iloc[0]))
                 self.logger.warning(f"Both 'π' and 'β' boundary markers missing for {group['filename'].iloc[0]}. Keeping original labels.")
             elif not has_pi:
+                observe("annotation_start_missing", legacy_filename=str(group["filename"].iloc[0]))
                 self.logger.warning(f"'π' boundary marker missing for {group['filename'].iloc[0]}. Keeping original labels.")
             else:
+                observe("annotation_end_missing", legacy_filename=str(group["filename"].iloc[0]))
                 self.logger.warning(f"'β' boundary marker missing for {group['filename'].iloc[0]}. Keeping original labels.")
                 
             return group  # Return with original labels
@@ -723,8 +808,7 @@ class GlossSectionClassifier:
         self.logger.info(f"Using model from {model_path} for prediction")
         self.load_model(model_path)
         
-        # Process using Dask
-        self._process_predictions_with_dask(input_parquet, output_parquet, model_path=model_path, pretrained_model=True, n_cpus=n_cpus)
+        self._process_predictions(input_parquet, output_parquet, model_path=model_path, pretrained_model=True, n_cpus=n_cpus)
         
         overall_end = time.time()
         self.logger.info(f"Total elapsed time: {overall_end - overall_start:.2f} seconds.")

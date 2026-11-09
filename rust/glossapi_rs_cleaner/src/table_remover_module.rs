@@ -41,6 +41,9 @@ pub fn remove_tables_from_content(
     if table_locations_for_file.is_empty() {
         return file_content.to_string();
     }
+    if file_content.is_empty() {
+        return String::new();
+    }
 
     let original_lines: Vec<&str> = file_content.lines().collect();
     if original_lines.is_empty() {

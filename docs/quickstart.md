@@ -38,14 +38,13 @@ Workers report per-batch summaries and extraction progress is persisted into
 `download_results/download_results.parquet`, so you can restart multi-GPU runs
 without losing progress (no extra checkpoint files required).
 
-## GPU OCR (opt-in)
+## OCR remediation (opt-in)
 
 ```python
 from glossapi import Corpus
 c = Corpus('IN', 'OUT')
-c.extract(input_format='pdf', accel_type='CUDA', force_ocr=True)
-# or reuse multi-GPU batching
-c.extract(input_format='pdf', use_gpus='multi', force_ocr=True)
+c.clean()
+c.ocr(ocr_options=plugin_options, fix_bad=True, math_enhance=False)  # configure in external plugin
 ```
 
 ## Phase‑2 Math Enrichment (from JSON)
@@ -71,30 +70,16 @@ c = Corpus('IN', 'OUT')
 c.download(url_column='url')         # optional, if you have URLs parquet
 c.extract(input_format='pdf')        # Phase‑1 (no OCR by default)
 c.clean()                            # compute quality; filter badness
-c.ocr()                              # re‑extract bad ones and enrich math/code
+c.ocr(mode='ocr_bad')                 # default Greek R8+x1 plugin
 c.section()                          # to parquet
 c.annotate()                         # classify/annotate sections
 ```
 
-See ocr_and_math_enhancement.md for GPU details, batch sizes, and artifact locations.
+See `ocr_and_math_enhancement.md` for OCR runtime details, batch sizes, and artifact locations.
 
-### DeepSeek OCR
+### External OCR
 
-DeepSeek can be used as an OCR backend; equations are included inline in the OCR output, so Phase‑2 math is not required and any math flags are ignored.
-
-```python
-from glossapi import Corpus
-c = Corpus('IN','OUT')
-c.ocr(backend='deepseek', fix_bad=True, math_enhance=True, mode='ocr_bad_then_math')
-# → OCR only for bad files; math is included inline in the Markdown
-```
-
-To avoid stub output, set `GLOSSAPI_DEEPSEEK_ALLOW_CLI=1` and `GLOSSAPI_DEEPSEEK_ALLOW_STUB=0`, and ensure the CLI bits are reachable:
-
-```bash
-export GLOSSAPI_DEEPSEEK_VLLM_SCRIPT=/path/to/deepseek-ocr/run_pdf_ocr_vllm.py
-export GLOSSAPI_DEEPSEEK_TEST_PYTHON=/path/to/deepseek-venv/bin/python
-export GLOSSAPI_DEEPSEEK_MODEL_DIR=/path/to/deepseek-ocr/DeepSeek-OCR
-export GLOSSAPI_DEEPSEEK_LD_LIBRARY_PATH=/path/to/libjpeg-turbo/lib
-python -m glossapi.ocr.deepseek.preflight  # optional: validates env without running OCR
-```
+Install `python install_glossapi.py ocr --device cpu` (or `mps` / `cuda126` /
+`cuda132`), then call `c.ocr(mode="ocr_bad")`. Explicit `ocr_options` remain
+available for custom plugin configuration.
+See [OCR plugin migration](ocr_plugin_migration.md).

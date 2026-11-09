@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/report_export.json",
+  "title": "glossAPI CLI v1 report --output data",
+  "description": "The receipt of the one explicit write (report --output).",
+  "type": "object",
+  "required": [
+    "path",
+    "sha256",
+    "bytes",
+    "rows"
+  ],
+  "properties": {
+    "path": {
+      "type": "string"
+    },
+    "sha256": {
+      "$ref": "common.json#/$defs/sha256"
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "rows": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

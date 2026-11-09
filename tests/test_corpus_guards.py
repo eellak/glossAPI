@@ -50,12 +50,6 @@ def make_corpus(tmp_path):
     return Corpus(input_dir=input_dir, output_dir=output_dir)
 
 
-def set_onnx_providers(monkeypatch, providers):
-    stub = SimpleNamespace(get_available_providers=lambda: providers)
-    monkeypatch.setitem(sys.modules, "onnxruntime", stub)
-    return stub
-
-
 def set_torch_stub(monkeypatch, *, available: bool, device_count: int):
     cuda_ns = SimpleNamespace(
         is_available=lambda: available,
@@ -66,22 +60,23 @@ def set_torch_stub(monkeypatch, *, available: bool, device_count: int):
     return torch_ns
 
 
-def test_prime_extractor_requires_cuda_for_ocr(tmp_path, monkeypatch):
+def test_prime_extractor_force_ocr_is_ignored_for_backend_selection(tmp_path, monkeypatch):
     corpus = make_corpus(tmp_path)
     corpus.extractor = DummyExtractor()
 
-    set_torch_stub(monkeypatch, available=True, device_count=1)
-    set_onnx_providers(monkeypatch, ["CPUExecutionProvider"])
+    set_torch_stub(monkeypatch, available=False, device_count=0)
 
-    with pytest.raises(RuntimeError) as exc:
-        corpus.prime_extractor(
-            input_format="pdf",
-            accel_type="CUDA",
-            force_ocr=True,
-            phase1_backend="docling",
-        )
+    corpus.prime_extractor(
+        input_format="pdf",
+        accel_type="CPU",
+        force_ocr=True,
+        phase1_backend="auto",
+    )
 
-    assert "CUDAExecutionProvider" in str(exc.value)
+    assert corpus.extractor.last_policy == "safe"
+    ensure_kwargs = corpus.extractor.ensure_calls[0]
+    assert ensure_kwargs["enable_ocr"] is False
+    assert ensure_kwargs["force_full_page_ocr"] is False
 
 
 def test_prime_extractor_requires_cuda_for_docling_backend(tmp_path, monkeypatch):
@@ -89,8 +84,6 @@ def test_prime_extractor_requires_cuda_for_docling_backend(tmp_path, monkeypatch
     corpus.extractor = DummyExtractor()
 
     set_torch_stub(monkeypatch, available=False, device_count=0)
-    set_onnx_providers(monkeypatch, ["CUDAExecutionProvider"])
-
     with pytest.raises(RuntimeError) as exc:
         corpus.prime_extractor(
             input_format="pdf",
@@ -106,8 +99,6 @@ def test_prime_extractor_configures_safe_backend_for_text_layer(tmp_path, monkey
     corpus.extractor = DummyExtractor()
 
     set_torch_stub(monkeypatch, available=True, device_count=1)
-    set_onnx_providers(monkeypatch, ["CUDAExecutionProvider"])
-
     corpus.prime_extractor(
         input_format="pdf",
         accel_type="CPU",
@@ -120,26 +111,24 @@ def test_prime_extractor_configures_safe_backend_for_text_layer(tmp_path, monkey
     assert corpus.extractor.ensure_calls[0]["enable_ocr"] is False
 
 
-def test_prime_extractor_configures_docling_backend_for_ocr(tmp_path, monkeypatch):
+def test_prime_extractor_configures_docling_backend_explicitly(tmp_path, monkeypatch):
     corpus = make_corpus(tmp_path)
     corpus.extractor = DummyExtractor()
 
+    monkeypatch.delenv("GLOSSAPI_DOCLING_MAX_BATCH_FILES", raising=False)
     set_torch_stub(monkeypatch, available=True, device_count=2)
-    set_onnx_providers(monkeypatch, ["CUDAExecutionProvider"])
-
     corpus.prime_extractor(
         input_format="pdf",
         accel_type="CUDA",
-        force_ocr=True,
-        phase1_backend="auto",
+        phase1_backend="docling",
     )
 
     assert corpus.extractor.last_policy == "docling"
     assert corpus.extractor.last_max_batch_files == 1
     assert corpus.extractor.last_prefer_safe_backend is False
     ensure_kwargs = corpus.extractor.ensure_calls[0]
-    assert ensure_kwargs["enable_ocr"] is True
-    assert ensure_kwargs["force_full_page_ocr"] is True
+    assert ensure_kwargs["enable_ocr"] is False
+    assert ensure_kwargs["force_full_page_ocr"] is False
 
 
 def test_prime_extractor_requires_cuda_for_formula_enrichment(tmp_path, monkeypatch):
@@ -147,8 +136,6 @@ def test_prime_extractor_requires_cuda_for_formula_enrichment(tmp_path, monkeypa
     corpus.extractor = DummyExtractor()
 
     set_torch_stub(monkeypatch, available=False, device_count=0)
-    set_onnx_providers(monkeypatch, ["CUDAExecutionProvider"])
-
     with pytest.raises(RuntimeError) as exc:
         corpus.prime_extractor(
             input_format="pdf",
@@ -203,6 +190,8 @@ def test_gpu_worker_requeues_failed_batch(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exit_info:
         corpus_mod.gpu_extract_worker_queue(
             device_id=0,
+            worker_slot=0,
+            worker_key="gpu0-w0",
             in_dir=str(tmp_path),
             out_dir=str(tmp_path),
             work_q=work_q,
@@ -240,4 +229,116 @@ def test_gpu_worker_requeues_failed_batch(tmp_path, monkeypatch):
 
     assert processed_batches == [["doc.pdf"]]
     assert work_q.empty()
+
+
+def test_gpu_worker_accepts_bundled_work_items(tmp_path, monkeypatch):
+    import glossapi.corpus as corpus_mod
+
+    processed_batches = []
+
+    class FakeCorpus:
+        def __init__(self, input_dir, output_dir):
+            self.input_dir = input_dir
+            self.output_dir = output_dir
+            self.extractor = SimpleNamespace(max_batch_files=1)
+
+        def prime_extractor(self, *args, **kwargs):
+            return None
+
+        def extract(self, *, file_paths=None, **kwargs):
+            processed_batches.append(list(file_paths or []))
+            return None
+
+    monkeypatch.setattr(corpus_mod, "Corpus", FakeCorpus)
+    monkeypatch.setattr("glossapi.Corpus", FakeCorpus)
+    monkeypatch.delenv("GLOSSAPI_WORKER_LOG_DIR", raising=False)
+
+    work_q = queue.Queue()
+    work_q.put(["doc-a.pdf", "doc-b.pdf"])
+    result_q = queue.Queue()
+    status_map: dict = {}
+
+    with pytest.raises(SystemExit) as exit_info:
+        corpus_mod.gpu_extract_worker_queue(
+            device_id=0,
+            worker_slot=0,
+            worker_key="gpu0-w0",
+            in_dir=str(tmp_path),
+            out_dir=str(tmp_path),
+            work_q=work_q,
+            force=False,
+            fe=False,
+            ce=False,
+            use_cls_w=False,
+            skip=False,
+            input_fmt="pdf",
+            threads=1,
+            benchmark=False,
+            export_json=False,
+            emit_index=False,
+            backend="safe",
+            result_q=result_q,
+            status_map=status_map,
+            marker_dir=None,
+        )
+
+    assert exit_info.value.code == 0
+    assert processed_batches == [["doc-a.pdf", "doc-b.pdf"]]
+    assert status_map == {}
+
+
+def test_gpu_worker_keeps_singleton_queue_items_separate(tmp_path, monkeypatch):
+    import glossapi.corpus as corpus_mod
+
+    processed_batches = []
+
+    class FakeCorpus:
+        def __init__(self, input_dir, output_dir):
+            self.input_dir = input_dir
+            self.output_dir = output_dir
+            self.extractor = SimpleNamespace(max_batch_files=2)
+
+        def prime_extractor(self, *args, **kwargs):
+            return None
+
+        def extract(self, *, file_paths=None, **kwargs):
+            processed_batches.append(list(file_paths or []))
+            return None
+
+    monkeypatch.setattr(corpus_mod, "Corpus", FakeCorpus)
+    monkeypatch.setattr("glossapi.Corpus", FakeCorpus)
+    monkeypatch.delenv("GLOSSAPI_WORKER_LOG_DIR", raising=False)
+
+    work_q = queue.Queue()
+    work_q.put("doc-a.pdf")
+    work_q.put("doc-b.pdf")
+    result_q = queue.Queue()
+    status_map: dict = {}
+
+    with pytest.raises(SystemExit) as exit_info:
+        corpus_mod.gpu_extract_worker_queue(
+            device_id=0,
+            worker_slot=0,
+            worker_key="gpu0-w0",
+            in_dir=str(tmp_path),
+            out_dir=str(tmp_path),
+            work_q=work_q,
+            force=False,
+            fe=False,
+            ce=False,
+            use_cls_w=False,
+            skip=False,
+            input_fmt="pdf",
+            threads=1,
+            benchmark=False,
+            export_json=False,
+            emit_index=False,
+            backend="docling",
+            result_q=result_q,
+            status_map=status_map,
+            marker_dir=None,
+        )
+
+    assert exit_info.value.code == 0
+    assert processed_batches == [["doc-a.pdf"], ["doc-b.pdf"]]
     assert status_map == {}

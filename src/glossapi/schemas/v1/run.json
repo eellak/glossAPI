@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/run.json",
+  "title": "glossAPI CLI v1 run data",
+  "description": "run --json data: the outcome of the streaming run (and its publication barriers).",
+  "type": "object",
+  "required": [
+    "run_id",
+    "state"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "counts": {
+      "$ref": "common.json#/$defs/counts"
+    },
+    "attempts": {
+      "type": "object"
+    },
+    "plan_hash": {
+      "$ref": "common.json#/$defs/sha256"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "bound_plan_hash": {
+      "oneOf": [
+        {
+          "$ref": "common.json#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "the plan --json identity this run was bound to"
+    },
+    "document_counts": {
+      "type": "object"
+    },
+    "source_inventory": {
+      "type": "object"
+    },
+    "disk": {
+      "type": "object"
+    },
+    "outputs": {
+      "type": "array"
+    },
+    "wall_seconds": {
+      "type": "number"
+    },
+    "total_wall_seconds": {
+      "type": "number"
+    },
+    "install_hints": {
+      "type": "array"
+    },
+    "trace": {
+      "type": "array"
+    }
+  }
+}

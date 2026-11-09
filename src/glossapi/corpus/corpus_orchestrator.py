@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ..ledger.journal import worker_observation_scope
+
 import json
 import logging
 import math
@@ -18,12 +20,17 @@ import numpy as np
 import pandas as pd
 
 from .._naming import canonical_stem
-from ..gloss_downloader import GlossDownloader
+
+# A multi-GPU extract worker that met an exhausted filesystem stops with this code after reporting a "disk_full" event
+# (fix 6, F3 audit). The controller then neither marks its batch problematic nor skip-lists it nor respawns the worker;
+# it raises the typed error once every worker has stopped, so the resume extracts those documents again.
+WORKER_DISK_FULL_EXIT = 74
+
+
+def _disk_full(error: BaseException) -> bool:
+    from ..stages.execution import disk_full
+    return disk_full(error)
 from ..gloss_section import GlossSection
-try:
-    from ..gloss_section_classifier import GlossSectionClassifier  # type: ignore
-except Exception:
-    GlossSectionClassifier = None  # type: ignore[assignment]
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch
@@ -34,6 +41,10 @@ from .phase_ocr_math import OcrMathPhaseMixin
 from .phase_sections import SectionPhaseMixin
 from .phase_annotate import AnnotatePhaseMixin
 from .phase_export import ExportPhaseMixin
+
+# Packaged default models ship in ``glossapi/models`` (pyproject package-data),
+# one level above this ``glossapi/corpus`` package.
+PACKAGED_MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 
 class Corpus(
     DownloadPhaseMixin,
@@ -56,6 +67,10 @@ class Corpus(
         corpus.section()  # Extract sections from markdown files
         corpus.annotate()  # Classify sections using ML
     """
+
+    def run(self, files=(), **options):
+        from ..stages.run import run_corpus
+        return run_corpus(self, files, **options)
 
     
     def __init__(
@@ -105,22 +120,20 @@ class Corpus(
         self.output_dir = Path(output_dir)
         self._metadata_parquet_path: Optional[Path] = None
         
-        # Package directory for default models
-        package_dir = Path(__file__).parent
-        
         # Handle section classifier model path
         if section_classifier_model_path:
             self.section_classifier_model_path = Path(section_classifier_model_path)
         else:
-            # Use default model path in the package
-            self.section_classifier_model_path = package_dir / "models" / "section_classifier.joblib"
+            # The packaged default: the neutral export (glossapi/models/section_classifier/, own inference,
+            # no scikit-learn). Explicit *.joblib paths use the legacy loader (glossapi[annotate-legacy]).
+            self.section_classifier_model_path = PACKAGED_MODELS_DIR / "section_classifier"
         
         # Handle extraction model path
         if extraction_model_path:
             self.extraction_model_path = Path(extraction_model_path)
         else:
-            # Use default model path in the package
-            self.extraction_model_path = package_dir / "models" / "kmeans_weights.joblib"
+            # Use the packaged default model (glossapi/models)
+            self.extraction_model_path = PACKAGED_MODELS_DIR / "kmeans_weights.joblib"
             
         self.metadata_path = Path(metadata_path) if metadata_path else None
         if self.metadata_path is not None:
@@ -148,10 +161,7 @@ class Corpus(
         # Lazy-create extractor to avoid heavy imports unless needed
         self.extractor = None
         self.sectioner = GlossSection()
-        try:
-            self.classifier = GlossSectionClassifier() if GlossSectionClassifier is not None else None  # type: ignore[call-arg, assignment]
-        except Exception:
-            self.classifier = None
+        self.classifier = None
         
         self.output_dir = Path(output_dir)
         self.downloads_dir = self.output_dir / "downloads"
@@ -182,6 +192,37 @@ class Corpus(
         self.filename_to_doctype = {}
         
         self._load_metadata()
+        self._shadow_ledger_enabled = True
+        self._stage_adapters_default = True
+
+    def process_all(self, input_format: str = "pdf", fully_annotate: bool = True, annotation_type: str = "auto", download_first: bool = False) -> None:
+        """
+        Run the complete processing pipeline: extract, section, and annotate.
+
+        Args:
+            input_format: Input format (default: "pdf")
+            fully_annotate: Whether to perform full annotation after classification (default: True)
+            annotation_type: Annotation method to use (default: "auto")
+            download_first: Whether to run the downloader before extraction (default: False)
+        """
+        if download_first:
+            try:
+                self.download()
+                self.logger.info("Download step completed, proceeding with extraction...")
+            except Exception as e:
+                # An exhausted filesystem is never a "continue with what is there" condition (fix 6 F3 rule; K5-D,
+                # FIX6-G2): extraction would meet the same full disk, and the download step's own typed failure
+                # must reach the caller. Other download failures keep the documented best-effort continuation.
+                if _disk_full(e):
+                    raise
+                self.logger.error(f"Error during download step: {e}")
+                self.logger.warning("Continuing with extraction of already downloaded files...")
+
+        self.extract(input_format=input_format)
+        self.section()
+        self.annotate(fully_annotate=fully_annotate, annotation_type=annotation_type)
+
+        self.logger.info("Complete processing pipeline finished successfully.")
 
     def _get_cached_metadata_parquet(self) -> Optional[Path]:
         """Return cached metadata parquet path if it still exists."""
@@ -238,6 +279,7 @@ class Corpus(
             try:
                 self.logger.info(f"Loading metadata from {self.metadata_path}")
                 metadata_df = pd.read_parquet(self.metadata_path)
+                self._shadow_original_source_frame = metadata_df.copy(deep=True)
                 
                 # Debug information
                 self.logger.info(f"Metadata file has {len(metadata_df)} rows and columns: {metadata_df.columns.tolist()}")
@@ -348,11 +390,14 @@ class Corpus(
     
 
 # Top-level worker function for multi-GPU extraction (picklable by multiprocessing)
+@worker_observation_scope
 def gpu_extract_worker_queue(
     device_id: int,
+    worker_slot: int,
+    worker_key: str,
     in_dir: str,
     out_dir: str,
-    work_q,  # multiprocessing Queue of filename strings
+    work_q,  # multiprocessing Queue of filename strings or bundled path lists
     force: bool,
     fe: bool,
     ce: bool,
@@ -367,7 +412,11 @@ def gpu_extract_worker_queue(
     result_q=None,
     status_map=None,
     marker_dir: Optional[str] = None,
+    repair_fonts: bool = True,
+    batched: bool | None = False,
+    stability_benchmark: dict | None = None,
 ) -> None:
+    from ..ledger.journal import drain_worker_observations
     import os as _os
     import sys as _sys
     import time as _time
@@ -392,24 +441,26 @@ def gpu_extract_worker_queue(
 
     _ensure_thread_caps()
     _status_proxy = status_map
-    _marker_path = _Path(marker_dir).expanduser() / f"gpu{device_id}.current" if marker_dir else None
+    _worker_label = worker_key or f"gpu{device_id}-w{worker_slot}"
+    _marker_path = _Path(marker_dir).expanduser() / f"{_worker_label}.current" if marker_dir else None
 
     def _update_current(batch_items: List[str]) -> None:
         if _status_proxy is not None:
             try:
-                _status_proxy[device_id] = list(batch_items)
+                _status_proxy[_worker_label] = list(batch_items)
             except Exception:
                 pass
         if _marker_path is not None:
             try:
                 _marker_path.write_text("\n".join(batch_items) + "\n", encoding="utf-8")
-            except Exception:
-                pass
+            except Exception as error:
+                if _disk_full(error):
+                    raise  # inside _run_batch: reported as the batch's disk_full (fix 6, F3 audit)
 
     def _clear_current() -> None:
         if _status_proxy is not None:
             try:
-                _status_proxy.pop(device_id, None)
+                _status_proxy.pop(_worker_label, None)
             except Exception:
                 pass
         if _marker_path is not None:
@@ -417,17 +468,36 @@ def gpu_extract_worker_queue(
                 _marker_path.unlink(missing_ok=True)
             except Exception:
                 pass
+
+    def _normalize_work_item(item: Any) -> List[str]:
+        if isinstance(item, str):
+            return [item] if item.strip() else []
+        if isinstance(item, (list, tuple, set)):
+            normalized: List[str] = []
+            for value in item:
+                try:
+                    text = str(value).strip()
+                except Exception:
+                    continue
+                if text:
+                    normalized.append(text)
+            return normalized
+        return []
     _worker_log_handle = None
     try:
         _log_dir = _os.environ.get("GLOSSAPI_WORKER_LOG_DIR")
         if _log_dir:
             _log_path = _Path(_log_dir).expanduser()
             _log_path.mkdir(parents=True, exist_ok=True)
-            _worker_log_file = _log_path / f"gpu{device_id}_{_os.getpid()}.log"
+            _worker_log_file = _log_path / f"{_worker_label}_{_os.getpid()}.log"
             _worker_log_handle = open(_worker_log_file, "a", encoding="utf-8", buffering=1)
             _sys.stdout = _worker_log_handle
             _sys.stderr = _worker_log_handle
     except Exception:
+        # Diagnostic-only, best-effort exception to the full-disk rule (fix 7, A1; FIX6-G2): any failure to open the
+        # optional worker log, ENOSPC/EDQUOT included, leaves output on the inherited stdout/stderr and the worker
+        # continues. No later failure is implied: GLOSSAPI_WORKER_LOG_DIR may be on another filesystem or quota, and
+        # the batch can succeed with no disk_full recorded anywhere. Only product writes are typed disk_full.
         _worker_log_handle = None
     # Bind this worker to a single GPU id
     _os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
@@ -447,20 +517,19 @@ def gpu_extract_worker_queue(
             except Exception:
                 _torch_name = "unknown"
             try:
-                import onnxruntime as _ort  # type: ignore
-                _ort_prov = _ort.get_available_providers()
-            except Exception:
-                _ort_prov = []
-            try:
                 import subprocess as _sp
                 _nvsmi = _sp.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=2)
                 _phys = _nvsmi.stdout.splitlines()[0].strip() if _nvsmi.returncode == 0 and _nvsmi.stdout else ""
             except Exception:
                 _phys = ""
             try:
-                print(f"[GPU{device_id}] bound: CUDA_VISIBLE_DEVICES={_os.environ.get('CUDA_VISIBLE_DEVICES','')} pid={_os.getpid()} torch={_torch_name} ORT={_ort_prov}")
+                print(
+                    f"[GPU{device_id}/W{worker_slot}] bound: "
+                    f"CUDA_VISIBLE_DEVICES={_os.environ.get('CUDA_VISIBLE_DEVICES','')} "
+                    f"pid={_os.getpid()} torch={_torch_name}"
+                )
                 if _phys:
-                    print(f"[GPU{device_id}] physical: {_phys}")
+                    print(f"[GPU{device_id}/W{worker_slot}] physical: {_phys}")
             except Exception:
                 pass
     except Exception:
@@ -475,13 +544,16 @@ def gpu_extract_worker_queue(
             _ensure_thread_caps()
             from glossapi import Corpus as _Corpus  # type: ignore
         except Exception as _e:
-            print(f"[GPU{device_id}] Cannot import glossapi in worker: {_e}")
+            print(f"[{_worker_label}] Cannot import glossapi in worker: {_e}")
             if result_q is not None:
                 try:
                     result_q.put(
                         {
+                            "ledger_observations": drain_worker_observations(),
                             "event": "exit",
-                            "worker": device_id,
+                            "worker": _worker_label,
+                            "device_id": device_id,
+                            "worker_slot": worker_slot,
                             "exitcode": 1,
                             "pid": _os.getpid(),
                             "error": str(_e),
@@ -490,31 +562,41 @@ def gpu_extract_worker_queue(
                 except Exception:
                     pass
             _sys.exit(1)
+    from ..ledger.journal import start_worker_observations, drain_worker_observations
+    start_worker_observations()
     c = _Corpus(input_dir=in_dir, output_dir=out_dir)
     # Prime once per worker (persistent converter)
     try:
-        c.prime_extractor(
-            input_format=input_fmt,
-            num_threads=threads,
-            accel_type="cuda:0",
-            force_ocr=force,
-            formula_enrichment=fe,
-            code_enrichment=ce,
-            use_cls=use_cls_w,
-            benchmark_mode=benchmark,
-            export_doc_json=bool(export_json),
-            emit_formula_index=bool(emit_index),
-            phase1_backend=backend,
-        )
+        if stability_benchmark is not None:
+            from ..scripts.batched_stability_benchmark import install_sequential_worker
+            install_sequential_worker(c, stability_benchmark, str(device_id), worker_key)
+        else:
+            c.prime_extractor(
+                input_format=input_fmt,
+                num_threads=threads,
+                accel_type="cuda:0",
+                force_ocr=force,
+                formula_enrichment=fe,
+                code_enrichment=ce,
+                use_cls=use_cls_w,
+                benchmark_mode=benchmark,
+                export_doc_json=bool(export_json),
+                emit_formula_index=bool(emit_index),
+                phase1_backend=backend,
+                repair_fonts=repair_fonts,
+            )
     except Exception as _e:
-        msg = f"[GPU{device_id}] Prime failed: {_e}"
+        msg = f"[{_worker_label}] Prime failed: {_e}"
         print(msg)
         if result_q is not None:
             try:
                 result_q.put(
                     {
+                        "ledger_observations": drain_worker_observations(),
                         "event": "exit",
-                        "worker": device_id,
+                        "worker": _worker_label,
+                        "device_id": device_id,
+                        "worker_slot": worker_slot,
                         "exitcode": 1,
                         "pid": _os.getpid(),
                         "error": str(_e),
@@ -533,8 +615,11 @@ def gpu_extract_worker_queue(
                     try:
                         result_q.put(
                             {
+                                "ledger_observations": drain_worker_observations(),
                                 "event": "batch",
-                                "worker": device_id,
+                                "worker": _worker_label,
+                                "device_id": device_id,
+                                "worker_slot": worker_slot,
                                 "processed": [str(x) for x in ok_list],
                                 "problematic": [str(x) for x in bad_list],
                                 "pid": _os.getpid(),
@@ -546,128 +631,107 @@ def gpu_extract_worker_queue(
                 c.extractor.batch_result_callback = _report_batch
     except Exception as _e:
         print(f"[GPU{device_id}] Unable to set batch callback: {_e}")
-    # Prepare persistent extractor in this worker on first call
-    # Process queue items in small batches to reduce function-call overhead
-    batch: list[str] = []
-    try:
-        _batch_env = int(str(_os.environ.get("GLOSSAPI_GPU_BATCH_SIZE", "")).strip() or 0)
-    except Exception:
-        _batch_env = 0
-    default_batch = 5 if not force else 1
-    try:
-        extractor = getattr(c, "extractor", None)
-        if extractor is not None:
-            configured = int(getattr(extractor, "max_batch_files", default_batch))
-            if force:
-                default_batch = 1
-            else:
-                default_batch = max(1, configured)
-    except Exception:
-        pass
-    BATCH_SIZE = max(1, _batch_env) if _batch_env else max(1, default_batch)
+    # The controller already shapes queue items for multi-GPU extraction. Workers
+    # should execute those queue items as-is rather than re-batching them locally,
+    # otherwise long PDFs can be accidentally merged back into tail-heavy bundles.
     import queue as _queue
     last_progress = _time.time()
     processed = 0
     exit_code = 0
+    disk_full_stop = False
+
+    def _run_batch(batch_items: List[str]) -> None:
+        nonlocal processed, exit_code, disk_full_stop
+        if not batch_items:
+            return
+        try:
+            _update_current(list(batch_items))
+            c.extract(
+                input_format=input_fmt,
+                num_threads=threads,
+                accel_type="cuda:0",
+                force_ocr=force,
+                formula_enrichment=fe,
+                code_enrichment=ce,
+                file_paths=list(batch_items),
+                skip_existing=skip,
+                use_gpus="single",
+                use_cls=use_cls_w,
+                benchmark_mode=benchmark,
+                export_doc_json=bool(export_json),
+                emit_formula_index=bool(emit_index),
+                phase1_backend=backend,
+                repair_fonts=repair_fonts,
+                _prepared=True,
+                batched=False if batched is None else batched,
+            )
+            processed += len(batch_items)
+            _clear_current()
+        except Exception as _e:
+            if _disk_full(_e):
+                # Not a problematic batch: the filesystem is full. Report it typed and stop this worker (fix 6).
+                import errno as _errno
+                exit_code = WORKER_DISK_FULL_EXIT
+                disk_full_stop = True
+                print(f"[GPU{device_id}] Batch stopped by a full disk ({len(batch_items)}): {_e}")
+                if result_q is not None:
+                    try:
+                        result_q.put({
+                            "ledger_observations": drain_worker_observations(),
+                            "event": "disk_full",
+                            "worker": _worker_label,
+                            "device_id": device_id,
+                            "worker_slot": worker_slot,
+                            "items": list(batch_items),
+                            "errno": getattr(_e, "errno", None) if getattr(_e, "errno", None) in (_errno.ENOSPC, _errno.EDQUOT) else _errno.ENOSPC,
+                            "pid": _os.getpid(),
+                            "error": str(_e),
+                        })
+                    except Exception:
+                        pass
+                _clear_current()
+                return
+            exit_code = 1
+            print(f"[GPU{device_id}] Batch failed ({len(batch_items)}): {_e}")
+            if result_q is not None:
+                try:
+                    result_q.put(
+                        {
+                            "ledger_observations": drain_worker_observations(),
+                            "event": "batch",
+                            "worker": _worker_label,
+                            "device_id": device_id,
+                            "worker_slot": worker_slot,
+                            "processed": [],
+                            "problematic": list(batch_items),
+                            "pid": _os.getpid(),
+                            "error": str(_e),
+                        }
+                    )
+                except Exception:
+                    pass
+            _clear_current()
+
     try:
         while True:
             try:
-                nm = work_q.get_nowait()
+                work_item = work_q.get_nowait()
             except _queue.Empty:
-                # queue.Empty or other -> flush any pending batch then exit
-                if batch:
-                    try:
-                        _update_current(list(batch))
-                        c.extract(
-                            input_format=input_fmt,
-                            num_threads=threads,
-                            accel_type="cuda:0",
-                            force_ocr=force,
-                            formula_enrichment=fe,
-                            code_enrichment=ce,
-                            file_paths=list(batch),
-                            skip_existing=skip,
-                            use_gpus="single",
-                            use_cls=use_cls_w,
-                            benchmark_mode=benchmark,
-                            export_doc_json=bool(export_json),
-                            emit_formula_index=bool(emit_index),
-                            phase1_backend=backend,
-                            _prepared=True,
-                        )
-                        processed += len(batch)
-                        _clear_current()
-                    except Exception as _e:
-                        exit_code = 1
-                        print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
-                        if result_q is not None:
-                            try:
-                                result_q.put(
-                                    {
-                                        "event": "batch",
-                                        "worker": device_id,
-                                        "processed": [],
-                                        "problematic": list(batch),
-                                        "pid": _os.getpid(),
-                                        "error": str(_e),
-                                    }
-                                )
-                            except Exception:
-                                pass
-                        _clear_current()
-                    batch.clear()
                 break
             except Exception as exc:
                 exit_code = 1
                 print(f"[GPU{device_id}] Queue receive error: {exc}")
                 break
-            if isinstance(nm, str) and nm.strip():
-                batch.append(nm)
-            if len(batch) >= BATCH_SIZE:
-                try:
-                    _update_current(list(batch))
-                    c.extract(
-                        input_format=input_fmt,
-                        num_threads=threads,
-                        accel_type="cuda:0",
-                        force_ocr=force,
-                        formula_enrichment=fe,
-                        code_enrichment=ce,
-                        file_paths=list(batch),
-                        skip_existing=skip,
-                        use_gpus="single",
-                        use_cls=use_cls_w,
-                        benchmark_mode=benchmark,
-                        export_doc_json=bool(export_json),
-                        emit_formula_index=bool(emit_index),
-                        phase1_backend=backend,
-                        _prepared=True,
-                    )
-                    processed += len(batch)
-                    _clear_current()
-                except Exception as _e:
-                    exit_code = 1
-                    print(f"[GPU{device_id}] Batch failed ({len(batch)}): {_e}")
-                    if result_q is not None:
-                        try:
-                            result_q.put(
-                                {
-                                    "event": "batch",
-                                    "worker": device_id,
-                                    "processed": [],
-                                    "problematic": list(batch),
-                                    "pid": _os.getpid(),
-                                    "error": str(_e),
-                                }
-                            )
-                        except Exception:
-                            pass
-                    _clear_current()
-                batch.clear()
+            normalized = _normalize_work_item(work_item)
+            if not normalized:
+                continue
+            _run_batch(normalized)
+            if disk_full_stop:
+                break
             # Occasional heartbeat
             if _time.time() - last_progress > 30:
                 try:
-                    print(f"[GPU{device_id}] processed ~{processed} files…")
+                    print(f"[{_worker_label}] processed ~{processed} files...")
                 except Exception:
                     pass
                 last_progress = _time.time()
@@ -691,8 +755,11 @@ def gpu_extract_worker_queue(
     if result_q is not None:
         try:
             result_q.put({
+                "ledger_observations": drain_worker_observations(),
                 "event": "exit",
-                "worker": device_id,
+                "worker": _worker_label,
+                "device_id": device_id,
+                "worker_slot": worker_slot,
                 "exitcode": exit_code,
                 "pid": _os.getpid(),
             })

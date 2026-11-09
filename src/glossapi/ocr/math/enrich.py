@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from ...ledger.journal import observe
+import hashlib
+
 import json
 import time
 from dataclasses import dataclass
@@ -15,7 +18,59 @@ try:
 except Exception as e:  # pragma: no cover
     pdfium = None  # type: ignore
 
-from docling_core.types.doc import DocItemLabel  # type: ignore
+from ...optional_dependencies import optional_dependencies
+
+with optional_dependencies("layout"):
+    from docling_core.types.doc import DocItemLabel  # type: ignore
+
+
+LEGACY_CODE_FORMULA_MODULE = "docling.models.code_formula_model"
+
+
+class MathBackendUnavailable(ImportError):
+    """Real CodeFormula inference is unavailable; never substituted or mocked here."""
+
+    reason_code = "math_backend_unavailable"
+
+
+def _code_formula_backend():
+    """Return the CodeFormula API this retained kernel was written against.
+
+    The qualified Docling 2.81.0 removed ``docling.models.code_formula_model``
+    (the model now lives in ``docling.models.stages.code_formula`` and loads an
+    unpinned CodeFormulaV2 ``main`` revision). Switching to it would be an
+    unqualified model/API change, so the kernel reports an explicit
+    unavailable outcome instead of a misleading "install glossapi[layout]"
+    hint (LS4-G03). A missing layout install keeps that install hint.
+    """
+    import importlib
+    with optional_dependencies("layout"):
+        from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice  # type: ignore
+        from docling.datamodel.base_models import ItemAndImageEnrichmentElement  # type: ignore
+    try:
+        module = importlib.import_module(LEGACY_CODE_FORMULA_MODULE)
+    except ModuleNotFoundError as error:
+        if error.name != LEGACY_CODE_FORMULA_MODULE:
+            raise ImportError(f"Missing optional dependency {error.name!r}; install layout with "
+                              "`pip install 'glossapi[layout]'`.") from error
+        try:
+            import importlib.metadata
+            version = importlib.metadata.version("docling")
+        except Exception:
+            version = "unknown"
+        raise MathBackendUnavailable(
+            f"math_backend_unavailable: real CodeFormula math inference is not available with docling {version}: "
+            f"module {LEGACY_CODE_FORMULA_MODULE!r} is absent. glossAPI does not substitute the relocated "
+            "docling.models.stages.code_formula model or an unpinned CodeFormulaV2 revision; math stays "
+            "unavailable until a backend qualification binds the model revision and runs real ROI inference.",
+            name=LEGACY_CODE_FORMULA_MODULE) from error
+    return module.CodeFormulaModel, module.CodeFormulaModelOptions, AcceleratorOptions, AcceleratorDevice, ItemAndImageEnrichmentElement
+
+
+def _backend_identity(model_class) -> dict:
+    module = str(getattr(model_class, "__module__", ""))
+    return {"module": module, "qualname": str(getattr(model_class, "__qualname__", "")),
+            "real_inference": module.startswith("docling.")}
 
 
 @dataclass
@@ -30,24 +85,51 @@ class PageRasterCache:
     def __init__(self, pdf_path: Path, max_cached_pages: int = 4):
         if pdfium is None:
             raise RuntimeError("pypdfium2 not available; cannot rasterize PDF")
-        self.doc = pdfium.PdfDocument(str(pdf_path))
         self.cache: dict[Tuple[int, int], Any] = {}
         self.max_cached = int(max_cached_pages)
+        from ...pdfium_guard import pdfium_guard
+        with pdfium_guard():
+            self.doc = pdfium.PdfDocument(str(pdf_path))
+
+    def close(self) -> None:
+        """Close the PDF under the process-wide PDFium lock (idempotent); the cached images are dropped (K5-D,
+        K5A2A-G5: not left to the garbage collector, which runs on any thread outside ``pdfium_guard``)."""
+        from ...pdfium_guard import pdfium_guard
+        with pdfium_guard():
+            doc, self.doc = getattr(self, "doc", None), None
+            self.cache.clear()
+            if doc is not None:
+                doc.close()
 
     def get_pil(self, page_no_1b: int, dpi: int):
         key = (int(page_no_1b), int(dpi))
-        if key in self.cache:
-            return self.cache[key]
-        page = self.doc[int(page_no_1b) - 1]
-        scale = float(dpi) / 72.0
-        bm = page.render(scale=scale)
-        im = bm.to_pil()
-        # naive LRU: cap cache size
-        self.cache[key] = im
-        if len(self.cache) > self.max_cached:
-            # pop arbitrary oldest key
-            self.cache.pop(next(iter(self.cache)))
-        return im
+        from ...pdfium_guard import pdfium_guard
+        with pdfium_guard():
+            if key in self.cache:
+                return self.cache[key]
+            if self.doc is None:
+                raise RuntimeError("Raster cache is closed")
+            page = self.doc[int(page_no_1b) - 1]
+            try:
+                bm = page.render(scale=float(dpi) / 72.0)
+                try:
+                    # to_pil() can share PDFium's buffer: detach before closing it.
+                    im = bm.to_pil().copy()
+                finally:
+                    bm.close()
+            finally:
+                page.close()
+            self.cache[key] = im
+            if len(self.cache) > self.max_cached:
+                self.cache.pop(next(iter(self.cache)))
+            return im
+
+
+def _close_raster(raster: Any) -> None:
+    """Close a raster cache that has ``close`` (K5-D); test doubles without one are left alone."""
+    close = getattr(raster, "close", None)
+    if callable(close):
+        close()
 
 
 def _dpi_for_bbox(px_h: float, *, base: int = 220, lo: int = 180, hi: int = 320) -> int:
@@ -92,272 +174,287 @@ def enrich_from_docling_json(
     Writes final Markdown and a latex_map.jsonl sidecar; returns a small metrics dict.
     """
     from glossapi.ocr.utils.json_io import load_docling_json  # type: ignore
-    from docling.models.code_formula_model import CodeFormulaModel, CodeFormulaModelOptions  # type: ignore
-    from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice  # type: ignore
-    from docling.datamodel.base_models import ItemAndImageEnrichmentElement  # type: ignore
+    (CodeFormulaModel, CodeFormulaModelOptions, AcceleratorOptions, AcceleratorDevice,
+     ItemAndImageEnrichmentElement) = _code_formula_backend()
+    backend = _backend_identity(CodeFormulaModel)
 
     doc = load_docling_json(json_path)
     rc = PageRasterCache(pdf_path)
 
-    # Collect ROIs (optionally filter by explicit (page_no, per_page_ix) targets)
-    rois: list[RoiEntry] = []
-    per_page_ix: dict[int, int] = {}
-    it = getattr(doc, 'iterate_items', None)
-    if not callable(it):
-        raise RuntimeError("DoclingDocument missing iterate_items()")
-    targets_set = set((int(p), int(ix)) for (p, ix) in (targets or []))
-    for element, _level in it():
-        lab = str(getattr(element, 'label', '')).lower()
-        if lab not in {"formula", "code"}:
-            continue
-        prov = getattr(element, 'prov', []) or []
-        if not prov:
-            continue
-        p = prov[0]
-        page_no = int(getattr(p, 'page_no', 0))
-        bbox = getattr(p, 'bbox', None)
-        if not page_no or bbox is None:
-            continue
-        per_page_ix[page_no] = per_page_ix.get(page_no, 0) + 1
-        cur_ix = per_page_ix[page_no]
-        if targets_set and (page_no, cur_ix) not in targets_set:
-            continue
-        rois.append(RoiEntry(page_no=page_no, bbox=bbox, label=lab, per_page_ix=cur_ix))
-
-    if not rois:
-        # Nothing to enrich; still emit the base markdown (and fall back to raw text if empty)
-        out_md_path.parent.mkdir(parents=True, exist_ok=True)
-        doc.save_as_markdown(out_md_path)
-        try:
-            rendered = out_md_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            rendered = ""
-        if not rendered.strip():
-            # Some Docling docs store text only in the lightweight texts list; surface it so the
-            # markdown is not empty (important for tests and downstream auditability).
-            fallback: list[str] = []
-            text_items = getattr(doc, "texts", None)
-            if text_items:
-                for item in text_items:
-                    value = getattr(item, "text", None) if hasattr(item, "text") else None
-                    if value:
-                        fallback.append(str(value))
-            if fallback:
-                out_md_path.write_text("\n\n".join(fallback), encoding="utf-8")
-        return {"items": 0, "accepted": 0, "time_sec": 0.0}
-
-    acc = AcceleratorOptions(device=device if device else AcceleratorDevice.AUTO)
-    opts = CodeFormulaModelOptions(do_code_enrichment=True, do_formula_enrichment=True)
-    model: Optional[CodeFormulaModel] = None
     try:
-        model = CodeFormulaModel(enabled=True, artifacts_path=None, options=opts, accelerator_options=acc)
+        # Collect ROIs (optionally filter by explicit (page_no, per_page_ix) targets)
+        rois: list[RoiEntry] = []
+        per_page_ix: dict[int, int] = {}
+        it = getattr(doc, 'iterate_items', None)
+        if not callable(it):
+            raise RuntimeError("DoclingDocument missing iterate_items()")
+        targets_set = set((int(p), int(ix)) for (p, ix) in (targets or []))
+        for element, _level in it():
+            lab = str(getattr(element, 'label', '')).lower()
+            if lab not in {"formula", "code"}:
+                continue
+            prov = getattr(element, 'prov', []) or []
+            if not prov:
+                observe("math_region_without_provenance", label=lab)
+                continue
+            p = prov[0]
+            page_no = int(getattr(p, 'page_no', 0))
+            bbox = getattr(p, 'bbox', None)
+            if not page_no or bbox is None:
+                continue
+            per_page_ix[page_no] = per_page_ix.get(page_no, 0) + 1
+            cur_ix = per_page_ix[page_no]
+            if targets_set and (page_no, cur_ix) not in targets_set:
+                observe("math_region_not_targeted", page=page_no, item=cur_ix)
+                continue
+            observe("math_region_input", page=page_no, item=cur_ix, label=lab,
+                bbox={**{key: getattr(bbox, key, None) for key in ("l", "t", "r", "b")}, "coord_origin": str(getattr(bbox,"coord_origin", "unknown_not_reported"))})
+            rois.append(RoiEntry(page_no=page_no, bbox=bbox, label=lab, per_page_ix=cur_ix))
+
+        if not rois:
+            observe("math_no_regions", path=pdf_path, status="ok", inference_performed=False)
+            # Nothing to enrich; still emit the base markdown (and fall back to raw text if empty)
+            out_md_path.parent.mkdir(parents=True, exist_ok=True)
+            doc.save_as_markdown(out_md_path)
+            try:
+                rendered = out_md_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                rendered = ""
+            if not rendered.strip():
+                # Some Docling docs store text only in the lightweight texts list; surface it so the
+                # markdown is not empty (important for tests and downstream auditability).
+                fallback: list[str] = []
+                text_items = getattr(doc, "texts", None)
+                if text_items:
+                    for item in text_items:
+                        value = getattr(item, "text", None) if hasattr(item, "text") else None
+                        if value:
+                            fallback.append(str(value))
+                if fallback:
+                    out_md_path.write_text("\n\n".join(fallback), encoding="utf-8")
+            return {"items": 0, "accepted": 0, "time_sec": 0.0, "backend": backend}
+
+        acc = AcceleratorOptions(device=device if device else AcceleratorDevice.AUTO)
+        opts = CodeFormulaModelOptions(do_code_enrichment=True, do_formula_enrichment=True)
+        model: Optional[CodeFormulaModel] = None
         try:
-            from .earlystop import attach_early_stop
-            attach_early_stop(model)
-        except Exception:
-            pass
-        try:
-            setattr(model, "elements_batch_size", int(batch_size))
-        except Exception:
-            pass
+            model = CodeFormulaModel(enabled=True, artifacts_path=None, options=opts, accelerator_options=acc)
+            try:
+                from .earlystop import attach_early_stop
+                attach_early_stop(model)
+            except Exception:
+                pass
+            try:
+                setattr(model, "elements_batch_size", int(batch_size))
+            except Exception:
+                pass
 
-        t0 = time.time()
-        accepted = 0
-        written = 0
-        out_map_jsonl.parent.mkdir(parents=True, exist_ok=True)
-        with out_map_jsonl.open("w", encoding="utf-8") as fp:
-            fp.write("")
+            t0 = time.time()
+            accepted = 0
+            written = 0
+            out_map_jsonl.parent.mkdir(parents=True, exist_ok=True)
+            with out_map_jsonl.open("w", encoding="utf-8") as fp:
+                fp.write("")
 
-        batch: list[ItemAndImageEnrichmentElement] = []
-        binfo: list[Tuple[int, int, int]] = []
+            batch: list[ItemAndImageEnrichmentElement] = []
+            binfo: list[Tuple[int, int, int]] = []
 
-        from glossapi.text_sanitize import accept_latex, load_latex_policy, sanitize_latex, tail_run  # type: ignore
+            from glossapi.text_sanitize import accept_latex, load_latex_policy, sanitize_latex, tail_run  # type: ignore
 
-        def _sanitize_latex(text: str, *, max_len: int = 3000, max_tail_repeats: int = 50) -> tuple[str, dict]:
-            s = text or ""
-            info = {
-                "orig_len": len(s),
-                "truncated_by_repeat": False,
-                "truncated_by_len": False,
-                "tail_token": "",
-                "tail_run": 0,
-            }
-            toks = s.split()
-            if toks:
+            def _sanitize_latex(text: str, *, max_len: int = 3000, max_tail_repeats: int = 50) -> tuple[str, dict]:
+                s = text or ""
+                info = {
+                    "orig_len": len(s),
+                    "truncated_by_repeat": False,
+                    "truncated_by_len": False,
+                    "tail_token": "",
+                    "tail_run": 0,
+                }
+                toks = s.split()
+                if toks:
+                    last = toks[-1]
+                    run = 1
+                    i = len(toks) - 2
+                    while i >= 0 and toks[i] == last:
+                        run += 1
+                        i -= 1
+                    info["tail_token"] = last
+                    info["tail_run"] = run
+                    if run > int(max_tail_repeats):
+                        keep = int(max_tail_repeats)
+                        new_toks = toks[: (i + 1 + keep)]
+                        s = " ".join(new_toks)
+                        info["truncated_by_repeat"] = True
+                if len(s) > int(max_len):
+                    cut_ws = max(
+                        s.rfind(" ", 0, int(max_len)),
+                        s.rfind("\n", 0, int(max_len)),
+                        s.rfind("\t", 0, int(max_len)),
+                    )
+                    cut = cut_ws if cut_ws != -1 else int(max_len)
+                    s = s[:cut].rstrip()
+                    info["truncated_by_len"] = True
+                return s, info
+
+            def _env_int(name: str, default: int) -> int:
+                try:
+                    v = os.getenv(name)
+                    return int(v) if v is not None and str(v).strip() != "" else default
+                except Exception:
+                    return default
+
+            policy = load_latex_policy()
+
+            def _tail_run(s: str) -> int:
+                toks = s.split()
+                if not toks:
+                    return 0
                 last = toks[-1]
                 run = 1
                 i = len(toks) - 2
                 while i >= 0 and toks[i] == last:
                     run += 1
                     i -= 1
-                info["tail_token"] = last
-                info["tail_run"] = run
-                if run > int(max_tail_repeats):
-                    keep = int(max_tail_repeats)
-                    new_toks = toks[: (i + 1 + keep)]
-                    s = " ".join(new_toks)
-                    info["truncated_by_repeat"] = True
-            if len(s) > int(max_len):
-                cut_ws = max(
-                    s.rfind(" ", 0, int(max_len)),
-                    s.rfind("\n", 0, int(max_len)),
-                    s.rfind("\t", 0, int(max_len)),
-                )
-                cut = cut_ws if cut_ws != -1 else int(max_len)
-                s = s[:cut].rstrip()
-                info["truncated_by_len"] = True
-            return s, info
+                return run
 
-        def _env_int(name: str, default: int) -> int:
-            try:
-                v = os.getenv(name)
-                return int(v) if v is not None and str(v).strip() != "" else default
-            except Exception:
-                return default
+            def flush_batch() -> None:
+                nonlocal accepted, batch, binfo, written
+                if not batch:
+                    return
+                t_call = time.time()
+                for _out_item in model(doc, batch):  # type: ignore[misc]
+                    pass
+                dt_ms = int((time.time() - t_call) * 1000.0)
+                per_ms = int(dt_ms / max(1, len(batch)))
+                out_lines: list[str] = []
+                _engine = "code_formula"
+                try:
+                    import docling as _dl  # type: ignore
 
-        policy = load_latex_policy()
-
-        def _tail_run(s: str) -> int:
-            toks = s.split()
-            if not toks:
-                return 0
-            last = toks[-1]
-            run = 1
-            i = len(toks) - 2
-            while i >= 0 and toks[i] == last:
-                run += 1
-                i -= 1
-            return run
-
-        def flush_batch() -> None:
-            nonlocal accepted, batch, binfo, written
-            if not batch:
-                return
-            t_call = time.time()
-            for _out_item in model(doc, batch):  # type: ignore[misc]
-                pass
-            dt_ms = int((time.time() - t_call) * 1000.0)
-            per_ms = int(dt_ms / max(1, len(batch)))
-            out_lines: list[str] = []
-            _engine = "code_formula"
-            try:
-                import docling as _dl  # type: ignore
-
-                _engine_ver = getattr(_dl, "__version__", "") or ""
-            except Exception:
-                _engine_ver = ""
-            for (page_no, ix, dpi_used), el in zip(binfo, batch):
-                latex = getattr(el.item, "text", "") or ""
-                do_post = True
-                if policy.post_only_failed:
-                    tr = 0
-                    try:
-                        tr = tail_run(latex)
-                    except Exception:
+                    _engine_ver = getattr(_dl, "__version__", "") or ""
+                except Exception:
+                    _engine_ver = ""
+                for (page_no, ix, dpi_used), el in zip(binfo, batch):
+                    latex = getattr(el.item, "text", "") or ""
+                    original_latex_sha256 = hashlib.sha256(latex.encode("utf-8")).hexdigest()
+                    do_post = True
+                    if policy.post_only_failed:
                         tr = 0
-                    do_post = (tr > policy.post_repeat_gate) or (len(latex) > policy.post_max_chars)
-                sinfo = {
-                    "orig_len": len(latex),
-                    "truncated_by_repeat": False,
-                    "truncated_by_len": False,
-                    "tail_token": "",
-                    "tail_run": 0,
-                }
-                if do_post:
-                    sanitized, sinfo = sanitize_latex(latex, policy)
-                    if sanitized != latex:
                         try:
-                            setattr(el.item, "text", sanitized)
+                            tr = tail_run(latex)
                         except Exception:
-                            pass
-                    latex = sanitized
-                ok = accept_latex(latex) >= 1.0
-                if ok:
-                    accepted += 1
-                row = {
-                    "page_no": int(page_no),
-                    "item_index": int(ix),
-                    "latex": latex,
-                    "accept_score": 1.0 if ok else 0.0,
-                    "compile_ok": False,
-                    "dpi": int(dpi_used),
-                    "orig_len": int(sinfo.get("orig_len", len(latex))),
-                    "truncated_by_repeat": bool(sinfo.get("truncated_by_repeat", False)),
-                    "truncated_by_len": bool(sinfo.get("truncated_by_len", False)),
-                    "tail_token": str(sinfo.get("tail_token", "")),
-                    "tail_run": int(sinfo.get("tail_run", 0)),
-                    "post_applied": bool(do_post),
-                    "engine": _engine,
-                    "engine_version": _engine_ver,
-                    "time_ms": int(per_ms),
-                }
-                out_lines.append(json.dumps(row, ensure_ascii=False))
-            if out_lines:
-                with out_map_jsonl.open("a", encoding="utf-8") as fp:
-                    fp.write("\n".join(out_lines) + "\n")
-            written += len(out_lines)
-            if written % max(1, batch_size) == 0:
-                print(f"[Phase-2] Wrote {written}/{len(rois)} items for current doc…")
-            batch = []
-            binfo = []
+                            tr = 0
+                        do_post = (tr > policy.post_repeat_gate) or (len(latex) > policy.post_max_chars)
+                    sinfo = {
+                        "orig_len": len(latex),
+                        "truncated_by_repeat": False,
+                        "truncated_by_len": False,
+                        "tail_token": "",
+                        "tail_run": 0,
+                    }
+                    if do_post:
+                        sanitized, sinfo = sanitize_latex(latex, policy)
+                        if sanitized != latex:
+                            try:
+                                setattr(el.item, "text", sanitized)
+                            except Exception:
+                                pass
+                        latex = sanitized
+                    ok = accept_latex(latex) >= 1.0
+                    if ok:
+                        accepted += 1
+                    row = {
+                        "page_no": int(page_no),
+                        "item_index": int(ix),
+                        "latex": latex,
+                        "accept_score": 1.0 if ok else 0.0,
+                        "compile_ok": False,
+                        "dpi": int(dpi_used),
+                        "orig_len": int(sinfo.get("orig_len", len(latex))),
+                        "truncated_by_repeat": bool(sinfo.get("truncated_by_repeat", False)),
+                        "truncated_by_len": bool(sinfo.get("truncated_by_len", False)),
+                        "tail_token": str(sinfo.get("tail_token", "")),
+                        "tail_run": int(sinfo.get("tail_run", 0)),
+                        "post_applied": bool(do_post),
+                        "engine": _engine,
+                        "engine_version": _engine_ver,
+                        "time_ms": int(per_ms),
+                    }
+                    observe("math_completed" if ok else "math_latex_rejected", page=int(page_no), item=int(ix), original_sha256=original_latex_sha256, sanitized_sha256=hashlib.sha256(latex.encode("utf-8")).hexdigest(), acceptance="heuristic", compile_status="not_run", evidence={key:value for key,value in row.items() if key != "latex"})
+                    if row["truncated_by_repeat"]:
+                        observe("math_repeat_truncated", page=int(page_no), item=int(ix))
+                    if row["truncated_by_len"]:
+                        observe("math_length_truncated", page=int(page_no), item=int(ix))
+                    out_lines.append(json.dumps(row, ensure_ascii=False))
+                if out_lines:
+                    with out_map_jsonl.open("a", encoding="utf-8") as fp:
+                        fp.write("\n".join(out_lines) + "\n")
+                written += len(out_lines)
+                if written % max(1, batch_size) == 0:
+                    print(f"[Phase-2] Wrote {written}/{len(rois)} items for current doc…")
+                batch = []
+                binfo = []
 
-        print(f"[Phase-2] {json_path.stem}: {len(rois)} items to enrich …")
-        for entry in rois:
-            dpi = int(dpi_base)
-            im = rc.get_pil(entry.page_no, dpi)
-            l, t, r, b = _crop_box_pixels(entry.bbox, pil_h=im.height, dpi=dpi)
-            dpi = _dpi_for_bbox(b - t, base=dpi_base, lo=dpi_lo, hi=dpi_hi)
-            im = rc.get_pil(entry.page_no, dpi)
-            l, t, r, b = _crop_box_pixels(entry.bbox, pil_h=im.height, dpi=dpi)
-            l = max(0, l - int(pad_px))
-            t = max(0, t - int(pad_px))
-            r = min(im.width, r + int(pad_px))
-            b = min(im.height, b + int(pad_px))
-            crop = im.crop((l, t, r, b))
-            batch.append(
-                ItemAndImageEnrichmentElement(
-                    item=getattr(entry, "item", None) or _find_item(doc, entry),
-                    image=crop,
+            print(f"[Phase-2] {json_path.stem}: {len(rois)} items to enrich …")
+            for entry in rois:
+                dpi = int(dpi_base)
+                im = rc.get_pil(entry.page_no, dpi)
+                l, t, r, b = _crop_box_pixels(entry.bbox, pil_h=im.height, dpi=dpi)
+                dpi = _dpi_for_bbox(b - t, base=dpi_base, lo=dpi_lo, hi=dpi_hi)
+                im = rc.get_pil(entry.page_no, dpi)
+                l, t, r, b = _crop_box_pixels(entry.bbox, pil_h=im.height, dpi=dpi)
+                l = max(0, l - int(pad_px))
+                t = max(0, t - int(pad_px))
+                r = min(im.width, r + int(pad_px))
+                b = min(im.height, b + int(pad_px))
+                crop = im.crop((l, t, r, b))
+                batch.append(
+                    ItemAndImageEnrichmentElement(
+                        item=getattr(entry, "item", None) or _find_item(doc, entry),
+                        image=crop,
+                    )
                 )
-            )
-            binfo.append((entry.page_no, entry.per_page_ix, int(dpi)))
-            if len(batch) >= int(batch_size):
-                flush_batch()
-        flush_batch()
+                binfo.append((entry.page_no, entry.per_page_ix, int(dpi)))
+                if len(batch) >= int(batch_size):
+                    flush_batch()
+            flush_batch()
 
-        out_md_path.parent.mkdir(parents=True, exist_ok=True)
-        doc.save_as_markdown(out_md_path)
+            out_md_path.parent.mkdir(parents=True, exist_ok=True)
+            doc.save_as_markdown(out_md_path)
 
-        return {"items": len(rois), "accepted": accepted, "time_sec": time.time() - t0}
+            return {"items": len(rois), "accepted": accepted, "time_sec": time.time() - t0, "backend": backend}
+        finally:
+            try:
+                if model is not None:
+                    try:
+                        inner = getattr(model, "_model", None)
+                        if inner is not None:
+                            inner.to("cpu")
+                    except Exception:
+                        pass
+                    try:
+                        model._processor = None  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                import torch  # type: ignore
+
+                cuda_iface = getattr(torch, "cuda", None)
+                if cuda_iface and cuda_iface.is_available():  # type: ignore[attr-defined]
+                    try:
+                        cuda_iface.empty_cache()
+                    except Exception:
+                        pass
+                    try:
+                        ipc_collect = getattr(cuda_iface, "ipc_collect", None)
+                        if callable(ipc_collect):
+                            ipc_collect()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
     finally:
-        try:
-            if model is not None:
-                try:
-                    inner = getattr(model, "_model", None)
-                    if inner is not None:
-                        inner.to("cpu")
-                except Exception:
-                    pass
-                try:
-                    model._processor = None  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-            import torch  # type: ignore
-
-            cuda_iface = getattr(torch, "cuda", None)
-            if cuda_iface and cuda_iface.is_available():  # type: ignore[attr-defined]
-                try:
-                    cuda_iface.empty_cache()
-                except Exception:
-                    pass
-                try:
-                    ipc_collect = getattr(cuda_iface, "ipc_collect", None)
-                    if callable(ipc_collect):
-                        ipc_collect()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        _close_raster(rc)
 
 
 def _find_item(doc, entry: RoiEntry):

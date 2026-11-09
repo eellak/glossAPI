@@ -458,6 +458,39 @@ def test_jsonl_export_sharded(tmp_path):
     assert len(seen_doc_ids) == len(texts)
 
 
+def test_jsonl_prefers_base_markdown_when_chunks_exist(tmp_path):
+    corpus = Corpus(input_dir=tmp_path / "in_chunks", output_dir=tmp_path / "out_chunks")
+
+    base_text = "## Base Title\n\nMerged body from extraction."
+    base_path = corpus.cleaned_markdown_dir / "chunked.md"
+    base_path.parent.mkdir(parents=True, exist_ok=True)
+    base_path.write_text(base_text, encoding="utf-8")
+
+    chunk_dir = corpus.cleaned_markdown_dir / "chunks" / "chunked"
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+    (chunk_dir / "chunked__p0001-0002.md").write_text("chunk-one", encoding="utf-8")
+    (chunk_dir / "chunked__p0003-0004.md").write_text("chunk-two", encoding="utf-8")
+
+    _write_download_results(
+        corpus.output_dir / "download_results" / "download_results.parquet",
+        [
+            {
+                "filename": "chunked.pdf",
+                "filter": "ok",
+                "needs_ocr": False,
+                "is_empty": False,
+                "char_count_no_comments": 10,
+            }
+        ],
+    )
+
+    out_path = corpus.output_dir / "chunked.jsonl"
+    corpus.jsonl(out_path)
+
+    record = json.loads(out_path.read_text(encoding="utf-8").strip())
+    assert record["document"] == base_text
+
+
 @pytest.mark.skipif(not _HAS_DATASETS, reason="datasets package is not installed")
 def test_hf_streaming_loader_example(tmp_path):
     corpus = Corpus(input_dir=tmp_path / "in7", output_dir=tmp_path / "out7")
@@ -531,5 +564,6 @@ def test_pyarrow_filter_example(tmp_path):
     table = dataset.to_table(filter=(ds.field("lang") == "el") & (ds.field("year") >= 2019))
 
     assert set(table.column("doc_id").to_pylist()) == {"a"}
+
 def _expected_doc_id(filename: str) -> str:
     return hashlib.sha256(filename.encode("utf-8")).hexdigest()

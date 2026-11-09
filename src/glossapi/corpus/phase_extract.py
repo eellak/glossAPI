@@ -1,6 +1,14 @@
 """Phase-1 extraction helpers split from Corpus."""
 from __future__ import annotations
 
+from ..stages.profile import adapters_enabled
+
+from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows, accept_worker_observations
+from ..stages.execution import preserving_thread_caps, disk_full
+
+from glossapi.optional_dependencies import optional_dependencies
+
+import errno
 import json
 import logging
 import math
@@ -13,17 +21,17 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
 from .._naming import canonical_stem
-from ..gloss_downloader import GlossDownloader
 # Avoid importing section/classifier here; extract phase does not use them.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
 from .corpus_state import _ProcessingStateManager
 from .corpus_utils import _maybe_import_torch as _maybe_import_torch_fallback
+from glossapi.parquet_schema import MetadataPolicyError
 
 # Wrapper to allow tests to monkeypatch glossapi.corpus._maybe_import_torch.
 def _maybe_import_torch(force: bool = False):
@@ -35,6 +43,151 @@ def _maybe_import_torch(force: bool = False):
     except Exception:
         pass
     return _maybe_import_torch_fallback(force=force)
+
+
+def _resolve_batched_docling(batched: bool | None, *, accel_type="CUDA",
+                             resolved_backend="docling", use_gpus="single",
+                             formula_enrichment=False, code_enrichment=False) -> bool:
+    """Auto-batch supported CUDA runs using the resolved backend, never 'auto'."""
+    if batched is not None:
+        return bool(batched)
+    device = str(getattr(accel_type, "value", accel_type) or "auto").lower()
+    if (resolved_backend != "docling" or use_gpus != "single" or formula_enrichment or
+            code_enrichment or device.startswith(("cpu", "mps"))):
+        return False
+    torch = _maybe_import_torch(force=True)
+    return bool(torch is not None and torch.cuda.is_available())
+
+
+def _resolve_docling_max_batch_files(default: int = 1) -> int:
+    """Resolve the per-worker Docling document batch size for Phase-1 extraction.
+
+    GlossAPI keeps the default conservative because fresh GPU nodes have been
+    more sensitive to bootstrap/runtime drift than to raw scheduler limits.
+    Strong GPUs can still be benchmarked explicitly by raising this knob.
+    """
+
+    fallback = max(1, int(default))
+    raw = os.getenv("GLOSSAPI_DOCLING_MAX_BATCH_FILES")
+    if not raw:
+        return fallback
+    try:
+        return max(1, int(raw))
+    except Exception:
+        return fallback
+
+
+def _resolve_docling_batch_target_pages(default: int = 256) -> int:
+    """Resolve the target page budget per queued Docling extraction work item."""
+
+    fallback = max(1, int(default))
+    raw = os.getenv("GLOSSAPI_DOCLING_BATCH_TARGET_PAGES")
+    if not raw:
+        return fallback
+    try:
+        return max(1, int(raw))
+    except Exception:
+        return fallback
+
+
+def _estimate_extract_work_pages(path: Path) -> int:
+    """Best-effort PDF page estimate used for Phase-1 queue packing."""
+
+    suffix = path.suffix.lower()
+    if suffix != ".pdf":
+        return 1
+
+    try:
+        import pypdfium2 as pdfium  # type: ignore
+        from ..pdfium_guard import pdfium_guard
+
+        with pdfium_guard():
+            pdf = pdfium.PdfDocument(str(path))
+            try:
+                return max(1, int(len(pdf)))
+            finally:
+                close = getattr(pdf, "close", None)
+                if callable(close):
+                    close()
+    except Exception:
+        pass
+
+    return 1
+
+
+def _build_extract_work_items(
+    paths: Iterable[Path],
+    *,
+    max_batch_files: int,
+    target_batch_pages: int,
+    long_pdf_page_threshold: int = 600,
+    page_counter: Optional[Callable[[Path], int]] = None,
+) -> List[List[Path]]:
+    """Pack extraction work into steadier page-budget batches for multi-GPU runs."""
+
+    files = [Path(path) for path in paths]
+    if not files:
+        return []
+
+    max_files = max(1, int(max_batch_files))
+    target_pages = max(1, int(target_batch_pages))
+    long_threshold = max(1, int(long_pdf_page_threshold))
+    counter = page_counter or _estimate_extract_work_pages
+
+    packed: List[Tuple[List[Path], int]] = []
+    standalone: List[Tuple[List[Path], int]] = []
+
+    for path in files:
+        try:
+            est_pages = max(1, int(counter(path)))
+        except Exception:
+            est_pages = 1
+
+        if path.suffix.lower() == ".pdf" and est_pages > long_threshold:
+            standalone.append(([path], est_pages))
+            continue
+
+        best_idx: Optional[int] = None
+        best_leftover: Optional[int] = None
+        for idx, (bundle_paths, bundle_pages) in enumerate(packed):
+            if len(bundle_paths) >= max_files:
+                continue
+            new_pages = bundle_pages + est_pages
+            if bundle_paths and new_pages > target_pages:
+                continue
+            leftover = max(0, target_pages - new_pages)
+            if best_leftover is None or leftover < best_leftover:
+                best_idx = idx
+                best_leftover = leftover
+        if best_idx is None:
+            packed.append(([path], est_pages))
+        else:
+            packed[best_idx][0].append(path)
+            packed[best_idx] = (packed[best_idx][0], packed[best_idx][1] + est_pages)
+
+    work_items = standalone + packed
+    work_items.sort(key=lambda item: item[1], reverse=True)
+    return [bundle_paths for bundle_paths, _ in work_items]
+
+
+def _resolve_docling_queue_policy(extractor: Any | None = None) -> Tuple[int, int]:
+    """Return the Docling queue packing knobs the multi-GPU planner should use."""
+
+    max_batch_files = _resolve_docling_max_batch_files()
+    long_pdf_page_threshold = 600
+    if extractor is None:
+        return max_batch_files, long_pdf_page_threshold
+    try:
+        max_batch_files = max(1, int(getattr(extractor, "max_batch_files", max_batch_files)))
+    except Exception:
+        max_batch_files = _resolve_docling_max_batch_files()
+    try:
+        long_pdf_page_threshold = max(
+            1, int(getattr(extractor, "long_pdf_page_threshold", long_pdf_page_threshold))
+        )
+    except Exception:
+        long_pdf_page_threshold = 600
+    return max_batch_files, long_pdf_page_threshold
 
 
 class ExtractPhaseMixin:
@@ -52,11 +205,16 @@ class ExtractPhaseMixin:
         export_doc_json: bool = True,
         emit_formula_index: bool = False,
         phase1_backend: str = "auto",
+        repair_fonts: bool = True,
+        ocr_options=None,
     ) -> None:
         """Prepare and initialize the underlying extractor once per configuration.
 
         Builds the Docling converter only if the effective configuration changed.
         """
+        plugin_options = ocr_options
+        if plugin_options is not None and phase1_backend == "safe":
+            raise ValueError("OCR engine requires phase1_backend='docling' or 'auto'")
         # Lazy import + instantiate GlossExtract
         if self.extractor is None:
             from ..gloss_extract import GlossExtract
@@ -66,6 +224,7 @@ class ExtractPhaseMixin:
         try:
             setattr(self.extractor, "export_doc_json", bool(export_doc_json))
             setattr(self.extractor, "emit_formula_index", bool(emit_formula_index))
+            setattr(self.extractor, "repair_fonts", bool(repair_fonts))
         except Exception:
             pass
         # Resolve backend preference (safe vs docling)
@@ -76,6 +235,8 @@ class ExtractPhaseMixin:
             code_enrichment=bool(code_enrichment),
         )
         self._phase1_backend = backend_choice
+        if plugin_options is not None:
+            backend_choice = self._phase1_backend = "docling"
 
         # Threads
         try:
@@ -96,30 +257,43 @@ class ExtractPhaseMixin:
         except Exception:
             images_scale_env = "1.25"
 
+        if force_ocr:
+            self.logger.warning(
+                "Corpus.extract(force_ocr=True) is deprecated and no longer executes OCR. "
+                "Use Corpus.ocr(ocr_options=...) for OCR remediation."
+            )
+
         # Hard GPU preflight before we attempt to build OCR/enrichment pipelines
         self._gpu_preflight(
             accel_type=accel_type,
-            require_ocr=bool(force_ocr),
+            require_ocr=False,
             require_math=bool(formula_enrichment or code_enrichment),
-            require_backend_gpu=(backend_choice == "docling"),
+            require_backend_gpu=(backend_choice == "docling" and plugin_options is None
+                                 and str(accel_type).strip().lower() != "cpu"),
         )
 
         # Configure batch/backend policy based on resolved choice
         if backend_choice == "docling":
-            # Keep docling runs conservative: process one document per batch for stability
-            self.extractor.configure_batch_policy("docling", max_batch_files=1, prefer_safe_backend=False)
+            # Keep docling runs conservative by default, but expose an explicit
+            # Phase-1 tuning hook for benchmark nodes and strong GPUs.
+            self.extractor.configure_batch_policy(
+                "docling",
+                max_batch_files=_resolve_docling_max_batch_files(),
+                prefer_safe_backend=False,
+            )
         else:
             self.extractor.configure_batch_policy("safe", max_batch_files=1, prefer_safe_backend=True)
 
         # Ensure converter exists (reuse when unchanged)
         self.extractor.ensure_extractor(
-            enable_ocr=bool(force_ocr),
-            force_full_page_ocr=bool(force_ocr),
+            enable_ocr=plugin_options is not None,
+            force_full_page_ocr=False,
             formula_enrichment=bool(formula_enrichment),
             code_enrichment=bool(code_enrichment),
             images_scale=float(images_scale_env),
             use_cls=bool(use_cls),
             profile_timings=not bool(benchmark_mode),
+            **({"ocr_options": plugin_options} if plugin_options is not None else {}),
         )
 
     def _resolve_phase1_backend(
@@ -136,12 +310,12 @@ class ExtractPhaseMixin:
             raise ValueError(
                 f"Invalid phase1_backend='{requested}'. Expected one of: 'auto', 'safe', 'docling'."
             )
-        needs_gpu = bool(force_ocr or formula_enrichment or code_enrichment)
+        needs_gpu = bool(formula_enrichment or code_enrichment)
         if choice == "auto":
             choice = "docling" if needs_gpu else "safe"
         if choice == "safe" and needs_gpu:
             self.logger.info(
-                "Phase-1 backend 'safe' overridden to 'docling' because OCR/math enrichment was requested."
+                "Phase-1 backend 'safe' overridden to 'docling' because math/code enrichment was requested."
             )
             choice = "docling"
         return choice
@@ -154,12 +328,12 @@ class ExtractPhaseMixin:
         require_math: bool,
         require_backend_gpu: bool = False,
     ) -> None:
-        """Abort early when GPU OCR/math is requested but CUDA is unavailable."""
+        """Abort early when GPU-backed Docling work is requested but CUDA is unavailable."""
         if not (require_ocr or require_math or require_backend_gpu):
             return
 
         instructions = (
-            "GPU OCR and math enrichment require CUDA-enabled torch and onnxruntime-gpu. "
+            "GPU-backed Docling extraction and math enrichment require CUDA-enabled torch. "
             "Install the CUDA wheels and ensure NVIDIA drivers expose the desired devices."
         )
 
@@ -167,30 +341,15 @@ class ExtractPhaseMixin:
         accel_lower = str(accel_type or "").strip().lower()
         if accel_lower.startswith("cpu"):
             raise RuntimeError(
-                "GPU OCR was requested (force_ocr/math) but accel_type='CPU'. "
+                "GPU-backed Docling extraction was requested but accel_type='CPU'. "
                 f"{instructions}"
-            )
-
-        try:
-            import onnxruntime as _ort  # type: ignore
-            providers = _ort.get_available_providers()
-        except Exception as exc:
-            raise RuntimeError(
-                "onnxruntime not available while attempting GPU OCR. "
-                "Install onnxruntime-gpu and rerun."
-            ) from exc
-
-        if "CUDAExecutionProvider" not in providers:
-            raise RuntimeError(
-                "CUDAExecutionProvider missing from onnxruntime providers. "
-                f"Detected providers={providers}. {instructions}"
             )
 
         torch_mod = _maybe_import_torch(force=True)
         if torch_mod is None or not getattr(torch_mod, "cuda", None) or not torch_mod.cuda.is_available():
             raise RuntimeError(
-                "Torch CUDA is not available but GPU OCR/math was requested. "
-                "Install the CUDA wheel (e.g. torch==2.5.1+cu121) and ensure CUDA drivers/devices are visible."
+                "Torch CUDA is not available but GPU-backed Docling extraction/math was requested. "
+                "Install the CUDA wheel and ensure CUDA drivers/devices are visible."
             )
 
         device_count = torch_mod.cuda.device_count()
@@ -208,16 +367,17 @@ class ExtractPhaseMixin:
 
         if not self._gpu_banner_logged:
             self.logger.info(
-                "GPU preflight: using torch + onnxruntime GPU backends; ensure CUDA drivers are available."
+                "GPU preflight: using torch-backed Docling extraction; ensure CUDA drivers are available."
             )
             self._gpu_banner_logged = True
 
         self.logger.info(
-            "GPU preflight OK: providers=%s torch_devices=%s",
-            ",".join(providers),
+            "GPU preflight OK: torch_devices=%s",
             ", ".join(device_names) or "<none>",
         )
 
+    @shadow_stage("extract", "extract.wrapper")
+    @preserving_thread_caps
     def extract(
         self,
         input_format: str = "all",
@@ -237,7 +397,13 @@ class ExtractPhaseMixin:
         export_doc_json: bool = True,
         emit_formula_index: bool = False,
         phase1_backend: str = "auto",
+        repair_fonts: bool = True,
+        workers_per_device: int = 1,
         _prepared: bool = False,
+        batched: bool | None = None,
+        _stability_benchmark: dict | None = None,
+        page_range: tuple[int, int] | None = None,
+        ocr_options=None,
     ) -> None:
         """
         Extract input files to markdown format.
@@ -245,15 +411,67 @@ class ExtractPhaseMixin:
         Args:
             input_format: Input format ("pdf", "docx", "xml_jats", "html", "pptx", "csv", "md", "all") (default: "all")
                           Note: Old .doc format (pre-2007) is not supported
-            num_threads: Number of threads for processing (default: 4)
-            accel_type: Acceleration type ("Auto", "CPU", "CUDA", "MPS") (default: "Auto")
+            num_threads: Number of processing threads (default: 2)
+            accel_type: Acceleration type ("Auto", "CPU", "CUDA", "MPS") (default: "CUDA")
             export_doc_json: When True (default), writes Docling layout JSON to `json/<stem>.docling.json(.zst)`
             emit_formula_index: Also emit `json/<stem>.formula_index.jsonl` (default: False)
             phase1_backend: Selects the Phase-1 backend. ``"auto"`` (default) keeps the safe backend unless
-                OCR/math is requested, ``"safe"`` forces the PyPDFium backend, and ``"docling"`` forces the
-                Docling backend.
+                math/code enrichment is requested, ``"safe"`` forces the PyPDFium backend, and ``"docling"``
+                forces the Docling backend.
+            page_range: Inclusive one-based Docling page range; explicit single-device, sequential
+                Docling only. Source PDF is passed intact to Docling.
+            repair_fonts: Repair eligible PDF ToUnicode maps in repaired_pdfs/ before extraction (default: True).
+            workers_per_device: Number of extraction workers to bind to each visible GPU when ``use_gpus='multi'``.
+            ocr_options: Configured options from an external Docling OCR engine.
+                Sequential single-device extraction only; batching is unsupported.
+            batched: None (default) uses cross-document layout batching for single-device,
+                layout-only Docling on CUDA; CPU/MPS and the safe backend stay sequential.
+                Auto-CUDA uses layout_batch=8 and 8 rasteriser workers. Explicit True/False
+                overrides auto selection. Multi-GPU workers default to sequential;
+                True is forwarded to each worker for layout-only Docling instrumentation.
 
         """
+        if os.environ.get('GLOSSAPI_STAGE_PROFILE') == 'sequential-adapters':
+            if str(accel_type).lower() != "cpu" or str(use_gpus).lower() != "single" or batched or ocr_options is not None:
+                raise ValueError("Sequential adapter profile requires CPU, one device, batched=False and no OCR plugin")
+            batched = False
+        if page_range is not None:
+            if (len(page_range) != 2 or any(type(n) is not int for n in page_range)
+                    or not 1 <= page_range[0] <= page_range[1]):
+                raise ValueError("page_range must be an inclusive, one-based (start, end)")
+            if phase1_backend != "docling" or use_gpus == "multi" or batched:
+                raise ValueError("page_range requires explicit sequential single-device Docling")
+            batched = False
+        arguments = locals().copy()
+        arguments.pop("self")
+        if ocr_options is not None:
+            if batched:
+                raise ValueError("OCR engine with batched=True is unsupported; use batched=False (B-track)")
+            if str(use_gpus).lower() == "multi":
+                raise ValueError("OCR plugin supports single-device extraction only")
+            if _prepared:
+                raise ValueError("OCR engine must be configured by extract(); _prepared=True is unsupported")
+            if phase1_backend == "safe":
+                raise ValueError("OCR engine requires phase1_backend='docling' or 'auto'")
+        backend_choice = self._resolve_phase1_backend(
+            phase1_backend, force_ocr=force_ocr, formula_enrichment=formula_enrichment,
+            code_enrichment=code_enrichment)
+        device = accel_type
+        if ocr_options is not None:
+            backend_choice = "docling"
+        if _prepared and self.extractor is not None:
+            options = getattr(self.extractor, "pipeline_options", None)
+            accelerator = getattr(options, "accelerator_options", None)
+            device = getattr(accelerator, "device", accel_type)
+        if ocr_options is None and str(use_gpus).lower() != "multi" and _resolve_batched_docling(
+                batched, accel_type=device, resolved_backend=backend_choice,
+                use_gpus=use_gpus, formula_enrichment=formula_enrichment,
+                code_enrichment=code_enrichment):
+            arguments["batched"] = False
+            from .batched_extract import corpus_batched_extract
+            return corpus_batched_extract(self, ExtractPhaseMixin.extract,
+                                          _auto_cuda=batched is None, **arguments)
+
         if not file_paths:
             self.logger.info(f"Extracting {input_format} files to markdown...")
 
@@ -264,13 +482,6 @@ class ExtractPhaseMixin:
         formula_batch_env = _os.getenv("GLOSSAPI_FORMULA_BATCH", "16")
         # Create output directory for downstream stages
         os.makedirs(self.markdown_dir, exist_ok=True)
-
-        backend_choice = self._resolve_phase1_backend(
-            phase1_backend,
-            force_ocr=bool(force_ocr),
-            formula_enrichment=bool(formula_enrichment),
-            code_enrichment=bool(code_enrichment),
-        )
 
         # Define supported formats
         supported_formats = ["pdf", "docx", "xml", "html", "pptx", "csv", "md"]
@@ -343,6 +554,7 @@ class ExtractPhaseMixin:
             ext = "xml" if input_format.lower() == "xml_jats" else input_format.lower()
 
             if ext == "doc":
+                observe("unsupported_legacy_doc", status="skipped")
                 self.logger.error(
                     "The .doc format (pre-2007 Word) is not supported by Docling. Please convert to .docx first."
                 )
@@ -352,18 +564,27 @@ class ExtractPhaseMixin:
 
         if filenames and not file_paths:
             names = {str(n) for n in filenames}
+            for excluded in input_files:
+                if excluded.name not in names:
+                    observe("not_selected_by_filename", path=excluded, status="skipped")
             input_files = [p for p in input_files if p.name in names]
             self.logger.info(f"Filtered to {len(input_files)} files from provided filename list")
 
         if not input_files:
+            observe("no_matching_inputs", status="skipped", input_format=input_format)
             self.logger.warning(f"No {input_format} files found in {downloads_dir}")
             return
 
         skiplist_path = _resolve_skiplist_path(self.output_dir, self.logger)
         skip_mgr = _SkiplistManager(skiplist_path, self.logger)
-        skipped_stems = skip_mgr.load()
+        # The benchmark supplies its own input-bound resume selection. Stale
+        # production skip/state entries must not suppress its incomplete rows.
+        skipped_stems = set() if _stability_benchmark is not None or getattr(self, '_scheduler_writer', None) is not None else skip_mgr.load()
         if skipped_stems:
             before = len(input_files)
+            for excluded in input_files:
+                if canonical_stem(excluded) in skipped_stems:
+                    observe("fatal_skiplist", path=excluded, status="skipped", provenance="unknown_not_recorded")
             input_files = [p for p in input_files if canonical_stem(p) not in skipped_stems]
             removed = before - len(input_files)
             if removed:
@@ -425,12 +646,17 @@ class ExtractPhaseMixin:
                 except Exception:
                     threads_effective = int(num_threads) if isinstance(num_threads, int) else max(2, 2 * max(1, len(devs)))
 
-                batch_hint = 5 if backend_choice == "docling" and not force_ocr else 1
+                workers_per_device = max(1, int(workers_per_device or 1))
+                configured_batch_hint = 1
+                if backend_choice == "docling":
+                    extractor = getattr(self, "extractor", None)
+                    configured_batch_hint, _ = _resolve_docling_queue_policy(extractor)
                 self.logger.info(
-                    "Phase-1 config: backend=%s batch_size=%s threads=%s skip_existing=%s benchmark=%s",
+                    "Phase-1 config: backend=%s max_batch_files=%s threads=%s workers_per_device=%s skip_existing=%s benchmark=%s",
                     backend_choice,
-                    batch_hint,
+                    configured_batch_hint,
                     threads_effective,
+                    workers_per_device,
                     bool(skip_existing),
                     bool(benchmark_mode),
                 )
@@ -448,7 +674,7 @@ class ExtractPhaseMixin:
                 if skip_existing and processed_files:
                     processed_stems = {canonical_stem(name) for name in processed_files}
                     pending_files = [p for p in pending_files if canonical_stem(p) not in processed_stems]
-                if problematic_files:
+                if problematic_files and _stability_benchmark is None:
                     problematic_stems = {canonical_stem(name) for name in problematic_files}
                     before_prob = len(pending_files)
                     pending_files = [p for p in pending_files if canonical_stem(p) not in problematic_stems]
@@ -461,18 +687,49 @@ class ExtractPhaseMixin:
 
                 if not pending_files:
                     self.logger.info("No pending files left after state filtering; skipping extraction.")
+                    self._finalize_font_repair_metadata(input_files)
                     return
 
                 # Dynamic work queue across GPUs
+                from .corpus_orchestrator import gpu_extract_worker_queue, WORKER_DISK_FULL_EXIT
+                disk_full_error: Optional[OSError] = None
                 from multiprocessing import get_context
                 ctx = get_context("spawn")
                 manager = ctx.Manager()
                 task_q = ctx.Queue()
                 result_q = ctx.Queue()
                 status_map = manager.dict()
-                path_list = [str(p.resolve()) for p in pending_files]
-                for full_path in path_list:
-                    task_q.put(full_path)
+                batch_target_pages = 1
+                configured_max_batch_files = 1
+                long_pdf_page_threshold = 600
+                work_items: List[List[Path]] = [[Path(p)] for p in pending_files]
+                extractor = getattr(self, "extractor", None)
+                configured_max_batch_files, long_pdf_page_threshold = _resolve_docling_queue_policy(extractor)
+                if backend_choice == "docling":
+                    batch_target_pages = _resolve_docling_batch_target_pages()
+                    work_items = _build_extract_work_items(
+                        pending_files,
+                        max_batch_files=configured_max_batch_files,
+                        target_batch_pages=batch_target_pages,
+                        long_pdf_page_threshold=long_pdf_page_threshold,
+                    )
+                queue_items = [[str(path.resolve()) for path in item] for item in work_items]
+                for queue_item in queue_items:
+                    task_q.put(queue_item)
+                total_estimated_pages = 0
+                try:
+                    total_estimated_pages = sum(_estimate_extract_work_pages(path) for path in pending_files)
+                except Exception:
+                    total_estimated_pages = 0
+                self.logger.info(
+                    "Phase-1 dispatch: %d file(s) -> %d work item(s) (backend=%s max_batch_files=%d target_pages=%d est_pages=%d)",
+                    len(pending_files),
+                    len(queue_items),
+                    backend_choice,
+                    configured_max_batch_files,
+                    batch_target_pages,
+                    total_estimated_pages,
+                )
                 worker_log_dir_env = os.environ.get("GLOSSAPI_WORKER_LOG_DIR")
                 worker_log_dir_to_use = worker_log_dir_env
                 if not worker_log_dir_to_use:
@@ -481,6 +738,8 @@ class ExtractPhaseMixin:
                         default_worker_log_dir.mkdir(parents=True, exist_ok=True)
                         worker_log_dir_to_use = str(default_worker_log_dir)
                     except Exception as exc:
+                        if disk_full(exc):
+                            raise  # a full disk is not "no worker log directory" (fix 6, F3 audit)
                         self.logger.warning(
                             "Unable to prepare worker log directory %s: %s",
                             default_worker_log_dir,
@@ -493,15 +752,33 @@ class ExtractPhaseMixin:
                 try:
                     marker_base.mkdir(parents=True, exist_ok=True)
                 except Exception as exc:
+                    if disk_full(exc):
+                        raise  # workers would then fail writing their markers (fix 6, F3 audit)
                     self.logger.debug("Unable to prepare marker directory %s: %s", marker_base, exc)
-                procs: List[Any] = []
-                proc_gpu: Dict[int, int] = {}
-                marker_files: Dict[int, Path] = {dev_id: marker_base / f"gpu{dev_id}.current" for dev_id in devs}
+                worker_specs: List[Dict[str, Any]] = []
                 for dev_id in devs:
+                    for worker_slot in range(workers_per_device):
+                        worker_specs.append(
+                            {
+                                "device_id": int(dev_id),
+                                "worker_slot": int(worker_slot),
+                                "worker_key": f"gpu{dev_id}-w{worker_slot}",
+                            }
+                        )
+                procs: List[Any] = []
+                proc_specs: Dict[int, Dict[str, Any]] = {}
+                marker_files: Dict[str, Path] = {
+                    spec["worker_key"]: marker_base / f"{spec['worker_key']}.current"
+                    for spec in worker_specs
+                }
+                for spec in worker_specs:
                     p = ctx.Process(
                         target=gpu_extract_worker_queue,
+                        **({"kwargs": {"stability_benchmark": _stability_benchmark}} if _stability_benchmark else {}),
                         args=(
-                            dev_id,
+                            spec["device_id"],
+                            spec["worker_slot"],
+                            spec["worker_key"],
                             str(self.input_dir),
                             str(self.output_dir),
                             task_q,
@@ -519,14 +796,17 @@ class ExtractPhaseMixin:
                             result_q,
                             status_map,
                             str(marker_base),
+                            bool(repair_fonts),
+                            False if batched is None else batched,
                         ),
                     )
                     p.start()
                     procs.append(p)
                     if p.pid is not None:
-                        proc_gpu[p.pid] = dev_id
+                        proc_specs[p.pid] = dict(spec)
                 active = list(procs)
                 any_fail = False
+                benchmark_signals = []
                 last_summary = time.time()
                 last_activity = time.time()
                 heartbeat: Dict[int, float] = {p.pid or -1: time.time() for p in procs}
@@ -541,20 +821,39 @@ class ExtractPhaseMixin:
                                 procs.remove(p)
                             pid = p.pid or -1
                             heartbeat[pid] = time.time()
-                            gpu_id = proc_gpu.pop(pid, None)
+                            worker_spec = proc_specs.pop(pid, None)
+                            worker_key = worker_spec["worker_key"] if worker_spec else None
+                            if p.exitcode == WORKER_DISK_FULL_EXIT:
+                                # Stopped by a full disk after reporting it (fix 6): its batch is neither problematic
+                                # nor skip-listed, and it is not respawned.
+                                any_fail = True
+                                if disk_full_error is None:
+                                    disk_full_error = OSError(errno.ENOSPC, f"extract worker pid={p.pid}: filesystem full")
+                                if worker_key is not None:
+                                    status_map.pop(worker_key, None)
+                                continue
                             if p.exitcode not in (0, None):
                                 any_fail = True
+                                observe("worker_process_crashed", status="failed", worker_pid=p.pid, exitcode=p.exitcode, assigned_items=list(status_map.get(worker_key, []) or []))
                                 self.logger.warning("GPU worker pid=%s exited with code %s", p.pid, p.exitcode)
+                                if _stability_benchmark and p.exitcode < 0:
+                                    from ..scripts.batched_stability_benchmark import record_process_crash
+                                    benchmark_gpu = str(worker_spec["device_id"]) if worker_spec else None
+                                    benchmark_gpu = _stability_benchmark.get("device_bindings", {}).get(benchmark_gpu, benchmark_gpu)
+                                    record_process_crash(Path(_stability_benchmark["mode_out"]).parent,
+                                        -p.exitcode, pid=p.pid, mode="sequential", gpu=benchmark_gpu,
+                                        worker=worker_key, round_id=_stability_benchmark["round"])
+                                    benchmark_signals.append(-p.exitcode)
                                 current_paths: List[str] = []
                                 stems_for_skip: List[str] = []
-                                if gpu_id is not None:
-                                    current_entry = status_map.pop(gpu_id, None)
+                                if worker_key is not None:
+                                    current_entry = status_map.pop(worker_key, None)
                                     if current_entry:
                                         if not isinstance(current_entry, (list, tuple, set)):
                                             current_entry = [current_entry]
                                         current_paths = [str(x) for x in current_entry]
                                         stems_for_skip = [canonical_stem(path) for path in current_paths]
-                                    marker_path = marker_files.get(gpu_id)
+                                    marker_path = marker_files.get(worker_key)
                                     if marker_path:
                                         try:
                                             marker_path.unlink(missing_ok=True)
@@ -565,12 +864,18 @@ class ExtractPhaseMixin:
                                     state_mgr.save(processed_files, problematic_files)
                                 if stems_for_skip:
                                     skip_mgr.add(stems_for_skip)
-                                if gpu_id is not None:
-                                    self.logger.info("Respawning GPU%s worker after crash.", gpu_id)
+                                if worker_spec is not None:
+                                    self.logger.info(
+                                        "Respawning %s after crash.",
+                                        worker_spec["worker_key"],
+                                    )
                                     replacement = ctx.Process(
                                         target=gpu_extract_worker_queue,
+                                        **({"kwargs": {"stability_benchmark": _stability_benchmark}} if _stability_benchmark else {}),
                                         args=(
-                                            gpu_id,
+                                            worker_spec["device_id"],
+                                            worker_spec["worker_slot"],
+                                            worker_spec["worker_key"],
                                             str(self.input_dir),
                                             str(self.output_dir),
                                             task_q,
@@ -588,19 +893,21 @@ class ExtractPhaseMixin:
                                             result_q,
                                             status_map,
                                             str(marker_base),
+                                            bool(repair_fonts),
+                                            False if batched is None else batched,
                                         ),
                                     )
                                     replacement.start()
                                     procs.append(replacement)
                                     active.append(replacement)
                                     if replacement.pid is not None:
-                                        proc_gpu[replacement.pid] = gpu_id
+                                        proc_specs[replacement.pid] = dict(worker_spec)
                                         heartbeat[replacement.pid] = time.time()
                                 continue
                             else:
-                                if gpu_id is not None:
-                                    status_map.pop(gpu_id, None)
-                                    marker_path = marker_files.get(gpu_id)
+                                if worker_key is not None:
+                                    status_map.pop(worker_key, None)
+                                    marker_path = marker_files.get(worker_key)
                                     if marker_path:
                                         try:
                                             marker_path.unlink(missing_ok=True)
@@ -610,12 +917,14 @@ class ExtractPhaseMixin:
                         while True:
                             try:
                                 result = result_q.get_nowait()
+                                accept_worker_observations(result.get("ledger_observations", []))
                             except queue.Empty:
                                 break
                             drained = True
                             last_activity = time.time()
                             event_type = result.get("event")
                             if event_type == "batch":
+                                observe("legacy_observed", store="worker_result_queue", receipt=result)
                                 ok_raw = [str(x) for x in (result.get("processed", []) or [])]
                                 bad_raw = [str(x) for x in (result.get("problematic", []) or [])]
                                 ok_stems = [canonical_stem(x) for x in ok_raw]
@@ -628,7 +937,7 @@ class ExtractPhaseMixin:
                                     skip_mgr.add(bad_stems)
                                 state_mgr.save(processed_files, problematic_files)
                                 self.logger.info(
-                                    "GPU%s batch complete: +%d processed, +%d problematic (totals: %d processed, %d problematic)",
+                                    "%s batch complete: +%d processed, +%d problematic (totals: %d processed, %d problematic)",
                                     result.get("worker"),
                                     len(ok_stems),
                                     len(bad_stems),
@@ -638,34 +947,37 @@ class ExtractPhaseMixin:
                                 worker_pid = result.get("pid")
                                 if worker_pid is not None:
                                     heartbeat[worker_pid] = time.time()
+                            elif event_type == "disk_full":
+                                observe("legacy_observed", store="worker_result_queue", receipt=result)
+                                if disk_full_error is None:
+                                    disk_full_error = OSError(int(result.get("errno") or errno.ENOSPC),
+                                                              f"{result.get('worker')}: {result.get('error')}")
+                                worker_pid = result.get("pid")
+                                if worker_pid is not None:
+                                    heartbeat[worker_pid] = time.time()
                             elif event_type == "exit":
                                 if result.get("exitcode", 0) not in (0, None):
                                     any_fail = True
                                     self.logger.warning(
-                                        "GPU%s reported non-zero exit: %s", result.get("worker"), result.get("exitcode")
+                                        "%s reported non-zero exit: %s", result.get("worker"), result.get("exitcode")
                                     )
                                 worker_pid = result.get("pid")
                                 if worker_pid is not None:
                                     heartbeat[worker_pid] = time.time()
-                                worker_gpu = result.get("worker")
-                                if worker_gpu is not None:
-                                    try:
-                                        worker_gpu_int = int(worker_gpu)
-                                    except Exception:
-                                        worker_gpu_int = None
-                                    else:
-                                        status_map.pop(worker_gpu_int, None)
-                                        marker_path = marker_files.get(worker_gpu_int)
-                                        if marker_path:
-                                            try:
-                                                marker_path.unlink(missing_ok=True)
-                                            except Exception:
-                                                pass
+                                worker_key = result.get("worker")
+                                if worker_key is not None:
+                                    status_map.pop(worker_key, None)
+                                    marker_path = marker_files.get(str(worker_key))
+                                    if marker_path:
+                                        try:
+                                            marker_path.unlink(missing_ok=True)
+                                        except Exception:
+                                            pass
 
                         now = time.time()
                         if now - last_summary > 30:
                             try:
-                                pending = result_q.qsize()
+                                pending = task_q.qsize()
                             except NotImplementedError:
                                 pending = -1
                             self.logger.info(
@@ -700,16 +1012,27 @@ class ExtractPhaseMixin:
                     else:
                         os.environ.pop("GLOSSAPI_WORKER_LOG_DIR", None)
 
+                if disk_full_error is not None:
+                    raise disk_full_error  # typed, after every worker stopped; the resume extracts these again (fix 6)
                 remaining_after_failure: List[str] = []
                 try:
                     while True:
                         pending_item = task_q.get_nowait()
                         if isinstance(pending_item, str) and pending_item.strip():
                             remaining_after_failure.append(pending_item)
+                            continue
+                        if isinstance(pending_item, (list, tuple, set)):
+                            remaining_after_failure.extend(
+                                str(item).strip()
+                                for item in pending_item
+                                if str(item).strip()
+                            )
                 except queue.Empty:
                     pass
                 if remaining_after_failure:
-                    skip_mgr.add(canonical_stem(x) for x in remaining_after_failure)
+                    # Never attempted, so not known to be bad (T2-G05): the cause is observed, and the fatal skiplist
+                    # (which a later extract filters by) stays reserved for files a worker failed on.
+                    observe("workers_exhausted_unattempted", status="skipped", items=remaining_after_failure)
                     self.logger.error(
                         "No active extraction workers remain; skipped %d pending item(s)",
                         len(remaining_after_failure),
@@ -723,6 +1046,10 @@ class ExtractPhaseMixin:
                         len(processed_files),
                         len(problematic_files),
                     )
+                self._finalize_font_repair_metadata(input_files)
+                if benchmark_signals:
+                    from ..scripts.batched_stability_benchmark import NativeProcessCrash
+                    raise NativeProcessCrash(benchmark_signals[0])
                 return
 
         # Single GPU path
@@ -738,6 +1065,7 @@ class ExtractPhaseMixin:
         try:
             setattr(self.extractor, "export_doc_json", bool(export_doc_json))
             setattr(self.extractor, "emit_formula_index", bool(emit_formula_index))
+            setattr(self.extractor, "repair_fonts", bool(repair_fonts))
         except Exception:
             pass
         # Determine effective thread count (auto when None)
@@ -757,7 +1085,8 @@ class ExtractPhaseMixin:
                 except Exception:
                     pass
                 try:
-                    from docling.models.code_formula_model import CodeFormulaModel  # type: ignore
+                    with optional_dependencies("layout"):
+                        from docling.models.code_formula_model import CodeFormulaModel  # type: ignore
                     fb = int(formula_batch_env) if str(formula_batch_env).isdigit() else 16
                     CodeFormulaModel.elements_batch_size = int(fb)  # type: ignore[attr-defined]
                 except Exception:
@@ -790,6 +1119,8 @@ class ExtractPhaseMixin:
                 export_doc_json=bool(export_doc_json),
                 emit_formula_index=bool(emit_formula_index),
                 phase1_backend=backend_choice,
+                repair_fonts=bool(repair_fonts),
+                **({"ocr_options": ocr_options} if ocr_options is not None else {}),
             )
         # Propagate benchmark mode to extractor to trim auxiliary I/O
         try:
@@ -798,7 +1129,10 @@ class ExtractPhaseMixin:
             pass
         # Extract files to markdown
         os.makedirs(self.markdown_dir, exist_ok=True)
+        self.extractor.page_range = page_range
         self.extractor.extract_path(input_files, self.markdown_dir, skip_existing=skip_existing)
+        if not getattr(self.extractor, "external_state_updates", False):
+            self._finalize_font_repair_metadata(input_files)
         self.logger.info(f"Extraction complete. Markdown files saved to {self.markdown_dir}")
         try:
             release = getattr(self.extractor, "release_resources", None)
@@ -806,3 +1140,65 @@ class ExtractPhaseMixin:
                 release()
         except Exception as exc:
             self.logger.debug("Extractor resource release failed: %s", exc)
+
+    def _finalize_font_repair_metadata(self, input_files: List[Path]) -> None:
+        """Merge worker repair sidecars once in the stage controller and summarize."""
+        from ..parquet_schema import ParquetSchema, update_metadata_parquet
+
+        defaults = {"font_repair_status": "skipped", "font_repair_backend": "unknown", "font_repair_fonts": 0,
+                    "font_repair_valid_rate_before": None, "font_repair_valid_rate_after": None}
+        counts = dict.fromkeys(("repaired", "not_needed", "unsupported", "no_text_layer", "error", "skipped"), 0)
+        updates = {}
+        for source in input_files:
+            if source.suffix.lower() != ".pdf":
+                continue
+            try:
+                payload = json.loads((self.output_dir / "sidecars" / "extract" / f"{source.stem}.json").read_text())
+                repair = {key: payload.get(key, value) for key, value in defaults.items()}
+                # Controller owns the parquet merge for safe and Docling workers.
+                for key in ("extract_status", "page_count", "extraction_mode", "extraction_backend"):
+                    if key in payload:
+                        repair[key] = payload[key]
+                if "extract_status" not in repair and payload.get("failure_mode"):
+                    repair["extract_status"] = payload["failure_mode"]
+                if payload.get("font_repair_error"):
+                    repair["extract_error"] = payload["font_repair_error"]
+            except Exception:
+                repair = dict(defaults)
+            status = repair["font_repair_status"]
+            counts[status if status in counts else "error"] += 1
+            updates[source.name] = repair
+        try:
+            schema = ParquetSchema({"url_column": self.url_column})
+            parquet = schema.ensure_metadata_parquet(self.output_dir)
+            if parquet is not None:
+                # One locked read-modify-write (K2 native): the repair fields are merged into the rows read under
+                # the lock, so a concurrent writer's rows are kept.
+                def _update(df):
+                    if not parquet.exists():
+                        pd.read_parquet(parquet)  # raises the same missing-file error as before
+                    for key, value in defaults.items():
+                        if key not in df.columns:
+                            df[key] = value
+                    for key, value in (("extract_status", "unknown"), ("page_count", pd.NA),
+                                       ("extraction_mode", ""), ("extraction_backend", "")):
+                        if key not in df.columns:
+                            df[key] = value
+                    for filename, repair in updates.items():
+                        mask = df["filename"] == filename
+                        for key, value in repair.items():
+                            df.loc[mask, key] = value
+                    df["page_count"] = pd.to_numeric(df["page_count"], errors="coerce").astype("Int64")
+                    df["font_repair_fonts"] = pd.to_numeric(df["font_repair_fonts"], errors="coerce").fillna(0).astype("int64")
+                    for key in ("font_repair_valid_rate_before", "font_repair_valid_rate_after"):
+                        df[key] = pd.to_numeric(df[key], errors="coerce").astype("float64")
+                    return df
+
+                update_metadata_parquet(parquet, _update)
+        except MetadataPolicyError:
+            raise  # policy refusals are never swallowed (CP-K2e F5)
+        except Exception as exc:
+            if disk_full(exc):
+                raise  # the font-repair metadata merge writes the metadata parquet (fix 6, F3 audit)
+            self.logger.warning("Failed to merge font repair metadata: %s", exc)
+        self.logger.info("Font repair summary: %s", " ".join(f"{key}={value}" for key, value in counts.items()))

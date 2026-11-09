@@ -1,0 +1,3 @@
+# The default annotation needs no extra packages since K2 W2b: the packaged neutral section-classifier model runs on
+# core numpy (glossapi.section_model). The extra is kept so `glossapi[annotate]` installs keep resolving.
+# Legacy *.joblib models and training: glossapi[annotate-legacy].

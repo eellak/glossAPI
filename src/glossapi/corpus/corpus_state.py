@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..ledger.journal import observe, observe_store
+
 import logging
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Set, Tuple
@@ -9,7 +11,48 @@ from typing import Dict, Iterable, Optional, Set, Tuple
 import pandas as pd
 
 from .._naming import canonical_stem
-from ..parquet_schema import ParquetSchema
+from ..parquet_schema import ParquetSchema, update_metadata_parquet
+from glossapi.parquet_schema import MetadataPolicyError
+
+
+def _cell_text(value) -> str:
+    """Return a metadata cell as text; missing cells (None, pd.NA, NaN, NaT) are "".
+
+    ``pd.NA`` has no truth value, so ``value or ""`` raises on it (FG-G01).
+    """
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        # Array-like cells have no scalar missing state; keep their text.
+        pass
+    return str(value)
+
+
+def _disk_full(error: BaseException) -> bool:
+    from ..stages.execution import disk_full
+    return disk_full(error)
+
+
+def _append_rows_exactly(current: pd.DataFrame, added: pd.DataFrame) -> pd.DataFrame:
+    """``current`` followed by ``added`` (same columns) without rounding an exact value (fix 6, F1; K2E-F3).
+
+    ``added`` rows leave every foreign column missing. A plain ``pd.concat`` turns an ``int64`` column into float64
+    as soon as one row is missing, which rounds every value above 2**53. As in the other metadata mergers, only the
+    integer columns a float64 cannot hold exactly become nullable (``exact_integer_columns``); an all-missing
+    ``added`` column then takes the current column's nullable dtype, and the union is checked value by value
+    (``lossless_concat``, ``MetadataSchemaError`` before anything is replaced). Every other column keeps the dtype
+    the legacy concatenation produced."""
+    from ..parquet_schema import _missing_like, exact_integer_columns, lossless_concat
+    before = current.dtypes
+    current, added = exact_integer_columns(current, added)
+    added = added.copy()
+    for column in current.columns:
+        if current[column].dtype != before[column] and added[column].isna().all():
+            added[column] = _missing_like(current[column], added.index)
+    return lossless_concat([current, added], what="processing-state rows")
 
 
 class _ProcessingStateManager:
@@ -52,27 +95,19 @@ class _ProcessingStateManager:
                 continue
         return stems
 
-    @staticmethod
-    def _text_or_empty(value: object) -> str:
-        if value is None:
-            return ""
-        try:
-            is_missing = pd.isna(value)
-        except Exception:
-            is_missing = False
-        if isinstance(is_missing, bool) and is_missing:
-            return ""
-        return str(value)
-
     def _metadata_path(self) -> Optional[Path]:
         try:
             return self.schema.ensure_metadata_parquet(self.base_dir)
+        except MetadataPolicyError:
+            raise  # policy refusals are never swallowed (CP-K2e F5)
         except Exception as exc:
+            if _disk_full(exc):
+                raise  # ensuring the table writes it: a full disk is never "no metadata table" (fix 6, F3)
             self.logger.warning("Failed to ensure metadata parquet under %s: %s", self.base_dir, exc)
             return None
 
     def _mark_stage(self, current: str, stage: str) -> str:
-        parts = [p for p in self._text_or_empty(current).split(",") if p]
+        parts = [p for p in _cell_text(current).split(",") if p]
         if stage and stage not in parts:
             parts.append(stage)
         return ",".join(parts)
@@ -122,8 +157,8 @@ class _ProcessingStateManager:
             stem = _stem_for(row)
             if not stem:
                 continue
-            status_raw = self._text_or_empty(row.get("extract_status")).strip().lower()
-            stage_raw = self._text_or_empty(row.get("processing_stage"))
+            status_raw = _cell_text(row.get("extract_status")).strip().lower()
+            stage_raw = _cell_text(row.get("processing_stage"))
             if status_raw in success_markers or "extract" in stage_raw.split(","):
                 processed.add(stem)
                 continue
@@ -139,6 +174,7 @@ class _ProcessingStateManager:
         except Exception:
             pass
 
+        observe("legacy_observed", path=parquet_path, store="processing_state", processed=sorted(processed), problematic=sorted(problematic), provenance="unknown_not_recorded")
         return processed, problematic
 
     def save(self, processed: Set[str], problematic: Set[str]) -> None:
@@ -158,69 +194,97 @@ class _ProcessingStateManager:
         if parquet_path is None:
             return
 
-        try:
-            df = self.schema.normalize_metadata_frame(pd.read_parquet(parquet_path))
-        except Exception as exc:
-            self.logger.warning("Unable to read metadata parquet %s: %s", parquet_path, exc)
-            return
+        # One locked read-modify-write (K2 native): read, update and replace inside the metadata lock, so a concurrent
+        # writer's rows cannot be lost. Failure handling: an exhausted filesystem always propagates (fix 6, F3); any
+        # other read failure (including a missing file) logs and returns, a write failure is observed and logged, and
+        # update errors propagate.
+        phase = {"value": "read"}
 
-        if "extract_status" not in df.columns:
-            df["extract_status"] = pd.Series([pd.NA] * len(df))
-        if "extract_error" not in df.columns:
-            df["extract_error"] = pd.Series([""] * len(df))
-        if "processing_stage" not in df.columns:
-            df["processing_stage"] = pd.Series([""] * len(df))
+        def _update(current):
+            if not parquet_path.exists():
+                pd.read_parquet(parquet_path)  # raises the same missing-file error as before
+            df = self.schema.normalize_metadata_frame(current)
+            phase["value"] = "update"
 
-        df["__stem__"] = df["filename"].astype(str).map(canonical_stem)
+            if "extract_status" not in df.columns:
+                df["extract_status"] = pd.Series([pd.NA] * len(df))
+            if "extract_error" not in df.columns:
+                df["extract_error"] = pd.Series([""] * len(df))
+            if "processing_stage" not in df.columns:
+                df["processing_stage"] = pd.Series([""] * len(df))
 
-        def _update_rows(target_stems: Set[str], status: str, error: str = "") -> None:
-            nonlocal df
-            if not target_stems:
-                return
-            mask = df["__stem__"].isin(target_stems)
-            existing_stems = set(df.loc[mask, "__stem__"].tolist())
-            missing_stems = target_stems.difference(existing_stems)
+            df["__stem__"] = df["filename"].astype(str).map(canonical_stem)
 
-            if missing_stems:
-                rows: list[dict] = []
-                for stem in sorted(missing_stems):
-                    filename, exists = self._guess_filename(stem)
-                    file_ext = Path(filename).suffix.lstrip(".")
-                    row = {col: pd.NA for col in df.columns}
-                    row[self.url_column] = self._text_or_empty(row.get(self.url_column, ""))
-                    row["filename"] = filename
-                    row["file_ext"] = file_ext
-                    row["filename_base"] = stem
-                    row["download_success"] = bool(exists)
-                    row["extract_status"] = status
-                    row["extract_error"] = error
-                    row["processing_stage"] = self._mark_stage("", "extract")
-                    row["__stem__"] = stem
-                    rows.append(row)
-                df = pd.concat([df, pd.DataFrame(rows)], ignore_index=True)
+            def _update_rows(target_stems: Set[str], status: str, error: str = "") -> None:
+                nonlocal df
+                if not target_stems:
+                    return
                 mask = df["__stem__"].isin(target_stems)
+                existing_stems = set(df.loc[mask, "__stem__"].tolist())
+                missing_stems = target_stems.difference(existing_stems)
 
-            df.loc[mask, "extract_status"] = status
-            if error:
-                df.loc[mask, "extract_error"] = error
-            df.loc[mask, "processing_stage"] = df.loc[mask, "processing_stage"].apply(
-                lambda current: self._mark_stage(current, "extract")
-            )
+                if missing_stems:
+                    rows: list[dict] = []
+                    for stem in sorted(missing_stems):
+                        filename, exists = self._guess_filename(stem)
+                        file_ext = Path(filename).suffix.lstrip(".")
+                        row = {col: pd.NA for col in df.columns}
+                        # Every cell of a new row starts missing (the one metadata rule, K4BI-G9): the URL is unknown
+                        # here, and a download is recorded only for a file found on disk, as the artifact scan of
+                        # ``ensure_metadata_parquet`` records it. A row added here (a document that failed in an
+                        # earlier pass and succeeds on --retry-failed) then equals the row the scan writes when
+                        # every document succeeds in one pass (K4g fix 4).
+                        row["filename"] = filename
+                        row["file_ext"] = file_ext
+                        row["filename_base"] = stem
+                        if exists:
+                            row["download_success"] = True
+                            row["download_error"] = ""
+                        row["extract_status"] = status
+                        row["extract_error"] = error if error else pd.NA
+                        row["processing_stage"] = self._mark_stage("", "extract")
+                        row["__stem__"] = stem
+                        rows.append(row)
+                    df = _append_rows_exactly(df, pd.DataFrame(rows, columns=df.columns))
+                    mask = df["__stem__"].isin(target_stems)
 
-        # Prioritize problematic markers over processed ones for overlapping stems
-        overlap = processed_stems & problematic_stems
-        if overlap:
-            processed_stems.difference_update(overlap)
+                df.loc[mask, "extract_status"] = status
+                if error:
+                    df.loc[mask, "extract_error"] = error
+                df.loc[mask, "processing_stage"] = df.loc[mask, "processing_stage"].apply(
+                    lambda current: self._mark_stage(current, "extract")
+                )
 
-        _update_rows(processed_stems, "success")
-        _update_rows(problematic_stems, "problematic")
+            # Prioritize problematic markers over processed ones for overlapping stems
+            overlap = processed_stems & problematic_stems
+            if overlap:
+                processed_stems.difference_update(overlap)
+
+            _update_rows(processed_stems, "success")
+            _update_rows(problematic_stems, "problematic")
+
+            try:
+                df = df.drop(columns=["__stem__"])
+            except KeyError:
+                pass
+            phase["value"] = "write"
+            return df
 
         try:
-            df = df.drop(columns=["__stem__"])
-        except KeyError:
-            pass
-
-        try:
-            self.schema.write_metadata_parquet(df, parquet_path)
+            update_metadata_parquet(parquet_path, _update)
+            observe_store(parquet_path, kind="processing_state_metadata")
+        except MetadataPolicyError:
+            raise  # policy refusals are never swallowed (CP-K2e F5)
         except Exception as exc:
+            if _disk_full(exc):
+                # An exhausted filesystem (ENOSPC/EDQUOT, SQLite disk-full, also as a cause) in any phase -- the lock
+                # file, the temporary parquet, the replacement -- is never a best-effort state miss (fix 6, F3): it
+                # propagates unchanged, so the publication fails typed disk_full and the resume repeats it.
+                raise
+            if phase["value"] == "read":
+                self.logger.warning("Unable to read metadata parquet %s: %s", parquet_path, exc)
+                return
+            if phase["value"] != "write":
+                raise
+            observe("extract_exception", path=parquet_path, error=exc, warning=True, continuation="legacy_state_unchanged")
             self.logger.warning("Failed to persist processing state to %s: %s", parquet_path, exc)

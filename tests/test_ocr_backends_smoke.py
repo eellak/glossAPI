@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pandas as pd
@@ -11,7 +12,7 @@ def _mk_corpus(tmp_path: Path):
     return Corpus(input_dir=root, output_dir=root)
 
 
-def test_cross_backend_smoke_with_stubs(tmp_path, monkeypatch):
+def test_plugin_ocr_then_math_only_smoke(tmp_path, monkeypatch):
     corpus = _mk_corpus(tmp_path)
 
     # Two PDFs: one needs OCR, one does not (for math-only later)
@@ -28,8 +29,8 @@ def test_cross_backend_smoke_with_stubs(tmp_path, monkeypatch):
     parquet_path = dl_dir / "download_results.parquet"
     df.to_parquet(parquet_path, index=False)
 
-    # DeepSeek stub for OCR
-    from glossapi.ocr.deepseek import runner
+    # External plugin runner is stubbed here only to avoid the heavy model during unit tests.
+    from glossapi.corpus.ocr import dispatch as runner
 
     def fake_run_for_files(self_ref, files, **kwargs):
         for f in files:
@@ -40,12 +41,12 @@ def test_cross_backend_smoke_with_stubs(tmp_path, monkeypatch):
             (corpus.output_dir / "json" / "metrics" / f"{stem}.metrics.json").write_text("{\n \"page_count\": 1\n}\n", encoding="utf-8")
         return {"needs": {"page_count": 1}}
 
-    monkeypatch.setattr(runner, "run_for_files", fake_run_for_files)
+    monkeypatch.setattr(runner, "run_plugin_ocr", fake_run_for_files)
 
-    # Run DeepSeek OCR for bad files
-    corpus.ocr(backend="deepseek", fix_bad=True, math_enhance=True, mode="ocr_bad_then_math")
+    # Run plugin OCR for bad files
+    corpus.ocr(backend="docling", fix_bad=True, math_enhance=True, mode="ocr_bad_then_math")
 
-    # RapidOCR math-only pass: ensure JSON for clean.pdf and run math
+    # Math-only pass: ensure JSON for clean.pdf and run math
     json_dir = corpus.output_dir / "json"
     json_dir.mkdir(parents=True, exist_ok=True)
     (json_dir / "clean.docling.json").write_text("{}", encoding="utf-8")
@@ -58,9 +59,58 @@ def test_cross_backend_smoke_with_stubs(tmp_path, monkeypatch):
 
     monkeypatch.setattr(corpus, "formula_enrich_from_json", fake_enrich)
 
-    corpus.ocr(backend="rapidocr", fix_bad=False, math_enhance=True, mode="math_only")
+    corpus.ocr(backend="docling", fix_bad=False, math_enhance=True, mode="math_only")
 
     # Verify
     updated = pd.read_parquet(parquet_path).set_index("filename")
     assert bool(updated.loc["needs.pdf", "ocr_success"]) is True
+    assert bool(updated.loc["needs.pdf", "needs_ocr"]) is False
+    assert updated.loc["needs.pdf", "text"] == "ds md\n"
+    assert updated.loc["needs.pdf", "ocr_markdown_relpath"] == "markdown/needs.md"
+    assert updated.loc["needs.pdf", "ocr_metrics_relpath"] == "json/metrics/needs.metrics.json"
+    assert (
+        updated.loc["needs.pdf", "ocr_text_sha256"]
+        == hashlib.sha256(b"ds md\n").hexdigest()
+    )
     assert captured.get("files") == ["clean"], "Math-only should run for non-OCR stem only"
+
+
+def test_plugin_ocr_normalizes_chunk_rows_to_real_source_pdf(tmp_path, monkeypatch):
+    corpus = _mk_corpus(tmp_path)
+
+    (corpus.input_dir / "needs.pdf").write_bytes(b"%PDF-1.4\n%stub\n")
+
+    dl_dir = corpus.output_dir / "download_results"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    parquet_path = dl_dir / "download_results.parquet"
+    pd.DataFrame(
+        [
+            {"filename": "needs.pdf", corpus.url_column: "", "needs_ocr": True, "ocr_success": False},
+            {"filename": "needs__p0001-0002.pdf", corpus.url_column: "", "needs_ocr": True, "ocr_success": False},
+        ]
+    ).to_parquet(parquet_path, index=False)
+
+    from glossapi.corpus.ocr import dispatch as runner
+
+    captured = {}
+
+    def fake_run_for_files(self_ref, files, **kwargs):
+        captured["files"] = list(files)
+        markdown_dir = corpus.output_dir / "markdown"
+        metrics_dir = corpus.output_dir / "json" / "metrics"
+        markdown_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        (markdown_dir / "needs.md").write_text("normalized md\n", encoding="utf-8")
+        (metrics_dir / "needs.metrics.json").write_text("{\n \"page_count\": 1\n}\n", encoding="utf-8")
+        return {"needs": {"page_count": 1}}
+
+    monkeypatch.setattr(runner, "run_plugin_ocr", fake_run_for_files)
+
+    corpus.ocr(backend="docling", fix_bad=True, math_enhance=False, mode="ocr_bad")
+
+    assert captured["files"] == ["needs.pdf"]
+    updated = pd.read_parquet(parquet_path).set_index("filename")
+    assert bool(updated.loc["needs.pdf", "ocr_success"]) is True
+    assert bool(updated.loc["needs__p0001-0002.pdf", "ocr_success"]) is True
+    assert updated.loc["needs.pdf", "text"] == "normalized md\n"
+    assert updated.loc["needs__p0001-0002.pdf", "text"] == "normalized md\n"

@@ -1,0 +1,478 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://glossapi.eellak.gr/schemas/v1/install.json",
+  "title": "glossAPI CLI v1 install data",
+  "description": "`install --device DEV [--package NAME ...] [--yes]`. mode dry_run: the exact commands and what they would change; nothing ran. mode executed: the same commands ran in order (executed.steps) and changes holds the capability re-check from a fresh interpreter. The commands carry only the requested profiles' requirements.",
+  "type": "object",
+  "required": [
+    "mode",
+    "device",
+    "platform",
+    "device_profile",
+    "packages",
+    "requirements_source",
+    "installer",
+    "commands",
+    "requirements",
+    "would_change",
+    "executed",
+    "changes",
+    "warnings",
+    "capabilities_fingerprint"
+  ],
+  "properties": {
+    "mode": {
+      "enum": [
+        "dry_run",
+        "executed"
+      ]
+    },
+    "device": {
+      "$ref": "common.json#/$defs/device_profile"
+    },
+    "platform": {
+      "type": "object",
+      "required": [
+        "system",
+        "machine"
+      ],
+      "properties": {
+        "system": {
+          "type": "string"
+        },
+        "machine": {
+          "type": "string"
+        }
+      }
+    },
+    "device_profile": {
+      "type": "object",
+      "required": [
+        "device",
+        "index_url",
+        "suffix",
+        "requirements",
+        "applies"
+      ],
+      "properties": {
+        "device": {
+          "$ref": "common.json#/$defs/device_profile"
+        },
+        "index_url": {
+          "type": "string"
+        },
+        "suffix": {
+          "type": "string"
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "applies": {
+          "type": "boolean"
+        }
+      }
+    },
+    "packages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "expanded": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "package",
+          "includes",
+          "device_bound"
+        ],
+        "properties": {
+          "package": {
+            "type": "string"
+          },
+          "includes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "device_bound": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "requirements_source": {
+      "type": "object",
+      "required": [
+        "kind",
+        "location"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "source_tree",
+            "installed_metadata"
+          ]
+        },
+        "location": {
+          "type": "string"
+        }
+      }
+    },
+    "installer": {
+      "type": "object",
+      "required": [
+        "kind",
+        "requested",
+        "available",
+        "python"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "pip",
+            "uv"
+          ]
+        },
+        "requested": {
+          "enum": [
+            "auto",
+            "pip",
+            "uv"
+          ]
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "python": {
+          "type": "string"
+        },
+        "executable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "purpose",
+          "argv",
+          "shell",
+          "index_urls",
+          "requirements"
+        ],
+        "properties": {
+          "purpose": {
+            "type": "string"
+          },
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "shell": {
+            "type": "string"
+          },
+          "index_urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/requirement_state"
+      }
+    },
+    "would_change": {
+      "type": "object",
+      "required": [
+        "requirements",
+        "from_lock"
+      ],
+      "properties": {
+        "requirements": {
+          "type": "object",
+          "required": [
+            "missing",
+            "version_mismatch",
+            "satisfied"
+          ],
+          "properties": {
+            "missing": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "version_mismatch": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "satisfied": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "from_lock": {
+          "type": "object",
+          "required": [
+            "basis",
+            "target",
+            "locks",
+            "new",
+            "changed",
+            "download_bytes",
+            "installed_bytes",
+            "unmeasured"
+          ],
+          "properties": {
+            "basis": {
+              "type": "string"
+            },
+            "target": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "locks": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "new": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "changed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "download_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "installed_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unmeasured": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "executed": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "steps",
+            "dependency_check"
+          ],
+          "properties": {
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "index",
+                  "argv",
+                  "returncode",
+                  "seconds",
+                  "output_tail"
+                ],
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "argv": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "returncode": {
+                    "type": "integer"
+                  },
+                  "seconds": {
+                    "type": "number"
+                  },
+                  "output_tail": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "dependency_check": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "argv",
+                    "returncode",
+                    "output_tail"
+                  ],
+                  "properties": {
+                    "argv": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "returncode": {
+                      "type": "integer"
+                    },
+                    "output_tail": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "changes": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "added",
+            "removed",
+            "changed",
+            "stages",
+            "fingerprint_before",
+            "fingerprint_after",
+            "recheck"
+          ],
+          "properties": {
+            "added": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "removed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "changed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "stages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "stage",
+                  "available_before",
+                  "available_after"
+                ],
+                "properties": {
+                  "stage": {
+                    "$ref": "common.json#/$defs/stage"
+                  },
+                  "available_before": {
+                    "type": "boolean"
+                  },
+                  "available_after": {
+                    "type": "boolean"
+                  },
+                  "reason_before": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reason_after": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            },
+            "fingerprint_before": {
+              "$ref": "common.json#/$defs/sha256"
+            },
+            "fingerprint_after": {
+              "$ref": "common.json#/$defs/sha256"
+            },
+            "recheck": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "$ref": "common.json#/$defs/warning"
+      }
+    },
+    "capabilities_fingerprint": {
+      "$ref": "common.json#/$defs/sha256"
+    }
+  }
+}

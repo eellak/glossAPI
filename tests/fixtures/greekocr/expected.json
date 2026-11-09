@@ -1,0 +1,123 @@
+{
+  "source_commit": "fb068b45234a12206953a5c0889631773a33fa41",
+  "detector": {
+    "repo_id": "PaddlePaddle/PP-OCRv6_small_det_onnx",
+    "revision": "28fe5895c24fd108c19eb3e8479f4ab385fbfc62",
+    "filename": "inference.onnx",
+    "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+    "bytes": 9880512,
+    "licence": "Apache-2.0",
+    "upstream_url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/tree/28fe5895c24fd108c19eb3e8479f4ab385fbfc62",
+    "cached_path": "<CACHE>/greekocr/detectors/models--PaddlePaddle--PP-OCRv6_small_det_onnx/snapshots/28fe5895c24fd108c19eb3e8479f4ab385fbfc62/inference.onnx"
+  },
+  "model_acquisition": {
+    "repo_id": "fffoivos/greek-ocr",
+    "requested_revision": "2a6b019be728e5be70cdbd981414c630b63fca08",
+    "resolved_commit": "2a6b019be728e5be70cdbd981414c630b63fca08",
+    "variant": "x1",
+    "manifest_sha256": "85d455d2cae2b756ab17e7114a3de13d7d41426d1fa5093028a179cf0c7d1345"
+  },
+  "model_release": "<CACHE>/greekocr/models/repo-6e03e02cb44acdc7/2a6b019be728e5be70cdbd981414c630b63fca08/x1",
+  "options": {
+    "lang": [
+      "el",
+      "en"
+    ],
+    "force_full_page_ocr": true,
+    "bitmap_area_threshold": 0.05,
+    "checkpoint": null,
+    "codec": null,
+    "release_dir": null,
+    "model_repo": "fffoivos/greek-ocr",
+    "model_variant": "x1",
+    "model_revision": "2a6b019be728e5be70cdbd981414c630b63fca08",
+    "model_manifest_sha256": "85d455d2cae2b756ab17e7114a3de13d7d41426d1fa5093028a179cf0c7d1345",
+    "segmenter": "paddle_small_heuristics_r8",
+    "segmenter_detector": "small",
+    "detector_device": "cpu",
+    "segmenter_preset": "clean_scan",
+    "segmenter_rules": {},
+    "ornament_seeds": [],
+    "hole_seeds": [],
+    "config_sha256": null,
+    "recognition_mode": "detector",
+    "crop_scale": 3.0,
+    "device": "cpu",
+    "routing_sidecar": null,
+    "replace_policy": "all",
+    "checkpoint_sha256": null,
+    "call_log": "<OUTPUT>/plugin_calls.jsonl",
+    "tables": true,
+    "join_lines": false,
+    "granularity": "default",
+    "statistics": false,
+    "discounted": "keep",
+    "outputs": {
+      "directory": null,
+      "files": [
+        "segments",
+        "checks",
+        "structure",
+        "cells",
+        "lines"
+      ]
+    }
+  },
+  "schema": "greekocr-docling-synthetic-smoke-v1",
+  "pages": [
+    [
+      "Μῆνιν ἄειδε, θεά, Πηληϊάδεω Ἀχιλῆος",
+      "οὐλομένην, ἣ μυρί' Ἀχαιοῖς ἄλγε᾽ ἔθηκε,",
+      "πολλὰς δ᾽ ἰφθίμους ψυχὰς Ἄϊδι προΐαψεν"
+    ],
+    [
+      "ἡρώων, αὐτοὺς δὲ ἑλώρια τεῦχε κύνεσσιν",
+      "οἰωνοῖσί τε πᾶσι, Διὸς δ᾽ ἐτελείετο βουλή,",
+      "ἐξ οὗ δὴ τὰ πρῶτα διαστήτην ἐρίσαντε"
+    ]
+  ],
+  "kept_lines": 6,
+  "dropped_lines": 0,
+  "normalized_sha256": "7e4395ef98811bc79a26818d508345aeaf3ca118c2baec0d139baf177ac8c38e",
+  "fixture_sha256": "7c85b11bf8dcd43f9f05ea61210800864377fdbc492de98feb586ba6470495d6",
+  "wall_seconds": 5.216744666919112,
+  "seconds_per_page": 2.608372333459556,
+  "timings_s": [
+    {
+      "render": 1.295795664191246e-05,
+      "segmenter_setup": 0.7809703331440687,
+      "segmentation": 0.8065372500568628,
+      "detector": 0.699597124941647,
+      "r8_correction": 0.0526589578948915,
+      "detector_inference": 0.6852739159949124,
+      "filter": 0.0034428327344357967,
+      "crop": 0.055080207996070385,
+      "recognizer_setup": 0.09004791593179107,
+      "recognition": 0.6177143747918308,
+      "total": 2.3760864166542888
+    },
+    {
+      "render": 7.2498805820941925e-06,
+      "segmenter_setup": 9.592622518539429e-07,
+      "segmentation": 0.7691958746872842,
+      "detector": 0.6949353748932481,
+      "r8_correction": 0.030226833187043667,
+      "detector_inference": 0.6880213748663664,
+      "filter": 0.002064791973680258,
+      "crop": 0.03175712516531348,
+      "recognizer_setup": 6.7497603595256805e-06,
+      "recognition": 0.5539029170759022,
+      "total": 1.3731858748942614
+    }
+  ],
+  "versions": {
+    "docling": "2.81.0",
+    "docling-core": "2.70.2",
+    "torch": "2.14.1",
+    "onnxruntime": "1.31.0",
+    "numpy": "2.5.3",
+    "Pillow": "12.3.0"
+  },
+  "normalization": "Ordered per-page line arrays; NFC + whitespace runs collapsed inside each line; UTF-8 JSON ensure_ascii=False separators=(comma,colon), no trailing newline.",
+  "expected_is": "Observed uncorrected OCR, not ground truth. See source.json for supplied transcription."
+}

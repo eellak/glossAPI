@@ -1,3 +1,5 @@
+from .stages.profile import adapters_enabled
+from .ledger.journal import observe, observe_store, observe_source_rows
 from typing import Dict, Set, List, Optional, Iterable, Tuple, Any, Union, Callable
 import importlib
 import sys
@@ -5,27 +7,55 @@ import warnings
 
 from ._naming import canonical_stem
 
-from docling.datamodel.base_models import InputFormat, ConversionStatus
-from docling.datamodel.pipeline_options import (
-    AcceleratorDevice,
-    AcceleratorOptions,
-    PdfPipelineOptions,
-    RapidOcrOptions,
-    LayoutOptions,
-    TableStructureOptions,
-    TableFormerMode,
-)
+from enum import Enum
+from types import SimpleNamespace
 
-try:
-    from docling.datamodel.pipeline_options import PictureDescriptionApiOptions
-except ImportError:  # pragma: no cover - older docling versions
-    class PictureDescriptionApiOptions:  # type: ignore
-        """Compatibility shim when PictureDescriptionApiOptions is missing."""
+class ConversionStatus(str, Enum):
+    SUCCESS = "success"
+    PARTIAL_SUCCESS = "partial_success"
+    FAILURE = "failure"
 
-        def __init__(self, *args, **kwargs):
-            pass
-from docling.datamodel.document import ConversionResult
-from docling.datamodel.settings import settings
+InputFormat = None
+ConversionResult = Any
+PdfPipelineOptions = AcceleratorOptions = LayoutOptions = TableStructureOptions = SimpleNamespace
+PictureDescriptionApiOptions = SimpleNamespace
+AcceleratorDevice = SimpleNamespace(AUTO="auto", CUDA="cuda", MPS="mps", CPU="cpu")
+TableFormerMode = SimpleNamespace(ACCURATE="accurate")
+settings = None
+
+_DOCLING_DATAMODEL_LOADED = False
+
+
+def _ensure_docling_datamodel_loaded():
+    global _DOCLING_DATAMODEL_LOADED
+    global InputFormat, AcceleratorDevice, AcceleratorOptions
+    global PdfPipelineOptions, LayoutOptions, TableStructureOptions, TableFormerMode
+    global PictureDescriptionApiOptions, ConversionResult, settings
+    if _DOCLING_DATAMODEL_LOADED:
+        return
+    from .optional_dependencies import optional_dependencies
+    with optional_dependencies("layout"):
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import (
+            AcceleratorDevice,
+            AcceleratorOptions,
+            PdfPipelineOptions,
+            LayoutOptions,
+            TableStructureOptions,
+            TableFormerMode,
+        )
+
+        try:
+            from docling.datamodel.pipeline_options import PictureDescriptionApiOptions
+        except ImportError:  # pragma: no cover - older docling versions
+            class PictureDescriptionApiOptions:  # type: ignore
+                """Compatibility shim when PictureDescriptionApiOptions is missing."""
+
+                def __init__(self, *args, **kwargs):
+                    pass
+        from docling.datamodel.document import ConversionResult
+        from docling.datamodel.settings import settings
+    _DOCLING_DATAMODEL_LOADED = True
 
 
 def _maybe_import_torch(*, force: bool = False):
@@ -33,6 +63,8 @@ def _maybe_import_torch(*, force: bool = False):
     torch_mod = sys.modules.get("torch")
     if torch_mod is not None:
         return torch_mod
+    if not force:
+        return None
     try:
         return importlib.import_module("torch")  # type: ignore
     except Exception:
@@ -47,9 +79,17 @@ PowerpointFormatOption = None
 MarkdownFormatOption = None
 CsvFormatOption = None
 StandardPdfPipeline = None
-DoclingParseV2DocumentBackend = None
 DoclingParseDocumentBackend = None
 PyPdfiumDocumentBackend = None
+_DOCLING_PARSE_BACKEND_NAME = "docling_parse"
+
+
+def _disk_full(error: BaseException) -> bool:
+    """K4g fix 3: the best-effort handlers on the per-document path let a full disk (ENOSPC/EDQUOT, SQLite disk-full,
+    also as a cause) propagate, so the attempt fails typed disk_full and the resume retries it, instead of carrying on
+    with a skipped sidecar, artefact or font repair as a successful extract."""
+    from .stages.execution import disk_full
+    return disk_full(error)
 
 
 class _NoOpOption:  # minimal stand-ins for optional helpers
@@ -67,6 +107,7 @@ def _ensure_docling_converter_loaded() -> None:
     global PowerpointFormatOption, MarkdownFormatOption, CsvFormatOption
     if _DOC_CONVERTER_LOADED:
         return
+    _ensure_docling_datamodel_loaded()
     try:
         module = importlib.import_module("docling.document_converter")
         DocumentConverter = getattr(module, "DocumentConverter")
@@ -79,38 +120,47 @@ def _ensure_docling_converter_loaded() -> None:
         CsvFormatOption = getattr(module, "CsvFormatOption", _NoOpOption)
         _DOC_CONVERTER_LOADED = True
     except Exception as exc:
-        raise RuntimeError(f"Failed to load docling document converter components: {exc}")
+        raise RuntimeError(f"Failed to load Docling converter; install layout with `pip install 'glossapi[layout]'`: {exc}")
 
 
 def _ensure_docling_pipeline_loaded() -> None:
     global _DOC_PIPELINE_LOADED, StandardPdfPipeline
-    global DoclingParseV2DocumentBackend, DoclingParseDocumentBackend, PyPdfiumDocumentBackend
+    global DoclingParseDocumentBackend, PyPdfiumDocumentBackend, _DOCLING_PARSE_BACKEND_NAME
     if _DOC_PIPELINE_LOADED:
         return
     try:
         StandardPdfPipeline = importlib.import_module(
             "docling.pipeline.standard_pdf_pipeline"
         ).StandardPdfPipeline
-        DoclingParseV2DocumentBackend = importlib.import_module(
-            "docling.backend.docling_parse_v2_backend"
-        ).DoclingParseV2DocumentBackend
-        DoclingParseDocumentBackend = importlib.import_module(
-            "docling.backend.docling_parse_backend"
-        ).DoclingParseDocumentBackend
+        try:
+            DoclingParseDocumentBackend = importlib.import_module(
+                "docling.backend.docling_parse_backend"
+            ).DoclingParseDocumentBackend
+            _DOCLING_PARSE_BACKEND_NAME = "docling_parse"
+        except Exception:
+            DoclingParseDocumentBackend = importlib.import_module(
+                "docling.backend.docling_parse_v2_backend"
+            ).DoclingParseV2DocumentBackend
+            _DOCLING_PARSE_BACKEND_NAME = "docling_parse_v2"
         PyPdfiumDocumentBackend = importlib.import_module(
             "docling.backend.pypdfium2_backend"
         ).PyPdfiumDocumentBackend
         _DOC_PIPELINE_LOADED = True
     except Exception as exc:
-        raise RuntimeError(f"Failed to load docling PDF pipeline components: {exc}")
+        raise RuntimeError(f"Failed to load Docling pipeline; install layout with `pip install 'glossapi[layout]'`: {exc}")
 
 
-from docling.pipeline.simple_pipeline import SimplePipeline
-# Ensure RapidOCR plugin is registered for factory-based OCR construction
-import docling.models.rapid_ocr_model  # noqa: F401
-from .ocr.rapidocr._paths import resolve_packaged_onnx_and_keys
-from .ocr.rapidocr.pool import GLOBAL_RAPID_OCR_POOL
 import inspect
+
+
+def build_layout_pipeline(*args, **kwargs):
+    """Load the canonical builder only when Docling is selected.
+
+    Keep this module-level hook for callers that customize layout options.
+    """
+    from .ocr.docling_pipeline import build_layout_pipeline as builder
+    return builder(*args, **kwargs)
+
 
 import ftfy
 import logging
@@ -122,7 +172,6 @@ import re
 from pathlib import Path
 from typing import Iterable, List, Tuple
 from multiprocessing import Pool, cpu_count
-from tqdm import tqdm
 import shutil
 from shutil import copy2
 from collections import defaultdict
@@ -146,6 +195,14 @@ class GlossExtract:
         """
         # Default timeout for processing files (10 minutes in seconds)
         self.processing_timeout = 600
+        self.repair_fonts = True
+        self._font_repair_records = {}
+        self._font_repair_paths = {}
+        self._font_repair_originals = {}
+        self._font_repair_deadlines = {}
+        self._font_repair_output_dir = None
+        # Page counts the stage adapter already read for this run (resolved path -> count); see run_prepared.
+        self._preflight_page_counts = {}
         # Timeout budget for text-layer extraction scales with page count
         self.per_page_timeout_s = 20
         # Default to layout-only extraction; OCR is enabled explicitly by callers
@@ -187,7 +244,7 @@ class GlossExtract:
         except Exception:
             pass
         self.USE_V2 = True
-        self.log_file = Path('.') / 'conversion.log'
+        self.log_file = Path(os.environ.get("GLOSSAPI_CONVERSION_LOG_FILE", "conversion.log"))
         self.url_column = url_column  # Store the URL column name for later use
         self._metadata_parquet_path = None  # Store metadata parquet path once found
         # Chunking defaults for long PDFs
@@ -305,8 +362,6 @@ class GlossExtract:
             pass
 
     def _apply_thread_caps(self) -> None:
-        if self._thread_caps_applied:
-            return
         import os as _os
 
         defaults = {
@@ -317,8 +372,12 @@ class GlossExtract:
             "VECLIB_MAXIMUM_THREADS": "1",
             "NUMBA_NUM_THREADS": "1",
         }
+        # Set for the extraction in progress (and the workers it starts); the in-process extraction entries restore
+        # the caller's values afterwards (stages.execution.thread_caps_scope, K4F2-G1), so set them on every call.
         for key, value in defaults.items():
             _os.environ.setdefault(key, value)
+        if self._thread_caps_applied:
+            return
         torch_mod = _maybe_import_torch()
         try:
             if torch_mod is not None and hasattr(torch_mod, "set_num_threads"):
@@ -328,7 +387,7 @@ class GlossExtract:
         self._thread_caps_applied = True
 
     def release_resources(self) -> None:
-        """Release Docling converters, pooled RapidOCR engines, and GPU caches."""
+        """Release Docling converters and GPU caches."""
         try:
             self.converter = None
         except Exception:
@@ -343,10 +402,6 @@ class GlossExtract:
                 setattr(self, attr, None)
             except Exception:
                 pass
-        try:
-            GLOBAL_RAPID_OCR_POOL.clear()
-        except Exception:
-            pass
         torch_mod = _maybe_import_torch()
         if torch_mod is not None and getattr(torch_mod, "cuda", None):
             try:
@@ -374,6 +429,8 @@ class GlossExtract:
 
     def _convert_all_with_timeout(self, files: Iterable[Path], timeout_s: int, **kwargs):
         """Use Docling native timeout if available; otherwise call directly (no fallback wrapper)."""
+        if getattr(self, "page_range", None) is not None:
+            kwargs.setdefault("page_range", self.page_range)
         file_list = [Path(f) for f in files]
         if not file_list:
             return []
@@ -390,12 +447,15 @@ class GlossExtract:
             timeout_kw = None
 
         backend_cls = getattr(self, "_active_pdf_backend", None)
-        is_native_backend = backend_cls is DoclingParseV2DocumentBackend if backend_cls else False
+        is_native_backend = backend_cls is DoclingParseDocumentBackend if backend_cls else False
 
         if timeout_kw and not is_native_backend and len(set(budgets)) == 1:
             kw = dict(raises_on_error=False)
             kw.update(kwargs)
-            kw[timeout_kw] = int(budgets[0])
+            if self._font_repair_output_dir is not None:
+                file_list = [self._prepare_font_repair(path, self._font_repair_output_dir) for path in file_list]
+            kw[timeout_kw] = int(min(self._remaining_text_timeout(path, budget)
+                                      for path, budget in zip(file_list, budgets)))
             return list(self.converter.convert_all(file_list, **kw))  # type: ignore
 
         results = []
@@ -404,9 +464,14 @@ class GlossExtract:
         return results
 
     def _convert_with_timeout(self, file: Path, timeout_s: int, **kwargs):
+        if self._font_repair_output_dir is not None:
+            file = self._prepare_font_repair(Path(file), self._font_repair_output_dir)
         budget = timeout_s if timeout_s is not None else self._calculate_text_timeout(file_path=file)
+        budget = self._remaining_text_timeout(file, budget)
         timeout_kw = self._supports_native_timeout()
         kw = dict(raises_on_error=False)
+        if getattr(self, "page_range", None) is not None:
+            kw["page_range"] = self.page_range
         kw.update(kwargs)
         if timeout_kw:
             kw[timeout_kw] = int(budget)
@@ -484,6 +549,7 @@ class GlossExtract:
         use_cls: bool,
         ocr_langs: list[str] | None,
         profile_timings: bool,
+        ocr_options=None,
     ) -> tuple:
         langs = tuple((ocr_langs or ["el", "en"]))
         return (
@@ -491,6 +557,7 @@ class GlossExtract:
             bool(enable_ocr), bool(force_full_page_ocr), float(text_score), float(images_scale),
             bool(formula_enrichment), bool(code_enrichment), bool(use_cls), bool(profile_timings), langs,
             bool(getattr(self, "use_pypdfium_backend", False)),
+            ocr_options.model_dump_json() if ocr_options is not None else None,
         )
 
     def ensure_extractor(
@@ -505,10 +572,11 @@ class GlossExtract:
         use_cls: bool = False,
         ocr_langs: list[str] | None = None,
         profile_timings: bool = True,
+        ocr_options=None,
     ):
         """Ensure a converter exists; rebuild only when configuration changes."""
         # Mark extractor as supporting external state updates when pooling is active
-        if enable_ocr:
+        if enable_ocr and ocr_options is None:
             self.external_state_updates = True
 
         sig = self._cfg_signature(
@@ -521,6 +589,7 @@ class GlossExtract:
             use_cls=use_cls,
             ocr_langs=ocr_langs,
             profile_timings=profile_timings,
+            ocr_options=ocr_options,
         )
         if getattr(self, "converter", None) is not None and self._last_extractor_cfg == sig:
             try:
@@ -538,6 +607,7 @@ class GlossExtract:
             use_cls=use_cls,
             ocr_langs=ocr_langs,
             profile_timings=profile_timings,
+            ocr_options=ocr_options,
         )
 
     def create_extractor(
@@ -552,15 +622,21 @@ class GlossExtract:
         use_cls: bool = False,
         ocr_langs: list[str] | None = None,
         profile_timings: bool = True,
+        ocr_options=None,
     ):
-        """Create a document converter with configured options using the canonical builder.
-
-        Delegates PDF pipeline construction to `glossapi.ocr.rapidocr.pipeline.build_rapidocr_pipeline`
-        to avoid duplicated provider checks and option wiring. Falls back to the legacy
-        inline path if the canonical builder is unavailable.
-        """
+        """Create a Docling document converter for Phase-1 extraction."""
+        if ocr_options is not None and not enable_ocr:
+            raise ValueError("ocr_options requires enable_ocr=True")
+        if self.use_pypdfium_backend and ocr_options is not None:
+            raise ValueError("OCR engine requires the Docling backend")
+        if self.use_pypdfium_backend and not (formula_enrichment or code_enrichment):
+            self.pdf_backend_name = "pypdfium"
+            self._active_pdf_backend = None
+            return
         _ensure_docling_converter_loaded()
         _ensure_docling_pipeline_loaded()
+        _ensure_docling_datamodel_loaded()
+        from docling.pipeline.simple_pipeline import SimplePipeline
         # Enable/disable Docling pipeline timings collection (for benchmarks)
         try:
             from docling.datamodel.settings import settings as _settings  # type: ignore
@@ -569,176 +645,89 @@ class GlossExtract:
             pass
 
         # Record the PDF backend name for provenance (default to native backend)
-        self.pdf_backend_name = "docling_parse_v2"
-        self._active_pdf_backend = DoclingParseV2DocumentBackend
+        self.pdf_backend_name = _DOCLING_PARSE_BACKEND_NAME
+        self._active_pdf_backend = DoclingParseDocumentBackend
 
         # Best-effort Torch preflight only if Phase‑1 is asked to do enrichment
         try:
-            if formula_enrichment:
+            if formula_enrichment or code_enrichment:
                 torch_mod = _maybe_import_torch(force=True)
                 if torch_mod is None:
-                    raise RuntimeError("Torch not available but formula enrichment requested.")
+                    raise RuntimeError("Torch not available but Docling GPU enrichment was requested.")
                 if hasattr(torch_mod, "cuda") and isinstance(getattr(self, "pipeline_options", None), PdfPipelineOptions):
                     dev = getattr(self.pipeline_options, "accelerator_options", None)
                     dv = getattr(dev, "device", None)
                     if (isinstance(dv, str) and dv.lower().startswith("cuda")) and not torch_mod.cuda.is_available():
-                        raise RuntimeError("Torch CUDA not available but formula enrichment requested.")
+                        raise RuntimeError("Torch CUDA not available but Docling GPU enrichment was requested.")
         except Exception as e:
             raise RuntimeError(f"Torch CUDA preflight failed: {e}")
 
-        # Build PDF pipeline via the canonical builder (preferred)
-        opts = None
-        active_backend = DoclingParseV2DocumentBackend
-        try:
-            from .ocr.rapidocr.pipeline import build_layout_pipeline, build_rapidocr_pipeline  # type: ignore
-        except Exception:  # pragma: no cover - adapter fallback
-            from ._pipeline import build_layout_pipeline, build_rapidocr_pipeline  # type: ignore
-
-        device_str = self._current_device_str() or "cuda:0"
-        builder = build_rapidocr_pipeline if enable_ocr else build_layout_pipeline
-
-        try:
-            _, opts = builder(
-                device=device_str,
-                images_scale=float(images_scale),
-                formula_enrichment=bool(formula_enrichment),
-                code_enrichment=bool(code_enrichment),
-                **({"text_score": float(text_score)} if enable_ocr else {}),
-            )
-
-            if enable_ocr and hasattr(opts, "ocr_options") and getattr(opts, "ocr_options", None) is not None:
-                if use_cls is not None:
-                    setattr(opts.ocr_options, "use_cls", bool(use_cls))  # type: ignore[attr-defined]
-                if ocr_langs:
-                    setattr(opts.ocr_options, "lang", list(ocr_langs))  # type: ignore[attr-defined]
-                if force_full_page_ocr is not None:
-                    setattr(opts.ocr_options, "force_full_page_ocr", bool(force_full_page_ocr))  # type: ignore[attr-defined]
-
+        if enable_ocr and ocr_options is None:
             try:
-                setattr(opts, "images_scale", float(images_scale))
-            except Exception:
-                pass
-
-            self._active_pdf_options = opts
-            self._current_ocr_enabled = bool(enable_ocr)
-
-            # Create a multi-format DocumentConverter using the built PDF options
-            pdf_backend = DoclingParseV2DocumentBackend
-            if not enable_ocr:
-                try:
-                    if getattr(self, "use_pypdfium_backend", False):
-                        pdf_backend = PyPdfiumDocumentBackend
-                        self.pdf_backend_name = "pypdfium"
-                except Exception:
-                    pdf_backend = DoclingParseV2DocumentBackend
-            if opts is None:
-                opts = self.pipeline_options
-            active_backend = pdf_backend
-
-            self.converter = DocumentConverter(
-                allowed_formats=[
-                    InputFormat.PDF,
-                    InputFormat.DOCX,
-                    InputFormat.XML_JATS,
-                    InputFormat.HTML,
-                    InputFormat.PPTX,
-                    InputFormat.CSV,
-                    InputFormat.MD,
-                ],
-                format_options={
-                    InputFormat.PDF: PdfFormatOption(
-                        pipeline_options=opts,
-                        pipeline_cls=StandardPdfPipeline,
-                        backend=active_backend,
-                    ),
-                    InputFormat.DOCX: WordFormatOption(pipeline_cls=SimplePipeline),
-                    InputFormat.XML_JATS: XMLJatsFormatOption(),
-                    InputFormat.HTML: HTMLFormatOption(),
-                    InputFormat.PPTX: PowerpointFormatOption(),
-                    InputFormat.CSV: CsvFormatOption(),
-                    InputFormat.MD: MarkdownFormatOption(),
-                },
-            )
-            self._active_pdf_backend = active_backend
-        except Exception:
-            # Fallback to legacy inline configuration path
-            if enable_ocr:
-                r = resolve_packaged_onnx_and_keys()
-                if not (r.det and r.rec and r.cls and r.keys):
-                    raise FileNotFoundError(
-                        "RapidOCR ONNX models/keys not found. Ensure models exist under glossapi.models/rapidocr or set GLOSSAPI_RAPIDOCR_ONNX_DIR."
-                    )
-                langs = ocr_langs or ["el", "en"]
-                ocr_opts = RapidOcrOptions(
-                    backend="onnxruntime",
-                    lang=langs,
-                    force_full_page_ocr=bool(force_full_page_ocr),
-                    use_det=True,
-                    use_cls=bool(use_cls),
-                    use_rec=True,
-                    text_score=float(text_score),
-                    det_model_path=r.det,
-                    rec_model_path=r.rec,
-                    cls_model_path=r.cls,
-                    print_verbose=False,
+                self._log.warning(
+                    "Docling Phase-1 OCR is no longer supported. "
+                    "Ignoring enable_ocr/force_full_page_ocr; use Corpus.ocr(ocr_options=...) instead."
                 )
-                ocr_opts.rec_keys_path = r.keys
-                self.pipeline_options.ocr_options = ocr_opts
-            # Attach core toggles to existing pipeline_options
-            try:
-                self.pipeline_options.do_ocr = bool(enable_ocr)
-                self.pipeline_options.do_formula_enrichment = bool(formula_enrichment)
-                self.pipeline_options.do_code_enrichment = bool(code_enrichment)
-                try:
-                    setattr(self.pipeline_options, "images_scale", float(images_scale))
-                except Exception:
-                    pass
             except Exception:
                 pass
-            if not enable_ocr:
-                try:
-                    setattr(self.pipeline_options, "ocr_options", None)
-                except Exception:
-                    pass
 
-            pdf_backend = DoclingParseV2DocumentBackend
-            if not enable_ocr:
-                try:
-                    if getattr(self, "use_pypdfium_backend", False):
-                        pdf_backend = PyPdfiumDocumentBackend
-                        self.pdf_backend_name = "pypdfium"
-                except Exception:
-                    pdf_backend = DoclingParseV2DocumentBackend
+        active_backend = DoclingParseDocumentBackend
+        device_str = self._current_device_str() or "cuda:0"
+        _, opts = build_layout_pipeline(
+            device=device_str,
+            images_scale=float(images_scale),
+            formula_enrichment=bool(formula_enrichment),
+            code_enrichment=bool(code_enrichment),
+            **({"ocr_options": ocr_options} if ocr_options is not None else {}),
+        )
+        try:
+            opts.do_ocr = ocr_options is not None
+            setattr(opts, "images_scale", float(images_scale))
+        except Exception:
+            pass
 
-            active_backend = pdf_backend
+        self._active_pdf_options = opts
+        self._current_ocr_enabled = ocr_options is not None
 
-            self.converter = DocumentConverter(
-                allowed_formats=[
-                    InputFormat.PDF,
-                    InputFormat.DOCX,
-                    InputFormat.XML_JATS,
-                    InputFormat.HTML,
-                    InputFormat.PPTX,
-                    InputFormat.CSV,
-                    InputFormat.MD,
-                ],
-                format_options={
-                    InputFormat.PDF: PdfFormatOption(
-                        pipeline_options=self.pipeline_options,
-                        pipeline_cls=StandardPdfPipeline,
-                        backend=active_backend,
-                    ),
-                },
-            )
+        pdf_backend = DoclingParseDocumentBackend
+        try:
+            if getattr(self, "use_pypdfium_backend", False):
+                pdf_backend = PyPdfiumDocumentBackend
+                self.pdf_backend_name = "pypdfium"
+        except Exception:
+            pdf_backend = DoclingParseDocumentBackend
+        active_backend = pdf_backend
 
-            self._active_pdf_options = self.pipeline_options
-            self._current_ocr_enabled = bool(enable_ocr)
-            self._active_pdf_backend = active_backend
+        self.converter = DocumentConverter(
+            allowed_formats=[
+                InputFormat.PDF,
+                InputFormat.DOCX,
+                InputFormat.XML_JATS,
+                InputFormat.HTML,
+                InputFormat.PPTX,
+                InputFormat.CSV,
+                InputFormat.MD,
+            ],
+            format_options={
+                InputFormat.PDF: PdfFormatOption(
+                    pipeline_options=opts,
+                    pipeline_cls=StandardPdfPipeline,
+                    backend=active_backend,
+                ),
+                InputFormat.DOCX: WordFormatOption(pipeline_cls=SimplePipeline),
+                InputFormat.XML_JATS: XMLJatsFormatOption(),
+                InputFormat.HTML: HTMLFormatOption(),
+                InputFormat.PPTX: PowerpointFormatOption(),
+                InputFormat.CSV: CsvFormatOption(),
+                InputFormat.MD: MarkdownFormatOption(),
+            },
+        )
+        self._active_pdf_backend = active_backend
 
         # Record last configuration for reuse
         try:
             self._last_extractor_cfg = self._cfg_signature(
-                enable_ocr=enable_ocr,
+                enable_ocr=ocr_options is not None,
                 force_full_page_ocr=force_full_page_ocr,
                 text_score=text_score,
                 images_scale=images_scale,
@@ -747,10 +736,51 @@ class GlossExtract:
                 use_cls=use_cls,
                 ocr_langs=ocr_langs,
                 profile_timings=profile_timings,
+                ocr_options=ocr_options,
             )
         except Exception:
             self._last_extractor_cfg = None
     
+    def _prepare_font_repair(self, file_path: Path, output_dir: Path) -> Path:
+        """Prepare a file at its worker's extraction boundary, preserving its name."""
+        file_path = Path(file_path)
+        if file_path.suffix.lower() != ".pdf":
+            return file_path
+        key = str(file_path.resolve())
+        if key in self._font_repair_paths:
+            return self._font_repair_paths[key]
+        budget = self._calculate_text_timeout(file_path=file_path)
+        deadline = time.monotonic() + budget
+        from .pdf_repair.extract import repair_for_extract
+        selected, data = repair_for_extract(file_path, Path(output_dir).parent,
+                                            enabled=self.repair_fonts,
+                                            deadline=deadline - budget / 2,
+                                            **({"backend_name": self.repair_backend} if getattr(self, "repair_backend", None) is not None else {}))
+        self._font_repair_records[file_path.stem] = data
+        self._font_repair_paths[key] = selected
+        self._font_repair_paths[str(selected.resolve())] = selected
+        self._font_repair_originals[str(selected.resolve())] = file_path
+        # Disabled repair leaves existing extraction timeout semantics intact.
+        if self.repair_fonts:
+            self._font_repair_deadlines[key] = deadline
+            self._font_repair_deadlines[str(selected.resolve())] = deadline
+        self._update_extraction_metadata(output_dir, file_path, "pending",
+                                         "pypdfium" if self.use_pypdfium_backend else "standard")
+        if data["font_repair_status"] == "repaired":
+            before, after = data["font_repair_valid_rate_before"], data["font_repair_valid_rate_after"]
+            rates = f" {before:.6f}→{after:.6f}" if before is not None and after is not None else ""
+            self._log.info("Font repair %s: fonts=%d%s", file_path.stem, data["font_repair_fonts"], rates)
+        elif data["font_repair_status"] == "error":
+            self._log.warning("Font repair %s: %s; using original PDF", file_path.stem, data["font_repair_error"])
+        return selected
+
+    def _original_extract_file(self, file_path: Path) -> Path:
+        return self._font_repair_originals.get(str(Path(file_path).resolve()), Path(file_path))
+
+    def _remaining_text_timeout(self, file_path: Path, budget: float) -> float:
+        deadline = self._font_repair_deadlines.get(str(Path(file_path).resolve()))
+        return min(budget, max(0.0, deadline - time.monotonic())) if deadline is not None else budget
+
     def _get_pdf_page_count(self, file_path: Path) -> Optional[int]:
         """
         Lightweight preflight to get total page count for a PDF.
@@ -761,13 +791,13 @@ class GlossExtract:
             if file_path.suffix.lower() != ".pdf":
                 return None
             import pypdfium2 as pdfium  # local import to avoid hard dep at import time
-            pdf = pdfium.PdfDocument(str(file_path))
-            n = len(pdf)
-            # Explicit close to release resources
-            try:
-                pdf.close()
-            except Exception:
-                pass
+            from .pdfium_guard import pdfium_guard
+            with pdfium_guard():
+                pdf = pdfium.PdfDocument(str(file_path))
+                try:
+                    n = len(pdf)
+                finally:
+                    pdf.close()
             return int(n)
         except Exception as e:
             self._log.warning(f"Failed to get page count for {file_path}: {e}")
@@ -793,7 +823,13 @@ class GlossExtract:
         if baseline <= 0:
             baseline = per_page
         if page_count is None and file_path is not None:
-            page_count = self._get_pdf_page_count(file_path)
+            # Reuse the count the stage preflight (run_prepared) read from this same file in this same call,
+            # instead of opening the PDF a second time; without one, count the pages here, as before.
+            counted = getattr(self, "_preflight_page_counts", None)
+            if counted:
+                page_count = counted.get(str(Path(file_path).resolve()))
+            if page_count is None:
+                page_count = self._get_pdf_page_count(file_path)
         if page_count is None or page_count <= 0:
             return baseline
         budget = max(int(page_count) * per_page, per_page)
@@ -807,6 +843,7 @@ class GlossExtract:
 
         Returns True if all chunks succeeded (or partial-success) and final MD assembled; False otherwise.
         """
+        file_path = self._prepare_font_repair(file_path, output_dir)
         stem = file_path.stem
         page_count = self._get_pdf_page_count(file_path)
         if page_count is None:
@@ -817,14 +854,17 @@ class GlossExtract:
                 success_count, partial_success_count, failure_count = self._export_documents(conv_results, output_dir=output_dir)
                 return (success_count + partial_success_count) > 0 and failure_count == 0
             except Exception as e:
+                if _disk_full(e):
+                    raise
                 self._log.error(f"Fallback non-chunked processing failed for {file_path.name}: {e}")
                 return False
 
         # Mark as chunked in existing metadata parquet (minimal provenance)
         try:
             self._mark_is_chunked(output_dir=output_dir, src_file=file_path)
-        except Exception:
-            pass
+        except Exception as _error:
+            if _disk_full(_error):
+                raise
 
         chunk_dir = output_dir / "chunks" / stem
         chunk_dir.mkdir(parents=True, exist_ok=True)
@@ -862,23 +902,29 @@ class GlossExtract:
                         timeout_s=chunk_timeout_budget,
                         page_range=(start, end),
                     )
-                    if conv_res.status in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
+                    if getattr(conv_res.status, "value", conv_res.status) in (ConversionStatus.SUCCESS.value, ConversionStatus.PARTIAL_SUCCESS.value):
                         markdown_content = conv_res.document.export_to_markdown()
                         fixed_content = self._fix_greek_text(markdown_content)
                         chunk_name = f"{stem}__p{start:04d}-{end:04d}.md"
                         with (chunk_dir / chunk_name).open("w", encoding="utf-8") as fp:
                             fp.write(fixed_content)
                         all_segments.append(fixed_content)
-                        status = "ok" if conv_res.status == ConversionStatus.SUCCESS else "partial"
+                        status = "ok" if getattr(conv_res.status, "value", conv_res.status) == ConversionStatus.SUCCESS.value else "partial"
                         break
                     else:
                         status = "error"
                         last_error = "; ".join([getattr(e, "error_message", str(e)) for e in getattr(conv_res, "errors", [])]) or "unknown"
                         break
                 except TimeoutError as te:
+                    observe("chunk_timeout", path=self._original_extract_file(file_path), error=te,
+                        status="failed", page_first=start, page_last=end, inner_attempt=tries)
                     status = "timeout"
                     last_error = str(te)
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
+                    observe("chunk_error", path=self._original_extract_file(file_path), error=e,
+                        status="failed", page_first=start, page_last=end, inner_attempt=tries)
                     status = "error"
                     last_error = str(e)
 
@@ -912,7 +958,22 @@ class GlossExtract:
             with manifest_path.open("w", encoding="utf-8") as fp:
                 json.dump(manifest, fp, ensure_ascii=False, indent=2)
         except Exception as e:
+            if _disk_full(e):
+                raise
             self._log.error(f"Failed to write chunk manifest for {file_path.name}: {e}")
+
+        # Always attempt to assemble whatever chunks succeeded (best-effort)
+        out_md_path = output_dir / f"{stem}.md"
+        final_md_written = False
+        if all_segments:
+            try:
+                final_md = "\n\n".join(all_segments)
+                out_md_path.write_text(final_md, encoding="utf-8")
+                final_md_written = True
+            except Exception as e:
+                if _disk_full(e):
+                    raise
+                self._log.error(f"Failed to assemble final markdown for {file_path.name}: {e}")
 
         if not completed:
             # Record failure/timeout provenance in parquet
@@ -928,25 +989,23 @@ class GlossExtract:
                     chunk_size=self.chunk_size,
                     chunk_count=len(manifest.get("entries", [])),
                     chunk_manifest_path=manifest_path,
+                    no_partial_output=not final_md_written,
                 )
             except Exception as e:
+                if _disk_full(e):
+                    raise
                 self._log.warning(f"Failed to record chunked extraction metadata for {file_path.name}: {e}")
             # Copy source file to timeout_dir for inspection if provided
             if timeout_dir is not None:
                 try:
                     copy2(file_path, timeout_dir / file_path.name)
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     self._log.error(f"Failed to copy timeout/failed file {file_path.name}: {e}")
             return False
 
-        # Assemble final markdown
-        try:
-            final_md = "\n\n".join(all_segments)
-            out_md_path = output_dir / f"{stem}.md"
-            with out_md_path.open("w", encoding="utf-8") as fp:
-                fp.write(final_md)
-        except Exception as e:
-            self._log.error(f"Failed to assemble final markdown for {file_path.name}: {e}")
+        if not final_md_written:
             return False
         # Record success provenance in parquet
         try:
@@ -962,6 +1021,8 @@ class GlossExtract:
                 chunk_manifest_path=manifest_path,
             )
         except Exception as e:
+            if _disk_full(e):
+                raise
             self._log.warning(f"Failed to record chunked extraction metadata for {file_path.name}: {e}")
 
         return True
@@ -991,78 +1052,9 @@ class GlossExtract:
                 
         return unprocessed_files
 
-    def _find_metadata_parquet(self, input_dir: Union[str, Path]) -> Optional[Path]:
-        """
-        Locate the metadata parquet (e.g. *download_results.parquet*) starting in
-        ``input_dir``. The search order is:
-        1. ``input_dir``
-        2. ``input_dir/download_results``
-        3. ``input_dir.parent``
-        4. ``input_dir.parent/download_results``
-        The first match is cached in ``self._metadata_parquet_path`` so later
-        look-ups are O(1).
-        """
-        if self._metadata_parquet_path is not None:
-            return self._metadata_parquet_path
-
-        from glossapi.parquet_schema import ParquetSchema  # local import to avoid circular deps
-        import logging
-
-        logger = logging.getLogger(__name__)
-        input_dir = Path(input_dir)
-
-        parquet_schema = ParquetSchema({'url_column': getattr(self, 'url_column', 'url')})
-        logger.info(f"Using URL column: {parquet_schema.url_column}")
-
-        input_parquet_path: Optional[Path] = parquet_schema.find_metadata_parquet(input_dir, require_url_column=False)
-
-        # Fallback: look inside download_results sub-directory
-        if input_parquet_path is None:
-            download_results_dir = input_dir / "download_results"
-            if download_results_dir.exists():
-                input_parquet_path = parquet_schema.find_metadata_parquet(download_results_dir, require_url_column=False)
-
-        # Additional fallbacks: parent directory and its download_results
-        if input_parquet_path is None:
-            parent_dir = input_dir.parent
-            if parent_dir.exists():
-                input_parquet_path = parquet_schema.find_metadata_parquet(parent_dir, require_url_column=False)
-                if input_parquet_path is None:
-                    parent_download_dir = parent_dir / "download_results"
-                    if parent_download_dir.exists():
-                        input_parquet_path = parquet_schema.find_metadata_parquet(parent_download_dir, require_url_column=False)
-
-        if input_parquet_path is not None:
-            self._metadata_parquet_path = input_parquet_path
-            logger.info(f"Found metadata parquet file: {input_parquet_path}")
-
-        return input_parquet_path
-
-    def _ensure_metadata_parquet(self, markdown_dir: Path) -> Optional[Path]:
-        """Ensure a metadata parquet exists and return its path.
-
-        We search via _find_metadata_parquet starting from the markdown_dir. If none is
-        found, create a basic one under the pipeline root (parent of markdown_dir)
-        using currently available markdown files.
-        """
-        try:
-            from glossapi.parquet_schema import ParquetSchema
-        except Exception as e:
-            self._log.error(f"ParquetSchema import failed: {e}")
-            return None
-
-        existing = self._find_metadata_parquet(markdown_dir)
-        if existing is not None:
-            return existing
-
-        pipeline_root = markdown_dir.parent
-        schema = ParquetSchema({'url_column': getattr(self, 'url_column', 'url')})
-        created = schema.ensure_metadata_parquet(pipeline_root)
-        if created is None:
-            self._log.warning("Could not create a basic metadata parquet; extraction metadata will not be recorded.")
-        else:
-            self._metadata_parquet_path = created
-        return created
+    # The extractor has no metadata-parquet finder of its own (T2-G03): its former _find_metadata_parquet /
+    # _ensure_metadata_parquet (a third search order: input_dir, download_results, parent) had no caller. The corpus
+    # phases resolve metadata through Corpus._resolve_metadata_parquet and the clean resolver.
 
     def _mark_is_chunked(self, output_dir: Path, src_file: Path) -> None:
         """Record chunked extraction via sidecar (no direct parquet writes)."""
@@ -1070,6 +1062,7 @@ class GlossExtract:
             root = Path(output_dir).parent
             sc_dir = root / "sidecars" / "extract"
             sc_dir.mkdir(parents=True, exist_ok=True)
+            src_file = self._original_extract_file(src_file)
             stem = Path(src_file).stem
             p = sc_dir / f"{stem}.json"
             data = {}
@@ -1083,6 +1076,8 @@ class GlossExtract:
             import json as _json
             p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
+            if _disk_full(e):
+                raise
             self._log.warning(f"Failed to write extract sidecar for {src_file}: {e}")
 
 
@@ -1094,6 +1089,7 @@ class GlossExtract:
         timeout_dir: Optional[Path] = None,
     ) -> bool:
         """Process one document safely, updating metadata on failure."""
+        self._font_repair_output_dir = Path(output_dir)
         if getattr(self, "use_pypdfium_backend", False):
             try:
                 self._log.info("Using PyPDFium safe extractor for %s", Path(file_path).name)
@@ -1120,6 +1116,8 @@ class GlossExtract:
                     copy2(file_path, timeout_dir / filename)
                     self._log.info(f"Copied timeout file to {timeout_dir / filename}")
                 except Exception as copy_exc:
+                    if _disk_full(copy_exc):
+                        raise
                     self._log.error(f"Failed to copy timeout file {filename}: {copy_exc}")
             try:
                 self._update_extraction_metadata(
@@ -1130,9 +1128,15 @@ class GlossExtract:
                     page_count=self._get_pdf_page_count(Path(file_path)),
                 )
             except Exception as meta_exc:
+                if _disk_full(meta_exc):
+                    raise
                 self._log.warning(f"Failed to record timeout metadata for {filename}: {meta_exc}")
             return False
         except Exception as individual_error:
+            if _disk_full(individual_error):
+                raise
+            observe("extract_exception", path=self._original_extract_file(Path(file_path)), error=individual_error,
+                status="failed", operation="extract.convert_and_export")
             self._log.error("Failed to process file %s: %s", filename, individual_error, exc_info=True)
         # Record general failure metadata
         try:
@@ -1144,6 +1148,8 @@ class GlossExtract:
                 page_count=self._get_pdf_page_count(Path(file_path)),
             )
         except Exception as meta_exc:
+            if _disk_full(meta_exc):
+                raise
             self._log.warning(f"Failed to record failure metadata for {filename}: {meta_exc}")
         return False
 
@@ -1154,103 +1160,170 @@ class GlossExtract:
         output_dir: Path,
         timeout_dir: Optional[Path] = None,
     ) -> bool:
-        """Minimal PyPDFium-based extraction path for safe mode."""
+        """Safe-mode extraction: one PDFium load per page; layout v2 Markdown (K5-A2).
+
+        Each page's text is production's ``get_text_range()`` text, read with the char table of the same text page
+        through Rust-owned handles (``glossapi.markdown_layout.reader``; pypdfium2 when the native reader cannot be
+        used, with exactly the previous exceptions and text). The text is unchanged. In the default Markdown mode
+        (``GLOSSAPI_MARKDOWN_LAYOUT=layout_v2``) the pages are labelled with layout v2 and rendered by the rules in
+        ``markdown_layout/render.py``; ``plain`` writes the plain pages as before K5-A2. The whole document is read
+        under the process-wide PDFium lock (``glossapi.pdfium_guard``, policy P7).
+        """
         try:
-            import pypdfium2 as pdfium  # type: ignore
+            import pypdfium2 as pdfium  # type: ignore  # noqa: F401
         except ImportError as exc:
+            observe("pdf_backend_missing", path=file_path, error=exc, status="failed")
             self._log.error("PyPDFium backend requested but pypdfium2 is not installed: %s", exc)
             return False
+        from . import markdown_layout
+        from .pdfium_guard import pdfium_guard
 
+        layout_mode = markdown_layout.mode()
+        file_path = self._prepare_font_repair(Path(file_path), output_dir)
         stem = Path(file_path).stem
         out_md_path = output_dir / f"{stem}.md"
-
-        try:
-            doc = pdfium.PdfDocument(str(file_path))
-        except Exception as exc:
-            self._log.error("PyPDFium failed to open %s: %s", Path(file_path).name, exc)
-            return False
-
-        texts: List[str] = []
+        labels = layout_mode == "layout_v2"
+        native, native_problem = markdown_layout.native_module() if labels else (None, None)
         page_count = 0
-        try:
-            page_count = len(doc)
-            timeout_budget = self._calculate_text_timeout(
-                file_path=file_path,
-                page_count=page_count,
-                fallback=self.processing_timeout,
-            )
-            deadline = time.time() + timeout_budget
-            for index in range(page_count):
-                if time.time() > deadline:
-                    raise TimeoutError(
-                        f"PyPDFium extraction timed out after {timeout_budget}s "
-                        f"while processing {Path(file_path).name}"
-                    )
-                try:
-                    page = doc[index]
-                    text_page = page.get_textpage()
-                    content = text_page.get_text_range()
-                    text = content.replace("\r\n", "\n").replace("\r", "\n").strip()
-                    if text:
-                        texts.append(text)
-                except Exception as page_exc:
-                    self._log.warning(
-                        "PyPDFium failed on page %d of %s: %s",
-                        index + 1,
-                        Path(file_path).name,
-                        page_exc,
-                    )
-            markdown = "\n\n".join(texts)
-            out_md_path.write_text(markdown, encoding="utf-8")
-            self._update_extraction_metadata(
-                output_dir=output_dir,
-                src_file=Path(file_path),
-                status="ok",
-                extraction_mode="pypdfium",
-                page_count=page_count,
-            )
-            return True
-        except TimeoutError as exc:
-            self._log.error("PyPDFium extraction timeout for %s: %s", Path(file_path).name, exc)
+
+        with pdfium_guard():
             try:
+                source = markdown_layout.open_page_source(Path(file_path), chars=native is not None)
+            except Exception as exc:
+                observe("pdf_open_failed", path=file_path, error=exc, status="failed")
+                self._log.error("PyPDFium failed to open %s: %s", Path(file_path).name, exc)
+                self._update_extraction_metadata(output_dir, file_path, "failure", "pypdfium")
+                return False
+            try:
+                labeller = (markdown_layout.DocumentLabeller(native) if native is not None and source.reader is not None
+                            else None)
+                texts: List[str] = []
+                attempted_pages, succeeded_pages, blank_pages, failed_pages = [], [], [], []
+                page_count = source.page_count
+                timeout_budget = self._calculate_text_timeout(
+                    file_path=file_path,
+                    page_count=page_count,
+                    fallback=self.processing_timeout,
+                )
+                timeout_budget = self._remaining_text_timeout(file_path, timeout_budget)
+                deadline = time.monotonic() + timeout_budget
+                plain_page_spans = []
+                plain_length = 0
+                for index in range(page_count):
+                    attempted_pages.append(index + 1)
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(
+                            f"PyPDFium extraction timed out after {timeout_budget}s "
+                            f"while processing {Path(file_path).name}"
+                        )
+                    text: Optional[str] = None
+                    try:
+                        text = markdown_layout.page_text(source.text(index))
+                        succeeded_pages.append(index + 1)
+                        if text:
+                            start = plain_length + (2 if texts else 0)
+                            plain_page_spans.append([index + 1, start, start + len(text)])
+                            plain_length = start + len(text)
+                            texts.append(text)
+                        else:
+                            blank_pages.append(index + 1)
+                    except Exception as page_exc:
+                        text = None
+                        failed_pages.append(index + 1)
+                        observe("safe_page_error", path=file_path, error=page_exc, page=index + 1, coverage="incomplete")
+                        self._log.warning(
+                            "PyPDFium failed on page %d of %s: %s",
+                            index + 1,
+                            Path(file_path).name,
+                            page_exc,
+                        )
+                    table = source.chars(index)      # always taken, so a plain-mode read keeps no tables
+                    if labeller is not None:
+                        labeller.add(index + 1, text, table)
+                # P4b: per-page decode status from the native content-stream check of the file PDFium read (pure Rust;
+                # PDFium's error state is not a signal). Recorded, never a routing input by itself.
+                from .pdf_repair.decode_status import page_decode_status
+                decode_status = page_decode_status(Path(file_path), page_count)
+                observe("legacy_observed", path=file_path, page_coverage={"attempted": attempted_pages, "succeeded": succeeded_pages, "blank": blank_pages, "failed": failed_pages, "decode_status": decode_status["pages"]}, complete=not failed_pages)
+                layout_metadata = None
+                if labeller is not None:
+                    labelled = labeller.finish(lambda page: source.reread_chars(page - 1))
+                    markdown, layout_metadata = markdown_layout.render_document(labelled, reader=source.reader)
+                    for page, problem in labelled.rejected:
+                        observe("layout_input_rejected", path=file_path, page=page, problem=problem)
+                    if source.reason:
+                        observe("layout_reader_fallback", path=file_path, reader=source.reader, problem=source.reason)
+                else:
+                    markdown = "\n\n".join(texts)
+                    if labels:
+                        problem = native_problem or source.reason or "no char reader"
+                        layout_metadata = markdown_layout.unavailable_metadata(problem, markdown)
+                        observe("layout_unavailable", path=file_path, problem=problem)
+                if not markdown:
+                    observe("safe_empty_text", path=file_path, blank_pages=blank_pages)
+                out_md_path.write_text(markdown, encoding="utf-8")
                 self._update_extraction_metadata(
                     output_dir=output_dir,
                     src_file=Path(file_path),
-                    status="timeout",
+                    status="ok",
                     extraction_mode="pypdfium",
-                    page_count=page_count or None,
+                    page_count=page_count,
+                    markdown_layout=layout_metadata,
+                    plain_pages=({"pages": plain_page_spans, "markdown_chars": len(markdown),
+                        "markdown_sha256": __import__('hashlib').sha256(markdown.encode('utf-8')).hexdigest()}
+                        if not labels else None),
+                    decode_status=decode_status,
                 )
-            except Exception:
-                pass
-            if timeout_dir is not None:
+                return True
+            except TimeoutError as exc:
+                observe("extract_timeout", path=file_path, error=exc, status="failed")
+                self._log.error("PyPDFium extraction timeout for %s: %s", Path(file_path).name, exc)
                 try:
-                    copy2(file_path, timeout_dir / Path(file_path).name)
+                    self._update_extraction_metadata(
+                        output_dir=output_dir,
+                        src_file=Path(file_path),
+                        status="timeout",
+                        extraction_mode="pypdfium",
+                        page_count=page_count or None,
+                    )
+                except Exception as _error:
+                    if _disk_full(_error):
+                        raise
+                if timeout_dir is not None:
+                    try:
+                        copy2(file_path, timeout_dir / Path(file_path).name)
+                    except Exception as _error:
+                        if _disk_full(_error):
+                            raise
+                return False
+            except Exception as exc:
+                if _disk_full(exc):
+                    raise
+                observe("extract_exception", path=self._original_extract_file(Path(file_path)), error=exc, status="failed")
+                self._log.error("PyPDFium extraction failed for %s: %s", Path(file_path).name, exc)
+                try:
+                    self._update_extraction_metadata(
+                        output_dir=output_dir,
+                        src_file=Path(file_path),
+                        status="failure",
+                        extraction_mode="pypdfium",
+                        page_count=page_count or None,
+                    )
+                except Exception as _error:
+                    if _disk_full(_error):
+                        raise
+                if timeout_dir is not None:
+                    try:
+                        copy2(file_path, timeout_dir / Path(file_path).name)
+                    except Exception as _error:
+                        if _disk_full(_error):
+                            raise
+                return False
+            finally:
+                try:
+                    source.close()
                 except Exception:
                     pass
-            return False
-        except Exception as exc:
-            self._log.error("PyPDFium extraction failed for %s: %s", Path(file_path).name, exc)
-            try:
-                self._update_extraction_metadata(
-                    output_dir=output_dir,
-                    src_file=Path(file_path),
-                    status="failure",
-                    extraction_mode="pypdfium",
-                    page_count=page_count or None,
-                )
-            except Exception:
-                pass
-            if timeout_dir is not None:
-                try:
-                    copy2(file_path, timeout_dir / Path(file_path).name)
-                except Exception:
-                    pass
-            return False
-        finally:
-            try:
-                doc.close()
-            except Exception:
-                pass
 
     def _update_extraction_metadata(
         self,
@@ -1265,12 +1338,23 @@ class GlossExtract:
         chunk_manifest_path: Optional[Path] = None,
         *,
         no_partial_output: bool = False,
+        markdown_layout: Optional[dict] = None,
+        plain_pages: Optional[dict] = None,
+        decode_status: Optional[dict] = None,
     ) -> None:
-        """Write extraction metadata to sidecar (eliminate in-worker parquet writes)."""
+        """Write extraction metadata to sidecar (eliminate in-worker parquet writes).
+
+        ``markdown_layout``: the safe extractor's layout v2 metadata (``glossapi.markdown_layout.render``), stored
+        under that key; absent (and removed) otherwise, so a plain-mode or Docling sidecar is unchanged.
+        ``decode_status``: the safe extractor's per-page content-stream decode status (K5-A2b, policy P4b,
+        ``glossapi.pdf_repair.decode_status``); absent (and removed) for the Docling route and failed extractions."""
+        reason_code = ("extract_completed" if status in ("ok", "success") else "extract_timeout" if status == "timeout" else "extract_exception" if extraction_mode == "pypdfium" else "chunk_assembly_failed" if extraction_mode == "chunked" else "docling_partial" if status == "partial" else "docling_failed")
+        observe(reason_code, path=self._original_extract_file(Path(src_file)), status="ok" if status in ("ok", "success") else "failed", backend_status=status, extraction_mode=extraction_mode, page_count=page_count, no_partial_output=no_partial_output)
         try:
             root = Path(output_dir).parent
             sc_dir = root / "sidecars" / "extract"
             sc_dir.mkdir(parents=True, exist_ok=True)
+            src_file = self._original_extract_file(src_file)
             stem = Path(src_file).stem
             p = sc_dir / f"{stem}.json"
             data = {}
@@ -1280,7 +1364,12 @@ class GlossExtract:
                     data = _json.loads(p.read_text(encoding="utf-8")) or {}
                 except Exception:
                     data = {}
+            # Repair provenance is keyed on the original stem even for repaired inputs.
+            repair = self._font_repair_records.get(stem)
+            if repair is not None:
+                data.update(repair)
             # Update fields
+            data["extract_status"] = str(status)
             data["extraction_mode"] = str(extraction_mode)
             if page_count is not None:
                 data["page_count"] = int(page_count)
@@ -1294,15 +1383,30 @@ class GlossExtract:
                 if chunk_manifest_path is not None:
                     data["chunk_manifest_path"] = str(chunk_manifest_path)
             # Backend and failure
-            backend_name = getattr(self, "pdf_backend_name", None) or ("docling_parse_v2" if getattr(self, "USE_V2", True) else "docling_parse")
+            backend_name = getattr(self, "pdf_backend_name", None) or _DOCLING_PARSE_BACKEND_NAME
             data["extraction_backend"] = backend_name
             if status in ("timeout", "error", "failure"):
                 data["failure_mode"] = status
+            else:
+                data.pop("failure_mode", None)
+            data.pop("no_partial_output", None)
             if no_partial_output:
                 data["no_partial_output"] = True
+            data.pop("markdown_layout", None)
+            if markdown_layout is not None:
+                data["markdown_layout"] = markdown_layout
+            data.pop("plain_pages", None)
+            if plain_pages is not None:
+                data["plain_pages"] = plain_pages
+            data.pop("decode_status", None)
+            if decode_status is not None:
+                data["decode_status"] = decode_status
             import json as _json
             p.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
+            if _disk_full(e):
+                raise
+            observe("extract_exception", path=src_file, error=e, warning=True, operation="extract.metadata_write", backend_result_unchanged=True)
             self._log.warning(f"Failed to write extraction sidecar for {src_file}: {e}")
 
     
@@ -1320,9 +1424,12 @@ class GlossExtract:
         Returns:
             Tuple of (successful_filenames, problematic_filenames)
         """
+        self._font_repair_output_dir = Path(output_dir)
         self._apply_thread_caps()
         policy = getattr(self, "batch_policy", "safe") or "safe"
         max_batch_files = max(1, getattr(self, "max_batch_files", 1))
+        if adapters_enabled():
+            max_batch_files = 1
 
         successful: List[str] = []
         problematic: List[str] = []
@@ -1334,7 +1441,9 @@ class GlossExtract:
             try:
                 if file_path.suffix.lower() == ".pdf":
                     n_pages = self._get_pdf_page_count(file_path)
-                    if n_pages is not None and n_pages > self.long_pdf_page_threshold:
+                    if (not self.use_pypdfium_backend and n_pages is not None
+                            and n_pages > self.long_pdf_page_threshold
+                            and getattr(self, "page_range", None) is None):
                         long_files.append(file_path)
                     else:
                         normal_files.append(file_path)
@@ -1345,7 +1454,7 @@ class GlossExtract:
                 normal_files.append(file_path)
 
         if normal_files:
-            if max_batch_files == 1:
+            if max_batch_files == 1 or self.use_pypdfium_backend:
                 if policy != "safe" and not self.use_pypdfium_backend:
                     self._log.info("Batch policy capped to 1; processing documents sequentially.")
                 for file_path in normal_files:
@@ -1356,7 +1465,7 @@ class GlossExtract:
                         )
                     except Exception:
                         pass
-                    if self._process_single_document(file_path, output_dir=output_dir, timeout_dir=timeout_dir):
+                    if self._run_sequential_document(file_path, output_dir=output_dir, timeout_dir=timeout_dir):
                         successful.append(Path(file_path).name)
                     else:
                         problematic.append(Path(file_path).name)
@@ -1369,8 +1478,8 @@ class GlossExtract:
                         )
                         self._export_documents(conv_results, output_dir=output_dir)
                         for res in conv_results:
-                            fname = Path(res.input.file).name
-                            if res.status in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
+                            fname = self._original_extract_file(Path(res.input.file)).name
+                            if getattr(res.status, "value", res.status) in (ConversionStatus.SUCCESS.value, ConversionStatus.PARTIAL_SUCCESS.value):
                                 successful.append(fname)
                             else:
                                 problematic.append(fname)
@@ -1391,16 +1500,29 @@ class GlossExtract:
         # Process long PDFs individually with chunking
         for file_path in long_files:
             try:
-                ok = self._process_file_chunked(file_path, output_dir=output_dir, timeout_dir=timeout_dir)
+                if adapters_enabled():
+                    from .stages.compatibility import extract_compatibility_document
+                    ok = extract_compatibility_document(self, file_path, output_dir, timeout_dir)
+                else:
+                    ok = self._process_file_chunked(file_path, output_dir=output_dir, timeout_dir=timeout_dir)
                 if ok:
                     successful.append(Path(file_path).name)
                 else:
                     problematic.append(Path(file_path).name)
             except Exception as e:
+                from .stages.compatibility import PublicationSourceConflictError
+                if isinstance(e, PublicationSourceConflictError):
+                    raise  # a refused publication is the caller's decision, never a per-file failure (CP-K4c3 R1)
                 problematic.append(Path(file_path).name)
                 self._log.error(f"Failed during chunked processing for {Path(file_path).name}: {e}")
 
         return successful, problematic
+
+    def _run_sequential_document(self, file_path, *, output_dir, timeout_dir=None):
+        if adapters_enabled():
+            from .stages.compatibility import extract_compatibility_document
+            return extract_compatibility_document(self, file_path, output_dir, timeout_dir)
+        return self._process_single_document(file_path, output_dir=output_dir, timeout_dir=timeout_dir)
         
     def extract_path(self, input_doc_paths, output_dir, batch_size: int = 5, *, skip_existing: bool = True):
         """
@@ -1412,7 +1534,13 @@ class GlossExtract:
             batch_size (int): Number of files to process in each batch
         """
         start_time = time.time()
+        self._font_repair_records = {}
+        self._font_repair_paths = {}
+        self._font_repair_originals = {}
+        self._font_repair_deadlines = {}
+        self._preflight_page_counts = {}
         output_dir = Path(output_dir)
+        self._font_repair_output_dir = output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
         # Ensure converter is created only when using Docling pipelines
         if self.converter is None and not getattr(self, "use_pypdfium_backend", False):
@@ -1582,7 +1710,18 @@ class GlossExtract:
         partial_success_count = 0
         
         for conv_res in conv_results:
-            if conv_res.status == ConversionStatus.SUCCESS:
+            # Stage evidence does not alter the compatibility serializer.
+            observed_pages = [int(page.page_no) for page in (getattr(conv_res, "pages", ()) or ()) if getattr(page, "page_no", None) is not None]
+            source_count = self._get_pdf_page_count(Path(conv_res.input.file))
+            selected_range = getattr(self, "page_range", None)
+            selected_pages = list(range(selected_range[0], selected_range[1]+1)) if selected_range else list(range(1, (source_count or 0)+1))
+            observe("legacy_observed", path=self._original_extract_file(Path(conv_res.input.file)),
+                page_coverage={"attempted": selected_pages, "succeeded": observed_pages, "blank": None,
+                    "failed": sorted(set(selected_pages)-set(observed_pages)),
+                    "complete": bool(selected_pages) and sorted(observed_pages) == selected_pages},
+                backend_status=str(getattr(conv_res.status, "value", conv_res.status)),
+                backend_errors=[getattr(error, "error_message", str(error)) for error in (getattr(conv_res, "errors", ()) or ())])
+            if getattr(conv_res.status, "value", conv_res.status) == ConversionStatus.SUCCESS.value:
                 success_count += 1
                 doc_filename = conv_res.input.file.stem
 
@@ -1609,6 +1748,8 @@ class GlossExtract:
                         page_count=self._get_pdf_page_count(Path(conv_res.input.file)),
                     )
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     self._log.warning(f"Failed to update extraction metadata for {doc_filename}: {e}")
                 # Optional Phase-1 artifacts for later enrichment/scheduling
                 try:
@@ -1617,13 +1758,16 @@ class GlossExtract:
                     if getattr(self, "emit_formula_index", False):
                         self._emit_formula_index(conv_res, output_dir, doc_filename)
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
+                    observe("required_extract_artifact_missing", path=conv_res.input.file, error=e, required=False, warning=True)
                     self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
 
                 # Optionally can also export to other formats like JSON
                 # with (output_dir / f"{doc_filename}.json").open("w", encoding='utf-8') as fp:
                 #     json.dump(conv_res.document.export_to_dict(), fp, ensure_ascii=False, indent=2)
 
-            elif conv_res.status == ConversionStatus.PARTIAL_SUCCESS:
+            elif getattr(conv_res.status, "value", conv_res.status) == ConversionStatus.PARTIAL_SUCCESS.value:
                 self._log.info(
                     f"Document {conv_res.input.file} was partially extracted with the following errors:"
                 )
@@ -1653,6 +1797,8 @@ class GlossExtract:
                         no_partial_output=True,
                     )
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     self._log.warning(f"Failed to update extraction metadata for {doc_filename}: {e}")
                 # Optional Phase-1 artifacts for later enrichment/scheduling
                 try:
@@ -1661,6 +1807,9 @@ class GlossExtract:
                     if getattr(self, "emit_formula_index", False):
                         self._emit_formula_index(conv_res, output_dir, doc_filename)
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
+                    observe("required_extract_artifact_missing", path=conv_res.input.file, error=e, required=False, warning=True)
                     self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
             else:
                 # Attempt best-effort export even on failure if a document exists
@@ -1699,6 +1848,8 @@ class GlossExtract:
                         no_partial_output=True,
                     )
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
                     self._log.warning(f"Failed to update extraction metadata for {Path(conv_res.input.file).name}: {e}")
                 # Optional Phase-1 artifacts even on fail->partial
                 try:
@@ -1707,13 +1858,16 @@ class GlossExtract:
                     if doc_filename and getattr(self, "emit_formula_index", False):
                         self._emit_formula_index(conv_res, output_dir, doc_filename)
                 except Exception as e:
+                    if _disk_full(e):
+                        raise
+                    observe("required_extract_artifact_missing", path=conv_res.input.file, error=e, required=False, warning=True)
                     self._log.warning(f"Optional Phase-1 artifacts failed for {doc_filename}: {e}")
             # Write per-document metrics JSON (Docling timings) and per-page metrics (skipped in benchmark mode)
             if not getattr(self, "benchmark_mode", False):
                 try:
                     import json as _json
                     # Per-document timings (same structure as module runner)
-                    metrics = {"file": str(getattr(conv_res.input.file, 'name', 'unknown')), "timings": {}}
+                    metrics = {"file": self._original_extract_file(Path(conv_res.input.file)).name, "timings": {}}
                     for key, item in conv_res.timings.items():
                         times = list(item.times)
                         cnt = int(item.count)
@@ -1754,8 +1908,12 @@ class GlossExtract:
                                     int(row.get("code_count", 0)),
                                 )
                     except Exception as _e:
+                        if _disk_full(_e):
+                            raise
                         self._log.warning("Failed to compute per-page metrics for %s: %s", doc_filename, _e)
                 except Exception as _e:
+                    if _disk_full(_e):
+                        raise
                     self._log.debug("Metrics export failed for %s: %s", doc_filename, _e)
 
         return success_count, partial_success_count, failure_count
@@ -1764,7 +1922,9 @@ class GlossExtract:
         """Export DoclingDocument JSON (compressed) with metadata stamping for Phase-1."""
         try:
             from .ocr.utils.json_io import export_docling_json, _sha256_file  # type: ignore
-        except Exception:
+        except Exception as exc:
+            observe("required_extract_artifact_missing", path=conv_res.input.file, error=exc,
+                required=False, warning=True, artifact_kind="docling_json")
             self._log.warning("glossapi.ocr.utils.json_io not available; skipping JSON export")
             return
         try:
@@ -1774,18 +1934,25 @@ class GlossExtract:
                 pdf_path = Path(getattr(conv_res.input.file, 'path', None) or conv_res.input.file)  # type: ignore
             except Exception:
                 pass
-            doc_id = _sha256_file(pdf_path) if (pdf_path and pdf_path.exists()) else ""
+            if pdf_path is not None:
+                pdf_path = self._original_extract_file(pdf_path)
+            provenance = getattr(self, "_stage_source_provenance", None)
+            doc_id = provenance["sha256"] if provenance else _sha256_file(pdf_path) if (pdf_path and pdf_path.exists()) else ""
             meta = {
                 "schema_version": 1,
                 "sha256_pdf": doc_id,
                 "page_count": len(getattr(conv_res.document, 'pages', []) or []),
-                "source_pdf_relpath": str(pdf_path) if pdf_path else "",
+                "source_pdf_relpath": provenance["path"] if provenance else str(pdf_path) if pdf_path else "",
             }
             json_dir = output_dir.parent / "json"
             json_dir.mkdir(parents=True, exist_ok=True)
             out_json = json_dir / f"{stem}.docling.json"
             export_docling_json(conv_res.document, out_json, compress="zstd", meta=meta)  # type: ignore
         except Exception as e:
+            if _disk_full(e):
+                raise
+            observe("required_extract_artifact_missing", path=conv_res.input.file, error=e,
+                required=False, warning=True, artifact_kind="docling_json")
             self._log.warning(f"JSON export failed for {stem}: {e}")
 
     def _emit_formula_index(self, conv_res: ConversionResult, output_dir: Path, stem: str) -> int:
@@ -1809,7 +1976,7 @@ class GlossExtract:
             try:
                 from .ocr.utils.json_io import _sha256_file  # type: ignore
                 from pathlib import Path as _Path
-                pdf_path = _Path(getattr(getattr(conv_res, 'input', None), 'file', ''))
+                pdf_path = self._original_extract_file(_Path(getattr(getattr(conv_res, 'input', None), 'file', '')))
                 sha256_pdf = _sha256_file(pdf_path) if (pdf_path and pdf_path.exists()) else ""
             except Exception:
                 sha256_pdf = ""
@@ -1887,6 +2054,8 @@ class GlossExtract:
                     fp.write("\n".join(out_lines) + "\n")
                 return len(out_lines)
         except Exception as e:
+            if _disk_full(e):
+                raise
             self._log.warning(f"Formula index emit failed for {stem}: {e}")
             return 0
 

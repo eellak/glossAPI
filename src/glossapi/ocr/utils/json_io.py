@@ -11,10 +11,6 @@ try:
 except Exception:  # pragma: no cover
     zstd = None  # type: ignore
 
-try:
-    from docling_core.types.doc.document import DoclingDocument  # type: ignore
-except Exception:
-    DoclingDocument = None  # type: ignore
 
 
 def _sha256_file(p: Path, chunk: int = 1024 * 1024) -> str:
@@ -100,8 +96,9 @@ def load_docling_json(path: Path) -> Any:
     else:
         data = path.read_bytes()
 
-    if DoclingDocument is None:
-        raise RuntimeError("docling_core is not available to load DoclingDocument")
+    from ...optional_dependencies import optional_dependencies
+    with optional_dependencies("layout"):
+        from docling_core.types.doc.document import DoclingDocument
     return DoclingDocument.model_validate_json(data.decode("utf-8"))
 
 

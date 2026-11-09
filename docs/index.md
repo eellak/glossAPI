@@ -5,24 +5,15 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 ## Start here
 - [Onboarding Guide](getting_started.md) — prerequisites, install choices, and first run.
 - [Quickstart Recipes](quickstart.md) — common extraction/OCR flows in copy-paste form.
-- [Lightweight PDF Corpus](lightweight_corpus.md) — 20 one-page PDFs for smoke testing without Docling or GPUs.
-
-## Understand the architecture
-- [Architecture Overview](architecture/index.md) — the end-to-end staged model and why it exists.
-- [Core Design Principles](architecture/core_design_principles.md) — the design constraints that shape the pipeline.
-- [Docling Throughput and Batching](architecture/docling_throughput_and_batching.md) — how throughput and stability trade off.
-- [Failure Recovery and Skiplist](architecture/docling_failure_recovery_and_skiplist.md) — how the pipeline survives problematic PDFs.
-- [Greek Text Validation](architecture/greek_text_validation.md) — why extraction success is not enough for Greek corpora.
-- [Metadata, Artifacts, and Run Diagnostics](architecture/metadata_artifacts_and_run_diagnostics.md) — how provenance and operational state are retained.
-- [Artifact Layout and Stage Handoffs](architecture/artifact_layout_and_stage_handoffs.md) — how folders, filenames, and metadata glue the stages together.
-- [Resumability, Recovery, and Retention](architecture/resumability_recovery_and_retention.md) — how the current design supports reruns and where storage pressure appears.
+- [Lightweight PDF Corpus](lightweight_corpus.md) — two one-page PDFs for smoke testing without Docling or GPUs.
 
 ## Learn the pipeline
 - [Code Map](code_map.md) links the main documentation ideas to the classes and files that implement them.
 - [Pipeline Overview](pipeline.md) explains each stage and the emitted artifacts.
-- [OCR & Math Enrichment](ocr_and_math_enhancement.md) covers Docling + RapidOCR usage.
+- [OCR & Math Enrichment](ocr_and_math_enhancement.md) covers Greek OCR toolkit remediation and optional Docling-based enrichment.
+- [OCR Repetition Policy](ocr_repetition_policy.md) pins the default repetition thresholds for word and LaTeX cleaning.
+- [OCR Cleaning Runtime](architecture/ocr_cleaning_runtime.md) explains the shared clean/debug analyzer, ordering, and why the cleaner separates tables, numeric, LaTeX, hybrid, and text ownership.
 - [Multi-GPU & Benchmarking](multi_gpu.md) shares scaling and scheduling tips.
-- [Stage Reference](stages/index.md) breaks down each pipeline stage as a contract.
 
 ## Configure and debug
 - [Configuration](configuration.md) lists all environment knobs.
@@ -31,4 +22,6 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 
 ## Reference
 - [Corpus API](api/corpus.md) gives the compact contract view of the main public methods.
-- [Legacy Corpus API Notes](api_corpus_tmp.md) remains available while the docs are being consolidated.
+- [CLI JSON schema](cli_json_schema.md) describes the `glossapi` commands, their JSON output, exit codes and typed errors.
+- [LLM guide](llm_guide.md) is the guide `glossapi guide` prints, rendered as Markdown.
+- [Resumability, Recovery, and Retention](architecture/resumability_recovery_and_retention.md) explains resume, retries, retention settings and durability of a streaming run.

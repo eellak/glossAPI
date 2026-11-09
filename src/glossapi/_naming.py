@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Union
 
 _KNOWN_SUFFIXES = (
@@ -19,6 +20,8 @@ _KNOWN_SUFFIXES = (
     ".htm",
 )
 
+_PAGE_CHUNK_SUFFIX_RE = re.compile(r"__p\d{4,5}-\d{4,5}$")
+
 
 def canonical_stem(value: Union[str, Path]) -> str:
     """Return a normalised stem for any pipeline artefact."""
@@ -33,6 +36,7 @@ def canonical_stem(value: Union[str, Path]) -> str:
                 working = working[: -len(suffix)]
                 stripped = True
                 break
+    working = _PAGE_CHUNK_SUFFIX_RE.sub("", working)
     if working:
         return working
     fallback = Path(name).stem

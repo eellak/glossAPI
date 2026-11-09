@@ -1,8 +1,13 @@
 """Export helpers split from Corpus."""
 from __future__ import annotations
 
+from ..stages.profile import adapters_enabled
+from ..ledger.journal import shadow_stage, observe, observe_store, observe_source_rows
+
 import hashlib
 import json
+import hashlib
+from ..ledger.encoding import snapshot_hash
 import logging
 import math
 import os
@@ -21,7 +26,6 @@ import pandas as pd
 import zstandard as zstd
 
 from .._naming import canonical_stem
-from ..gloss_downloader import GlossDownloader
 from ..gloss_section import GlossSection
 # Avoid importing classifier at import time; export phase does not require it.
 from .corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
@@ -395,10 +399,12 @@ class ExportPhaseMixin:
                 metrics_dir / f"{stem}.per_page.metrics.json",
             ]
             data = None
+            selected_candidate = None
             for candidate in candidates:
                 if candidate.exists():
                     try:
                         data = json.loads(candidate.read_text(encoding="utf-8"))
+                        selected_candidate = candidate
                         break
                     except Exception:
                         continue
@@ -419,6 +425,11 @@ class ExportPhaseMixin:
                     page_count = int(page_count)
             except Exception:
                 page_count = None
+            observe('legacy_observed', path=selected_candidate, export_metrics_choice={
+                'precedence': ['metrics', 'per_page_metrics'],
+                'input_sha256': hashlib.sha256(selected_candidate.read_bytes()).hexdigest(),
+                'page_count': page_count, 'formula_total': formula_total, 'code_total': code_total,
+                'method': 'legacy_export_counter_selection', 'measurement_method': 'unknown_if_not_reported_by_metrics'})
             return page_count, formula_total, code_total
 
         def _load_math_accepts(stem: str) -> tuple[bool, int]:
@@ -471,25 +482,19 @@ class ExportPhaseMixin:
             chunk_paths: List[Path] = entry.get("chunk_paths", []) or []
             base_path: Optional[Path] = entry.get("base_path")
             representative_path: Optional[Path] = base_path
-            if representative_path is None and chunk_paths:
-                representative_path = sorted(chunk_paths, key=_chunk_sort_key)[0]
             base_metadata = metadata_by_stem.get(stem)
             chunk_metadata = metadata_chunks_by_stem.get(stem, [])
             if base_metadata is None and not chunk_metadata:
+                observe("export_metadata_row_missing", path=base_path, status="skipped", legacy_stem=stem)
                 continue
             metadata = _aggregate_metadata(stem, base_metadata, chunk_metadata)
             metadata = {k: _normalize_value(v) for k, v in metadata.items()}
             original_filename_value = metadata.get("filename")
-            if chunk_paths:
-                ordered_chunks = sorted(chunk_paths, key=_chunk_sort_key)
-                parts: List[str] = []
-                for path in ordered_chunks:
-                    parts.append(path.read_text(encoding="utf-8"))
-                document_text = "\n".join(parts)
-            elif representative_path is not None:
-                document_text = representative_path.read_text(encoding="utf-8")
-            else:
+            if base_path is None or not base_path.exists():
+                observe("export_canonical_markdown_missing", path=base_path, status="skipped", legacy_stem=stem)
                 continue
+
+            document_text = base_path.read_text(encoding="utf-8")
 
             filetype = metadata.get("filetype") or metadata.get("file_ext")
             if not filetype:
@@ -594,8 +599,10 @@ class ExportPhaseMixin:
                 record[source_metadata_key] = filtered_source
 
             record["filename"] = filename_base
+            observe("export_included", path=base_path, status="ok", text_sha256=hashlib.sha256(document_text.encode("utf-8")).hexdigest(), record_sha256=snapshot_hash(record), legacy_stem=stem)
             yield record
 
+    @shadow_stage("export", "export.jsonl")
     def jsonl(
         self,
         output_path: Union[str, Path],
@@ -631,6 +638,14 @@ class ExportPhaseMixin:
             source_metadata_path: Optional parquet file that holds the source metadata.
         """
 
+        if adapters_enabled(self) and not getattr(self, '_inside_product_stage', False):
+            from ..stages.export import export_products
+            options = locals().copy()
+            options.pop('self')
+            options.pop('export_products')
+            output = options.pop('output_path')
+            return export_products(self, output, options, sharded=False)
+
         if source_metadata_key and source_metadata_path is None:
             raise ValueError("source_metadata_path must be provided when source_metadata_key is set")
         if source_metadata_key and source_metadata_fields is None:
@@ -659,8 +674,11 @@ class ExportPhaseMixin:
 
         if records_written == 0:
             output_path.write_text("", encoding="utf-8")
+        observe_store(output_path, kind="document_jsonl")
+        observe("export_completed" if records_written else "export_empty", path=output_path, status="ok", records_written=records_written)
         return output_path
 
+    @shadow_stage("export", "export.jsonl_sharded")
     def jsonl_sharded(
         self,
         output_dir: Union[str, Path],
@@ -679,6 +697,14 @@ class ExportPhaseMixin:
         source_metadata_path: Optional[Union[str, Path]] = None,
     ) -> List[Path]:
         """Export sharded JSONL files with optional compression."""
+
+        if adapters_enabled(self) and not getattr(self, '_inside_product_stage', False):
+            from ..stages.export import export_products
+            options = locals().copy()
+            options.pop('self')
+            options.pop('export_products')
+            output = options.pop('output_dir')
+            return export_products(self, output, options, sharded=True)
 
         if shard_size_bytes <= 0:
             raise ValueError("shard_size_bytes must be positive")
@@ -732,28 +758,7 @@ class ExportPhaseMixin:
             bytes_written += len(encoded)
 
         _close_writer()
+        for published in shard_paths:
+            observe_store(published, kind="document_jsonl_shard")
+        observe("export_completed" if shard_paths else "export_empty", status="ok", shards=[str(p) for p in shard_paths])
         return shard_paths
-
-    def process_all(self, input_format: str = "pdf", fully_annotate: bool = True, annotation_type: str = "auto", download_first: bool = False) -> None:
-        """
-        Run the complete processing pipeline: extract, section, and annotate.
-
-        Args:
-            input_format: Input format (default: "pdf")
-            fully_annotate: Whether to perform full annotation after classification (default: True)
-            annotation_type: Annotation method to use (default: "auto")
-            download_first: Whether to run the downloader before extraction (default: False)
-        """
-        if download_first:
-            try:
-                self.download()
-                self.logger.info("Download step completed, proceeding with extraction...")
-            except Exception as e:
-                self.logger.error(f"Error during download step: {e}")
-                self.logger.warning("Continuing with extraction of already downloaded files...")
-
-        self.extract(input_format=input_format)
-        self.section()
-        self.annotate(fully_annotate=fully_annotate, annotation_type=annotation_type)
-
-        self.logger.info("Complete processing pipeline finished successfully.")

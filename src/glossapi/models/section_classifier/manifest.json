@@ -1,0 +1,109 @@
+{
+ "format": "glossapi.section-classifier.linear-tfidf",
+ "format_version": 1,
+ "exporter": "tools/export_section_classifier.py",
+ "source_model": {
+  "path": "glossapi/models/section_classifier.joblib",
+  "sha256": "12963ebe47b38855a932649df7c75577ca43882d0a09ce3a63ef93946f490737",
+  "bytes": 127590
+ },
+ "producer": {
+  "sklearn": "1.6.1",
+  "joblib": "1.6.0",
+  "numpy": "2.4.6",
+  "python": "3.11.3",
+  "unicodedata": "14.0.0",
+  "platform": "macOS-26.5.1-arm64-arm-64bit"
+ },
+ "inputs": {
+  "columns": [
+   "header",
+   "section",
+   "has_table",
+   "has_list"
+  ],
+  "null_text": "''",
+  "boolean_columns": "cast to int (False=0, True=1) before scoring"
+ },
+ "text": {
+  "combine": "header + ' ' + section (after null -> '')",
+  "lowercase": "python str.lower()",
+  "strip_accents": null,
+  "unicode_normalization": null,
+  "token_pattern": "(?u)\\b\\w\\w+\\b",
+  "token_regex_flavour": "python re (str), unicodedata 14.0.0; table in files.word_ranges",
+  "ngram_range": [
+   1,
+   1
+  ],
+  "oov": "ignored"
+ },
+ "tfidf": {
+  "tf": "raw count",
+  "idf": "smooth (stored values)",
+  "sublinear_tf": false,
+  "norm": "l2 over the text features only, zero row stays zero"
+ },
+ "features": {
+  "order": [
+   "vocabulary[0..n)",
+   "has_table",
+   "has_list"
+  ],
+  "n_text": 2000,
+  "n_total": 2002
+ },
+ "classifier": {
+  "kind": "linear-ovr",
+  "classes": [
+   "άλλο",
+   "β",
+   "π"
+  ],
+  "decision": "x . coef[k] + intercept[k]",
+  "label": "classes[argmax(decision)]; ties -> lowest index (numpy argmax, as sklearn)"
+ },
+ "files": {
+  "vocabulary": {
+   "path": "vocabulary.txt",
+   "encoding": "utf-8",
+   "lines": 2000,
+   "order": "feature index",
+   "sha256": "db2ee1ec9d12dc4f3759839f6bdde1bc1cebb1b36f055cb2245089cac1d5dcb4"
+  },
+  "idf": {
+   "path": "idf.f64le",
+   "dtype": "float64-le",
+   "shape": [
+    2000
+   ],
+   "sha256": "1c506d6e027604ae91ca9206d626dbd81a3b396bdcfe1426b677c78149e206d8"
+  },
+  "coef": {
+   "path": "coef.f64le",
+   "dtype": "float64-le",
+   "shape": [
+    3,
+    2002
+   ],
+   "sha256": "2e6e22f320d536b396c33fa8d22a3801507efdacc3f3e5d4d9b03a1d7950b98e"
+  },
+  "intercept": {
+   "path": "intercept.f64le",
+   "dtype": "float64-le",
+   "shape": [
+    3
+   ],
+   "sha256": "90155e4bb5939db085a82ef4bdbe8d805e7cf3d3dbf860b3e79cd71154a13a35"
+  },
+  "word_ranges": {
+   "path": "word_ranges_u14.0.0.txt",
+   "encoding": "ascii",
+   "pattern": "\\w",
+   "unicodedata": "14.0.0",
+   "lines": 734,
+   "format": "start end (inclusive, lowercase hex)",
+   "sha256": "125be635f02b686113e9ee58bccb919e2f631af966959d634be5b7cfa3a8ff66"
+  }
+ }
+}

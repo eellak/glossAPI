@@ -1,0 +1,22 @@
+# The single Greek OCR toolkit pin (public GitHub commit). To move toolkit releases change the pin line and,
+# together with it, the source fingerprint below (SHA256 over the installed greekocr/**/*.py files; see
+# glossapi.ocr.defaults.toolkit_code_fingerprint). Runtime admission uses it when an install has no VCS metadata.
+# greekocr-source-fingerprint bb5aa6fadf933a00a8cba50bc560ce723a157962 f2c84fe2cad10eb0257ffdb80ac0fa941feb80911f0412b3f33153d60d6e7058 471
+greek-ocr-toolkit[docling] @ git+https://github.com/fffoivos/greek-ocr-toolkit@bb5aa6fadf933a00a8cba50bc560ce723a157962
+torch==2.14.1
+torchvision==0.29.1
+docling==2.81.0
+docling-core==2.70.2
+numpy==2.5.3; python_version >= "3.12"
+numpy==2.4.6; python_version < "3.12"
+Pillow==12.3.0
+scipy==1.18.1; python_version >= "3.12"
+scipy==1.17.1; python_version < "3.12"
+pypdfium2==4.30.0
+huggingface-hub==0.36.2
+pyclipper==1.4.0
+shapely==2.1.2
+safetensors==0.8.0
+onnxruntime==1.31.0
+opencv-python-headless==5.0.0.93
+onnx==1.23.2; sys_platform == "darwin"

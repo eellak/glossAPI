@@ -1,0 +1,221 @@
+"""Target selection helpers for corpus OCR orchestration."""
+
+from __future__ import annotations
+
+from ...ledger.journal import observe
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import List, Optional, Set
+
+import pandas as pd
+
+from ..._naming import canonical_stem
+from ...parquet_schema import ParquetSchema, update_metadata_parquet
+from .context import CorpusOcrContext
+from ..corpus_skiplist import _SkiplistManager, _resolve_skiplist_path
+
+
+@dataclass(slots=True)
+class OcrSelection:
+    bad_files: List[str]
+    ocr_candidates_initial: int
+    skipped_completed: int
+    skipped_skiplist: int
+    parquet_meta: Optional[pd.DataFrame]
+    ocr_done_files: List[str]
+    ocr_done_stems: Set[str]
+    math_done_stems: Set[str]
+    skip_mgr: _SkiplistManager
+    skiplist_path: Path
+    page_ranges: List[str] = field(default_factory=list)
+
+
+def normalize_ocr_target_filenames(*, filenames: List[str], input_dir: Path,
+                                   downloads_dir: Path | None = None) -> List[str]:
+    """Collapse chunk-like metadata rows back to real OCR source files when possible."""
+
+    source_by_stem = {}
+    try:
+        for directory in (downloads_dir, Path(input_dir) / "downloads", Path(input_dir)):
+            if directory is not None:
+                for path in sorted(directory.glob("*.pdf")):
+                    source_by_stem.setdefault(canonical_stem(path.name), path.name)
+    except Exception:
+        source_by_stem = {}
+
+    normalized: List[str] = []
+    seen: Set[str] = set()
+    for fname in filenames:
+        resolved = source_by_stem.get(canonical_stem(fname), str(fname))
+        if resolved in seen:
+            continue
+        normalized.append(resolved)
+        seen.add(resolved)
+    return normalized
+
+
+def build_ocr_selection(
+    context: CorpusOcrContext,
+    *,
+    mode: str,
+    reprocess_completed: bool,
+    page_routing: str = "all",
+) -> OcrSelection:
+    if page_routing not in {"flagged", "all"}:
+        raise ValueError("page_routing must be 'flagged' or 'all'")
+    from ...page_quality import parse_page_ranges
+
+    bad_files: List[str] = []
+    skipped_completed = 0
+    skipped_skiplist = 0
+    parquet_meta: Optional[pd.DataFrame] = None
+    ocr_done_files: List[str] = []
+    ocr_done_stems: Set[str] = set()
+    math_done_stems: Set[str] = set()
+    glyph_documents: Set[str] = set()
+
+    parquet_schema = ParquetSchema({"url_column": context.url_column})
+    parquet_path = context._resolve_metadata_parquet(parquet_schema, ensure=True, search_input=True)
+    if parquet_path and parquet_path.exists():
+        # One locked read-modify-write (K2 native): the unflagged-route counts are written into the rows read under
+        # the lock; the selection below uses exactly those rows.
+        selection = {}
+
+        def _update(df):
+            if not parquet_path.exists():
+                pd.read_parquet(parquet_path)  # raises the same missing-file error as before
+            selection["df"] = df
+            if "filename" not in df.columns or "needs_ocr" not in df.columns:
+                return None
+            flagged = df["needs_ocr"].fillna(False).astype(bool)
+
+            def route_count(value: object) -> int:
+                if not isinstance(value, str):
+                    return 0
+                try:
+                    return sum(end - start + 1 for start, end in parse_page_ranges(value))
+                except ValueError as error:
+                    observe("ocr_route_invalid", error=error, route=value, fallback="document_wide")
+                    context.logger.warning("Ignoring invalid OCR page route: %r", value)
+                    return 0
+
+            routed_counts = df.get("ocr_pages", pd.Series("", index=df.index)).map(route_count)
+            df["ocr_pages_unflagged_count"] = routed_counts.where(~flagged, 0).astype("int64")
+            selection.update(flagged=flagged, routed_counts=routed_counts)
+            return df
+
+        update_metadata_parquet(parquet_path, _update)
+        df = selection["df"]
+        if "flagged" in selection:
+            flagged, routed_counts = selection["flagged"], selection["routed_counts"]
+            # P4d (K5 quality policy, FG-G03 residual, K5-A2b): OCR follows run - a flagged document whose page
+            # quality ran and routed no page is not OCRed (run leaves it as extracted), in both page_routing modes.
+            # Page quality ran when clean attached a valid report (page_rule_profile set); a document without one
+            # keeps document-level routing, and the OCR stage's own page quality picks its pages.
+            known = (df["page_rule_profile"].notna() if "page_rule_profile" in df.columns
+                     else pd.Series(False, index=df.index))
+            # P4a: an all-GLYPH text layer goes to OCR whole; the OCR stage's own glyph check selects every page.
+            glyphs = df.get("filter", pd.Series("", index=df.index)).astype(str).str.split(";").map(
+                lambda tokens: "glyph_only" in tokens)
+            glyph_documents.update(df.loc[glyphs & flagged, "filename"].dropna().astype(str).map(canonical_stem))
+            unrouted = (flagged & known & routed_counts.eq(0) & ~glyphs
+                        & (mode in {"ocr_bad", "ocr_bad_then_math"}))
+            if bool(unrouted.any()):
+                names = df.loc[unrouted, "filename"].dropna().astype(str).tolist()
+                observe("ocr_not_routed", status="skipped", filenames=names, cause="flagged_without_routed_pages")
+                context.logger.info("OCR: %d flagged document(s) have no page that page quality routes; not OCRed "
+                                    "(as glossapi run).", len(names))
+            selected = (flagged & ~unrouted) | ((routed_counts > 0) & (page_routing == "all"))
+            bad_files = df.loc[selected, "filename"].dropna().astype(str).tolist()
+        if "ocr_success" in df.columns:
+            ocr_done_files = df.loc[df["ocr_success"].fillna(False), "filename"].dropna().astype(str).tolist()
+            ocr_done_stems = {canonical_stem(name) for name in ocr_done_files}
+        math_done_files: List[str] = []
+        if "math_enriched" in df.columns:
+            math_done_files = df.loc[df["math_enriched"].fillna(False), "filename"].dropna().astype(str).tolist()
+        elif "enriched_math" in df.columns:
+            math_done_files = df.loc[df["enriched_math"].fillna(False), "filename"].dropna().astype(str).tolist()
+        if math_done_files:
+            math_done_stems = {canonical_stem(name) for name in math_done_files}
+        if not reprocess_completed and ocr_done_stems:
+            before = len(bad_files)
+            bad_files = [name for name in bad_files if canonical_stem(name) not in ocr_done_stems]
+            skipped_completed = before - len(bad_files)
+            if skipped_completed:
+                observe("legacy_ocr_completed", status="skipped", legacy_filenames=ocr_done_files)
+                context.logger.info(
+                    "OCR: skipping %d already completed document(s) (reprocess_completed=False).",
+                    skipped_completed,
+                )
+        if reprocess_completed and mode in {"ocr_bad", "ocr_bad_then_math"} and ocr_done_files:
+            pending = {str(name) for name in bad_files}
+            for fname in ocr_done_files:
+                if fname not in pending:
+                    bad_files.append(fname)
+                    pending.add(fname)
+        parquet_meta = df
+
+    ocr_candidates_initial = len(bad_files)
+    skiplist_path = _resolve_skiplist_path(context.output_dir, context.logger)
+    skip_mgr = _SkiplistManager(skiplist_path, context.logger)
+    skip_stems = skip_mgr.load()
+    if skip_stems:
+        before = len(bad_files)
+        bad_files = [name for name in bad_files if canonical_stem(name) not in skip_stems]
+        skipped_skiplist = before - len(bad_files)
+        if skipped_skiplist:
+            observe("fatal_skiplist", status="skipped", legacy_stems=sorted(skip_stems), provenance="unknown_not_recorded")
+            context.logger.warning(
+                "Skip-list %s filtered %d document(s) from Phase-3 OCR.",
+                skiplist_path,
+                skipped_skiplist,
+            )
+
+    normalized_bad_files = normalize_ocr_target_filenames(
+        filenames=bad_files,
+        input_dir=Path(context.input_dir),
+        downloads_dir=Path(context.output_dir) / "downloads",
+    )
+    if len(normalized_bad_files) != len(bad_files):
+        context.logger.info(
+            "OCR: collapsed %d metadata-selected row(s) onto %d real source PDF(s) by canonical stem.",
+            len(bad_files),
+            len(normalized_bad_files),
+        )
+    bad_files = normalized_bad_files
+    context.logger.info(
+        "OCR targets: total=%d kept=%d skipped_completed=%d skipped_skiplist=%d",
+        ocr_candidates_initial,
+        len(bad_files),
+        skipped_completed,
+        skipped_skiplist,
+    )
+
+    page_ranges: List[str] = []
+    if parquet_meta is not None and "ocr_pages" in parquet_meta.columns:
+        routes = {
+            canonical_stem(str(row["filename"])): row["ocr_pages"]
+            for _, row in parquet_meta.iterrows()
+            if isinstance(row.get("ocr_pages"), str) and row["ocr_pages"].strip()
+            and (page_routing == "all" or pd.notna(row.get("needs_ocr"))
+                 and bool(row.get("needs_ocr")))
+        }
+        for filename in bad_files:
+            route = routes.get(canonical_stem(filename))
+            if route and canonical_stem(filename) not in glyph_documents:
+                page_ranges.extend(f"{filename}:{start}:{end}" for start, end in parse_page_ranges(route))
+
+    return OcrSelection(
+        page_ranges=page_ranges,
+        bad_files=bad_files,
+        ocr_candidates_initial=ocr_candidates_initial,
+        skipped_completed=skipped_completed,
+        skipped_skiplist=skipped_skiplist,
+        parquet_meta=parquet_meta,
+        ocr_done_files=ocr_done_files,
+        ocr_done_stems=ocr_done_stems,
+        math_done_stems=math_done_stems,
+        skip_mgr=skip_mgr,
+        skiplist_path=skiplist_path,
+    )
