@@ -1,0 +1,2395 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Academic document processing with PDFium, Rust and the Greek OCR toolkit">
+      
+      
+      
+      
+        <link rel="prev" href="../download/">
+      
+      
+        <link rel="next" href="../clean/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Extract - GlossAPI</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#extract-stage" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="GlossAPI" class="md-header__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            GlossAPI
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Extract
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting_started/" class="md-tabs__link">
+          
+  
+  
+  Onboarding
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../pipeline/" class="md-tabs__link">
+          
+  
+  
+  Pipeline
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../ocr_plugin_migration/" class="md-tabs__link">
+          
+  
+  
+  Configuration & Ops
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../code_map/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="GlossAPI" class="md-nav__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    GlossAPI
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Onboarding
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../lightweight_corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lightweight PDF Corpus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/core_design_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/docling_throughput_and_batching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docling Throughput and Batching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/docling_failure_recovery_and_skiplist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Failure Recovery and Skiplist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/greek_text_validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Greek Text Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/metadata_artifacts_and_run_diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metadata, Artifacts, and Run Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/artifact_layout_and_stage_handoffs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Artifact Layout and Stage Handoffs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/resumability_recovery_and_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resumability, Recovery, and Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/corpus_barriers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Corpus-wide Barriers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/ocr_cleaning_runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Cleaning Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ocr_repetition_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Repetition Policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/markdown_library_survey/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Markdown Library Survey (design history)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Pipeline
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ocr_and_math_enhancement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR & Math Enrichment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../multi_gpu/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-GPU & Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Stage Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../download/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Download
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extract
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#main-responsibilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Main responsibilities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#main-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Main inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#main-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Main outputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-design-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key design point
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backend-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend semantics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layout-aware-markdown-layout-v2-core-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layout-aware Markdown (layout v2, core install)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#font-repair-pre-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Font repair pre-pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failure-concerns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure concerns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fatal-skiplist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fatal skiplist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recovery-concerns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovery concerns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contributor-note" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contributor note
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../clean/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Clean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ocr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../section/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Section
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../annotate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Annotate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration & Ops
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration & Ops
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ocr_plugin_migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Plugin Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../testing/compatibility_matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility And Regression Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../code_map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Corpus API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli_json_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI JSON Schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../llm_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Guide (generated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../math_enrichment_runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math Enrichment Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#main-responsibilities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Main responsibilities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#main-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Main inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#main-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Main outputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-design-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key design point
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backend-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend semantics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#layout-aware-markdown-layout-v2-core-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layout-aware Markdown (layout v2, core install)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#font-repair-pre-pass" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Font repair pre-pass
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failure-concerns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure concerns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fatal-skiplist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fatal skiplist
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recovery-concerns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recovery concerns
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contributor-note" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contributor note
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="extract-stage">Extract Stage<a class="headerlink" href="#extract-stage" title="Permanent link">&para;</a></h1>
+<h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
+<p>The extraction stage converts source files into Markdown and optional structured byproducts such as Docling JSON.</p>
+<h2 id="main-responsibilities">Main responsibilities<a class="headerlink" href="#main-responsibilities" title="Permanent link">&para;</a></h2>
+<ul>
+<li>locate source files for processing</li>
+<li>choose extraction backend behavior</li>
+<li>produce Markdown</li>
+<li>optionally emit structured JSON artifacts</li>
+<li>balance throughput against stability</li>
+</ul>
+<h2 id="main-inputs">Main inputs<a class="headerlink" href="#main-inputs" title="Permanent link">&para;</a></h2>
+<ul>
+<li>files in <code>downloads/</code> or explicitly provided file paths</li>
+<li>extraction configuration</li>
+<li>backend selection and accelerator settings</li>
+</ul>
+<h2 id="main-outputs">Main outputs<a class="headerlink" href="#main-outputs" title="Permanent link">&para;</a></h2>
+<ul>
+<li>repaired PDF sidecars in <code>repaired_pdfs/&lt;stem&gt;.pdf</code> when eligible</li>
+<li>font-repair metadata in the canonical download-results parquet</li>
+<li>Markdown in <code>markdown/</code></li>
+<li>optional JSON artifacts in <code>json/</code></li>
+<li>stage logs and timeout/problematic-file traces</li>
+</ul>
+<h2 id="key-design-point">Key design point<a class="headerlink" href="#key-design-point" title="Permanent link">&para;</a></h2>
+<p>This stage is where the Docling throughput strategy meets the pipeline's stability constraints.</p>
+<p>It should be understood as both:</p>
+<ul>
+<li>a text extraction stage</li>
+<li>an operational risk management stage</li>
+</ul>
+<h2 id="backend-semantics">Backend semantics<a class="headerlink" href="#backend-semantics" title="Permanent link">&para;</a></h2>
+<p>The extraction logic distinguishes between safer extraction behavior and Docling-focused behavior.</p>
+<p>This matters because Docling is powerful, but not equally stable under all batching and corpus conditions.</p>
+<h2 id="layout-aware-markdown-layout-v2-core-install">Layout-aware Markdown (layout v2, core install)<a class="headerlink" href="#layout-aware-markdown-layout-v2-core-install" title="Permanent link">&para;</a></h2>
+<p>The safe backend (the default <code>phase1_backend='auto'</code>/<code>'safe'</code>) writes layout-aware Markdown without Docling: the
+PDFium plain text in plain order, cut into blocks and labelled by layout v2 (<code>glossapi.markdown_layout</code>, Rust in
+<code>glossapi_rs_pdfrepair</code>). Labels never change the text and nothing is re-ordered. It needs only the core install
+(pypdfium2 and the <code>glossapi_rs_pdfrepair</code> extension at native API level 3); the <code>layout</code> extra and its <code>docling</code>
+alias are not involved.</p>
+<p><code>GLOSSAPI_MARKDOWN_LAYOUT</code> selects the safe backend's Markdown: <code>layout_v2</code> (default, extract stage contract 3; 2 was
+K5-A2a's sidecar without the strip record) or
+<code>plain</code> (the plain pages, byte for byte as before; contract 2: hash-bound <code>plain_pages</code> physical page offsets in the sidecar). The value is part of the extract stage identity.</p>
+<p>Rendering rules (<code>glossapi-layout-md/1</code>, <code>markdown_layout/render.py</code>):</p>
+<table>
+<thead>
+<tr>
+<th>block</th>
+<th>Markdown</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>page separator</td>
+<td>one blank line between non-blank pages, as before (page offsets are in the metadata)</td>
+</tr>
+<tr>
+<td>between blocks of a page</td>
+<td>one blank line (replaces the block's original whitespace separator)</td>
+</tr>
+<tr>
+<td><code>title</code></td>
+<td><code># text</code></td>
+</tr>
+<tr>
+<td><code>section_header</code> level n</td>
+<td><code>#</code> x min(6, n + 1), a space, the text (newlines inside the heading become spaces)</td>
+</tr>
+<tr>
+<td><code>list_item</code></td>
+<td><code>- text</code>, unless the text already starts with <code>-</code>, <code>*</code>, <code>+</code>, <code>1.</code> or <code>1)</code> and a space</td>
+</tr>
+<tr>
+<td><code>caption</code>, <code>footnote</code>, <code>table</code>, <code>picture</code>, <code>formula</code></td>
+<td>a <code>&lt;!-- caption --&gt;</code> (etc.) line, then the text</td>
+</tr>
+<tr>
+<td><code>page_header</code>, <code>page_footer</code></td>
+<td>a <code>&lt;!-- page-header --&gt;</code> / <code>&lt;!-- page-footer --&gt;</code> line, then the text (kept)</td>
+</tr>
+<tr>
+<td><code>paragraph</code>, unlabelled page</td>
+<td>the text</td>
+</tr>
+</tbody>
+</table>
+<p>Text is never escaped. Deleting the added markup and restoring each block's original separator gives the page text
+byte for byte. A page is emitted unlabelled (its text unchanged) when it has no char table, no text layer, a page box
+or font size outside the input contract (<code>layout_input_rejected</code>) or the labeller fails on it.</p>
+<p>The extract sidecar (<code>sidecars/extract/&lt;stem&gt;.json</code>) carries <code>markdown_layout</code>: schema, rules, reader (<code>native</code> or
+<code>python</code>), status (<code>labelled</code>, <code>partial</code>, <code>unlabelled</code>, <code>unavailable</code>), per-page and per-block code-point offsets into
+the Markdown with labels and levels, label counts, labeller warnings, rejected pages and the document context, and
+<code>strip</code>: the edits that undo the markup (<code>[start, end, original]</code> code-point spans: each prefix deleted, each block
+separator and each heading newline restored) with the length and sha256 of the Markdown it describes and the sha256 of
+the plain text it gives back. <code>markdown_layout.markup_free</code> applies it (checking both hashes; an appended OCR
+supplement after the native pages is kept), and the cleaner measures every text metric on that markup-free text, so
+the metrics and routing decisions of the default mode equal the plain mode's (K5-A2b, K5A2A-G2). The cleaned Markdown
+keeps the markup. In <code>Corpus.run</code> and the stage adapters the sidecar is the clean stage's bound <code>layout_metadata</code>
+input (clean contract 2 in the default mode, 1 in plain mode).</p>
+<p>The sidecar also carries <code>decode_status</code> for the safe backend (K5 quality policy P4b, both Markdown modes): one entry
+per page, from the native content-stream check of the file PDFium read (<code>glossapi_rs_pdfrepair.page_decode_status_json</code>;
+PDFium's own error state is not a signal). <code>partial</code>: a content stream of the page, or of a Form XObject it draws,
+or the ToUnicode CMap of a font the page selects (<code>Tf</code>, in its own streams or a drawn form), failed to decode or ended
+before its end marker; the page keeps the readable text PDFium extracts. FlateDecode, LZWDecode, RunLengthDecode,
+ASCIIHex and ASCII85 are decoded. An RC4-encrypted document whose user password is empty (an owner-password
+document, which PDFium opens) is decrypted for this check only (analysis and font repair still refuse encrypted
+documents). Annotation appearance streams are not checked: PDFium's text page does not read them. Font programs are not
+checked. <code>unknown</code>: the check could not run or decide (stale or missing native module, a
+document the native parser cannot open, such as one encrypted with AES or with a user password, or one whose
+cross-reference table PDFium has to rebuild, a page count that differs from PDFium's, an unavailable page, an unreadable stream object, a filter the check
+does not implement); <code>reason</code> or <code>reasons</code> say why. <code>complete</code>: the check ran and found no decode failure. The same list is in
+the ledger's page coverage (<code>page_coverage.decode_status</code>). The status never routes a page by itself.</p>
+<p>Reading: each page is loaded once. <code>layout_v2_read_document</code> opens the document with Rust-owned PDFium handles and
+returns each page's text (exactly <code>get_text_range()</code>) and char table from the same text page. If the native reader is
+unavailable (<code>LayoutV2ReaderUnavailable</code>) the text comes from pypdfium2 as before and the char tables from the Python
+reference reader (same bytes, slower); a document or page the native reader cannot open is read the pypdfium2 way,
+with exactly pypdfium2's exceptions. A missing or stale extension gives the plain Markdown.</p>
+<p>Reader threat model (K5 policy P7): Documents and public argument values are untrusted; the Python runtime, installed
+dependencies and executable caller code are trusted. The wrapper validates arguments and preserves native handle
+ownership and lifetime. Dependency replacement, forged ctypes state and uncoordinated library teardown are
+unsupported. All PDFium users, initialization and destruction require process-wide coordination; the reader's mutex
+and GIL do not serialize external ctypes calls. Identity checks and self-tests detect accidental incompatibility, not
+malicious substitution. This boundary does not sandbox PDFium or guarantee unlimited resource availability.</p>
+<p>Coordination: every glossAPI module that opens a PDF with pypdfium2 does so under <code>glossapi.pdfium_guard</code> (one
+re-entrant lock per process, reset in a forked child), and every native read takes the same lock, so no two PDFium
+users overlap in one process. glossAPI never initializes or destroys PDFium: pypdfium2 does at import and at exit.</p>
+<p>Docling stays available through <code>phase1_backend='docling'</code> and the <code>layout</code> extra (alias <code>docling</code>) for what layout
+v2 does not replace:</p>
+<table>
+<thead>
+<tr>
+<th>capability</th>
+<th>core (layout v2)</th>
+<th><code>layout</code> extra (Docling 2.81)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>headings, lists, captions, footnotes, furniture labels</td>
+<td>yes (labels on the plain order)</td>
+<td>yes (Docling layout model)</td>
+</tr>
+<tr>
+<td>text source</td>
+<td>PDFium plain text</td>
+<td>docling-parse text (transliterates TeX-encoded Greek)</td>
+</tr>
+<tr>
+<td>table structure (rows, cells, Markdown tables)</td>
+<td>no (table text marked <code>&lt;!-- table --&gt;</code>)</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>math/code enrichment</td>
+<td>no</td>
+<td>yes (<code>formula_enrichment</code>, <code>code_enrichment</code>)</td>
+</tr>
+<tr>
+<td>Docling JSON (<code>json/&lt;stem&gt;.docling.json</code>)</td>
+<td>no</td>
+<td>yes (<code>export_doc_json</code>)</td>
+</tr>
+<tr>
+<td>non-PDF conversion</td>
+<td>no</td>
+<td>yes</td>
+</tr>
+<tr>
+<td>GPU</td>
+<td>not needed</td>
+<td>optional</td>
+</tr>
+</tbody>
+</table>
+<h2 id="font-repair-pre-pass">Font repair pre-pass<a class="headerlink" href="#font-repair-pre-pass" title="Permanent link">&para;</a></h2>
+<p><code>Corpus.extract(..., repair_fonts=True)</code> enables CPU ToUnicode repair by default
+for both the safe and Docling backends. Set <code>repair_fonts=False</code> to extract the
+original text layer. Each file's extraction worker analyzes its PDF immediately
+before conversion; a <code>repairable</code> or <code>mixed</code> document with at least one eligible
+font receives a repaired copy in <code>&lt;output_dir&gt;/repaired_pdfs/&lt;stem&gt;.pdf</code>. The
+extractor opens that copy. Original PDFs in <code>downloads/</code> stay unchanged, and
+Markdown names, resume keys and metadata retain the original filename/stem.
+Non-PDF inputs bypass repair.</p>
+<p>An existing <code>repaired_pdfs/&lt;stem&gt;.pdf</code> is never reused: a newer modification
+time does not prove that the copy was made from the current source bytes, so each
+extraction analyses the source and repairs it again (the repair is deterministic,
+so the same source gives the same bytes). The ledger paths (<code>Corpus.run()</code>,
+<code>glossapi run</code>) reuse work by the source hashes they record instead. Ordinary
+<code>skip_existing=True</code> resume still skips completed Markdown entirely;
+<code>skip_existing=False</code> re-extracts and repairs again.</p>
+<p>The pre-pass uses at most half of the existing per-file extraction timeout,
+reserving the rest for extraction. Its elapsed time is deducted from the shared
+budget, including chunked conversion and retries. Analysis/repair failures and
+pre-pass timeouts fall back to the original PDF and record <code>error</code> plus the
+message in the extract sidecar and parquet's existing <code>extract_error</code> column.
+The stage continues. Docling retains its existing native timeout behavior;
+converters without native timeout support cannot enforce the extraction portion
+of the deadline. POSIX main-thread signal timers bound the pre-pass without an
+extra process pool. Unsupported timer contexts fall back with <code>error</code>; native C
+calls may delay signal delivery until they return to Python.</p>
+<p>Workers write <code>sidecars/extract/&lt;stem&gt;.json</code>; the controller merges these four
+columns into the canonical metadata parquet after extraction:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type / default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>font_repair_status</code></td>
+<td>string / <code>skipped</code></td>
+<td><code>repaired</code>, <code>not_needed</code> (consistent), <code>unsupported</code>, <code>no_text_layer</code>, <code>error</code>, or <code>skipped</code> (disabled/unprocessed).</td>
+</tr>
+<tr>
+<td><code>font_repair_fonts</code></td>
+<td>int / <code>0</code></td>
+<td>Number of fonts repaired.</td>
+</tr>
+<tr>
+<td><code>font_repair_valid_rate_before</code></td>
+<td>float / null</td>
+<td>Dictionary validity over the original PDF's first 20 pages.</td>
+</tr>
+<tr>
+<td><code>font_repair_valid_rate_after</code></td>
+<td>float / null</td>
+<td>Dictionary validity over the repaired PDF's first 20 pages, or the unchanged original.</td>
+</tr>
+</tbody>
+</table>
+<p>Configure <code>GLOSSAPI_GREEK_WORDLIST</code> with a local UTF-8 word list to compute rates
+with <code>extract_text_stats</code>. Missing/unreadable dictionaries or metric failures
+leave rates null. Each repaired PDF gets one INFO line with its stem, font count
+and available before→after rates. The final summary counts statuses for the stage's selected PDFs, including
+previously completed files on resume.</p>
+<h2 id="failure-concerns">Failure concerns<a class="headerlink" href="#failure-concerns" title="Permanent link">&para;</a></h2>
+<p>Typical issues include:</p>
+<ul>
+<li>Docling crashes</li>
+<li>hangs or timeouts</li>
+<li>worker poisoning after a bad file</li>
+<li>partial progress during corpus-scale processing</li>
+</ul>
+<h2 id="fatal-skiplist">Fatal skiplist<a class="headerlink" href="#fatal-skiplist" title="Permanent link">&para;</a></h2>
+<p>The fatal skiplist holds files a worker failed on; a later direct
+<code>Corpus.extract</code> call skips them (a <code>Corpus.run()</code> decides from the ledger and
+does not read the skiplist). When every multi-GPU worker has exited, the files still queued were
+never attempted: they are recorded as <code>workers_exhausted_unattempted</code> and are
+not added to the skiplist, so the next <code>Corpus.extract</code> processes them.</p>
+<h2 id="recovery-concerns">Recovery concerns<a class="headerlink" href="#recovery-concerns" title="Permanent link">&para;</a></h2>
+<p>Recovery should preserve:</p>
+<ul>
+<li>successful Markdown already produced</li>
+<li>visibility into failed documents</li>
+<li>enough information to avoid repeating the same crash pattern blindly</li>
+</ul>
+<h2 id="contributor-note">Contributor note<a class="headerlink" href="#contributor-note" title="Permanent link">&para;</a></h2>
+<p>Any change to batch policy, backend selection, or output naming should be treated as an architectural change, not just a local refactor.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

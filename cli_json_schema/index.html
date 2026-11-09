@@ -1,0 +1,2410 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Academic document processing with PDFium, Rust and the Greek OCR toolkit">
+      
+      
+      
+      
+        <link rel="prev" href="../api/corpus/">
+      
+      
+        <link rel="next" href="../llm_guide/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>CLI JSON Schema - GlossAPI</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#cli-json-schema-v1-and-the-input-manifest-v1" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="GlossAPI" class="md-header__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            GlossAPI
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CLI JSON Schema
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../getting_started/" class="md-tabs__link">
+          
+  
+  
+  Onboarding
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../pipeline/" class="md-tabs__link">
+          
+  
+  
+  Pipeline
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../ocr_plugin_migration/" class="md-tabs__link">
+          
+  
+  
+  Configuration & Ops
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../code_map/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="GlossAPI" class="md-nav__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    GlossAPI
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Onboarding
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting_started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lightweight_corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lightweight PDF Corpus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/core_design_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/docling_throughput_and_batching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docling Throughput and Batching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/docling_failure_recovery_and_skiplist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Failure Recovery and Skiplist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/greek_text_validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Greek Text Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/metadata_artifacts_and_run_diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metadata, Artifacts, and Run Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/artifact_layout_and_stage_handoffs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Artifact Layout and Stage Handoffs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/resumability_recovery_and_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resumability, Recovery, and Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/corpus_barriers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Corpus-wide Barriers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/ocr_cleaning_runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Cleaning Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ocr_repetition_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Repetition Policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/markdown_library_survey/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Markdown Library Survey (design history)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Pipeline
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ocr_and_math_enhancement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR & Math Enrichment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi_gpu/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-GPU & Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Stage Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/download/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Download
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/extract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/clean/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Clean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/ocr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/section/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Section
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/annotate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Annotate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration & Ops
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration & Ops
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ocr_plugin_migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Plugin Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/compatibility_matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility And Regression Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../code_map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Corpus API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI JSON Schema
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI JSON Schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#compatibility-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compatibility rule
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit codes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plan-json-the-exact-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plan --json: the exact preview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capabilities-and-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        capabilities and doctor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capabilities-catalog-the-package-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        capabilities --catalog: the package list
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#install-device-dev-package-name-yes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        install --device DEV [--package NAME ...] [--yes]
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        guide --json
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#typed-errors-and-exit-codes-of-install-guide-and-capabilities-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Typed errors and exit codes of install, guide and capabilities --catalog
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#input-manifest-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input manifest v1
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#changelog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changelog
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Guide (generated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math_enrichment_runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math Enrichment Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#compatibility-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Compatibility rule
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit codes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plan-json-the-exact-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plan --json: the exact preview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capabilities-and-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        capabilities and doctor
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capabilities-catalog-the-package-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        capabilities --catalog: the package list
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#install-device-dev-package-name-yes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        install --device DEV [--package NAME ...] [--yes]
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#guide-json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        guide --json
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#typed-errors-and-exit-codes-of-install-guide-and-capabilities-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Typed errors and exit codes of install, guide and capabilities --catalog
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#input-manifest-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input manifest v1
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#changelog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changelog
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="cli-json-schema-v1-and-the-input-manifest-v1">CLI JSON schema v1 and the input manifest v1<a class="headerlink" href="#cli-json-schema-v1-and-the-input-manifest-v1" title="Permanent link">&para;</a></h1>
+<p>Every <code>glossapi</code> command (<code>plan</code>, <code>run</code>, <code>status</code>, <code>report</code>, <code>capabilities</code>, <code>doctor</code>, <code>install</code>, <code>guide</code>) prints
+exactly one JSON envelope. The schemas (JSON Schema draft 2020-12) ship with the package in <code>glossapi/schemas/v1/</code>:</p>
+<table>
+<thead>
+<tr>
+<th>file</th>
+<th>describes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>envelope.json</code></td>
+<td>the envelope: <code>schema_version</code> (1), <code>command</code>, <code>corpus_id</code>, <code>run_id</code>, <code>data</code>, <code>warnings</code>, <code>errors</code></td>
+</tr>
+<tr>
+<td><code>error.json</code></td>
+<td>one typed error: <code>code</code>, <code>message</code>, <code>document_id</code>, <code>stage</code>, <code>details</code></td>
+</tr>
+<tr>
+<td><code>common.json</code></td>
+<td>shared objects: capability, device, package status, conflict, warning, task counts</td>
+</tr>
+<tr>
+<td><code>plan.json</code></td>
+<td><code>plan --json</code> data, including the exact preview (below)</td>
+</tr>
+<tr>
+<td><code>run.json</code></td>
+<td><code>run --json</code> data</td>
+</tr>
+<tr>
+<td><code>status.json</code></td>
+<td><code>status --json</code> data (<code>sources</code> with <code>--file</code>)</td>
+</tr>
+<tr>
+<td><code>report.json</code></td>
+<td><code>report --json</code> data (<code>sources</code> = each document's original metadata, verbatim)</td>
+</tr>
+<tr>
+<td><code>report_why.json</code></td>
+<td><code>report --why SELECTOR</code> data</td>
+</tr>
+<tr>
+<td><code>report_export.json</code></td>
+<td>the receipt of <code>report --output</code></td>
+</tr>
+<tr>
+<td><code>capabilities.json</code></td>
+<td><code>capabilities --json</code> data</td>
+</tr>
+<tr>
+<td><code>doctor.json</code></td>
+<td><code>doctor --json</code> data</td>
+</tr>
+<tr>
+<td><code>manifest.json</code></td>
+<td>the input manifest v1 (<code>--manifest</code>)</td>
+</tr>
+<tr>
+<td><code>install.json</code></td>
+<td><code>install --json</code> data (dry run or executed)</td>
+</tr>
+<tr>
+<td><code>guide.json</code></td>
+<td><code>guide --json</code> data (the LLM guide)</td>
+</tr>
+</tbody>
+</table>
+<p>The runtime never validates against the schemas (<code>jsonschema</code> is a test-group dependency only); the tests validate
+real outputs: the CLI test corpora (<code>pytest -p cli_schema_validation ...</code> validates every envelope those tests print),
+a real extract → clean → export run, <code>capabilities</code>, <code>doctor</code> and every typed error.</p>
+<h2 id="compatibility-rule">Compatibility rule<a class="headerlink" href="#compatibility-rule" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Within v1, only <strong>additive optional fields</strong> are allowed: a new key that consumers may ignore. Consumers must
+  ignore keys they do not know.</li>
+<li>Anything else is <strong>v2</strong>: removing or renaming a field, making a field required, changing a type or an enum's
+  meaning, or changing an exit code's meaning. v2 gets a new <code>schemas/v2/</code> directory and <code>schema_version: 2</code>.</li>
+<li>Every change to a v1 file needs a changelog entry: append it to <code>schemas/v1/SCHEMA_LOCK.json</code> (entry id, date, the
+  change, and the new SHA-256 of every file) and list the same entry id below. <code>tests/test_k3_interface.py</code> fails when
+  a schema file's bytes differ from the latest lock entry.</li>
+</ul>
+<h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
+<p><code>0</code> success; <code>1</code> the command ran and found failures (<code>status</code>/<code>run</code> with failed documents, <code>doctor</code> with an
+<code>error</code> check). A <code>run</code> that exits 1 keeps its <code>data</code> and lists the failures in <code>errors</code>: one per failed task (<code>code</code> =
+the ledger reason code, e.g. <code>clean_process_failed</code>, with <code>document_id</code>, <code>stage</code>, the error message and
+<code>details.error_type</code>), one <code>source_unavailable</code> per unavailable source, and otherwise one summary error
+(<code>run_completed_with_failures</code> or <code>run_cancelled</code>). A <code>status</code> that exits 1 (a listed task failed) also keeps its
+<code>data</code> and adds one error per failed task it lists (its <code>--stage</code> and <code>--file</code> filters apply), each exactly as <code>run</code>
+reports it, or one <code>run_completed_with_failures</code> summary when the task table names none; <code>errors</code> is never empty
+then. <code>2</code> a typed error (<code>errors[0].code</code>); <code>3</code> a policy or disk conflict (<code>disk_budget_required</code>,
+<code>disk_budget_exceeded</code>, <code>policy_conflict</code>, <code>waiting_for_disk</code>, <code>disk_full</code>, <code>disk_guard_unavailable</code>), a run refused
+because a corpus copy the last run left unflushed was edited after it closed (<code>post_close_edit</code>, the edited paths in
+<code>details.paths</code>; move or delete them), a run refused because recovery found a corpus file it must repair but could not
+repair safely (<code>unresolved_recovery</code>: hard-linked, contradictory lock records, path replaced, managed source changed or
+missing; <code>details.paths</code> and <code>details.conditions</code> name each path and reason, the file is kept; remove the cause and
+resume), or a run waiting for disk.</p>
+<h2 id="plan-json-the-exact-preview"><code>plan --json</code>: the exact preview<a class="headerlink" href="#plan-json-the-exact-preview" title="Permanent link">&para;</a></h2>
+<p><code>plan</code> executes nothing and writes nothing (it reads the ledger read-only and hashes the selected new local sources).
+Its data adds to the hashed plan body:</p>
+<ul>
+<li><code>targets</code>: each document to process, with path, state (<code>present</code>/<code>absent</code>/<code>unreadable</code>/<code>remote</code>), bytes, SHA-256,
+  stages, and the download request for a remote source;</li>
+<li><code>exclusions</code>: each requested entry that will not be processed, with <code>reason_code</code> (<code>not_selected</code> for an
+  unselected manifest entry, <code>duplicate_source</code> for a repeated source);</li>
+<li><code>capabilities</code>: one capability object per planned stage, the missing installs and their install commands, and the
+  <code>fingerprint</code> of the installed capabilities the plan depends on;</li>
+<li><code>device_allocation</code>: the device, workers and CPU tokens per stage, whether the device was chosen explicitly, and the
+  device's state (<code>available</code>, <code>unknown_until_probe</code>, <code>unavailable</code>);</li>
+<li><code>deletion_policy</code>: what <code>debug</code>/<code>memory_saving</code> keep, release or delete, after which planned readers, per document;</li>
+<li><code>conflicts</code>: every conflict with its severity. <code>error</code> conflicts fail <code>plan</code> itself (exit 2, the preview stays in
+  <code>data</code>): <code>device_unsupported_for_stage</code>, <code>device_unavailable</code> (an explicitly chosen device this machine does not
+  have), <code>device_option_conflict</code>. <code>blocking</code> conflicts (<code>missing_capability</code>, <code>empty_selection</code>) keep <code>plan</code> at
+  exit 0 with <code>execution.ready: false</code> and a warning, and make <code>run</code> refuse. <code>memory_saving=extreme</code> needs positive
+  <code>disk_budget_bytes</code>, <code>max_source_bytes</code> and <code>max_attempt_bytes</code> (<code>disk_budget_required</code>, exit 3 otherwise) and
+  dedicated size-limited corpus and staging filesystems (<code>disk_guard_unavailable</code>, exit 3, on an ordinary shared
+  volume); the exact requirements are in
+  <a href="../architecture/resumability_recovery_and_retention/#memory_savingextreme-setup">Resumability, recovery and retention</a>.</li>
+</ul>
+<p>Downloads are public targets only. A source URL with userinfo (<code>user:pass@</code>) or a credential query/fragment field
+(<code>token</code>, <code>key</code>, <code>signature</code>, <code>X-Amz-Signature</code>, ...), or a <code>download</code> setting that would send credentials
+(<code>domain_cookies</code>, <code>credentials</code>), fails <code>plan</code> and <code>run</code> with <code>credentials_unsupported</code> (exit 2) before anything is
+planned, recorded or fetched. Every other URL is recorded as given.</p>
+<p>An omitted selection (no <code>--files</code>, no <code>--manifest</code>) plans every corpus document. A manifest is an explicit selection:
+one that selects nothing (<code>"selection": []</code>, or an empty pre-v1 list) plans zero <code>targets</code>, lists every entry in
+<code>exclusions</code>, and carries the blocking <code>empty_selection</code> conflict; <code>run</code> refuses it with <code>empty_selection</code> (exit 2)
+before the ledger is touched, with <code>--manifest</code> and with a saved <code>--plan</code> alike.</p>
+<p>Every present local target is hashed at planning, including a source the ledger already knows: <code>targets[].sha256</code> is
+the content observed now (<code>documents[].source_observation.sha256</code>); the ledger's previous hash is kept separately as
+<code>source_observation.stored_sha256</code>. An edited, previously processed file therefore plans and runs as a new version.</p>
+<p><code>run --resume RUN_ID</code> restores that run's frozen plan; any planning argument next to it is refused
+(<code>invalid_request</code>). Interrupted or lost attempts (a killed worker, a timeout) are retried automatically, at most 3
+attempts per task, and every interrupted attempt counts. Past that budget, and for any other failure, the task stays
+failed; <code>run --resume RUN_ID --retry-failed</code> is the explicit, operator-authorised retry of the failed tasks of that run.
+When the retry brings documents to <code>ok</code>, the corpus products are published again to cover them (a publication is
+current only for the document versions it recorded); a committed product that was already released makes the resume
+refuse with <code>republish_inputs_released</code> before it writes.</p>
+<p><code>run --plan FILE</code> is bound to the plan identity. Before the ledger is touched it refuses with a typed error when
+the file is not a plan (<code>invalid_plan</code>), the plan body was edited (<code>plan_hash_mismatch</code>, for example a changed setting), a planned input changed size,
+modification time or bytes, or appeared/disappeared (<code>plan_source_changed</code>), the installed capabilities changed
+(<code>plan_capability_changed</code>), or a conflict blocks it (<code>empty_selection</code>, <code>missing_capability</code>, device codes).</p>
+<h2 id="capabilities-and-doctor"><code>capabilities</code> and <code>doctor</code><a class="headerlink" href="#capabilities-and-doctor" title="Permanent link">&para;</a></h2>
+<p><code>capabilities</code> lists every stage with the packages it needs (present, missing, version mismatch, not admitted),
+the required native modules, the visible devices and the install command for each missing capability. Detection
+uses <code>importlib.metadata</code> and <code>importlib.util.find_spec</code> only: no torch, docling, pandas or OCR backend is imported.
+CUDA and MPS are <code>unknown_until_probe</code> unless the platform rules them out. A stage is available under the scheduler's
+own rule (the OCR stage checks versions, the toolkit source and its entry point).</p>
+<p>Each <code>native_modules</code> row of a required extension that carries a native API level (the cleaner and the noise
+module) also has <code>api_level</code> (found in the built file), <code>required_api_level</code> (what this glossapi needs) and <code>detail</code>.
+The level is read from the extension file's bytes, without importing it. A build from other source (no marker, or
+another level) is shown as <code>status: "missing"</code> with a <code>detail</code> that starts <code>stale native module</code> and ends
+<code>rebuild core</code>; <code>clean</code> is then unavailable with <code>reason_code: missing_native_module</code> and the install command
+<code>python install_glossapi.py core</code>. These keys are additive optional fields of schema v1.</p>
+<p><code>doctor</code> adds environment checks, each with a fix hint: Python version, the Rust extensions (imported in a child
+process), standalone native distributions that shadow the root wheel, free disk and writability at the corpus, and the
+ledger. <code>doctor --probe-devices</code> imports torch in a child process to confirm CUDA/MPS and says so in <code>device_probe</code>
+and a warning.</p>
+<h2 id="capabilities-catalog-the-package-list"><code>capabilities --catalog</code>: the package list<a class="headerlink" href="#capabilities-catalog-the-package-list" title="Permanent link">&para;</a></h2>
+<p><code>--catalog</code> adds <code>data.catalog</code> (<code>common.json#/$defs/catalog</code>) to the capabilities data. It lists every install profile
+(core and every pyproject extra): its purpose, the profiles it includes, its exact requirement lines, the stage
+variants it enables (derived from each stage adapter's <code>packages()</code>), whether it is device-bound (needs a torch build),
+the device profiles it supports per measured platform, the licences of its own requirements and of everything it adds,
+its measured install size, and whether it is installed (<code>installed.state</code>: installed / partial / missing, per
+requirement).</p>
+<p>Proprietary licences are flagged explicitly (schema 1.2): <code>licence.proprietary</code> (boolean) and
+<code>licence.proprietary_packages</code> per profile, over every target and device profile, and <code>proprietary_packages</code> per
+measured lock. A package is flagged when its measured licence names a proprietary licence, or when it is an NVIDIA
+CUDA runtime distribution (<code>nvidia-*</code>, <code>cuda-toolkit</code>) that declares no licence (<code>licence.proprietary_basis</code>). The
+CUDA device profiles of <code>layout</code>/<code>docling</code>/<code>ocr</code> are flagged (the NVIDIA CUDA runtimes); their CPU and MPS locks list
+none. The guide's package rows carry the same flag.</p>
+<p>Why a flag on <code>capabilities</code> and not a separate <code>packages</code> command: the catalog is the same capability surface (the
+same requirement detection and the same envelope command), so an LLM learns one read-only command for "what is here and
+what could be added", the envelope dispatch stays unchanged, and the plan's <code>install_commands</code> point at the same names.</p>
+<p>Sizes are measured, not estimated: <code>tools/catalog/measure_profiles.py</code> compiles one PEP 751 lock per profile, device
+profile and platform (<code>uv pip compile</code>, CPython 3.12, linux-x86_64 manylinux_2_28 and macos-arm64 14.0) from exactly the
+requirements <code>install</code> would request, and records per lock the package count, the download bytes (the lock's wheel
+sizes) and the installed bytes (uncompressed sizes from each wheel's ZIP central directory, read with range requests),
+plus the packages added over the core lock. Packages without a wheel (the Greek OCR toolkit is a VCS source) are listed
+in <code>unmeasured</code>. Each lock records the hash of its inputs; when the requirements change, <code>measurement.state</code> becomes
+<code>stale</code>, <code>capabilities --catalog</code> warns <code>catalog_measurement_stale</code>, and the tests fail until the tool is re-run.</p>
+<h2 id="install-device-dev-package-name-yes"><code>install --device DEV [--package NAME ...] [--yes]</code><a class="headerlink" href="#install-device-dev-package-name-yes" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The default is a <strong>dry run</strong>: <code>data.commands</code> holds the exact commands (installer, index URLs, requirement lines),
+  <code>data.requirements</code> the installed state of each line, and <code>data.would_change</code> what would change (the missing or
+  mismatched requirements, and an estimate from the measured locks of the packages added and their bytes). Nothing runs.
+  <code>would_change.from_lock</code> is labelled an estimate: the exact answer needs the network (the installer resolves for
+  real and may differ).</li>
+<li><code>--yes</code> runs exactly <code>data.commands</code> in order and stops at the first failure, then re-runs the capability check in a
+  fresh interpreter: <code>data.executed</code> (each step's exit code, time and output tail, and the installer's dependency check)
+  and <code>data.changes</code> (distributions added/removed/changed, stages whose availability changed, capability fingerprints).
+  While a command runs, its output is copied to stderr line by line; <code>output_tail</code> keeps its last 40 lines. stdout
+  stays one JSON envelope.</li>
+<li>Requirement lines are shown with their version specifiers in one canonical order (exact and lower bounds, then upper
+  bounds, then <code>!=</code>), so a wheel install and a source checkout show the same lines, commands and lock-input hash.</li>
+<li>Only what was requested: the commands carry the requested profiles' own requirement lines, with <code>glossapi[...]</code> self
+  references expanded (browser includes download), and nothing else. glossapi itself is never reinstalled (the source
+  installer <code>install_glossapi.py</code> does that). A device-bound profile (layout, ocr) first installs the device's
+  torch/torchvision build from its index; the second command pins the same build.</li>
+<li>One device profile per environment: <code>cpu</code>, <code>cuda126</code>, <code>cuda132</code> (Linux) or <code>mps</code> (Apple Silicon). Without
+  <code>--package</code> nothing is installed (warning <code>nothing_selected</code>).</li>
+<li><code>--installer auto|pip|uv</code>: auto uses pip when this interpreter has it, else <code>uv pip install --python</code>.</li>
+</ul>
+<h2 id="guide-json"><code>guide --json</code><a class="headerlink" href="#guide-json" title="Permanent link">&para;</a></h2>
+<p>The versioned LLM guide (<code>guide_version</code> 1): the phases and the two products, the choices (files, devices, packages,
+<code>debug</code>, <code>memory_saving</code>) with their measured costs, the workflow (capabilities, choose, plan, run, retry failed tasks
+after the user agrees, status/report, <code>report --why</code>), how to hand over files found elsewhere (input manifest v1; glossAPI does not scrape), the typed errors
+and the schema files. <code>docs/llm_guide.md</code> is the same content rendered by <code>python -m glossapi.llm_guide</code>. Every fact
+comes from the module that owns it; <code>tests/test_k3b_interface.py</code> fails when the guide, the Markdown file, the schemas,
+the settings contract or the catalog disagree.</p>
+<h2 id="typed-errors-and-exit-codes-of-install-guide-and-capabilities-catalog">Typed errors and exit codes of <code>install</code>, <code>guide</code> and <code>capabilities --catalog</code><a class="headerlink" href="#typed-errors-and-exit-codes-of-install-guide-and-capabilities-catalog" title="Permanent link">&para;</a></h2>
+<p><code>guide</code> and <code>capabilities --catalog</code> are read-only and exit 0; their only errors are the generic ones (<code>invalid_request</code>
+for a bad argument, <code>read_error</code>). <code>install</code> checks the whole request before anything runs; every refusal below leaves
+the environment untouched, except <code>install_command_failed</code>, which reports what ran.</p>
+<table>
+<thead>
+<tr>
+<th>code</th>
+<th>exit</th>
+<th>when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>device_required</code></td>
+<td>2</td>
+<td>no <code>--device</code></td>
+</tr>
+<tr>
+<td><code>conflicting_device_profiles</code></td>
+<td>2</td>
+<td>two device profiles at once (<code>--device cpu --device cuda126</code>, <code>cpu,mps</code>)</td>
+</tr>
+<tr>
+<td><code>unknown_device</code></td>
+<td>2</td>
+<td>not one of cpu, cuda126, cuda132, mps</td>
+</tr>
+<tr>
+<td><code>device_unsupported_on_platform</code></td>
+<td>2</td>
+<td>mps off Apple Silicon macOS, cuda126/cuda132 off Linux</td>
+</tr>
+<tr>
+<td><code>unknown_package</code></td>
+<td>2</td>
+<td>a package not in the catalog (<code>details.known</code> lists them)</td>
+</tr>
+<tr>
+<td><code>package_device_unsupported</code></td>
+<td>2</td>
+<td>the package's lock for that device profile did not resolve, or no measured platform has it</td>
+</tr>
+<tr>
+<td><code>installed_device_profile_conflict</code></td>
+<td>2</td>
+<td>the environment holds a torch build of another device profile</td>
+</tr>
+<tr>
+<td><code>requirements_unavailable</code></td>
+<td>2</td>
+<td>glossapi is neither a source checkout nor an installed distribution</td>
+</tr>
+<tr>
+<td><code>installer_unavailable</code></td>
+<td>2</td>
+<td><code>--yes</code> without pip in this interpreter or uv on PATH (the dry run warns instead)</td>
+</tr>
+<tr>
+<td><code>install_command_failed</code></td>
+<td>2</td>
+<td>a command exited non-zero; <code>data</code> keeps the steps, output tails and the changes so far</td>
+</tr>
+<tr>
+<td><code>invalid_request</code></td>
+<td>2</td>
+<td>a malformed argument (for example <code>--installer conda</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Warnings: <code>nothing_selected</code>, <code>installer_unavailable</code> (dry run), <code>dependency_check_failed</code> (after <code>--yes</code>),
+<code>catalog_measurement_stale</code> (<code>capabilities --catalog</code>).</p>
+<h2 id="input-manifest-v1">Input manifest v1<a class="headerlink" href="#input-manifest-v1" title="Permanent link">&para;</a></h2>
+<pre><code class="language-json">{&quot;manifest_version&quot;: 1,
+ &quot;documents&quot;: [{&quot;path&quot;: &quot;/abs/a.pdf&quot;, &quot;selection_id&quot;: &quot;a&quot;, &quot;metadata&quot;: {&quot;title&quot;: &quot;…&quot;, &quot;any&quot;: [&quot;JSON&quot;]}},
+               {&quot;path&quot;: &quot;/abs/b.pdf&quot;, &quot;selection_id&quot;: &quot;b&quot;}],
+ &quot;selection&quot;: [&quot;a&quot;],
+ &quot;stages&quot;: [&quot;extract&quot;, &quot;clean&quot;], &quot;products&quot;: [&quot;document_export&quot;],
+ &quot;devices&quot;: {&quot;ocr&quot;: &quot;mps&quot;}, &quot;workers&quot;: {&quot;clean&quot;: 2},
+ &quot;settings&quot;: {&quot;debug&quot;: &quot;off&quot;, &quot;memory_saving&quot;: &quot;normal&quot;}}
+</code></pre>
+<ul>
+<li>Each entry names exactly one source: <code>path</code> (absolute), <code>url</code> (unchanged URL behaviour), or a ledger reference
+  (<code>document_id</code>, <code>source_key</code>, <code>source_uri</code>). <code>metadata</code> and any other entry fields are the caller's original
+  metadata; <code>status --file</code> and <code>report</code> return them verbatim (<code>sources[].metadata.manifest_row</code>).</li>
+<li>A remote entry may give <code>source_id</code> and <code>url_index</code> (a nonnegative integer). Plan and run key a declared source by
+  (dataset_id, source_id, url_index); a list of URLs in one entry is keyed by each URL's position. Two different URLs
+  with the same identity are refused by plan and run with <code>invalid_manifest</code> (<code>details.reason:
+  ambiguous_source_identity</code>, <code>details.index</code>, <code>details.urls</code>); an invalid <code>url_index</code> (negative, fractional, a string
+  or a boolean) with <code>invalid_manifest</code> (<code>details.field: url_index</code>). The same URL twice stays one target (the repeat is
+  a <code>duplicate_source</code> exclusion).</li>
+<li><code>selection</code> (optional) names the <code>selection_id</code>s to process. Other entries appear in <code>exclusions</code> and are never
+  opened, hashed or processed. An empty <code>selection</code> selects nothing (<code>empty_selection</code>, see <code>plan</code>); omit it to
+  process every entry.</li>
+<li><code>products</code>: <code>document_export</code> adds <code>export</code>; <code>annotated_sections</code> adds <code>annotate</code>.</li>
+<li>Settings precedence: manifest <code>settings</code> &lt; <code>--settings FILE</code> &lt; individual flags. Stages, devices and workers given
+  both in the manifest and as arguments must agree (<code>conflicting_request</code>).</li>
+<li>A manifest without <code>manifest_version</code> (a list or <code>{"documents": [...]}</code>) keeps the pre-v1 behaviour, except that an
+  empty one selects nothing (<code>empty_selection</code>) instead of every corpus document. Other versions
+  fail with <code>unsupported_manifest_version</code>; malformed entries with <code>invalid_manifest</code> and <code>details.field</code>/<code>index</code>.</li>
+<li>Python: <code>glossapi.input_manifest.build_manifest</code>, <code>load_manifest</code>, <code>write_manifest</code>; <code>glossapi.cli.plan_documents</code>
+  returns the same plan data as <code>glossapi plan --json</code>. <code>write_manifest</code> (like <code>report --output</code>) resolves its
+  destination first and refuses a hard-linked file (<code>MetadataAliasError</code>) or one that resolves to corpus metadata
+  parquet through a symlink or <code>..</code> (<code>MetadataDestinationError</code>) before writing anything.</li>
+</ul>
+<h2 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>1.0</code> (2026-10-31): initial freeze: envelope, error, plan, run, status, report, report --why, report --output,
+  capabilities, doctor, input manifest v1.</li>
+<li><code>1.1</code> (2026-10-31): additive (K3b): new commands <code>install</code> and <code>guide</code> (<code>install.json</code>, <code>guide.json</code>, envelope
+  dispatch for them); <code>capabilities.catalog</code> (with <code>--catalog</code>) and the common definitions <code>catalog</code>, <code>package_profile</code>,
+  <code>lock_size</code>, <code>requirement_state</code>, <code>device_profile</code>. No existing field changed.</li>
+<li><code>1.2</code> (2026-10-31): additive (K3F round 2, K3B-M2): an optional proprietary-licence flag in the catalog
+  (<code>package_profile.licence.proprietary</code>, <code>proprietary_packages</code>, <code>proprietary_basis</code>;
+  <code>lock_size.proprietary_packages</code>) and in the guide package rows (<code>proprietary</code>, <code>proprietary_packages</code>). No existing
+  field changed.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

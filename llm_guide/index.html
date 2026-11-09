@@ -1,0 +1,2626 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Academic document processing with PDFium, Rust and the Greek OCR toolkit">
+      
+      
+      
+      
+        <link rel="prev" href="../cli_json_schema/">
+      
+      
+        <link rel="next" href="../math_enrichment_runtime/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>LLM Guide (generated) - GlossAPI</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#glossapi-guide-for-llms-guide-v1-cli-schema-v1" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="GlossAPI" class="md-header__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            GlossAPI
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              LLM Guide (generated)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../getting_started/" class="md-tabs__link">
+          
+  
+  
+  Onboarding
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  Architecture
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../pipeline/" class="md-tabs__link">
+          
+  
+  
+  Pipeline
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../ocr_plugin_migration/" class="md-tabs__link">
+          
+  
+  
+  Configuration & Ops
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../code_map/" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="GlossAPI" class="md-nav__button md-logo" aria-label="GlossAPI" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    GlossAPI
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/eellak/glossAPI" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Onboarding
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting_started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboarding Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lightweight_corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Lightweight PDF Corpus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/core_design_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Core Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/docling_throughput_and_batching/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Docling Throughput and Batching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/docling_failure_recovery_and_skiplist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Failure Recovery and Skiplist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/greek_text_validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Greek Text Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/metadata_artifacts_and_run_diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metadata, Artifacts, and Run Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/artifact_layout_and_stage_handoffs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Artifact Layout and Stage Handoffs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/resumability_recovery_and_retention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Resumability, Recovery, and Retention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/corpus_barriers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Corpus-wide Barriers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/ocr_cleaning_runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Cleaning Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ocr_repetition_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Repetition Policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/markdown_library_survey/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Markdown Library Survey (design history)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Pipeline
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pipeline Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ocr_and_math_enhancement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR & Math Enrichment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi_gpu/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-GPU & Scaling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Stage Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/download/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Download
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/extract/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/clean/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Clean
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/ocr/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/section/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Section
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/annotate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Annotate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stages/export/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Export
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration & Ops
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Configuration & Ops
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ocr_plugin_migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OCR Plugin Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/compatibility_matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility And Regression Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../code_map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Code Map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/corpus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Corpus API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli_json_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI JSON Schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Guide (generated)
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LLM Guide (generated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-glossapi-can-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What glossAPI can do
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-choices-the-user-makes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The choices the user makes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The choices the user makes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#devices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Devices
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packages
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#costs-measured-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Costs (measured only)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#handing-over-files-found-elsewhere" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Handing over files found elsewhere
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#typed-errors-on-the-decision-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Typed errors on the decision path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schemas
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math_enrichment_runtime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Math Enrichment Runtime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-glossapi-can-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What glossAPI can do
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-choices-the-user-makes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The choices the user makes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The choices the user makes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#devices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Devices
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packages
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#costs-measured-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Costs (measured only)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#handing-over-files-found-elsewhere" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Handing over files found elsewhere
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#typed-errors-on-the-decision-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Typed errors on the decision path
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schemas
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="glossapi-guide-for-llms-guide-v1-cli-schema-v1">glossAPI guide for LLMs (guide v1, CLI schema v1)<a class="headerlink" href="#glossapi-guide-for-llms-guide-v1-cli-schema-v1" title="Permanent link">&para;</a></h1>
+<!-- Generated by `python -m glossapi.llm_guide` from the same sources as `glossapi guide --json`. Do not edit by hand; tests/test_k3b_interface.py fails when it drifts. -->
+
+<p>glossAPI turns PDFs (local files or URLs you hand over) into clean text: it extracts the text layer, repairs fonts, cleans, routes bad pages to Greek OCR, splits sections, annotates them and exports. It is driven through a JSON CLI: every command prints one JSON envelope (schema v1).</p>
+<h2 id="what-glossapi-can-do">What glossAPI can do<a class="headerlink" href="#what-glossapi-can-do" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>stage</th>
+<th>what it does</th>
+<th>devices</th>
+<th>packages</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>download</code></td>
+<td>Fetch URL sources (HTTP; browser-assisted with the browser package). glossAPI does not search or scrape.</td>
+<td>cpu</td>
+<td>download</td>
+</tr>
+<tr>
+<td><code>extract</code></td>
+<td>Read the PDF text layer with PDFium and repair broken fonts (bundled Rust repair); Docling layout optional.</td>
+<td>cpu</td>
+<td>core</td>
+</tr>
+<tr>
+<td><code>clean</code></td>
+<td>Clean the extracted Markdown (Rust cleaner) and score its quality; route bad pages to OCR.</td>
+<td>cpu</td>
+<td>core</td>
+</tr>
+<tr>
+<td><code>ocr</code></td>
+<td>OCR the routed pages with the Greek OCR toolkit (the default plugin); output is text/Markdown.</td>
+<td>cpu, mps, cuda</td>
+<td>layout, ocr</td>
+</tr>
+<tr>
+<td><code>math</code></td>
+<td>Optional math/code enrichment with Docling (not executable by the streaming run yet).</td>
+<td>cpu</td>
+<td>layout</td>
+</tr>
+<tr>
+<td><code>sections</code></td>
+<td>Split documents into sections.</td>
+<td>cpu</td>
+<td>core</td>
+</tr>
+<tr>
+<td><code>annotate</code></td>
+<td>Classify sections with the packaged neutral classifier (product: annotated sections).</td>
+<td>cpu</td>
+<td>core</td>
+</tr>
+<tr>
+<td><code>export</code></td>
+<td>Write the document export (product: document export).</td>
+<td>cpu</td>
+<td>core</td>
+</tr>
+</tbody>
+</table>
+<p>Products (separate):</p>
+<ul>
+<li><code>document_export</code> (export stage): One record per document with its cleaned text and metadata (the export stage).</li>
+<li><code>annotated_sections</code> (annotate stage): Sections with their predicted types (the annotate stage). A separate product from the document export.</li>
+</ul>
+<h2 id="the-choices-the-user-makes">The choices the user makes<a class="headerlink" href="#the-choices-the-user-makes" title="Permanent link">&para;</a></h2>
+<h3 id="files">Files<a class="headerlink" href="#files" title="Permanent link">&para;</a></h3>
+<p>A versioned input manifest (manifest_version 1) of local paths or URLs with their original metadata; or --files PATH... for a quick plan.</p>
+<ul>
+<li>Each entry names exactly one of: <code>document_id</code>, <code>source_key</code>, <code>source_uri</code>, <code>path</code>, <code>url</code>.</li>
+<li><code>selection</code> names the selection_ids to process; other entries are never opened, hashed or processed. An empty <code>selection</code> selects nothing (run refuses with empty_selection); omit it to process every entry.</li>
+<li>Any <code>metadata</code> (and any other entry field) is carried verbatim to status --file and report.</li>
+<li>glossAPI does not search or scrape. An LLM that found files elsewhere hands them over in a manifest.</li>
+</ul>
+<h3 id="devices">Devices<a class="headerlink" href="#devices" title="Permanent link">&para;</a></h3>
+<ul>
+<li>--device STAGE=cpu|mps|cuda:N (plan/run); only the stages listed with mps/cuda can use them.</li>
+<li>install --device chooses the torch build for device-bound packages (cpu, cuda126, cuda132, mps); one device profile per environment.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>install device profile</th>
+<th>platforms (torch index)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cpu</code></td>
+<td>linux-x86_64 (https://download.pytorch.org/whl/cpu); macos-arm64 (https://pypi.org/simple)</td>
+</tr>
+<tr>
+<td><code>cuda126</code></td>
+<td>linux-x86_64 (https://download.pytorch.org/whl/cu126)</td>
+</tr>
+<tr>
+<td><code>cuda132</code></td>
+<td>linux-x86_64 (https://download.pytorch.org/whl/cu132)</td>
+</tr>
+<tr>
+<td><code>mps</code></td>
+<td>macos-arm64 (https://pypi.org/simple)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="packages">Packages<a class="headerlink" href="#packages" title="Permanent link">&para;</a></h3>
+<p>Sizes are measured from the locks (added over core; download / installed).</p>
+<table>
+<thead>
+<tr>
+<th>package</th>
+<th>kind</th>
+<th>adds stages</th>
+<th>devices</th>
+<th>size per platform</th>
+<th>licences of its own requirements</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>core</code></td>
+<td>base</td>
+<td>annotate, clean, export, extract, sections</td>
+<td>cpu, cuda126, cuda132, mps</td>
+<td>linux-x86_64: +11 pkgs, 92.5 MB / 303.3 MB; macos-arm64: +11 pkgs, 64.1 MB / 221.3 MB</td>
+<td>(Apache-2.0 OR BSD-3-Clause) AND LicenseRef-PdfiumThirdParty, Apache-2.0, BSD-3-Clause, BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0, MIT</td>
+</tr>
+<tr>
+<td><code>download</code></td>
+<td>feature</td>
+<td>download</td>
+<td>cpu, cuda126, cuda132, mps</td>
+<td>linux-x86_64: +11 pkgs, 4.1 MB / 14.7 MB; macos-arm64: +11 pkgs, 1.7 MB / 6.3 MB</td>
+<td>Apache-2.0 AND MIT, MIT</td>
+</tr>
+<tr>
+<td><code>browser</code></td>
+<td>feature</td>
+<td>download</td>
+<td>cpu, cuda126, cuda132, mps</td>
+<td>linux-x86_64: +15 pkgs, 60.3 MB / 180.3 MB; macos-arm64: +15 pkgs, 50.0 MB / 158.1 MB</td>
+<td>Apache-2.0, Apache-2.0 AND MIT, MIT, MIT-CMU</td>
+</tr>
+<tr>
+<td><code>layout</code></td>
+<td>feature</td>
+<td>extract, math, ocr</td>
+<td>cpu, cuda126, cuda132, mps</td>
+<td>linux-x86_64/cpu: +87 pkgs, 389.3 MB / 1267.1 MB; linux-x86_64/cuda126: +106 pkgs, 3844.0 MB / 7078.3 MB; linux-x86_64/cuda132: +106 pkgs, 3179.1 MB / 5936.3 MB; macos-arm64/cpu: +93 pkgs, 309.1 MB / 1048.6 MB; macos-arm64/mps: +93 pkgs, 309.1 MB / 1048.6 MB</td>
+<td>MIT</td>
+</tr>
+<tr>
+<td><code>docling</code> (alias of layout)</td>
+<td>alias</td>
+<td>extract, math, ocr</td>
+<td>cpu, cuda126, cuda132, mps</td>
+<td>linux-x86_64/cpu: +87 pkgs, 389.3 MB / 1267.1 MB; linux-x86_64/cuda126: +106 pkgs, 3844.0 MB / 7078.3 MB; linux-x86_64/cuda132: +106 pkgs, 3179.1 MB / 5936.3 MB; macos-arm64/cpu: +93 pkgs, 309.1 MB / 1048.6 MB; macos-arm64/mps: +93 pkgs, 309.1 MB / 1048.6 MB</td>
+<td>MIT</td>
+</tr>
+<tr>
+<td><code>annotate</code></td>
+<td>feature</td>
+<td>-</td>
+<td>cpu, cuda126, cuda132, mps</td>
+<td>linux-x86_64: +0 pkgs, 0.0 MB / 0.0 MB; macos-arm64: +0 pkgs, 0.0 MB / 0.0 MB</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>annotate-legacy</code></td>
+<td>feature</td>
+<td>annotate</td>
+<td>cpu, cuda126, cuda132, mps</td>
+<td>linux-x86_64: +5 pkgs, 48.8 MB / 154.5 MB; macos-arm64: +5 pkgs, 40.3 MB / 133.3 MB</td>
+<td>BSD License, BSD-3-Clause</td>
+</tr>
+<tr>
+<td><code>font-repair</code></td>
+<td>feature</td>
+<td>extract</td>
+<td>cpu, cuda126, cuda132, mps</td>
+<td>linux-x86_64: +2 pkgs, 5.9 MB / 24.8 MB; macos-arm64: +2 pkgs, 3.6 MB / 15.7 MB</td>
+<td>BSD-3-Clause, MIT</td>
+</tr>
+<tr>
+<td><code>docs</code></td>
+<td>tooling</td>
+<td>-</td>
+<td>cpu, cuda126, cuda132, mps</td>
+<td>linux-x86_64: +27 pkgs, 27.5 MB / 67.3 MB; macos-arm64: +27 pkgs, 27.0 MB / 65.4 MB</td>
+<td>BSD License, MIT</td>
+</tr>
+<tr>
+<td><code>ocr</code></td>
+<td>feature</td>
+<td>ocr</td>
+<td>cpu, cuda126, cuda132, mps</td>
+<td>linux-x86_64/cpu: +90 pkgs, 414.1 MB / 1335.6 MB (unmeasured: greek-ocr-toolkit); linux-x86_64/cuda126: +109 pkgs, 3868.8 MB / 7146.8 MB (unmeasured: greek-ocr-toolkit); linux-x86_64/cuda132: +109 pkgs, 3203.9 MB / 6004.8 MB (unmeasured: greek-ocr-toolkit); macos-arm64/cpu: +98 pkgs, 340.7 MB / 1157.3 MB (unmeasured: greek-ocr-toolkit); macos-arm64/mps: +98 pkgs, 340.7 MB / 1157.3 MB (unmeasured: greek-ocr-toolkit)</td>
+<td>(Apache-2.0 OR BSD-3-Clause) AND LicenseRef-PdfiumThirdParty, Apache, Apache 2.0, Apache Software License, Apache-2.0, Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND MIT, BSD, BSD 3-Clause, BSD License, BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0, MIT, MIT License, MIT-CMU, not declared (no licence in the pyproject at the pinned commit)</td>
+</tr>
+</tbody>
+</table>
+<p>Proprietary licences (flagged from the locks; a measured licence naming a proprietary licence, or an NVIDIA CUDA runtime distribution (nvidia-*, cuda-toolkit) that declares no licence (shipped under the NVIDIA software licence agreement)):</p>
+<ul>
+<li><code>layout</code>: proprietary: cuda-toolkit, nvidia-cublas, nvidia-cublas-cu12, nvidia-cuda-cupti, nvidia-cuda-cupti-cu12, nvidia-cuda-nvrtc, nvidia-cuda-nvrtc-cu12, nvidia-cuda-runtime, nvidia-cuda-runtime-cu12, nvidia-cudnn-cu12, nvidia-cudnn-cu13, nvidia-cufft, nvidia-cufft-cu12, nvidia-cufile, nvidia-cufile-cu12, nvidia-curand, nvidia-curand-cu12, nvidia-cusolver, nvidia-cusolver-cu12, nvidia-cusparse, nvidia-cusparse-cu12, nvidia-cusparselt-cu12, nvidia-cusparselt-cu13, nvidia-nccl-cu12, nvidia-nccl-cu13, nvidia-nvjitlink, nvidia-nvjitlink-cu12, nvidia-nvshmem-cu12, nvidia-nvshmem-cu13, nvidia-nvtx</li>
+<li><code>docling</code>: proprietary: cuda-toolkit, nvidia-cublas, nvidia-cublas-cu12, nvidia-cuda-cupti, nvidia-cuda-cupti-cu12, nvidia-cuda-nvrtc, nvidia-cuda-nvrtc-cu12, nvidia-cuda-runtime, nvidia-cuda-runtime-cu12, nvidia-cudnn-cu12, nvidia-cudnn-cu13, nvidia-cufft, nvidia-cufft-cu12, nvidia-cufile, nvidia-cufile-cu12, nvidia-curand, nvidia-curand-cu12, nvidia-cusolver, nvidia-cusolver-cu12, nvidia-cusparse, nvidia-cusparse-cu12, nvidia-cusparselt-cu12, nvidia-cusparselt-cu13, nvidia-nccl-cu12, nvidia-nccl-cu13, nvidia-nvjitlink, nvidia-nvjitlink-cu12, nvidia-nvshmem-cu12, nvidia-nvshmem-cu13, nvidia-nvtx</li>
+<li><code>ocr</code>: proprietary: cuda-toolkit, nvidia-cublas, nvidia-cublas-cu12, nvidia-cuda-cupti, nvidia-cuda-cupti-cu12, nvidia-cuda-nvrtc, nvidia-cuda-nvrtc-cu12, nvidia-cuda-runtime, nvidia-cuda-runtime-cu12, nvidia-cudnn-cu12, nvidia-cudnn-cu13, nvidia-cufft, nvidia-cufft-cu12, nvidia-cufile, nvidia-cufile-cu12, nvidia-curand, nvidia-curand-cu12, nvidia-cusolver, nvidia-cusolver-cu12, nvidia-cusparse, nvidia-cusparse-cu12, nvidia-cusparselt-cu12, nvidia-cusparselt-cu13, nvidia-nccl-cu12, nvidia-nccl-cu13, nvidia-nvjitlink, nvidia-nvjitlink-cu12, nvidia-nvshmem-cu12, nvidia-nvshmem-cu13, nvidia-nvtx</li>
+</ul>
+<p>Purposes:</p>
+<ul>
+<li><code>core</code>: The base install: text-layer extraction (PDFium with the bundled Rust font repair), cleaning, sections, annotation with the packaged neutral classifier, and export. Always installed with glossapi.</li>
+<li><code>download</code>: HTTP downloads of URL sources (aiohttp, YAML policies).</li>
+<li><code>browser</code>: Browser-assisted downloads (Playwright, Pillow); includes download. Browser engines are a separate explicit <code>python -m playwright install chromium</code> step that glossapi never runs.</li>
+<li><code>layout</code>: Docling 2.81 layout extraction and math/code enrichment; needs a device-specific torch build.</li>
+<li><code>docling</code>: Alias of layout (kept so existing <code>glossapi[docling]</code> installs resolve).</li>
+<li><code>annotate</code>: No extra packages: the packaged neutral section classifier runs on core numpy. Kept so existing <code>glossapi[annotate]</code> installs resolve.</li>
+<li><code>annotate-legacy</code>: scikit-learn 1.6.1 and joblib, only to load an explicitly supplied *.joblib classifier or to train one.</li>
+<li><code>font-repair</code>: The Python reference font repair (pypdf, fontTools); used only when the Rust repair is missing or requested explicitly.</li>
+<li><code>docs</code>: Documentation tooling (mkdocs); no pipeline capability.</li>
+<li><code>ocr</code>: The Greek OCR toolkit (the default OCR plugin, pinned to one commit) with its Docling, torch and ONNX pins.</li>
+</ul>
+<h3 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>debug=off</code> (default): An intermediate is released only after every planned reader has succeeded on its exact hash. Supplied files, selected final products, evidence and the ledger are kept.</li>
+<li><code>debug=on</code>: Keep every stage's intermediates and attempts, including bounded inner HTTP request bodies.</li>
+<li><code>memory_saving=normal</code> (default): Never delete a supplied original or a downloaded file.</li>
+<li><code>memory_saving=extreme</code>: Delete only downloads this run owns, after the last planned reader succeeds and outputs are durable. Never a supplied original, another run's file, or a path reached through a link. Requires a disk budget.</li>
+</ul>
+<p>Stages are fixed at the start of a run, and evaluation adds no readers. A plan amendment that adds a reader is a new plan; it cannot justify a past deletion.</p>
+<h2 id="costs-measured-only">Costs (measured only)<a class="headerlink" href="#costs-measured-only" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>workload</th>
+<th>device</th>
+<th>machine</th>
+<th>per page</th>
+<th>date</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>text-layer cohort of 242 PDFs, 24,551 pages (harness 8e05c3b)</td>
+<td>cpu</td>
+<td>persistent Linux CPU dev node</td>
+<td>extract 0.0054, clean 0.002, sections 0.0001, export 7e-05 (seconds per page, one worker)</td>
+<td>2026-10-28</td>
+</tr>
+<tr>
+<td>Docling 2.81 over the 242-PDF cohort, 24,551 pages in 46.1 min; 4 native crashes recovered</td>
+<td>cuda</td>
+<td>CSCS Clariden, 4x GH200</td>
+<td>extract (phase1_backend=docling) 0.1126 (seconds per page per node (8.88 pages/s per node of 4 GH200 GPUs))</td>
+<td>2026-10-29</td>
+</tr>
+<tr>
+<td>72 scanned pages through the Greek OCR toolkit (bb5aa6f), output equal to the direct runner</td>
+<td>mps</td>
+<td>Apple Silicon Mac, MPS recogniser + CoreML detector</td>
+<td>ocr 1.86-2.0 (seconds per page (range over runs), via glossAPI)</td>
+<td>2026-10-30</td>
+</tr>
+</tbody>
+</table>
+<p>Disk:</p>
+<ul>
+<li>ledger bytes per document (debug=off): 58.1-85.8 KB (58.1 sequential to 85.8 streaming KB per document; the K4 target is 50 KB (not met); 2026-10-30)</li>
+</ul>
+<p>Not measured: ocr on cpu or cuda (per page); extract with Docling on cpu (per page); download (network bound); math enrichment; intermediate bytes kept by debug=on.</p>
+<p>Only measured values. Each entry names its machine, workload, date and evidence record; a stage/device pair without an entry is not measured. The LLM guide reads this file; never copy its numbers by hand.</p>
+<h2 id="workflow">Workflow<a class="headerlink" href="#workflow" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>capabilities</strong>: <code>glossapi capabilities --json</code>. What is installed and runnable now: every stage, its packages, the visible devices. Read-only.</li>
+<li><strong>catalog</strong>: <code>glossapi capabilities --catalog --json</code>. Every optional package with what it adds, devices, measured install size, licences and install state.</li>
+<li><strong>install (preview)</strong>: <code>glossapi install --device cpu --package download --json</code>. Dry run: the exact commands and what they would change. Nothing runs. Show it to the user.</li>
+<li><strong>install (after the user agrees)</strong>: <code>glossapi install --device cpu --package download --yes --json</code>. Runs exactly the previewed commands, then re-checks capabilities and reports what changed.</li>
+<li><strong>plan (preview)</strong>: <code>glossapi plan --corpus CORPUS --manifest MANIFEST.json --json</code>. The exact targets, exclusions, required capabilities, device allocation and deletion policy. Writes nothing.</li>
+<li><strong>run</strong>: <code>glossapi run --corpus CORPUS --plan PLAN.json --json</code>. Runs the saved plan; refuses if any input byte, setting or installed capability changed since the preview.</li>
+<li><strong>retry failed tasks (after the user agrees)</strong>: <code>glossapi run --corpus CORPUS --resume RUN_ID --retry-failed --json</code>. An interrupted or lost attempt (killed worker, timeout) is retried automatically, at most 3 attempts per task, and every interrupted attempt counts. Past that budget the task stays failed; --retry-failed is an explicit, operator-authorised retry of the failed tasks of that run.</li>
+<li><strong>status</strong>: <code>glossapi status --corpus CORPUS --json</code>. Progress and per-stage counts of the latest run.</li>
+<li><strong>report</strong>: <code>glossapi report --corpus CORPUS --json</code>. The final census: every requested source exactly once.</li>
+<li><strong>report --why</strong>: <code>glossapi report --corpus CORPUS --why DOCUMENT --json</code>. Why a document ended as it did, from the ledger alone (also after intermediates are released).</li>
+</ol>
+<h2 id="handing-over-files-found-elsewhere">Handing over files found elsewhere<a class="headerlink" href="#handing-over-files-found-elsewhere" title="Permanent link">&para;</a></h2>
+<pre><code class="language-json">{
+  &quot;manifest_version&quot;: 1,
+  &quot;documents&quot;: [
+    {
+      &quot;url&quot;: &quot;https://example.org/a.pdf&quot;,
+      &quot;selection_id&quot;: &quot;a&quot;,
+      &quot;metadata&quot;: {
+        &quot;title&quot;: &quot;Found by the LLM&quot;
+      }
+    },
+    {
+      &quot;path&quot;: &quot;/absolute/path/b.pdf&quot;,
+      &quot;selection_id&quot;: &quot;b&quot;
+    }
+  ],
+  &quot;selection&quot;: [
+    &quot;a&quot;,
+    &quot;b&quot;
+  ],
+  &quot;products&quot;: [
+    &quot;document_export&quot;
+  ],
+  &quot;settings&quot;: {
+    &quot;debug&quot;: &quot;off&quot;,
+    &quot;memory_saving&quot;: &quot;normal&quot;
+  }
+}
+</code></pre>
+<ul>
+<li>Paths are absolute; URLs are fetched by the download stage only when it is planned.</li>
+<li>Show the user <code>plan --json</code> before <code>run</code>; run the saved plan with <code>run --plan</code>.</li>
+<li>Downloads are public targets only: a URL with userinfo or a credential query field is refused (credentials_unsupported).</li>
+</ul>
+<h2 id="typed-errors-on-the-decision-path">Typed errors on the decision path<a class="headerlink" href="#typed-errors-on-the-decision-path" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>code</th>
+<th>command</th>
+<th>exit</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>device_required</code></td>
+<td>install</td>
+<td>2</td>
+<td>No --device was given; choose one device profile: cpu, cuda126, cuda132, mps.</td>
+</tr>
+<tr>
+<td><code>conflicting_device_profiles</code></td>
+<td>install</td>
+<td>2</td>
+<td>More than one device profile was requested; an environment holds one torch build.</td>
+</tr>
+<tr>
+<td><code>unknown_device</code></td>
+<td>install</td>
+<td>2</td>
+<td>The device profile is not one of cpu, cuda126, cuda132, mps.</td>
+</tr>
+<tr>
+<td><code>device_unsupported_on_platform</code></td>
+<td>install</td>
+<td>2</td>
+<td>This platform has no such device profile (mps needs Apple Silicon macOS; cuda126/cuda132 need Linux).</td>
+</tr>
+<tr>
+<td><code>unknown_package</code></td>
+<td>install</td>
+<td>2</td>
+<td>A requested package is not in the catalog (<code>glossapi capabilities --catalog</code>).</td>
+</tr>
+<tr>
+<td><code>package_device_unsupported</code></td>
+<td>install</td>
+<td>2</td>
+<td>A requested package does not support the device profile (its lock did not resolve or no measured platform has it).</td>
+</tr>
+<tr>
+<td><code>installed_device_profile_conflict</code></td>
+<td>install</td>
+<td>2</td>
+<td>The environment already holds a torch build of another device profile; use a separate environment for this device.</td>
+</tr>
+<tr>
+<td><code>requirements_unavailable</code></td>
+<td>install</td>
+<td>2</td>
+<td>glossapi is neither a source checkout nor an installed distribution, so its profiles cannot be read.</td>
+</tr>
+<tr>
+<td><code>installer_unavailable</code></td>
+<td>install</td>
+<td>2</td>
+<td>Neither pip (in this interpreter) nor uv (on PATH) is available to run --yes.</td>
+</tr>
+<tr>
+<td><code>install_command_failed</code></td>
+<td>install</td>
+<td>2</td>
+<td>An install command exited non-zero; later commands did not run. <code>data.executed</code> has the output tail and <code>data.changes</code> what changed before the failure.</td>
+</tr>
+<tr>
+<td><code>device_unsupported_for_stage</code></td>
+<td>plan, run</td>
+<td>2</td>
+<td>A device choice the stage or machine cannot honour; plan keeps its preview in data.</td>
+</tr>
+<tr>
+<td><code>device_option_conflict</code></td>
+<td>plan, run</td>
+<td>2</td>
+<td>A device choice the stage or machine cannot honour; plan keeps its preview in data.</td>
+</tr>
+<tr>
+<td><code>device_unavailable</code></td>
+<td>plan, run</td>
+<td>2</td>
+<td>A device choice the stage or machine cannot honour; plan keeps its preview in data.</td>
+</tr>
+<tr>
+<td><code>missing_capability</code></td>
+<td>run</td>
+<td>2</td>
+<td>plan exits 0 with execution.ready false and the install commands; run refuses before writing.</td>
+</tr>
+<tr>
+<td><code>empty_selection</code></td>
+<td>run</td>
+<td>2</td>
+<td>The manifest selects no entry (selection: [] or an empty document list): plan exits 0 with zero targets, every entry in exclusions and execution.ready false; run refuses before writing. Omit selection to process every entry.</td>
+</tr>
+<tr>
+<td><code>invalid_plan</code></td>
+<td>run --plan</td>
+<td>2</td>
+<td>The file is not plan --json output (or its data object).</td>
+</tr>
+<tr>
+<td><code>plan_hash_mismatch</code></td>
+<td>run --plan</td>
+<td>2</td>
+<td>The saved plan no longer matches: re-run plan and show the new preview.</td>
+</tr>
+<tr>
+<td><code>plan_source_changed</code></td>
+<td>run --plan</td>
+<td>2</td>
+<td>The saved plan no longer matches: re-run plan and show the new preview.</td>
+</tr>
+<tr>
+<td><code>plan_capability_changed</code></td>
+<td>run --plan</td>
+<td>2</td>
+<td>The saved plan no longer matches: re-run plan and show the new preview.</td>
+</tr>
+<tr>
+<td><code>disk_budget_required</code></td>
+<td>plan, run</td>
+<td>3</td>
+<td>memory_saving=extreme needs positive disk_budget_bytes, max_source_bytes and max_attempt_bytes.</td>
+</tr>
+<tr>
+<td><code>disk_guard_unavailable</code></td>
+<td>plan, run</td>
+<td>3</td>
+<td>memory_saving=extreme needs dedicated size-limited corpus and staging filesystems whose capacities fit the budget; an ordinary shared volume is refused.</td>
+</tr>
+<tr>
+<td><code>post_close_edit</code></td>
+<td>run</td>
+<td>3</td>
+<td>A corpus copy the last run left unflushed (export.jsonl, a metadata parquet) was changed after that run closed; it is kept. Move or delete it (it is republished from the managed source) or use another corpus.</td>
+</tr>
+<tr>
+<td><code>unresolved_recovery</code></td>
+<td>run</td>
+<td>3</td>
+<td>A corpus product is not in the state the ledger expects and could not be made so safely. At a run start or a repeated publication: recovery found a file it must repair (a copy the last run left unflushed, or bytes a failed attempt put in place) but could not (hard-linked, contradictory lock records, path replaced, managed source changed or missing); the file is kept and the run stops there. At the completion gate: the run's work was done, but a product differs from its expected state; the run is not completed. Remove the cause (e.g. the extra hard link) and resume.</td>
+</tr>
+<tr>
+<td><code>credentials_unsupported</code></td>
+<td>plan, run</td>
+<td>2</td>
+<td>A source URL carries userinfo (user:pass@) or a credential query/fragment field (token, key, signature, ...), or a download setting would send credentials (domain_cookies, credentials): glossAPI downloads public targets only. Refused before anything is planned, recorded or fetched; supply the public URL.</td>
+</tr>
+<tr>
+<td><code>invalid_manifest</code></td>
+<td>plan, run</td>
+<td>2</td>
+<td>A malformed manifest entry; details.field and details.index say where.</td>
+</tr>
+<tr>
+<td><code>unsupported_manifest_version</code></td>
+<td>plan, run</td>
+<td>2</td>
+<td>This glossAPI reads manifest_version 1 only.</td>
+</tr>
+</tbody>
+</table>
+<p>Exit codes: <code>0</code> success; <code>1</code> ran and found failures (status/run with failed documents; doctor with an error check); run lists each failed task and unavailable source in errors (code = the ledger reason code); <code>2</code> a typed error (errors[0].code); <code>3</code> a policy or disk conflict, or a run waiting for disk.</p>
+<h2 id="schemas">Schemas<a class="headerlink" href="#schemas" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>common</code>: <code>glossapi/schemas/v1/common.json</code></li>
+<li><code>error</code>: <code>glossapi/schemas/v1/error.json</code></li>
+<li><code>envelope</code>: <code>glossapi/schemas/v1/envelope.json</code></li>
+<li><code>plan</code>: <code>glossapi/schemas/v1/plan.json</code></li>
+<li><code>run</code>: <code>glossapi/schemas/v1/run.json</code></li>
+<li><code>status</code>: <code>glossapi/schemas/v1/status.json</code></li>
+<li><code>report</code>: <code>glossapi/schemas/v1/report.json</code></li>
+<li><code>report_why</code>: <code>glossapi/schemas/v1/report_why.json</code></li>
+<li><code>report_export</code>: <code>glossapi/schemas/v1/report_export.json</code></li>
+<li><code>capabilities</code>: <code>glossapi/schemas/v1/capabilities.json</code></li>
+<li><code>doctor</code>: <code>glossapi/schemas/v1/doctor.json</code></li>
+<li><code>manifest</code>: <code>glossapi/schemas/v1/manifest.json</code></li>
+<li><code>install</code>: <code>glossapi/schemas/v1/install.json</code></li>
+<li><code>guide</code>: <code>glossapi/schemas/v1/guide.json</code></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
