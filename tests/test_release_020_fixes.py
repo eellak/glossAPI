@@ -72,13 +72,81 @@ def test_f02_math_only_after_lightweight_extraction(tmp_path):
 
 # ---- F03: files=None is the auto-discovery selector, not an inventory --------------------------------------------
 def test_f03_settings_snapshot_accepts_selector_none_inventories_stay_arrays():
-    validate_evidence({"schema_version": 1, "kind": "settings", "files": None, "device": "cuda"})
-    validate_evidence({"schema_version": 1, "kind": "settings", "files": ["a", "b"]})
+    validate_evidence({"schema_version": 1, "kind": "settings", "files": None, "device": "cuda"}, snapshot_kind="settings")
+    validate_evidence({"schema_version": 1, "kind": "settings", "files": ["a", "b"]}, snapshot_kind="settings")
     for kind in ("inputs", "outputs", "fingerprint"):
         with pytest.raises(ValueError, match="files must be an array"):
-            validate_evidence({"schema_version": 1, "kind": kind, "files": None})
+            validate_evidence({"schema_version": 1, "kind": kind, "files": None}, snapshot_kind=kind)
     with pytest.raises(ValueError, match="rows must be an array"):
         validate_evidence({"schema_version": 1, "rows": {"a": 1}})
+
+
+# ---- C2-01: only the authoritative snapshot kind grants the settings exemption -----------------------------------
+@pytest.mark.parametrize("files", [None, {"bad": 1}], ids=["null", "mapping"])
+def test_c2_01_payload_kind_cannot_exempt_an_inventory(files):
+    """Without an authoritative settings kind, a payload that calls itself settings is still an inventory."""
+    for snapshot_kind in (None, "inputs"):
+        with pytest.raises(ValueError):
+            validate_evidence({"schema_version": 1, "kind": "settings", "files": files}, snapshot_kind=snapshot_kind)
+    with pytest.raises(ValueError, match="conflicts with its snapshot kind"):
+        validate_evidence({"schema_version": 1, "kind": "inputs", "files": []}, snapshot_kind="settings")
+
+
+def _attempt(tmp_path, label, **slots):
+    from glossapi.ledger import LedgerWriter
+    arguments = dict(fingerprint={}, inputs={"files": []}, settings={}, tools={})
+    arguments.update(slots)
+    with LedgerWriter(tmp_path / f"{label}.sqlite3") as writer:
+        with writer.transaction():
+            run = writer.run({}, {}, {}, code_revision="c2-01-regression")
+            version = writer.version(writer.document("local_path:v1:file:///fixture.pdf"))
+            task = writer.task(run, "extract", "extract.test", {}, version_id=version)
+            attempt = writer.attempt(task, worker_id="test", device_id="cpu", **arguments)
+            row = writer.connection.execute("SELECT input_manifest_sha256, settings_sha256 FROM attempts "
+                                            "WHERE attempt_id=?", (attempt,)).fetchone()
+            kinds = [writer.connection.execute("SELECT kind FROM snapshots WHERE sha256=?", (digest,)).fetchone()[0]
+                     for digest in row]
+        from glossapi.ledger.writer import integrity
+        integrity(writer.connection)
+    return kinds
+
+
+@pytest.mark.parametrize("payload", [{"files": None}, {"kind": "settings", "files": None},
+                                     {"kind": "settings", "files": {"bad": 1}}, {"files": {"bad": 1}},
+                                     {"kind": "settings", "files": []}],
+                         ids=["null", "spoofed-null", "spoofed-mapping", "mapping", "spoofed-valid"])
+def test_c2_01_writer_attempt_refuses_malformed_or_spoofed_inventories(tmp_path, payload):
+    with pytest.raises(ValueError):
+        _attempt(tmp_path, "refused", inputs=payload)
+
+
+def test_c2_01_writer_attempt_keeps_settings_selectors_and_real_inventories(tmp_path):
+    assert _attempt(tmp_path, "ok", inputs={"files": [{"file_id": "x"}]},
+                    settings={"files": None, "device": "cuda"}) == ["inputs", "settings"]
+
+
+@pytest.mark.parametrize("files", [None, {"bad": 1}], ids=["null", "mapping"])
+def test_c2_01_integrity_rejects_a_stored_inventory_with_non_array_files(tmp_path, files):
+    """A stored inputs row is validated as an inventory even when its payload claims to be settings."""
+    import hashlib
+    import sqlite3
+    from glossapi.ledger.encoding import canonical_json
+    from glossapi.ledger.writer import LedgerError, integrity
+
+    def ledger(name, kind, payload):
+        connection = sqlite3.connect(tmp_path / name)
+        connection.execute("CREATE TABLE snapshots (sha256 TEXT PRIMARY KEY, kind TEXT NOT NULL, "
+                           "schema_version INTEGER NOT NULL, json TEXT NOT NULL)")
+        encoded = canonical_json(payload)
+        connection.execute("INSERT INTO snapshots VALUES(?,?,1,?)",
+                           (hashlib.sha256(encoded.encode()).hexdigest(), kind, encoded))
+        return connection
+
+    integrity(ledger("settings.sqlite3", "settings", {"schema_version": 1, "kind": "settings", "files": files}))
+    for name, payload in (("plain", {"schema_version": 1, "kind": "inputs", "files": files}),
+                          ("spoofed", {"schema_version": 1, "kind": "settings", "files": files})):
+        with pytest.raises((ValueError, LedgerError)):
+            integrity(ledger(f"{name}.sqlite3", "inputs", payload))
 
 
 @pytest.fixture
