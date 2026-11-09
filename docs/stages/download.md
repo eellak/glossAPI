@@ -4,6 +4,11 @@
 
 The download stage acquires source documents from parquet-based URL metadata and creates the initial local corpus artifact set.
 
+Prerequisites: the core install does not include the downloader. Install the `download` package
+(`python install_glossapi.py download`) for HTTP downloads. The browser routes (`download_mode="auto"` escalation and
+`download_mode="browser"`) need the `browser` package (`python install_glossapi.py browser`) and a one-time
+`python -m playwright install chromium`, which glossAPI never runs for you.
+
 ## Main responsibilities
 
 - read URL-bearing parquet input

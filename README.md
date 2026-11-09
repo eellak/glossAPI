@@ -1,14 +1,27 @@
 # GlossAPI
 
-GlossAPI is a GPU-ready document processing pipeline from [GFOSS](https://gfoss.eu/) that turns academic PDFs into structured Markdown, cleans noisy text with Rust extensions, and optionally enriches math/code content.
+GlossAPI is GFOSS's document-processing pipeline for turning academic PDFs into structured Markdown, cleaned text, sections and metadata.
+
+## Greek OCR: code, models and data
+
+**GlossAPI 0.2.0 uses the Greek OCR toolkit as its only supported OCR engine.**
+
+- **[OCR toolkit on GitHub](https://github.com/fffoivos/greek-ocr-toolkit)** — the implementation integrated with GlossAPI.
+- **[Greek OCR models on Hugging Face](https://huggingface.co/fffoivos/greek-ocr)** — the model repository used by the default OCR configuration.
+- **[Greek OCR Lines dataset on Hugging Face](https://huggingface.co/datasets/fffoivos/greek-ocr-lines)** — the toolkit's upstream line-data project.
+
+The default OCR configuration uses the toolkit's R8 segmenter and x1 recognizer, with source and model revisions pinned by GlossAPI. The dataset link provides upstream data context; inference uses model assets. See [OCR installation, pinned revisions and supported inputs](docs/ocr_plugin_migration.md).
+
+Core PDF extraction uses PDFium and bundled Rust extensions to produce `layout_v2` Markdown without Docling or a GPU. Set `GLOSSAPI_MARKDOWN_LAYOUT=plain` before a run for plain page text. OCR is an optional install and explicit processing step; Docling layout and math/code enrichment are optional capabilities.
 
 ## Why GlossAPI
-- Handles download → extraction → cleaning → sectioning in one pipeline.
-- Ships layout-aware Markdown extraction with PDFium and bundled Rust extensions, without Docling in core.
-- Uses the [Greek OCR toolkit](https://github.com/fffoivos/greek-ocr-toolkit) as its only supported OCR engine; Docling layout is optional.
-- Rust-powered cleaner/noise metrics keep Markdown quality predictable.
-- Greek-first metadata and section classification tuned for academic corpora.
-- Modular Corpus API lets you resume from any stage or plug into existing flows.
+
+- Download public documents, extract text, clean it, split sections, annotate and export through the `Corpus` API or CLI.
+- Inspect per-page OCR routing and provenance through the corpus ledger.
+- Resume streaming runs with frozen settings and recorded artifact identities.
+- Use the bundled neutral section classifier without scikit-learn; install legacy model support only when needed.
+
+See [0.2.0 changes and limitations](CHANGELOG.md). The installation commands below build from a source checkout.
 
 ## Quickstart (local repo)
 
@@ -40,7 +53,7 @@ PY
 ### Corpus usage contract
 `Corpus` is the organizing surface: keep contributions wired through `Corpus.run()` and the phase methods (`download()`, `extract()`, `clean()`, `ocr()`, `section()`, `annotate()`, `jsonl()`, `jsonl_sharded()`). The intended use is a short script chaining those calls, or the `glossapi plan`/`glossapi run` commands; avoid bespoke monkeypatches or side channels so resumability and artifact layout stay consistent.
 
-`Corpus.run()` and `glossapi run` record every stage in the corpus ledger (`corpus.sqlite3`) and can resume an interrupted run (`glossapi run --resume RUN_ID`). Their stage workers are separate processes started with `spawn`, which import your script again, so a script that calls `Corpus.run()` must guard it with `if __name__ == "__main__":`. See [Resumability, recovery and retention](docs/architecture/resumability_recovery_and_retention.md) and the [CLI JSON schema](docs/cli_json_schema.md).
+`Corpus.run()` and `glossapi run` record every stage in the corpus ledger (`corpus.sqlite3`) and can resume an interrupted run (`glossapi run --resume RUN_ID`). Their stage workers are separate processes started with `spawn`, which import your script again; phase methods such as `extract()` also run their per-document work in `spawn` workers. A script file that calls `Corpus.run()` or a phase method must therefore guard those calls with `if __name__ == "__main__":` (the `python - <<'PY'` examples below run from standard input and need no guard). See [Resumability, recovery and retention](docs/architecture/resumability_recovery_and_retention.md) and the [CLI JSON schema](docs/cli_json_schema.md).
 
 `Corpus.extract(batched=None)` defaults to layout batch 8 with 8 rasteriser workers for single-device, layout-only Docling on CUDA; safe PyPDFium and multi-GPU runs stay sequential by default.
 
@@ -55,11 +68,15 @@ Rust and a C toolchain; see [installation](docs/getting_started.md).
 The default install is **core**: extraction with PDFium, cleaning, sectioning, annotation and export. Add named
 packages when you need them:
 
-- `./dependency_setup/setup_glossapi.sh layout --device cpu` (or `cuda126`, `cuda132`, `mps`): Docling layout
+Run these in the environment that has glossAPI (activate it first):
+
+- `python install_glossapi.py layout --device cpu` (or `cuda126`, `cuda132`, `mps`): Docling layout
   extraction and math/code enrichment.
 - `python install_glossapi.py ocr --device cpu` (or `mps`, `cuda126`, `cuda132`): the pinned external Greek OCR
   plugin. Then call `corpus.ocr(mode='ocr_bad')`, or `glossapi run --stages ocr,export`, which use that plugin by
   default.
+- `python install_glossapi.py download` (HTTP downloads) or `python install_glossapi.py browser` (browser-assisted
+  downloads; then run `python -m playwright install chromium` once, which glossAPI never runs for you).
 - In an environment that already has glossAPI, `glossapi install --device cpu --package download` prints the exact
   commands for the named packages; add `--yes` to run them.
 
@@ -67,6 +84,9 @@ See [Dependency setup](dependency_setup/dependency_notes.md) and
 [OCR setup, development override and qualification](docs/ocr_plugin_migration.md).
 
 ## Browser-Gated Download Mode
+
+Downloads need the `download` package; the browser routes need the `browser` package plus the Chromium download
+described above.
 
 All download routes support public targets only. URLs containing credentials, signed/token query fields, cookies
 or credential settings are refused before any request. Browser recovery handles public interstitials, not login.
@@ -124,8 +144,8 @@ For manual smoke checks against live browser-gated sources, build an ad hoc parq
 
 | Scenario | Commands | Notes |
 | --- | --- | --- |
-| Core from a checkout | `./dependency_setup/setup_glossapi.sh` | Creates a core-only virtual environment (Python 3.11–3.14). The root wheel bundles the cleaner, noise and PDF font-repair Rust extensions. |
-| Named optional packages | `./dependency_setup/setup_glossapi.sh layout --device cpu`, `python install_glossapi.py ocr --device cuda126` | `download`, `browser`, `layout`, `ocr`, `annotate`, `annotate-legacy`. `layout` and `ocr` install a device-specific torch build first. Add `--dry-run` to print the commands only. |
+| Core from a checkout | `./dependency_setup/setup_glossapi.sh`, then `source .venv_glossapi_core/bin/activate` | Creates a core-only virtual environment (Python 3.11–3.14; `--venv PATH` chooses another, then activate `PATH/bin/activate`). The root wheel bundles the cleaner, noise and PDF font-repair Rust extensions. |
+| Named optional packages | `./dependency_setup/setup_glossapi.sh layout --device cpu`, or in the activated environment `python install_glossapi.py ocr --device cuda126` | `download`, `browser`, `layout`, `ocr`, `annotate`, `annotate-legacy`. `layout` and `ocr` install a device-specific torch build first. Add `--dry-run` to print the commands only. |
 | Manual editable install | `pip install -e .` after cloning | Core only. Needs a Rust toolchain to build the extensions; rerun it after pulling changes to `rust/`. |
 | Add packages to an existing environment | `glossapi install --device DEV --package NAME` | A dry run by default; `--yes` runs the printed commands. |
 
@@ -149,7 +169,7 @@ Use this as the shortest path from a documentation concept to the public call th
 | Stage | Main call | Important parameters | Writes |
 | --- | --- | --- | --- |
 | Download | `Corpus.download(...)` | `input_parquet`, `links_column`, `parallelize_by`, `download_mode="standard"|"auto"|"browser"`, `download_policy_file`, downloader kwargs | `downloads/`, `download_results/*.parquet` |
-| Extract (Phase-1) | `Corpus.extract(...)` | `input_format`, `phase1_backend`, `use_gpus`, `workers_per_device`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json` |
+| Extract (Phase-1) | `Corpus.extract(...)` | `input_format`, `phase1_backend`, `use_gpus`, `workers_per_device`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `json/metrics/*.json`; `json/<stem>.docling.json(.zst)` with `phase1_backend='docling'` only |
 | Clean | `Corpus.clean(...)` | `drop_bad`, `empty_char_threshold`, `empty_min_pages` (`threshold` is deprecated and has no effect) | `clean_markdown/<stem>.md`, updated parquet metrics/flags |
 | OCR / math follow-up | `Corpus.ocr(...)` | `mode`, `fix_bad`, `page_routing` (default `"all"`), `math_enhance`, `use_gpus`, `devices` | refreshed `markdown/<stem>.md`, optional `json/<stem>.latex_map.jsonl` |
 | Section | `Corpus.section()` | uses cleaner/parquet outputs to choose inputs | `sections/sections_for_annotation.parquet` |

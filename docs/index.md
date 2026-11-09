@@ -2,6 +2,18 @@
 
 Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning academic PDFs into clean Markdown and metadata artifacts.
 
+## Greek OCR: code, models and data
+
+**The Greek OCR toolkit is the only supported OCR engine in GlossAPI 0.2.0.**
+
+- **[OCR toolkit on GitHub](https://github.com/fffoivos/greek-ocr-toolkit)** — source code for the OCR integration.
+- **[Greek OCR models on Hugging Face](https://huggingface.co/fffoivos/greek-ocr)** — the repository used by GlossAPI's default x1 recognizer.
+- **[Greek OCR Lines dataset on Hugging Face](https://huggingface.co/datasets/fffoivos/greek-ocr-lines)** — the toolkit's upstream line-data project.
+
+GlossAPI pins the toolkit source and recognition model revision. It routes selected physical pages to OCR and preserves retained native text. Read [OCR setup, pins and supported inputs](ocr_plugin_migration.md) and the [OCR stage contract](stages/ocr.md).
+
+Core text-layer extraction produces layout-aware Markdown with PDFium and Rust; it needs neither Docling nor a GPU. `GLOSSAPI_MARKDOWN_LAYOUT=plain` selects plain text. Install the OCR package for recognition, or the optional layout package for Docling layout and math/code enrichment. See [installation](getting_started.md).
+
 ## Start here
 - [Onboarding Guide](getting_started.md) — prerequisites, install choices, and first run.
 - [Quickstart Recipes](quickstart.md) — common extraction/OCR flows in copy-paste form.
@@ -16,9 +28,11 @@ Welcome to the refreshed docs for GlossAPI, the GFOSS pipeline for turning acade
 - [Multi-GPU & Benchmarking](multi_gpu.md) shares scaling and scheduling tips.
 
 ## Configure and debug
-- [Configuration](configuration.md) lists all environment knobs.
+- [Configuration](configuration.md) lists the main environment knobs; the OCR toolkit and cache variables are in
+  [OCR setup](ocr_plugin_migration.md).
 - [Troubleshooting](troubleshooting.md) captures the most common pitfalls.
-- [AWS Job Distribution](aws_job_distribution.md) describes large-scale scheduling.
+- [Corpus-wide barriers](architecture/corpus_barriers.md) lists the points where a streaming run waits for the whole
+  corpus.
 
 ## Reference
 - [Corpus API](api/corpus.md) gives the compact contract view of the main public methods.

@@ -16,7 +16,7 @@ workers are `spawn` processes that import the calling script again, so guard a s
 | Stage | Main code | Typical inputs | Important parameters | Main outputs |
 | --- | --- | --- | --- | --- |
 | Download | `Corpus.download()`, `GlossDownloader.download_files()` | metadata parquet with a URL column | `input_parquet`, `links_column`, `parallelize_by`, downloader kwargs | `downloads/`, `download_results/*.parquet` |
-| Extract (Phase‑1) | `Corpus.prime_extractor()`, `Corpus.extract()`, `GlossExtract.extract_path()` | files in `downloads/` or explicit paths | `input_format`, `phase1_backend`, `repair_fonts=True`, `use_gpus`, `devices`, `workers_per_device`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `repaired_pdfs/<stem>.pdf`, `json/<stem>.docling.json(.zst)`, `json/metrics/*.json`; parquet columns `font_repair_status`, `font_repair_fonts`, `font_repair_valid_rate_before`, `font_repair_valid_rate_after` |
+| Extract (Phase‑1) | `Corpus.prime_extractor()`, `Corpus.extract()`, `GlossExtract.extract_path()` | files in `downloads/` or explicit paths | `input_format`, `phase1_backend`, `repair_fonts=True`, `use_gpus`, `devices`, `workers_per_device`, `export_doc_json`, `emit_formula_index` | `markdown/<stem>.md`, `repaired_pdfs/<stem>.pdf`, `json/metrics/*.json`, `json/<stem>.docling.json(.zst)` (Docling backend only); parquet columns `font_repair_status`, `font_repair_fonts`, `font_repair_valid_rate_before`, `font_repair_valid_rate_after` |
 | Clean | `Corpus.clean()` | `markdown/*.md` | `drop_bad`, `empty_char_threshold`, `empty_min_pages` (`threshold` is deprecated, no effect) | `clean_markdown/<stem>.md`, cleaner report parquet, parquet flags such as `filter` and `needs_ocr` |
 | OCR retry | `Corpus.ocr(mode='ocr_bad'...)` | pages page quality routes (default `page_routing="all"`), or only cleaner-flagged documents with `page_routing="flagged"` | `mode`, `fix_bad`, `page_routing`, `use_gpus`, `devices` | refreshed `markdown/<stem>.md`, refreshed cleaner/parquet metadata |
 | Phase‑2 enrich | `Corpus.ocr(mode='math_only'...)`, `Corpus.formula_enrich_from_json()` | `json/<stem>.docling.json(.zst)` and optional formula index | `math_enhance`, `math_batch_size`, `math_dpi_base`, `targets_by_stem` | updated `markdown/<stem>.md`, `json/<stem>.latex_map.jsonl` |
@@ -52,7 +52,8 @@ workers are `spawn` processes that import the calling script again, so guard a s
   - `repair_fonts=True` (default): worker-local CPU ToUnicode repair before safe or Docling extraction; `False` uses the original text layer
   - `use_gpus='single'|'multi'`
   - `workers_per_device` to fan out more than one extraction worker onto each GPU
-  - `export_doc_json` and `emit_formula_index` for later Phase‑2 work
+  - `export_doc_json` and `emit_formula_index` for later Phase‑2 work (Docling backend only: select
+    `phase1_backend='docling'`; the safe backend writes neither)
 - Operational note:
   - `force_ocr` is deprecated and ignored in Phase‑1; use `Corpus.ocr(ocr_options=plugin_options)` after `clean()` for OCR remediation
 - Main outputs:
@@ -61,7 +62,7 @@ workers are `spawn` processes that import the calling script again, so guard a s
   - parquet `font_repair_status`, `font_repair_fonts`, `font_repair_valid_rate_before` and `font_repair_valid_rate_after` (rates use first 20 pages when `GLOSSAPI_GREEK_WORDLIST` is configured; otherwise null)
   - every extraction derives the repair from the source again (an existing `repaired_pdfs/<stem>.pdf` is never reused by modification time); pre-pass errors/timeouts fall back to the original, using the shared file budget (see [Extract stage](stages/extract.md))
   - `problematic_files/` and `timeout_files/` (debug) are created by extraction for files it could not convert
-  - optional Docling JSON and index artifacts in `json/`
+  - optional Docling JSON and index artifacts in `json/` (Docling backend only)
   - per-document and per-page metrics in `json/metrics/`
 
 ### 3. Clean
@@ -120,6 +121,7 @@ play in the pipeline:
 - debug — extra files kept around when something fails or needs a closer look
 - ledger — the provenance ledger and the private work area of `Corpus.run()` / `glossapi run`
 
+```text
 OUT/
 ├── downloads/                                  (canonical)
 │   └── problematic_math/                       (debug)
@@ -148,8 +150,11 @@ OUT/
 ├── .glossapi/artifacts/                        (ledger: private stage outputs of a run)
 ├── problematic_files/                          (debug, extraction)
 └── timeout_files/                              (debug, extraction)
+```
 
 Notes:
+- `json/<stem>.docling.json(.zst)` and `json/<stem>.formula_index.jsonl` exist only after a Docling extraction
+  (`phase1_backend='docling'`).
 - Enriched Markdown replaces the plain Markdown (single canonical location).
 - Metrics lived under `markdown/` in earlier versions; they now live under `json/metrics/`.
 - When math enrichment cannot recover after the configured number of respawns, the corresponding PDFs and Docling artifacts are copied into the `problematic_math/` folders above and the stems are added to the fatal skip-list for later review.

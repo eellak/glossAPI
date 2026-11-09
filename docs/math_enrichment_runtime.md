@@ -5,6 +5,8 @@ This guide documents how math/code enrichment runs in two phases, how the genera
 ## Policy Summary
 
 - JSON is an intermediate only when enhancements are used (math/code). Standard runs stay PDF → MD.
+- Math enrichment consumes existing Docling JSON from an explicit Docling extraction. The safe PDFium backend does not
+  create these inputs. It needs the optional `layout` package (`python install_glossapi.py layout --device cuda126`).
 - Early‑stop runs during decoding to prevent runaway outputs with minimal overhead.
 - Post‑processing runs only on clearly failed cases to “wind down” degenerate runs; otherwise the generated LaTeX is left untouched.
 - Both phases run on GPU by default; CPU layout remains an option.
@@ -30,33 +32,47 @@ Notes
 
 ## Integrated Pipeline
 
-Docling JSON now writes during extraction (disable with `export_doc_json=False` if you want to skip it)
+Phase‑1 with the Docling backend writes the Docling JSON (`export_doc_json=True`, the default, applies to the Docling
+backend only); request the formula index when you plan to enrich later:
 
 ```python
 from glossapi import Corpus
-c = Corpus('IN','OUT')
-# Phase‑1 (layout only); request the index when you plan to enrich later
-c.extract(input_format='pdf', use_gpus='multi', emit_formula_index=True)
+
+c = Corpus('IN', 'OUT')
+c.extract(
+    input_format='pdf',
+    phase1_backend='docling',
+    accel_type='CUDA',
+    export_doc_json=True,
+    emit_formula_index=True,
+)
+c.formula_enrich_from_json(device='cuda', batch_size=12)
 ```
 
-OCR + math enrichment in one call (JSON ensured automatically)
+Math enrichment through `Corpus.ocr()`: `mode='math_only', fix_bad=False` enriches the documents that already have
+Docling JSON and performs no OCR. Without a mode, `c.ocr()` selects `ocr_bad_then_math`: it OCRs the routed pages
+first and then enriches only the documents OCR did not touch, from their existing Docling JSON. No call creates
+Docling JSON for you.
 
 ```python
 from glossapi import Corpus
-c = Corpus('OUT','OUT')
-# Re‑extract with OCR on GPU and immediately enrich from JSON
-c.ocr()
+c = Corpus('OUT', 'OUT')
+c.ocr(mode='math_only', fix_bad=False, math_batch_size=12)
 ```
 
-Targeted math (only specific items)
+Targeted math (only specific items). Pass the stems as `files` as well: `targets_by_stem` alone restricts the items
+inside the named stems but does not restrict which discovered documents are enriched.
 
 ```python
 from glossapi import Corpus
-c = Corpus('OUT','OUT')
+c = Corpus('OUT', 'OUT')
 # Only page/index pairs you want (page_no is 1‑based; item_index is per‑page occurrence)
-targets = { 'JSM_564': [(14,1), (23,2)] }
-c.ocr(math_targets=targets, math_batch_size=4)
+targets = {'JSM_564': [(14, 1), (23, 2)]}
+c.formula_enrich_from_json(files=list(targets), targets_by_stem=targets, device='cuda', batch_size=4)
 ```
+
+These recipes match the current signatures; real Docling math inference is not part of the CPU test suite and needs
+a CUDA host with the `layout` package.
 
 ## OCR/Model Constraints (recap)
 
@@ -65,10 +81,10 @@ c.ocr(math_targets=targets, math_batch_size=4)
 ## Multi‑GPU
 
 - Extract: uses a shared work queue across all visible GPUs (`use_gpus='multi'`).
-- Phase‑2 math: `Corpus.ocr(use_gpus='multi')` spreads math enrichment over the visible GPUs; targeted processing supports small batches.
+- Phase‑2 math: `Corpus.ocr(mode='math_only', fix_bad=False, use_gpus='multi')` spreads math enrichment over the visible GPUs; targeted processing supports small batches.
 - OCR: the external plugin runs on one device (see [OCR plugin migration](ocr_plugin_migration.md)). Multi-GPU OCR is a target that has not been qualified.
 
 ## Troubleshooting
 
-- If outputs still look repetitive: tighten early‑stop (`MAX_REPEAT`, `MAX_CHARS`) and rerun targeted Phase‑2 with `Corpus.ocr(math_targets=...)` or `Corpus.formula_enrich_from_json(targets_by_stem=...)`.
+- If outputs still look repetitive: tighten early‑stop (`MAX_REPEAT`, `MAX_CHARS`) and rerun targeted Phase‑2 with `Corpus.formula_enrich_from_json(files=list(targets), targets_by_stem=targets)`.
 - To observe cleanup: enable post‑processing flags and inspect `*.latex_map.jsonl` (`post_applied`, `truncated_by_*`, `tail_run`).

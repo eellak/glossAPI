@@ -2,7 +2,9 @@
 
 OCR remediation uses the pinned external Greek OCR toolkit, the only supported OCR engine. See
 [OCR plugin migration](ocr_plugin_migration.md) for configuration and page routing.
-Math/code enrichment stays in the optional Docling layout stack.
+Math/code enrichment stays in the optional Docling layout stack (`python install_glossapi.py layout --device cuda126`,
+or `cuda132`). Math enrichment consumes existing Docling JSON from an explicit Docling extraction. The safe PDFium
+backend does not create these inputs.
 Use `Corpus.ocr(mode="math_only", fix_bad=False)` to enrich existing Docling JSON
 without requiring an OCR plugin. `ocr_bad_then_math` OCRs the selected pages (default `page_routing="all"`: every page page quality routes)
 and then enriches non-OCR documents with available JSON.
@@ -18,7 +20,8 @@ c.extract(
     input_format='pdf',
     phase1_backend='docling',   # optional layout extra; required for Docling JSON/formula artifacts
     accel_type='CUDA',
-    emit_formula_index=True,     # request json/<stem>.formula_index.jsonl alongside the default JSON
+    export_doc_json=True,        # json/<stem>.docling.json(.zst) (the default, Docling backend only)
+    emit_formula_index=True,     # request json/<stem>.formula_index.jsonl alongside the JSON
 )
 ```
 
