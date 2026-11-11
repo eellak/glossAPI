@@ -126,7 +126,7 @@ def sanitize_latex(text: str, policy: LatexPolicy | None = None) -> Tuple[str, D
 def accept_latex(text: str) -> float:
     """Lightweight sanity score: 1.0 accepted, 0.0 rejected.
 
-    - Balanced braces
+    - Balanced unescaped braces
     - No obviously dangerous tokens
     - Modest max length (gate); prefer to handle via policy but keep here as guard
     """
@@ -135,13 +135,19 @@ def accept_latex(text: str) -> float:
         if len(s) > 6000:  # hard fail beyond extreme size
             return 0.0
         bal = 0
+        escaped = False
         for ch in s:
-            if ch == '{':
-                bal += 1
-            elif ch == '}':
-                bal -= 1
-            if bal < 0:
-                return 0.0
+            if ch == '\\':
+                escaped = not escaped
+                continue
+            if not escaped:
+                if ch == '{':
+                    bal += 1
+                elif ch == '}':
+                    bal -= 1
+                    if bal < 0:
+                        return 0.0
+            escaped = False
         if bal != 0:
             return 0.0
         bad_toks = ["\\includegraphics", "\\write18"]
