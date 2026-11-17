@@ -252,3 +252,31 @@ def test_corpus_reuses_canonical_metadata(tmp_path):
     # Subsequent calls should reuse cached path without re-reading metrics file
     again = corpus._resolve_metadata_parquet(helper, ensure=False, search_input=False)
     assert again == canonical
+
+
+def test_coerce_bool_value_handles_infinite_numbers():
+    import numpy as np
+    from glossapi.parquet_schema import _coerce_bool_value, _prepare_metadata_frame
+
+    # Test infinite float handling
+    assert _coerce_bool_value(float("inf")) is pd.NA
+    assert _coerce_bool_value(float("-inf")) is pd.NA
+    assert _coerce_bool_value(np.inf) is pd.NA
+    assert _coerce_bool_value(-np.inf) is pd.NA
+
+    # Standard finite numbers
+    assert _coerce_bool_value(1) is True
+    assert _coerce_bool_value(0) is False
+    assert _coerce_bool_value(1.0) is True
+    assert _coerce_bool_value(0.0) is False
+
+    # Verify _prepare_metadata_frame does not raise OverflowError with infinite values
+    df = pd.DataFrame({
+        "filename": ["doc1.pdf", "doc2.pdf", "doc3.pdf"],
+        "needs_ocr": [np.inf, 1, 0],
+    })
+    prepared = _prepare_metadata_frame(df)
+    assert pd.isna(prepared["needs_ocr"].iloc[0])
+    assert bool(prepared["needs_ocr"].iloc[1]) is True
+    assert bool(prepared["needs_ocr"].iloc[2]) is False
+

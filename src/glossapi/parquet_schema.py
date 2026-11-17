@@ -8,6 +8,7 @@ pipeline, ensuring consistency between different pipeline stages.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 import uuid
@@ -73,11 +74,11 @@ def _coerce_bool_value(value: Any) -> object:
         return value
     if isinstance(value, Number) and not isinstance(value, bool):
         try:
-            if pd.isna(value):
+            if pd.isna(value) or math.isinf(value):
                 return pd.NA
         except Exception:
             pass
-        return bool(int(value))
+        return bool(value)
     if isinstance(value, str):
         lowered = value.strip().lower()
         if lowered in {"true", "1", "yes", "y", "t"}:
