@@ -235,7 +235,11 @@ def test_browser_downloader_reuses_cached_domain_session(tmp_path, monkeypatch):
     async def _bootstrap(**kwargs):
         nonlocal bootstraps
         bootstraps += 1
-        return BrowserSessionState(user_agent="UA", cookie_header="a=b", cached_at=10_000.0), []
+        return BrowserSessionState(
+            user_agent="UA",
+            cookies=[{"name": "a", "value": "b", "domain": "eur-lex.europa.eu", "path": "/"}],
+            cached_at=10_000.0,
+        ), []
 
     monkeypatch.setattr(downloader, "_bootstrap_browser_session_state", _bootstrap)
     monkeypatch.setattr(downloader, "_fetch_with_browser_session_state", _fake_fetch_with_browser_session_state)
@@ -252,6 +256,47 @@ def test_browser_downloader_reuses_cached_domain_session(tmp_path, monkeypatch):
     assert second[0].startswith(b"%PDF")
     assert bootstraps == 1
     assert fetches == 2
+
+
+def test_cookie_header_scoped_to_candidate_host(tmp_path):
+    """Issue #121: cookies from the source host must not reach a cross-origin candidate."""
+    downloader = BrowserGlossDownloader(output_dir=str(tmp_path))
+    cookies = [
+        {"name": "SOURCE_SESSION", "value": "real-secret", "domain": "127.0.0.1", "path": "/"},
+        {"name": "CDN_SESSION", "value": "cdn-ok", "domain": "cdn.example.org", "path": "/"},
+    ]
+    header = downloader._cookie_header_for_url(cookies, "http://127.0.0.2/candidate.pdf")
+    assert header == ""
+    header = downloader._cookie_header_for_url(cookies, "http://cdn.example.org/candidate.pdf")
+    assert header == "CDN_SESSION=cdn-ok"
+
+
+def test_cookie_header_sends_domain_cookie_to_subdomain(tmp_path):
+    downloader = BrowserGlossDownloader(output_dir=str(tmp_path))
+    cookies = [
+        {"name": "shared", "value": "1", "domain": ".example.org", "path": "/"},
+        {"name": "host_only", "value": "2", "domain": "example.org", "path": "/"},
+    ]
+    header = downloader._cookie_header_for_url(cookies, "https://www.example.org/file.pdf")
+    assert "shared=1" in header
+    assert "host_only" not in header
+    header = downloader._cookie_header_for_url(cookies, "https://example.org/file.pdf")
+    assert "shared=1" in header
+    assert "host_only=2" in header
+
+
+def test_cookie_header_skips_secure_cookie_over_http(tmp_path):
+    downloader = BrowserGlossDownloader(output_dir=str(tmp_path))
+    cookies = [{"name": "secure_one", "value": "1", "domain": "example.org", "path": "/", "secure": True}]
+    assert downloader._cookie_header_for_url(cookies, "http://example.org/file.pdf") == ""
+    assert downloader._cookie_header_for_url(cookies, "https://example.org/file.pdf") == "secure_one=1"
+
+
+def test_cookie_header_respects_cookie_path(tmp_path):
+    downloader = BrowserGlossDownloader(output_dir=str(tmp_path))
+    cookies = [{"name": "scoped", "value": "1", "domain": "example.org", "path": "/download/"}]
+    assert downloader._cookie_header_for_url(cookies, "https://example.org/other/file.pdf") == ""
+    assert downloader._cookie_header_for_url(cookies, "https://example.org/download/file.pdf") == "scoped=1"
 
 
 def test_browser_downloader_policy_routes_domain_to_browser(tmp_path, monkeypatch):

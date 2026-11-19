@@ -13,7 +13,7 @@ import re
 import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .optional_dependencies import optional_dependencies
 
@@ -29,7 +29,7 @@ from .gloss_downloader import GlossDownloader
 @dataclass
 class BrowserSessionState:
     user_agent: str
-    cookie_header: str
+    cookies: List[Dict[str, Any]]
     cached_at: float
 
 
@@ -251,8 +251,9 @@ class BrowserGlossDownloader(GlossDownloader):
             "User-Agent": state.user_agent,
             "Accept": "application/pdf,application/octet-stream,*/*;q=0.8",
         }
-        if state.cookie_header:
-            request_headers["Cookie"] = state.cookie_header
+        cookie_header = self._cookie_header_for_url(state.cookies, url)
+        if cookie_header:
+            request_headers["Cookie"] = cookie_header
         if referer:
             request_headers["Referer"] = referer
 
@@ -266,6 +267,46 @@ class BrowserGlossDownloader(GlossDownloader):
                 received_bytes(len(body))
                 response_headers = {str(k): str(v) for k, v in (response.headers or {}).items()}
         return body, response_headers, {"candidate_url": url, "session_reused": True}
+
+    def _cookie_header_for_url(self, cookies: List[Dict[str, Any]], url: str) -> str:
+        """Build a Cookie header scoped to `url`'s origin.
+
+        Browser bootstrap collects cookies from the whole browser context, but
+        the selected candidate response may come from a different origin than
+        the page that produced it. Forwarding every collected cookie to that
+        candidate would disclose the source host's session state to it
+        (issue #121), so this applies RFC 6265-style domain/path/secure
+        matching to select only cookies that belong to the target URL.
+        """
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return ""
+        path = parsed.path or "/"
+        secure = parsed.scheme.lower() == "https"
+        matched: List[str] = []
+        for cookie in cookies or []:
+            name = cookie.get("name")
+            if not name:
+                continue
+            raw_domain = str(cookie.get("domain") or "")
+            domain = raw_domain.lower().lstrip(".")
+            if not domain:
+                continue
+            if raw_domain.startswith("."):
+                # Domain cookie: matches the domain and its subdomains.
+                if host != domain and not host.endswith("." + domain):
+                    continue
+            elif host != domain:
+                # Host-only cookie: exact host match only.
+                continue
+            cookie_path = str(cookie.get("path") or "/") or "/"
+            if not path.startswith(cookie_path):
+                continue
+            if cookie.get("secure") and not secure:
+                continue
+            matched.append(f"{name}={cookie.get('value', '')}")
+        return "; ".join(matched)
 
     async def _bootstrap_browser_session_state(
         self,
@@ -355,12 +396,9 @@ class BrowserGlossDownloader(GlossDownloader):
                 finally:
                     await browser.close()
 
-        cookie_header = "; ".join(
-            f"{cookie['name']}={cookie['value']}" for cookie in browser_cookies if cookie.get("name")
-        )
         return BrowserSessionState(
             user_agent=browser_user_agent,
-            cookie_header=cookie_header,
+            cookies=[dict(cookie) for cookie in browser_cookies if cookie.get("name")],
             cached_at=time.time(),
         ), accepted_responses
 
