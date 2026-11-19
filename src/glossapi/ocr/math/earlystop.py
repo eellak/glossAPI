@@ -121,16 +121,17 @@ def attach_early_stop(code_formula_model: Any) -> bool:
             except Exception:
                 return False
 
-    criteria = StoppingCriteriaList(
-        [StopOnRepeat(repeat_gate), StopOnLength(max_chars=max_chars, stride=stride, tokenizer=tokenizer)]
-    )
+    def _make_criteria() -> StoppingCriteriaList:
+        return StoppingCriteriaList(
+            [StopOnRepeat(repeat_gate), StopOnLength(max_chars=max_chars, stride=stride, tokenizer=tokenizer)]
+        )
 
     try:
         original_generate = target.generate  # type: ignore[attr-defined]
 
         def wrapped_generate(*args, **kwargs):
-            if criteria is not None and "stopping_criteria" not in kwargs:
-                kwargs["stopping_criteria"] = criteria
+            if "stopping_criteria" not in kwargs:
+                kwargs["stopping_criteria"] = _make_criteria()
             if max_new_tokens and "max_new_tokens" not in kwargs:
                 kwargs["max_new_tokens"] = int(max_new_tokens)
             return original_generate(*args, **kwargs)
